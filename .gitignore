@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.codex-bridge/
+SupportBundles/
+Secrets/
+*.runtime-key
+
