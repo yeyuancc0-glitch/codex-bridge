@@ -245,6 +245,42 @@ final class MCPHTTPBoundaryTests: XCTestCase {
     XCTAssertEqual(metrics, MCPHTTPMetrics(activeConnections: 0, activeRequests: 0))
   }
 
+  func testWritabilityCancellationAndCloseCannotLeakOrReopenWaiters() async {
+    let cancelledState = MCPHTTPWritability()
+    cancelledState.update(isWritable: false, isOpen: true)
+    let cancelledWaiter = Task {
+      try await cancelledState.waitUntilWritable()
+    }
+    await Task.yield()
+    cancelledWaiter.cancel()
+    do {
+      try await cancelledWaiter.value
+      XCTFail("Expected the cancelled waiter to finish.")
+    } catch is CancellationError {
+    } catch {
+      XCTFail("Unexpected cancellation error: \(error)")
+    }
+
+    let closedState = MCPHTTPWritability()
+    closedState.update(isWritable: false, isOpen: true)
+    let closedWaiter = Task {
+      try await closedState.waitUntilWritable()
+    }
+    await Task.yield()
+    closedState.update(isWritable: false, isOpen: false)
+    closedState.update(isWritable: true, isOpen: true)
+    do {
+      try await closedWaiter.value
+      XCTFail("Expected channel close to finish the waiter.")
+    } catch {
+    }
+    do {
+      try await closedState.waitUntilWritable()
+      XCTFail("A closed channel must never reopen.")
+    } catch {
+    }
+  }
+
   private var route: String {
     "/mcp/\(secret)"
   }

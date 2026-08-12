@@ -52,7 +52,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   package func channelActive(context: ChannelHandlerContext) {
     scheduleHeaderTimeout(context: context)
     let isWritable = context.channel.isWritable
-    Task { await writability.update(isWritable: isWritable, isOpen: true) }
+    writability.update(isWritable: isWritable, isOpen: true)
     context.fireChannelActive()
   }
 
@@ -70,12 +70,10 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   package func channelWritabilityChanged(context: ChannelHandlerContext) {
     let isWritable = context.channel.isWritable
     let isOpen = context.channel.isActive
-    Task {
-      await writability.update(
-        isWritable: isWritable,
-        isOpen: isOpen
-      )
-    }
+    writability.update(
+      isWritable: isWritable,
+      isOpen: isOpen
+    )
     context.fireChannelWritabilityChanged()
   }
 
@@ -84,7 +82,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     responseTask?.cancel()
     releaseRequest()
     releaseConnection(context.channel)
-    Task { await writability.update(isWritable: false, isOpen: false) }
+    writability.update(isWritable: false, isOpen: false)
     context.fireChannelInactive()
   }
 
@@ -511,31 +509,67 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   }
 }
 
-private actor MCPHTTPWritability {
+package final class MCPHTTPWritability: @unchecked Sendable {
+  private let lock = NSLock()
   private var isWritable = true
   private var isOpen = true
-  private var waiters: [CheckedContinuation<Void, any Error>] = []
+  private var waiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
 
   func update(isWritable: Bool, isOpen: Bool) {
-    self.isWritable = isWritable
-    self.isOpen = isOpen
-    guard isWritable || !isOpen else { return }
-    let pending = waiters
-    waiters.removeAll(keepingCapacity: true)
+    var pending: [CheckedContinuation<Void, any Error>] = []
+    var error: (any Error)?
+    lock.withLock {
+      guard self.isOpen else { return }
+      self.isWritable = isWritable
+      self.isOpen = isOpen
+      guard isWritable || !isOpen else { return }
+      pending = Array(waiters.values)
+      waiters.removeAll(keepingCapacity: true)
+      if !isOpen {
+        error = MCPHTTPWriteError.channelClosed
+      }
+    }
     for waiter in pending {
-      if isOpen {
-        waiter.resume()
+      if let error {
+        waiter.resume(throwing: error)
       } else {
-        waiter.resume(throwing: MCPHTTPWriteError.channelClosed)
+        waiter.resume()
       }
     }
   }
 
   func waitUntilWritable() async throws {
-    if !isOpen { throw MCPHTTPWriteError.channelClosed }
-    if isWritable { return }
-    try await withCheckedThrowingContinuation { continuation in
-      waiters.append(continuation)
+    let identifier = UUID()
+    try Task.checkCancellation()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        var outcome: Result<Void, any Error>?
+        lock.withLock {
+          if Task.isCancelled {
+            outcome = .failure(CancellationError())
+          } else if !isOpen {
+            outcome = .failure(MCPHTTPWriteError.channelClosed)
+          } else if isWritable {
+            outcome = .success(())
+          } else {
+            waiters[identifier] = continuation
+          }
+        }
+        if let outcome {
+          continuation.resume(with: outcome)
+        }
+      }
+    } onCancel: {
+      self.cancelWaiter(identifier)
+    }
+  }
+
+  private func cancelWaiter(_ identifier: UUID) {
+    let waiter = lock.withLock {
+      waiters.removeValue(forKey: identifier)
+    }
+    if let waiter {
+      waiter.resume(throwing: CancellationError())
     }
   }
 }
