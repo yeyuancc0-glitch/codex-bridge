@@ -1,0 +1,210 @@
+@preconcurrency import Foundation
+
+public struct AppServerConfiguration: Equatable, Sendable {
+  public let executableURL: URL
+  public let arguments: [String]
+  public let currentDirectoryURL: URL?
+  public let environment: [String: String]?
+  public let maximumProtocolLineBytes: Int
+  public let stderrBufferBytes: Int
+
+  public init(
+    executableURL: URL,
+    arguments: [String],
+    currentDirectoryURL: URL? = nil,
+    environment: [String: String]? = nil,
+    maximumProtocolLineBytes: Int = 8 * 1024 * 1024,
+    stderrBufferBytes: Int = 64 * 1024
+  ) {
+    self.executableURL = executableURL
+    self.arguments = arguments
+    self.currentDirectoryURL = currentDirectoryURL
+    self.environment = environment
+    self.maximumProtocolLineBytes = max(1, maximumProtocolLineBytes)
+    self.stderrBufferBytes = max(0, stderrBufferBytes)
+  }
+
+  public static func codex(executableURL: URL? = nil) -> AppServerConfiguration {
+    if let executableURL {
+      return AppServerConfiguration(
+        executableURL: executableURL,
+        arguments: ["app-server", "--stdio"]
+      )
+    }
+    return AppServerConfiguration(
+      executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+      arguments: ["codex", "app-server", "--stdio"]
+    )
+  }
+}
+
+private final class AppServerProcessState: @unchecked Sendable {
+  let process = Process()
+  let stdinPipe = Pipe()
+  let stdoutPipe = Pipe()
+  let stderrPipe = Pipe()
+
+  func terminateIfRunning() {
+    if process.isRunning {
+      process.terminate()
+    }
+  }
+
+  func closeHandles() {
+    try? stdinPipe.fileHandleForWriting.close()
+    try? stdoutPipe.fileHandleForReading.close()
+    try? stderrPipe.fileHandleForReading.close()
+  }
+}
+
+private actor BoundedDataBuffer {
+  private let limit: Int
+  private var data = Data()
+
+  init(limit: Int) {
+    self.limit = limit
+  }
+
+  func append(_ chunk: Data) {
+    guard limit > 0, !chunk.isEmpty else { return }
+    if chunk.count >= limit {
+      data = Data(chunk.suffix(limit))
+      return
+    }
+
+    data.append(chunk)
+    let overflow = data.count - limit
+    if overflow > 0 {
+      data.removeFirst(overflow)
+    }
+  }
+
+  func snapshot() -> Data {
+    data
+  }
+}
+
+public actor AppServerProcess {
+  private let configuration: AppServerConfiguration
+  private let stderrBuffer: BoundedDataBuffer
+  private var state: AppServerProcessState?
+  private var transport: JSONLineTransport?
+  private var stderrTask: Task<Void, Never>?
+  private var stderrContinuation: AsyncStream<Data>.Continuation?
+  private var hasStarted = false
+
+  public init(configuration: AppServerConfiguration = .codex()) {
+    self.configuration = configuration
+    stderrBuffer = BoundedDataBuffer(limit: configuration.stderrBufferBytes)
+  }
+
+  public func start(dispatcher: RPCDispatcher) async throws {
+    guard !hasStarted else { throw CodexRPCError.alreadyStarted }
+    hasStarted = true
+
+    let state = AppServerProcessState()
+    configure(state.process, with: configuration, pipes: state)
+    let transport = JSONLineTransport(
+      input: state.stdinPipe.fileHandleForWriting,
+      output: state.stdoutPipe.fileHandleForReading,
+      dispatcher: dispatcher,
+      maximumLineBytes: configuration.maximumProtocolLineBytes
+    )
+
+    state.process.terminationHandler = { process in
+      Task {
+        await dispatcher.terminate(with: .processExited(process.terminationStatus))
+      }
+    }
+    try await transport.start {
+      state.terminateIfRunning()
+    }
+    let stderrReader = makeStderrReader(
+      handle: state.stderrPipe.fileHandleForReading,
+      buffer: stderrBuffer
+    )
+    stderrTask = stderrReader.task
+    stderrContinuation = stderrReader.continuation
+
+    do {
+      try state.process.run()
+    } catch {
+      await transport.stop()
+      state.stderrPipe.fileHandleForReading.readabilityHandler = nil
+      stderrContinuation?.finish()
+      stderrContinuation = nil
+      stderrTask?.cancel()
+      stderrTask = nil
+      state.closeHandles()
+      throw CodexRPCError.processLaunchFailed(error.localizedDescription)
+    }
+
+    self.state = state
+    self.transport = transport
+  }
+
+  public func send(_ value: JSONValue) async throws {
+    guard let state, state.process.isRunning, let transport else {
+      throw CodexRPCError.notStarted
+    }
+    try await transport.write(value)
+  }
+
+  public func stop() async {
+    guard let state else { return }
+    await transport?.stop()
+    state.terminateIfRunning()
+    state.stderrPipe.fileHandleForReading.readabilityHandler = nil
+    stderrContinuation?.finish()
+    stderrContinuation = nil
+    stderrTask?.cancel()
+    stderrTask = nil
+    state.closeHandles()
+    transport = nil
+    self.state = nil
+  }
+
+  public func stderrSnapshot() async -> Data {
+    await stderrBuffer.snapshot()
+  }
+
+  private func configure(
+    _ process: Process,
+    with configuration: AppServerConfiguration,
+    pipes: AppServerProcessState
+  ) {
+    process.executableURL = configuration.executableURL
+    process.arguments = configuration.arguments
+    process.currentDirectoryURL = configuration.currentDirectoryURL
+    if let environment = configuration.environment {
+      process.environment = environment
+    }
+    process.standardInput = pipes.stdinPipe
+    process.standardOutput = pipes.stdoutPipe
+    process.standardError = pipes.stderrPipe
+  }
+
+  private func makeStderrReader(
+    handle: FileHandle,
+    buffer: BoundedDataBuffer
+  ) -> (task: Task<Void, Never>, continuation: AsyncStream<Data>.Continuation) {
+    let pair = AsyncStream.makeStream(
+      of: Data.self,
+      bufferingPolicy: .bufferingNewest(8)
+    )
+    handle.readabilityHandler = { readableHandle in
+      let data = readableHandle.availableData
+      if data.isEmpty {
+        pair.continuation.finish()
+      } else {
+        pair.continuation.yield(data)
+      }
+    }
+    let task = Task.detached(priority: .utility) {
+      for await data in pair.stream {
+        await buffer.append(data)
+      }
+    }
+    return (task, pair.continuation)
+  }
+}

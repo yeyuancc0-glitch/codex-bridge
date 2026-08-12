@@ -52,12 +52,15 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - Supervisor 只读、无网络、`approvalPolicy = never`，不能修改项目或批准风险操作。
 - Policy Engine 是安全边界；模型判断只是证据，不能扩大权限。
 - 任务事件追加写入，当前状态从事件归约；禁止修改历史事件。
+- `TaskPhase` 与 `TaskActivity` 分离：监督/纠偏是 activity，不伪造生命周期变化；恢复使用 `recovering/unknown`，完成必须已有最终报告。
+- interrupt/suspend 先记录意图，只有 app-server 的 turn 停止事实才能进入对应终态。
+- `EventStore` 通过事件序号 CAS 追加；提交幂等键是 `(origin, key)`，同指纹复用、异指纹拒绝；Thread 与工作树两把锁必须在同一 SQLite 事务获取。
 
 ## 安全不变量
 
 - 本地 MCP 仅回环监听，并使用 Keychain 中的随机 Path Secret。
 - MCP 不接受任意绝对路径，不提供万能 Shell 工具。
-- 相对路径必须标准化、解析符号链接后再次验证仍在注册根目录内。
+- 相对路径必须标准化、解析符号链接后再次验证仍在注册根目录内；读取时从根目录描述符逐级 `openat + O_NOFOLLOW`，并复核根与目标文件的 device/inode，防止校验后替换竞态。
 - 默认拒绝 `.env*`、私钥、Keychain、浏览器 Cookie、Codex auth 等敏感路径。
 - Runtime Key 只用于 Tunnel，永不传给 Codex/Luna，永不写日志或支持包。
 - 网络默认关闭；包安装、网络、Git 写和项目外访问要求本机确认。
@@ -115,6 +118,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 ```bash
 Scripts/with-xcode.sh swift build --package-path Packages/BridgeCore
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
+Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests
 Scripts/with-xcode.sh swift run --package-path Prototypes/AppServerProbe app-server-probe --help
 codex app-server generate-json-schema --out DIR
 ```
@@ -127,6 +131,9 @@ codex app-server generate-json-schema --out DIR
 - 当前 app-server wire 契约与方案的必要修正记录在 `docs/CODEX_PROTOCOL_COMPATIBILITY.md`；尤其注意无 `jsonrpc` 字段、Thread/Turn 两套 sandbox 表达、开放 reasoning effort 和多种审批响应。
 - stdout 是 JSON-RPC 协议通道；任何非 JSON 污染都必须检测，诊断只读 stderr。
 - 进程退出必须原子取消全部等待请求，避免 continuation 泄漏或重复恢复。
+- `CodexAppServerClient` 是一次性进程会话；停止、初始化失败或协议失败后由上层创建新实例，不能复用已终止的 dispatcher/event stream。
+- app-server stdout 与事件队列都必须有硬上限；审批/服务端请求不得静默丢弃，拥塞时终止会话并进入恢复。
+- Xcode 27 下不要在 detached task 中用阻塞式 `FileHandle.read(upToCount:)` 驱动管道；使用 `readabilityHandler` 接入有界 `AsyncStream`，再由单消费者解析。
 - Thread 只能按规范化 cwd/worktree 精确绑定，不能按标题或“最近使用”猜测。
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。

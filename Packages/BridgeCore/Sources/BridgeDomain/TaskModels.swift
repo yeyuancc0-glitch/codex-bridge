@@ -1,0 +1,185 @@
+import Foundation
+
+public struct TaskSubmission: Codable, Equatable, Sendable {
+  public let schemaVersion: UInt16
+  public let idempotencyKey: IdempotencyKey
+  public let projectID: ProjectID
+  public let thread: ThreadTarget
+  public let execution: ExecutionOptions
+  public let supervisor: SupervisorOptions
+  public let contract: TaskContract
+
+  public init(
+    schemaVersion: UInt16 = 1,
+    idempotencyKey: IdempotencyKey,
+    projectID: ProjectID,
+    thread: ThreadTarget,
+    execution: ExecutionOptions,
+    supervisor: SupervisorOptions,
+    contract: TaskContract
+  ) {
+    self.schemaVersion = schemaVersion
+    self.idempotencyKey = idempotencyKey
+    self.projectID = projectID
+    self.thread = thread
+    self.execution = execution
+    self.supervisor = supervisor
+    self.contract = contract
+  }
+}
+
+public enum ThreadTarget: Codable, Equatable, Sendable {
+  case new
+  case existing(ThreadID)
+}
+
+public struct ExecutionOptions: Codable, Equatable, Sendable {
+  public let model: String
+  public let effort: String
+  public let permissionMode: String
+  public let networkAccess: Bool
+
+  public init(
+    model: String,
+    effort: String,
+    permissionMode: String,
+    networkAccess: Bool
+  ) {
+    self.model = model
+    self.effort = effort
+    self.permissionMode = permissionMode
+    self.networkAccess = networkAccess
+  }
+}
+
+public struct SupervisorOptions: Codable, Equatable, Sendable {
+  public let enabled: Bool
+  public let model: String
+  public let effort: String
+
+  public init(enabled: Bool, model: String, effort: String) {
+    self.enabled = enabled
+    self.model = model
+    self.effort = effort
+  }
+}
+
+public struct TaskContract: Codable, Equatable, Sendable {
+  public let goal: String
+  public let background: String
+  public let requirements: [String]
+  public let acceptanceCriteria: [String]
+  public let nonGoals: [String]
+  public let constraints: [String]
+  public let allowedPaths: [String]
+  public let forbiddenPaths: [String]
+  public let verification: [String]
+
+  public init(
+    goal: String,
+    background: String = "",
+    requirements: [String] = [],
+    acceptanceCriteria: [String],
+    nonGoals: [String] = [],
+    constraints: [String] = [],
+    allowedPaths: [String] = [],
+    forbiddenPaths: [String] = [],
+    verification: [String] = []
+  ) {
+    self.goal = goal
+    self.background = background
+    self.requirements = requirements
+    self.acceptanceCriteria = acceptanceCriteria
+    self.nonGoals = nonGoals
+    self.constraints = constraints
+    self.allowedPaths = allowedPaths
+    self.forbiddenPaths = forbiddenPaths
+    self.verification = verification
+  }
+}
+
+public enum TaskPhase: String, Codable, Equatable, Hashable, Sendable {
+  case draft
+  case awaitingLocalApproval
+  case preparing
+  case running
+  case awaitingCodexApproval
+  case suspended
+  case verifying
+  case recovering
+  case unknown
+  case completed
+  case failed
+  case interrupted
+  case rejected
+
+  public var isTerminal: Bool {
+    switch self {
+    case .completed, .failed, .interrupted, .rejected:
+      true
+    default:
+      false
+    }
+  }
+}
+
+public enum TaskActivity: String, Codable, Equatable, Sendable {
+  case idle
+  case supervising
+  case correcting
+}
+
+public struct ExecutionBinding: Codable, Equatable, Sendable {
+  public let threadID: ThreadID
+  public let turnID: TurnID
+  public let turnGeneration: UInt64
+
+  public init(threadID: ThreadID, turnID: TurnID, turnGeneration: UInt64) {
+    self.threadID = threadID
+    self.turnID = turnID
+    self.turnGeneration = turnGeneration
+  }
+}
+
+public struct StopIntent: Codable, Equatable, Sendable {
+  public enum Outcome: String, Codable, Equatable, Sendable {
+    case suspend
+    case interrupt
+  }
+
+  public let operationID: OperationID
+  public let outcome: Outcome
+  public let reason: String?
+
+  public init(operationID: OperationID, outcome: Outcome, reason: String? = nil) {
+    self.operationID = operationID
+    self.outcome = outcome
+    self.reason = reason
+  }
+}
+
+public struct TaskAggregate: Codable, Equatable, Sendable {
+  public let id: TaskID
+  public let submission: TaskSubmission
+  public internal(set) var phase: TaskPhase
+  public internal(set) var activity: TaskActivity
+  public internal(set) var binding: ExecutionBinding?
+  public internal(set) var pendingApprovalIDs: Set<ApprovalID>
+  public internal(set) var stopIntent: StopIntent?
+  public internal(set) var reportReference: String?
+  public internal(set) var failureReason: String?
+  public internal(set) var recoveryOrigin: TaskPhase?
+
+  public init(id: TaskID, submission: TaskSubmission) {
+    self.id = id
+    self.submission = submission
+    self.phase = .draft
+    self.activity = .idle
+    self.binding = nil
+    self.pendingApprovalIDs = []
+    self.stopIntent = nil
+    self.reportReference = nil
+    self.failureReason = nil
+    self.recoveryOrigin = nil
+  }
+}
