@@ -8,17 +8,52 @@ public enum MCPToolName: String, CaseIterable, Sendable {
   case listModels = "list_models"
 }
 
+public enum MCPTaskToolName: String, CaseIterable, Sendable {
+  case getTask = "get_task"
+  case getTaskEvents = "get_task_events"
+  case getTaskDiff = "get_task_diff"
+  case getFinalReport = "get_final_report"
+  case submitTask = "submit_task"
+  case steerTask = "steer_task"
+  case interruptTask = "interrupt_task"
+}
+
+enum MCPDispatchedToolName: String, Sendable {
+  case bridgeStatus = "bridge_status"
+  case listProjects = "list_projects"
+  case listThreads = "list_threads"
+  case readThread = "read_thread"
+  case listModels = "list_models"
+  case getTask = "get_task"
+  case getTaskEvents = "get_task_events"
+  case getTaskDiff = "get_task_diff"
+  case getFinalReport = "get_final_report"
+  case submitTask = "submit_task"
+  case steerTask = "steer_task"
+  case interruptTask = "interrupt_task"
+}
+
 public struct MCPToolCatalog: Sendable {
   public let definitions: [Tool]
 
-  public init() {
-    definitions = [
+  public init(includeTaskTools: Bool = false) {
+    let readOnlyDefinitions = [
       Self.bridgeStatus,
       Self.listProjects,
       Self.listThreads,
       Self.readThread,
       Self.listModels,
     ]
+    let taskDefinitions = [
+      Self.getTask,
+      Self.getTaskEvents,
+      Self.getTaskDiff,
+      Self.getFinalReport,
+      Self.submitTask,
+      Self.steerTask,
+      Self.interruptTask,
+    ]
+    definitions = readOnlyDefinitions + (includeTaskTools ? taskDefinitions : [])
   }
 
   private static let annotations = Tool.Annotations(

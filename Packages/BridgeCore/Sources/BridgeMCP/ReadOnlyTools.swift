@@ -138,7 +138,7 @@ public struct ReadOnlyTools: Sendable {
   }
 }
 
-private func withToolDeadline<Output: Sendable>(
+func withToolDeadline<Output: Sendable>(
   until deadline: ContinuousClock.Instant,
   operation: @escaping @Sendable () async throws -> Output
 ) async throws -> Output {
@@ -212,7 +212,7 @@ enum MCPToolAdapterError: Error {
   case invalidQueryOutput
 }
 
-private struct StrictToolArguments {
+struct StrictToolArguments {
   private let values: [String: Value]
 
   init(
@@ -244,6 +244,76 @@ private struct StrictToolArguments {
       throw MCPError.invalidParams("Argument '\(key)' is invalid.")
     }
     return value
+  }
+
+  func requiredText(_ key: String, maximumUTF8Bytes: Int) throws -> String {
+    let value = try text(key, maximumUTF8Bytes: maximumUTF8Bytes)
+    guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw MCPError.invalidParams("Argument '\(key)' cannot be empty.")
+    }
+    return value
+  }
+
+  func text(_ key: String, maximumUTF8Bytes: Int) throws -> String {
+    guard case .string(let value)? = values[key] else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a string.")
+    }
+    guard
+      value.utf8.count <= maximumUTF8Bytes,
+      value.rangeOfCharacter(from: .controlCharacters.subtracting(.newlines)) == nil
+    else {
+      throw MCPError.invalidParams("Argument '\(key)' must be bounded text.")
+    }
+    return value
+  }
+
+  func requiredBoolean(_ key: String) throws -> Bool {
+    guard case .bool(let value)? = values[key] else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a boolean.")
+    }
+    return value
+  }
+
+  func optionalBoolean(_ key: String) throws -> Bool? {
+    guard let value = values[key], value != .null else { return nil }
+    guard case .bool(let result) = value else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a boolean.")
+    }
+    return result
+  }
+
+  func optionalNonnegativeInteger(_ key: String) throws -> Int64? {
+    guard let value = values[key], value != .null else { return nil }
+    guard case .int(let result) = value, result >= 0 else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a nonnegative integer.")
+    }
+    return Int64(result)
+  }
+
+  func requiredObject(_ key: String) throws -> [String: Value] {
+    guard case .object(let value)? = values[key] else {
+      throw MCPError.invalidParams("Argument '\(key)' must be an object.")
+    }
+    return value
+  }
+
+  func stringArray(
+    _ key: String,
+    maximumCount: Int,
+    maximumElementUTF8Bytes: Int
+  ) throws -> [String] {
+    guard case .array(let rawValues)? = values[key], rawValues.count <= maximumCount else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a bounded string array.")
+    }
+    return try rawValues.map { raw in
+      guard case .string(let value) = raw,
+        value.utf8.count <= maximumElementUTF8Bytes,
+        value.rangeOfCharacter(from: .controlCharacters.subtracting(.newlines)) == nil
+      else {
+        throw MCPError.invalidParams("Argument '\(key)' must contain bounded text.")
+      }
+      return value
+    }
   }
 
   func optionalString(_ key: String, maximumUTF8Bytes: Int) throws -> String? {

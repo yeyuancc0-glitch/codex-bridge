@@ -5,14 +5,13 @@ import XCTest
 @testable import BridgeMCP
 
 final class MCPToolContractTests: XCTestCase {
-  func testCatalogPublishesFiveStrictReadOnlyTools() throws {
-    let definitions = MCPToolCatalog().definitions
+  func testCatalogPublishesStrictClosedSchemasAndAccurateAnnotations() throws {
+    let definitions = MCPToolCatalog(includeTaskTools: true).definitions
 
-    XCTAssertEqual(definitions.map(\.name), MCPToolName.allCases.map(\.rawValue))
+    let expectedNames =
+      MCPToolName.allCases.map(\.rawValue) + MCPTaskToolName.allCases.map(\.rawValue)
+    XCTAssertEqual(definitions.map(\.name), expectedNames)
     for definition in definitions {
-      XCTAssertEqual(definition.annotations.readOnlyHint, true)
-      XCTAssertEqual(definition.annotations.destructiveHint, false)
-      XCTAssertEqual(definition.annotations.idempotentHint, true)
       XCTAssertEqual(definition.annotations.openWorldHint, false)
       try assertObjectSchemasAreClosed(definition.inputSchema)
       try assertObjectSchemasAreClosed(XCTUnwrap(definition.outputSchema))
@@ -21,6 +20,27 @@ final class MCPToolContractTests: XCTestCase {
       XCTAssertEqual(definition.outputSchema?.objectValue?["type"], "object")
       XCTAssertEqual(definition.outputSchema?.objectValue?["additionalProperties"], false)
     }
+
+    let byName = Dictionary(uniqueKeysWithValues: definitions.map { ($0.name, $0) })
+    let readOnlyNames = Set([
+      "bridge_status", "list_projects", "list_threads", "read_thread", "list_models",
+      "get_task", "get_task_events", "get_task_diff", "get_final_report",
+    ])
+    for name in readOnlyNames {
+      XCTAssertEqual(byName[name]?.annotations.readOnlyHint, true)
+      XCTAssertEqual(byName[name]?.annotations.destructiveHint, false)
+      XCTAssertEqual(byName[name]?.annotations.idempotentHint, true)
+    }
+    XCTAssertEqual(byName["submit_task"]?.annotations.readOnlyHint, false)
+    XCTAssertEqual(byName["submit_task"]?.annotations.destructiveHint, false)
+    XCTAssertEqual(byName["submit_task"]?.annotations.idempotentHint, true)
+    XCTAssertEqual(byName["steer_task"]?.annotations.readOnlyHint, false)
+    XCTAssertEqual(byName["steer_task"]?.annotations.destructiveHint, false)
+    XCTAssertEqual(byName["steer_task"]?.annotations.idempotentHint, false)
+    XCTAssertEqual(byName["interrupt_task"]?.annotations.readOnlyHint, false)
+    XCTAssertEqual(byName["interrupt_task"]?.annotations.destructiveHint, true)
+    XCTAssertEqual(byName["interrupt_task"]?.annotations.idempotentHint, false)
+    XCTAssertNil(byName["respond_to_codex_approval"])
   }
 
   func testAllReadOnlyToolsReturnLiveStateWithStructuredTextParity() async throws {
@@ -131,6 +151,10 @@ final class MCPToolContractTests: XCTestCase {
       (.threadNotFound, "thread_not_found", false),
       (.pathDenied, "path_denied", false),
       (.taskNotFound, "task_not_found", false),
+      (.idempotencyConflict, "idempotency_conflict", false),
+      (.turnMismatch, "turn_mismatch", false),
+      (.invalidTaskState, "invalid_task_state", false),
+      (.contractRejected, "contract_rejected", false),
       (.busy, "busy", true),
       (.timeout, "timeout", true),
       (.unavailable, "unavailable", true),

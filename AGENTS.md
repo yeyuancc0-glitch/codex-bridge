@@ -20,7 +20,7 @@
 - Swift Package Manager；发布应用最终需要完整 Xcode、Universal 2、Hardened Runtime、签名与公证。
 - Codex 通过本地 `codex app-server` stdio JSON-RPC 连接；Execution 与 Supervisor 使用隔离进程。
 - 本地 MCP 只监听 `127.0.0.1`，默认通过官方 Secure MCP Tunnel helper 连接 ChatGPT。
-- SQLite 持久化，计划使用 GRDB；日志使用 swift-log；密钥只进入 Keychain。
+- SQLite 持久化使用 GRDB；日志使用 swift-log；密钥只进入 Keychain。
 - Git 与验证命令使用 `Process` 和 argv 数组，不拼接 Shell 字符串。
 - 2026-08-12 本机事实：外置完整 Xcode 27.0 Beta 5（build `27A5237l`）位于 `/Volumes/fanch/Applications/Xcode-beta.app`，签名、License、First Launch 与全部 27.0 SDK 检查通过；Codex CLI 为 `0.147.0-alpha.6.5`，Git 2.54.0。
 - 系统级 `xcode-select` 仍指向 Command Line Tools，因为切换需要用户管理员密码。项目命令必须通过 `Scripts/with-xcode.sh` 或显式 `DEVELOPER_DIR=/Volumes/fanch/Applications/Xcode-beta.app/Contents/Developer` 运行。
@@ -56,6 +56,8 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - interrupt/suspend 先记录意图，只有 app-server 的 turn 停止事实才能进入对应终态。
 - 任何会改变 Codex 状态的审批、停止或纠偏操作都先追加持久化意图；只有 RPC 成功或 app-server 事件确认后才能记录完成事实。Suspended 不占用 active Thread/工作树锁，resume 必须重新原子获取两把锁并启动新 turn generation。
 - `EventStore` 通过事件序号 CAS 追加；提交幂等键是 `(origin, key)`，同指纹复用、异指纹拒绝；Thread 与工作树两把锁必须在同一 SQLite 事务获取。
+- 新任务的 submission 与首个领域事件和幂等 claim 在同一 SQLite 事务提交，任何读者都不能观察到只有 claim、没有初始投影的半初始化任务。
+- Codex 审批响应使用持久化 barrier：先记录意图并发送精确关联响应，终态通知暂存到 Approved/Denied 事实写入完成后才归约；持久化失败必须关闭会话并失败任务。
 
 ## 安全不变量
 
@@ -79,6 +81,8 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - `BridgeProjects` / `BridgeGit` / `BridgeSecurity`：项目白名单、Git 证据与确定性策略。
 - `BridgeMCP`：本地 Streamable HTTP MCP 与工具适配。
 - `BridgeSupervisor`：检查点、结构化判断、防循环与纠偏。
+- `BridgeRuntime`：每任务隔离的 Execution app-server 会话、审批关联、generation、steer/interrupt 和终态观察。
+- `BridgeRepositories`：项目配置、Thread 绑定和最终报告的 GRDB 持久仓库。
 - `BridgeTunnel`：官方 helper 校验、启动、健康和恢复。
 - `BridgeReporting`：结构化最终报告和脱敏支持包。
 - `Prototypes/AppServerProbe`：阶段 0 可行性验证；稳定后能力进入 `BridgeCodexRPC`。
@@ -151,7 +155,8 @@ codex app-server generate-json-schema --out DIR
 - `tunnel-client` 必须使用调用方预建的 0700 私有根、dirfd/inode 绑定的每次运行目录、Unix-domain health/admin socket 与最小化子进程环境。禁止把配置交给可替换的 pathname；非秘密配置使用固定 argv，Runtime Key 经 fd3、MCP 静态认证头经 fd4。官方 v0.0.11 不支持把 MCP URL 写成 `file:`，所以只传非秘密 `http://127.0.0.1:<port>/mcp`。`/readyz` 只证明本地 MCP 就绪，只有 health peer PID 匹配、严格 ready 且 control-plane poll 成功并新鲜时才可显示 Tunnel 已连接。
 - Tunnel helper 必须先按外部可信的签名后 SHA-256 校验打开的同一 fd，再以 suspended 状态 spawn；只有动态 SecCode 通过宿主 Team requirement 且 CDHash 与静态 fd 身份相同时才恢复和写入秘密。签名前 supply manifest 不能充当运行时信任根。
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责秘密路径或 Tunnel 认证头、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
-- `BridgeMCP` 的首批公开面固定为五个只读工具；每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
+- `BridgeMCP` 无任务后端时保持五个只读工具兼容；注入任务后端后追加七个任务查询/提交/steer/interrupt 工具，但不远程公开 Codex 审批。每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
+- Execution 与 Supervisor 都必须动态核对精确 model/effort；Luna 不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。
 

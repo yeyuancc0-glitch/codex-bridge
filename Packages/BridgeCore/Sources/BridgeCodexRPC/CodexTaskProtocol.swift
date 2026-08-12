@@ -187,6 +187,98 @@ public struct ThreadReadParams: Codable, Equatable, Sendable {
   }
 }
 
+public enum ThreadListCwdFilter: Codable, Equatable, Sendable {
+  case one(String)
+  case anyOf([String])
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let value = try? container.decode(String.self) {
+      self = .one(value)
+      return
+    }
+    self = .anyOf(try container.decode([String].self))
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .one(let value):
+      try container.encode(value)
+    case .anyOf(let values):
+      try container.encode(values)
+    }
+  }
+}
+
+public struct ThreadListParams: Codable, Equatable, Sendable {
+  public let cursor: String?
+  public let limit: UInt32?
+  public let sortKey: String?
+  public let sortDirection: String?
+  public let sourceKinds: [String]?
+  public let modelProviders: [String]?
+  public let archived: Bool?
+  public let cwd: ThreadListCwdFilter?
+  public let searchTerm: String?
+  public let useStateDbOnly: Bool
+
+  public init(
+    cursor: String? = nil,
+    limit: UInt32? = nil,
+    sortKey: String? = nil,
+    sortDirection: String? = nil,
+    sourceKinds: [String]? = nil,
+    modelProviders: [String]? = nil,
+    archived: Bool? = nil,
+    cwd: ThreadListCwdFilter? = nil,
+    searchTerm: String? = nil,
+    useStateDbOnly: Bool = true
+  ) {
+    self.cursor = cursor
+    self.limit = limit
+    self.sortKey = sortKey
+    self.sortDirection = sortDirection
+    self.sourceKinds = sourceKinds
+    self.modelProviders = modelProviders
+    self.archived = archived
+    self.cwd = cwd
+    self.searchTerm = searchTerm
+    self.useStateDbOnly = useStateDbOnly
+  }
+}
+
+public struct ThreadResumeParams: Codable, Equatable, Sendable {
+  public let threadId: String
+  public let cwd: String?
+  public let sandbox: ThreadSandboxMode?
+  public let approvalPolicy: CodexApprovalPolicy?
+  public let approvalsReviewer: String?
+  public let model: String?
+  public let baseInstructions: String?
+  public let developerInstructions: String?
+
+  public init(
+    threadId: String,
+    cwd: String? = nil,
+    sandbox: ThreadSandboxMode? = nil,
+    approvalPolicy: CodexApprovalPolicy? = nil,
+    approvalsReviewer: String? = nil,
+    model: String? = nil,
+    baseInstructions: String? = nil,
+    developerInstructions: String? = nil
+  ) {
+    self.threadId = threadId
+    self.cwd = cwd
+    self.sandbox = sandbox
+    self.approvalPolicy = approvalPolicy
+    self.approvalsReviewer = approvalsReviewer
+    self.model = model
+    self.baseInstructions = baseInstructions
+    self.developerInstructions = developerInstructions
+  }
+}
+
 public struct TurnStartParams: Codable, Equatable, Sendable {
   public let threadId: String
   public let input: [CodexTextInput]
@@ -279,6 +371,14 @@ public struct ThreadStartResponse: Codable, Equatable, Sendable {
 public struct ThreadReadResponse: Codable, Equatable, Sendable {
   public let thread: CodexThread
 }
+
+public struct ThreadListResponse: Codable, Equatable, Sendable {
+  public let data: [CodexThread]
+  public let nextCursor: String?
+  public let backwardsCursor: String?
+}
+
+public typealias ThreadResumeResponse = ThreadStartResponse
 
 public struct TurnStartResponse: Codable, Equatable, Sendable {
   public let turn: CodexTurn

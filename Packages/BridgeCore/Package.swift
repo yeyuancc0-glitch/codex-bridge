@@ -17,6 +17,8 @@ let package = Package(
         .library(name: "BridgeGit", targets: ["BridgeGit"]),
         .library(name: "BridgeReporting", targets: ["BridgeReporting"]),
         .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
+        .library(name: "BridgeRepositories", targets: ["BridgeRepositories"]),
+        .library(name: "BridgeRuntime", targets: ["BridgeRuntime"]),
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
@@ -84,7 +86,31 @@ let package = Package(
         ),
         .target(name: "BridgeGit"),
         .target(name: "BridgeReporting"),
-        .target(name: "BridgeSupervisor"),
+        .target(
+            name: "BridgeSupervisor",
+            dependencies: ["BridgeCodexRPC", "BridgeSecurity"]
+        ),
+        .target(
+            name: "BridgeRepositories",
+            dependencies: [
+                "BridgeDomain",
+                "BridgeSecurity",
+                "BridgeProjects",
+                "BridgeExecution",
+                "BridgeReporting",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .target(
+            name: "BridgeRuntime",
+            dependencies: [
+                "BridgeCodexRPC",
+                "BridgeCoordinator",
+                "BridgeDomain",
+                "BridgeProjects",
+                "BridgeSecurity",
+            ]
+        ),
         .target(
             name: "BridgeMCP",
             dependencies: [
@@ -160,7 +186,31 @@ let package = Package(
         ),
         .testTarget(
             name: "BridgeSupervisorTests",
-            dependencies: ["BridgeSupervisor"]
+            dependencies: ["BridgeCodexRPC", "BridgeSecurity", "BridgeSupervisor"]
+        ),
+        .testTarget(
+            name: "BridgeRepositoriesTests",
+            dependencies: [
+                "BridgeRepositories",
+                "BridgePersistence",
+                "BridgeDomain",
+                "BridgeSecurity",
+                "BridgeProjects",
+                "BridgeExecution",
+                "BridgeReporting",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .testTarget(
+            name: "BridgeRuntimeTests",
+            dependencies: [
+                "BridgeRuntime",
+                "BridgeCodexRPC",
+                "BridgeCoordinator",
+                "BridgeDomain",
+                "BridgeProjects",
+                "BridgeSecurity",
+            ]
         ),
         .testTarget(
             name: "BridgeMCPTests",

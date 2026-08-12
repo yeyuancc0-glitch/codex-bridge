@@ -66,6 +66,57 @@ final class EventStoreTests: XCTestCase {
     }
   }
 
+  func testClaimAndInitialEventsCommitAtomically() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-initialized")
+    let events = [
+      makeEvent(taskID: taskID, sequence: 1, kind: "task.submission"),
+      makeEvent(taskID: taskID, sequence: 2, kind: "task.preparationStarted"),
+    ]
+
+    let claimed = try await store.claimSubmission(
+      origin: "chatgpt",
+      key: IdempotencyKey(rawValue: "atomic-initialization"),
+      requestFingerprint: "sha256:atomic",
+      taskID: taskID,
+      initialEvents: events
+    )
+
+    XCTAssertEqual(claimed, taskID)
+    let storedEvents = try await store.events(for: taskID)
+    let lastSequence = try await store.lastEventSequence(for: taskID)
+    XCTAssertEqual(storedEvents, events)
+    XCTAssertEqual(lastSequence, 2)
+  }
+
+  func testExistingClaimDoesNotInstallCompetingInitialEvents() async throws {
+    let store = try EventStore.inMemory()
+    let winner = TaskID(rawValue: "task-winner")
+    let loser = TaskID(rawValue: "task-loser")
+    let key = IdempotencyKey(rawValue: "atomic-retry")
+    _ = try await store.claimSubmission(
+      origin: "chatgpt",
+      key: key,
+      requestFingerprint: "sha256:same",
+      taskID: winner,
+      initialEvents: [makeEvent(taskID: winner, sequence: 1)]
+    )
+
+    let repeated = try await store.claimSubmission(
+      origin: "chatgpt",
+      key: key,
+      requestFingerprint: "sha256:same",
+      taskID: loser,
+      initialEvents: [makeEvent(taskID: loser, sequence: 1, kind: "task.competing")]
+    )
+
+    XCTAssertEqual(repeated, winner)
+    let winnerEvents = try await store.events(for: winner)
+    let loserEvents = try await store.events(for: loser)
+    XCTAssertEqual(winnerEvents.map(\.kind), ["task.progress"])
+    XCTAssertTrue(loserEvents.isEmpty)
+  }
+
   func testEquivalentClaimsConvergeAcrossDatabaseConnections() async throws {
     let path = temporaryDatabasePath()
     defer { removeDatabaseFiles(at: path) }

@@ -30,7 +30,7 @@ final class MCPServerIntegrationTests: XCTestCase {
     XCTAssertNil(initialized.capabilities.prompts)
 
     let listed = try await client.listTools()
-    XCTAssertEqual(listed.tools.map(\.name), MCPToolName.allCases.map(\.rawValue))
+    XCTAssertEqual(listed.tools.map(\.name), MCPToolCatalog().definitions.map(\.name))
     XCTAssertNil(listed.nextCursor)
 
     let context: RequestContext<CallTool.Result> = try await client.callTool(
@@ -78,7 +78,7 @@ final class MCPServerIntegrationTests: XCTestCase {
     let initialized = try await client.connect(transport: transport)
     XCTAssertEqual(initialized.serverInfo.name, "codex-bridge")
     let listed = try await client.listTools()
-    XCTAssertEqual(listed.tools.map(\.name), MCPToolName.allCases.map(\.rawValue))
+    XCTAssertEqual(listed.tools.map(\.name), MCPToolCatalog().definitions.map(\.name))
 
     let context: RequestContext<CallTool.Result> = try await client.callTool(
       name: MCPToolName.bridgeStatus.rawValue
@@ -128,7 +128,7 @@ final class MCPServerIntegrationTests: XCTestCase {
     let initialized = try await client.connect(transport: transport)
     XCTAssertEqual(initialized.serverInfo.name, "codex-bridge")
     let tools = try await client.listTools()
-    XCTAssertEqual(tools.tools.count, MCPToolName.allCases.count)
+    XCTAssertEqual(tools.tools.count, MCPToolCatalog().definitions.count)
   }
 
   func testConcurrentFacadeStopsCompleteBeforeRestart() async throws {

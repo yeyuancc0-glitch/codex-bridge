@@ -32,9 +32,59 @@ public enum TaskExecutionObservation: Equatable, Sendable {
 
 public protocol TaskExecutionRuntime: Sendable {
   func lockKeys(for submission: TaskSubmission) async throws -> [String]
+  func lockKeys(
+    for submission: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) async throws -> [String]
   func start(taskID: TaskID, submission: TaskSubmission) async throws -> TaskExecutionSession
+  func start(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) async throws -> TaskExecutionSession
   func resolveApproval(taskID: TaskID, approvalID: ApprovalID, approved: Bool) async throws
+  func finalizeApprovalResolution(
+    taskID: TaskID,
+    approvalID: ApprovalID,
+    committed: Bool
+  ) async
+  func steer(taskID: TaskID, binding: ExecutionBinding, prompt: String) async throws
   func interrupt(taskID: TaskID, binding: ExecutionBinding) async throws
+}
+
+public enum TaskExecutionRuntimeCompatibilityError: Error, Equatable, Sendable {
+  case steerUnsupported
+}
+
+extension TaskExecutionRuntime {
+  public func lockKeys(
+    for submission: TaskSubmission,
+    previousBinding _: ExecutionBinding?
+  ) async throws -> [String] {
+    try await lockKeys(for: submission)
+  }
+
+  public func start(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    previousBinding _: ExecutionBinding?
+  ) async throws -> TaskExecutionSession {
+    try await start(taskID: taskID, submission: submission)
+  }
+
+  public func finalizeApprovalResolution(
+    taskID _: TaskID,
+    approvalID _: ApprovalID,
+    committed _: Bool
+  ) async {}
+
+  public func steer(
+    taskID _: TaskID,
+    binding _: ExecutionBinding,
+    prompt _: String
+  ) async throws {
+    throw TaskExecutionRuntimeCompatibilityError.steerUnsupported
+  }
 }
 
 public enum TaskFinalizationAuthorization: Equatable, Sendable {
@@ -63,6 +113,7 @@ public enum TaskCoordinatorError: Error, Equatable, Sendable {
   case unsupportedPermissionMode(String)
   case executionUnavailable(TaskID)
   case invalidApprovalIdentifier
+  case invalidSteerPrompt
   case invalidFailureReason
   case invalidFinalizationAuthorization
   case invalidReportReference

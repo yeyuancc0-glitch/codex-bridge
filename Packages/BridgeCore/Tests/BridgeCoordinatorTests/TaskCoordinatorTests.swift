@@ -55,6 +55,22 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(completedLocks, [])
   }
 
+  func testExistingIdempotentTaskDoesNotReevaluateAdmissionPolicy() async throws {
+    let admission = OneShotAdmission()
+    let coordinator = TaskCoordinator(
+      store: try EventStore.inMemory(),
+      admission: admission,
+      runtime: FakeRuntime()
+    )
+    let submission = makeSubmission(key: "stable-admission", permissionMode: "read-only")
+    let first = try await coordinator.submit(origin: "chatgpt", submission: submission)
+    let duplicate = try await coordinator.submit(origin: "chatgpt", submission: submission)
+
+    XCTAssertEqual(duplicate.aggregate.id, first.aggregate.id)
+    let calls = await admission.callCount()
+    XCTAssertEqual(calls, 1)
+  }
+
   func testRejectedLocalApprovalNeverStartsRuntime() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -114,6 +130,54 @@ final class TaskCoordinatorTests: XCTestCase {
     let kinds = try await store.events(for: submitted.aggregate.id).map(\.kind)
     XCTAssertTrue(kinds.contains("task.runtimeIntent"))
     XCTAssertFalse(kinds.contains("task.codexApprovalApproved"))
+    let ownedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertTrue(ownedLocks.isEmpty)
+  }
+
+  func testObservationStreamEndingWithoutTerminalEventFailsAndReleasesLocks() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "ended-stream", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+
+    await runtime.finish(taskID: submitted.aggregate.id)
+
+    try await waitForPhase(.failed, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let ownedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertTrue(ownedLocks.isEmpty)
+  }
+
+  func testInterruptRPCFailureFailsTaskAndReleasesLocks() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime(failInterrupt: true)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "interrupt-failure", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+
+    do {
+      _ = try await coordinator.interrupt(taskID: submitted.aggregate.id)
+      XCTFail("Expected interrupt failure")
+    } catch FakeRuntimeError.interruptFailed {}
+
+    let failed = try await coordinator.task(submitted.aggregate.id)
+    XCTAssertEqual(failed.aggregate.phase, .failed)
+    let ownedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertTrue(ownedLocks.isEmpty)
   }
 
   func testInterruptIntentWaitsForObservedStopBeforeTerminalAndReleasesLocks() async throws {
@@ -143,6 +207,33 @@ final class TaskCoordinatorTests: XCTestCase {
     try await waitForPhase(.interrupted, taskID: submitted.aggregate.id, coordinator: coordinator)
     let interruptedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
     XCTAssertEqual(interruptedLocks, [])
+  }
+
+  func testSteerPersistsIntentBeforeRuntimeAndUsesCurrentBinding() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "steer", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+
+    let projection = try await coordinator.steer(
+      taskID: submitted.aggregate.id,
+      prompt: "Keep the public API source-compatible."
+    )
+    XCTAssertEqual(projection.aggregate.phase, .running)
+    let calls = await runtime.steerCalls()
+    XCTAssertEqual(calls.count, 1)
+    XCTAssertEqual(calls.first?.prompt, "Keep the public API source-compatible.")
+    XCTAssertEqual(calls.first?.binding, projection.aggregate.binding)
+    let kinds = try await store.events(for: submitted.aggregate.id).map(\.kind)
+    XCTAssertEqual(kinds.last, "task.runtimeIntent")
   }
 
   func testSuspendedTaskReleasesLocksAndResumeStartsANewTurnGeneration() async throws {
@@ -302,32 +393,64 @@ private struct FixedAdmission: TaskAdmissionPolicy {
   func decision(for _: TaskSubmission) -> TaskAdmissionDecision { value }
 }
 
+private actor OneShotAdmission: TaskAdmissionPolicy {
+  private var calls = 0
+
+  func decision(for _: TaskSubmission) throws -> TaskAdmissionDecision {
+    calls += 1
+    guard calls == 1 else { throw OneShotAdmissionError.calledAgain }
+    return .start
+  }
+
+  func callCount() -> Int { calls }
+}
+
+private enum OneShotAdmissionError: Error {
+  case calledAgain
+}
+
 private actor FakeRuntime: TaskExecutionRuntime {
   private let failApprovalResolution: Bool
+  private let failInterrupt: Bool
   private var starts = 0
   private var taskStarts: [TaskID: UInt64] = [:]
   private var interrupts = 0
   private var continuations: [TaskID: AsyncStream<TaskExecutionObservation>.Continuation] = [:]
   private var responses: [ApprovalID: Bool] = [:]
+  private var steers: [(binding: ExecutionBinding, prompt: String)] = []
 
-  init(failApprovalResolution: Bool = false) {
+  init(failApprovalResolution: Bool = false, failInterrupt: Bool = false) {
     self.failApprovalResolution = failApprovalResolution
+    self.failInterrupt = failInterrupt
+  }
+
+  func lockKeys(
+    for submission: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) -> [String] {
+    let threadKey =
+      previousBinding?.threadID.rawValue ?? "new:\(submission.idempotencyKey.rawValue)"
+    return ["thread:\(threadKey)", "worktree:\(submission.projectID.rawValue)"]
   }
 
   func lockKeys(for submission: TaskSubmission) -> [String] {
-    ["thread:\(submission.idempotencyKey.rawValue)", "worktree:\(submission.projectID.rawValue)"]
+    lockKeys(for: submission, previousBinding: nil)
   }
 
-  func start(taskID: TaskID, submission _: TaskSubmission) -> TaskExecutionSession {
+  func start(
+    taskID: TaskID,
+    submission _: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) -> TaskExecutionSession {
     starts += 1
-    let generation = (taskStarts[taskID] ?? 0) + 1
+    let generation = max(taskStarts[taskID] ?? 0, previousBinding?.turnGeneration ?? 0) + 1
     taskStarts[taskID] = generation
     var continuation: AsyncStream<TaskExecutionObservation>.Continuation!
     let stream = AsyncStream<TaskExecutionObservation> { continuation = $0 }
     continuations[taskID] = continuation
     return TaskExecutionSession(
       binding: ExecutionBinding(
-        threadID: ThreadID(rawValue: "thread-\(taskID.rawValue)"),
+        threadID: previousBinding?.threadID ?? ThreadID(rawValue: "thread-\(taskID.rawValue)"),
         turnID: TurnID(rawValue: "turn-\(taskID.rawValue)-\(generation)"),
         turnGeneration: generation
       ),
@@ -335,22 +458,45 @@ private actor FakeRuntime: TaskExecutionRuntime {
     )
   }
 
+  func start(taskID: TaskID, submission: TaskSubmission) -> TaskExecutionSession {
+    start(taskID: taskID, submission: submission, previousBinding: nil)
+  }
+
   func resolveApproval(taskID _: TaskID, approvalID: ApprovalID, approved: Bool) throws {
     if failApprovalResolution { throw FakeRuntimeError.approvalResolutionFailed }
     responses[approvalID] = approved
   }
 
-  func interrupt(taskID _: TaskID, binding _: ExecutionBinding) { interrupts += 1 }
+  func finalizeApprovalResolution(
+    taskID _: TaskID,
+    approvalID _: ApprovalID,
+    committed _: Bool
+  ) {}
+
+  func steer(taskID _: TaskID, binding: ExecutionBinding, prompt: String) {
+    steers.append((binding, prompt))
+  }
+
+  func interrupt(taskID _: TaskID, binding _: ExecutionBinding) throws {
+    if failInterrupt { throw FakeRuntimeError.interruptFailed }
+    interrupts += 1
+  }
 
   func emit(_ observation: TaskExecutionObservation, taskID: TaskID) {
     continuations[taskID]?.yield(observation)
   }
 
+  func finish(taskID: TaskID) {
+    continuations[taskID]?.finish()
+  }
+
   func startCount() -> Int { starts }
   func interruptCount() -> Int { interrupts }
   func approvalResponses() -> [ApprovalID: Bool] { responses }
+  func steerCalls() -> [(binding: ExecutionBinding, prompt: String)] { steers }
 }
 
 private enum FakeRuntimeError: Error {
   case approvalResolutionFailed
+  case interruptFailed
 }

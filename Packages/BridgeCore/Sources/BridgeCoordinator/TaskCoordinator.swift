@@ -15,6 +15,7 @@ public actor TaskCoordinator {
     let kind: String
     let identifier: String
     let approved: Bool?
+    let detail: String?
   }
 
   private struct TaskFinalizationRecord: Codable {
@@ -44,28 +45,46 @@ public actor TaskCoordinator {
 
   public func submit(origin: String, submission: TaskSubmission) async throws -> TaskProjection {
     let normalizedOrigin = try Self.validatedOrigin(origin)
-    let admissionDecision = try await admission.decision(for: submission)
-    try Self.validateSubmission(submission, decision: admissionDecision)
     let encodedSubmission = try encoder.encode(submission)
     guard encodedSubmission.count <= 128 * 1024 else {
       throw TaskCoordinatorError.submissionTooLarge
     }
     let fingerprint = SHA256.hash(data: encodedSubmission).hexString
-    let candidate = TaskID(rawValue: "tsk_\(Self.randomIdentifier())")
-    let taskID = try await store.claimSubmission(
+    if let claimedTaskID = try await store.submissionClaim(
       origin: normalizedOrigin,
       key: submission.idempotencyKey,
-      requestFingerprint: fingerprint,
-      taskID: candidate
-    )
-    if let existing = try await projectionIfPresent(taskID) { return existing }
-
-    try await append(.submission(submission), taskID: taskID, expectedSequence: 0)
+      requestFingerprint: fingerprint
+    ), let existing = try await projectionIfPresent(claimedTaskID) {
+      return existing
+    }
+    let admissionDecision = try await admission.decision(for: submission)
+    try Self.validateSubmission(submission, decision: admissionDecision)
+    let candidate = TaskID(rawValue: "tsk_\(Self.randomIdentifier())")
     let firstEvent: TaskEvent =
       admissionDecision == .requireLocalApproval
       ? .localApprovalRequested
       : .preparationStarted
-    let projection = try await appendDomain(firstEvent, taskID: taskID)
+    let initialRecords: [StoredRecord] = [.submission(submission), .domain(firstEvent)]
+    let createdAt = Date()
+    let initialEvents = try initialRecords.enumerated().map { index, record in
+      try envelope(
+        record,
+        taskID: candidate,
+        sequence: Int64(index + 1),
+        createdAt: createdAt
+      )
+    }
+    let taskID = try await store.claimSubmission(
+      origin: normalizedOrigin,
+      key: submission.idempotencyKey,
+      requestFingerprint: fingerprint,
+      taskID: candidate,
+      initialEvents: initialEvents,
+      createdAt: createdAt
+    )
+    guard let projection = try await projectionIfPresent(taskID) else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
     if projection.aggregate.phase == .preparing { scheduleStart(taskID) }
     return projection
   }
@@ -101,46 +120,63 @@ public actor TaskCoordinator {
     let intent = TaskRuntimeIntentRecord(
       kind: "resolve_codex_approval",
       identifier: approvalID.rawValue,
-      approved: approved
+      approved: approved,
+      detail: nil
     )
     try await append(
       .runtimeIntent(intent),
       taskID: taskID,
       expectedSequence: current.lastSequence
     )
-    if approved {
-      do {
-        try await runtime.resolveApproval(
-          taskID: taskID,
-          approvalID: approvalID,
-          approved: true
-        )
-        return try await appendDomain(.codexApprovalApproved(approvalID), taskID: taskID)
-      } catch {
-        try? await recordRuntimeFailure(error, taskID: taskID)
-        throw error
-      }
-    }
-    let stopIntent = StopIntent(
-      operationID: OperationID(rawValue: "op_\(Self.randomIdentifier())"),
-      outcome: .interrupt,
-      reason: "Local user denied the Codex approval."
-    )
+    var responseSent = false
+    var resolutionCommitted = false
     do {
       try await runtime.resolveApproval(
         taskID: taskID,
         approvalID: approvalID,
-        approved: false
+        approved: approved
+      )
+      responseSent = true
+      if approved {
+        let projection = try await appendDomain(
+          .codexApprovalApproved(approvalID),
+          taskID: taskID
+        )
+        await runtime.finalizeApprovalResolution(
+          taskID: taskID,
+          approvalID: approvalID,
+          committed: true
+        )
+        resolutionCommitted = true
+        return projection
+      }
+      let stopIntent = StopIntent(
+        operationID: OperationID(rawValue: "op_\(Self.randomIdentifier())"),
+        outcome: .interrupt,
+        reason: "Local user denied the Codex approval."
       )
       let projection = try await appendDomain(
         .codexApprovalDenied(approvalID, stopIntent),
         taskID: taskID
       )
+      await runtime.finalizeApprovalResolution(
+        taskID: taskID,
+        approvalID: approvalID,
+        committed: true
+      )
+      resolutionCommitted = true
       if let binding = projection.aggregate.binding {
         try await runtime.interrupt(taskID: taskID, binding: binding)
       }
       return projection
     } catch {
+      if responseSent, !resolutionCommitted {
+        await runtime.finalizeApprovalResolution(
+          taskID: taskID,
+          approvalID: approvalID,
+          committed: false
+        )
+      }
       try? await recordRuntimeFailure(error, taskID: taskID)
       throw error
     }
@@ -148,6 +184,37 @@ public actor TaskCoordinator {
 
   public func interrupt(taskID: TaskID, reason: String? = nil) async throws -> TaskProjection {
     try await requestStop(taskID: taskID, outcome: .interrupt, reason: reason)
+  }
+
+  public func steer(taskID: TaskID, prompt: String) async throws -> TaskProjection {
+    let normalized = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty, normalized == prompt, normalized.utf8.count <= 16 * 1024,
+      !normalized.contains("\0")
+    else {
+      throw TaskCoordinatorError.invalidSteerPrompt
+    }
+    let current = try await task(taskID)
+    guard current.aggregate.phase == .running, let binding = current.aggregate.binding else {
+      throw TaskCoordinatorError.executionUnavailable(taskID)
+    }
+    let intent = TaskRuntimeIntentRecord(
+      kind: "steer",
+      identifier: "op_\(Self.randomIdentifier())",
+      approved: nil,
+      detail: normalized
+    )
+    try await append(
+      .runtimeIntent(intent),
+      taskID: taskID,
+      expectedSequence: current.lastSequence
+    )
+    do {
+      try await runtime.steer(taskID: taskID, binding: binding, prompt: normalized)
+      return try await task(taskID)
+    } catch {
+      try? await recordRuntimeFailure(error, taskID: taskID)
+      throw error
+    }
   }
 
   public func suspend(taskID: TaskID, reason: String? = nil) async throws -> TaskProjection {
@@ -175,8 +242,13 @@ public actor TaskCoordinator {
       reason: reason
     )
     let projection = try await appendDomain(.stopRequested(intent), taskID: taskID)
-    try await runtime.interrupt(taskID: taskID, binding: binding)
-    return projection
+    do {
+      try await runtime.interrupt(taskID: taskID, binding: binding)
+      return projection
+    } catch {
+      try? await recordRuntimeFailure(error, taskID: taskID)
+      throw error
+    }
   }
 
   public func complete(
@@ -254,13 +326,17 @@ public actor TaskCoordinator {
     do {
       let current = try await task(taskID)
       guard current.aggregate.phase == .preparing else { return }
-      let lockKeys = try await runtime.lockKeys(for: current.aggregate.submission)
+      let lockKeys = try await runtime.lockKeys(
+        for: current.aggregate.submission,
+        previousBinding: current.aggregate.binding
+      )
       try await ensureLocks(lockKeys, taskID: taskID)
       var startedBinding: ExecutionBinding?
       do {
         let session = try await runtime.start(
           taskID: taskID,
-          submission: current.aggregate.submission
+          submission: current.aggregate.submission,
+          previousBinding: current.aggregate.binding
         )
         startedBinding = session.binding
         _ = try await appendDomain(.turnStarted(session.binding), taskID: taskID)
@@ -292,6 +368,11 @@ public actor TaskCoordinator {
       guard let phase = try? await task(taskID).aggregate.phase else { return }
       if phase.isTerminal || phase == .suspended || phase == .verifying { return }
     }
+    guard let projection = try? await task(taskID) else { return }
+    let phase = projection.aggregate.phase
+    guard !phase.isTerminal, phase != .suspended, phase != .verifying else { return }
+    try? await recordRuntimeFailure(
+      TaskCoordinatorError.executionUnavailable(taskID), taskID: taskID)
   }
 
   private func apply(_ observation: TaskExecutionObservation, taskID: TaskID) async throws {
@@ -318,6 +399,7 @@ public actor TaskCoordinator {
     guard !current.aggregate.phase.isTerminal else { return }
     let reason = "Execution runtime failed: \(String(describing: type(of: error)))"
     _ = try await appendDomain(.failureRecorded(reason: reason), taskID: taskID)
+    try await releaseOwnedLocks(taskID)
   }
 
   private func releaseOwnedLocks(_ taskID: TaskID) async throws {
@@ -354,10 +436,20 @@ public actor TaskCoordinator {
     taskID: TaskID,
     expectedSequence: Int64
   ) async throws {
+    let sequence = expectedSequence + 1
+    let event = try envelope(record, taskID: taskID, sequence: sequence, createdAt: Date())
+    try await store.append(event, expectedLastSequence: expectedSequence)
+  }
+
+  private func envelope(
+    _ record: StoredRecord,
+    taskID: TaskID,
+    sequence: Int64,
+    createdAt: Date
+  ) throws -> TaskEventEnvelope {
     let payload = try encoder.encode(record)
     guard payload.count <= 256 * 1024 else { throw TaskCoordinatorError.submissionTooLarge }
-    let sequence = expectedSequence + 1
-    let envelope = TaskEventEnvelope(
+    return TaskEventEnvelope(
       taskID: taskID,
       sequence: sequence,
       schemaVersion: 1,
@@ -365,9 +457,8 @@ public actor TaskCoordinator {
       kind: Self.kind(record),
       severity: "info",
       payload: payload,
-      createdAt: Date()
+      createdAt: createdAt
     )
-    try await store.append(envelope, expectedLastSequence: expectedSequence)
   }
 
   private func projectionIfPresent(_ taskID: TaskID) async throws -> TaskProjection? {

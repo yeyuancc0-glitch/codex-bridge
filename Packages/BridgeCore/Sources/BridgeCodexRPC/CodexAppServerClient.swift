@@ -117,6 +117,28 @@ public actor CodexAppServerClient {
     )
   }
 
+  package func listThreads(
+    _ params: ThreadListParams
+  ) async throws -> ThreadListResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "thread/list",
+      params: params,
+      response: ThreadListResponse.self
+    )
+  }
+
+  package func resumeThread(
+    _ params: ThreadResumeParams
+  ) async throws -> ThreadResumeResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "thread/resume",
+      params: params,
+      response: ThreadResumeResponse.self
+    )
+  }
+
   package func startTurn(
     _ params: TurnStartParams
   ) async throws -> TurnStartResponse {

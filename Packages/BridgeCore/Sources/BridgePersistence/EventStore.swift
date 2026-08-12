@@ -174,6 +174,87 @@ public actor EventStore {
     }
   }
 
+  public func claimSubmission(
+    origin: String,
+    key: IdempotencyKey,
+    requestFingerprint: String,
+    taskID: TaskID,
+    initialEvents: [TaskEventEnvelope],
+    createdAt: Date = Date()
+  ) throws -> TaskID {
+    try Self.validateClaim(
+      origin: origin,
+      key: key,
+      requestFingerprint: requestFingerprint,
+      taskID: taskID
+    )
+    try Self.validateInitialEvents(initialEvents, taskID: taskID)
+
+    return try database.write { db in
+      if let existing = try Self.existingClaim(
+        origin: origin,
+        key: key,
+        requestFingerprint: requestFingerprint,
+        in: db
+      ) {
+        return existing
+      }
+      try Self.ensureTask(taskID, createdAt: createdAt, in: db)
+      try Self.insertClaim(
+        origin: origin,
+        key: key,
+        requestFingerprint: requestFingerprint,
+        taskID: taskID,
+        createdAt: createdAt,
+        in: db
+      )
+      for event in initialEvents {
+        try Self.insertEvent(event, in: db)
+      }
+      try db.execute(
+        sql: "UPDATE tasks SET last_event_seq = ?, updated_at = ? WHERE task_id = ?",
+        arguments: [
+          initialEvents.last?.sequence ?? 0,
+          initialEvents.last?.createdAt.timeIntervalSince1970 ?? createdAt.timeIntervalSince1970,
+          taskID.rawValue,
+        ]
+      )
+      return taskID
+    }
+  }
+
+  public func submissionClaim(
+    origin: String,
+    key: IdempotencyKey,
+    requestFingerprint: String
+  ) throws -> TaskID? {
+    guard !origin.isEmpty else { throw EventStoreError.invalidArgument("origin") }
+    guard !key.rawValue.isEmpty else { throw EventStoreError.invalidArgument("key") }
+    guard !requestFingerprint.isEmpty else {
+      throw EventStoreError.invalidArgument("requestFingerprint")
+    }
+    return try database.read { db in
+      guard
+        let row = try Row.fetchOne(
+          db,
+          sql: """
+            SELECT request_fingerprint, task_id
+            FROM submission_claims
+            WHERE origin = ? AND idempotency_key = ?
+            """,
+          arguments: [origin, key.rawValue]
+        )
+      else {
+        return nil
+      }
+      let storedFingerprint: String = row["request_fingerprint"]
+      guard storedFingerprint == requestFingerprint else {
+        throw EventStoreError.idempotencyMismatch(origin: origin, key: key)
+      }
+      return TaskID(rawValue: row["task_id"])
+    }
+  }
+
   public func acquireLocks(
     _ lockKeys: [String],
     ownerTaskID: TaskID,
@@ -261,6 +342,76 @@ public actor EventStore {
     )
   }
 
+  private static func existingClaim(
+    origin: String,
+    key: IdempotencyKey,
+    requestFingerprint: String,
+    in db: Database
+  ) throws -> TaskID? {
+    guard
+      let row = try Row.fetchOne(
+        db,
+        sql: """
+          SELECT request_fingerprint, task_id
+          FROM submission_claims
+          WHERE origin = ? AND idempotency_key = ?
+          """,
+        arguments: [origin, key.rawValue]
+      )
+    else {
+      return nil
+    }
+    let storedFingerprint: String = row["request_fingerprint"]
+    guard storedFingerprint == requestFingerprint else {
+      throw EventStoreError.idempotencyMismatch(origin: origin, key: key)
+    }
+    return TaskID(rawValue: row["task_id"])
+  }
+
+  private static func insertClaim(
+    origin: String,
+    key: IdempotencyKey,
+    requestFingerprint: String,
+    taskID: TaskID,
+    createdAt: Date,
+    in db: Database
+  ) throws {
+    try db.execute(
+      sql: """
+        INSERT INTO submission_claims (
+            origin, idempotency_key, request_fingerprint, task_id, created_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+      arguments: [
+        origin,
+        key.rawValue,
+        requestFingerprint,
+        taskID.rawValue,
+        createdAt.timeIntervalSince1970,
+      ]
+    )
+  }
+
+  private static func insertEvent(_ event: TaskEventEnvelope, in db: Database) throws {
+    try db.execute(
+      sql: """
+        INSERT INTO task_events (
+            task_id, seq, schema_version, source, kind, severity, payload, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+      arguments: [
+        event.taskID.rawValue,
+        event.sequence,
+        Int(event.schemaVersion),
+        event.source,
+        event.kind,
+        event.severity,
+        event.payload,
+        event.createdAt.timeIntervalSince1970,
+      ]
+    )
+  }
+
   private static func decodeEvent(_ row: Row) throws -> TaskEventEnvelope {
     let taskID = TaskID(rawValue: row["task_id"])
     let sequence: Int64 = row["seq"]
@@ -294,6 +445,21 @@ public actor EventStore {
       throw EventStoreError.invalidArgument("requestFingerprint")
     }
     guard !taskID.rawValue.isEmpty else { throw EventStoreError.invalidArgument("taskID") }
+  }
+
+  private static func validateInitialEvents(
+    _ events: [TaskEventEnvelope],
+    taskID: TaskID
+  ) throws {
+    guard !events.isEmpty else { throw EventStoreError.invalidArgument("initialEvents") }
+    for (index, event) in events.enumerated() {
+      guard event.taskID == taskID, event.sequence == Int64(index + 1) else {
+        throw EventStoreError.invalidArgument("initialEvents")
+      }
+      guard event.createdAt.timeIntervalSince1970.isFinite else {
+        throw EventStoreError.invalidArgument("initialEvents")
+      }
+    }
   }
 
   private static func validatedLockKeys(

@@ -37,18 +37,22 @@ public actor MCPToolAdmission {
 
 public struct MCPToolDispatcher: Sendable {
   private let tools: ReadOnlyTools
+  private let taskTools: TaskTools
   private let resultEncoder: MCPToolResultEncoder
   private let admission: MCPToolAdmission
   private let logger: Logger
 
   public init(
     queries: any BridgeMCPQueries,
+    taskOperations: (any BridgeMCPTaskOperations)? = nil,
     resultEncoder: MCPToolResultEncoder = .init(),
     admission: MCPToolAdmission = .init(),
     deadlines: MCPToolDeadlines = .production,
+    taskDeadlines: MCPTaskToolDeadlines = .production,
     logger: Logger = Logger(label: "CodexBridge.BridgeMCP.Tools")
   ) {
     tools = ReadOnlyTools(queries: queries, deadlines: deadlines)
+    taskTools = TaskTools(operations: taskOperations, deadlines: taskDeadlines)
     self.resultEncoder = resultEncoder
     self.admission = admission
     self.logger = logger
@@ -64,7 +68,7 @@ public struct MCPToolDispatcher: Sendable {
     _ parameters: CallTool.Parameters,
     sessionID: String
   ) async throws -> CallTool.Result {
-    guard let name = MCPToolName(rawValue: parameters.name) else {
+    guard let name = MCPDispatchedToolName(rawValue: parameters.name) else {
       throw MCPError.invalidParams("Unknown tool name.")
     }
     let admissionKey = sessionID.isEmpty ? "direct" : sessionID
@@ -83,7 +87,7 @@ public struct MCPToolDispatcher: Sendable {
   }
 
   private func callWithErrorMapping(
-    _ name: MCPToolName,
+    _ name: MCPDispatchedToolName,
     arguments: [String: Value]?
   ) async throws -> CallTool.Result {
     do {
@@ -107,7 +111,7 @@ public struct MCPToolDispatcher: Sendable {
   }
 
   private func callAdmitted(
-    _ name: MCPToolName,
+    _ name: MCPDispatchedToolName,
     arguments: [String: Value]?
   ) async throws -> CallTool.Result {
     switch name {
@@ -121,6 +125,20 @@ public struct MCPToolDispatcher: Sendable {
       return try resultEncoder.encode(await tools.readThread(arguments: arguments))
     case .listModels:
       return try resultEncoder.encode(await tools.listModels(arguments: arguments))
+    case .getTask:
+      return try resultEncoder.encode(await taskTools.getTask(arguments: arguments))
+    case .getTaskEvents:
+      return try resultEncoder.encode(await taskTools.getTaskEvents(arguments: arguments))
+    case .getTaskDiff:
+      return try resultEncoder.encode(await taskTools.getTaskDiff(arguments: arguments))
+    case .getFinalReport:
+      return try resultEncoder.encode(await taskTools.getFinalReport(arguments: arguments))
+    case .submitTask:
+      return try resultEncoder.encode(await taskTools.submitTask(arguments: arguments))
+    case .steerTask:
+      return try resultEncoder.encode(await taskTools.steerTask(arguments: arguments))
+    case .interruptTask:
+      return try resultEncoder.encode(await taskTools.interruptTask(arguments: arguments))
     }
   }
 
@@ -149,6 +167,30 @@ public struct MCPToolDispatcher: Sendable {
       description = .init(
         code: "task_not_found",
         message: "The requested task is not available.",
+        retryable: false
+      )
+    case .idempotencyConflict:
+      description = .init(
+        code: "idempotency_conflict",
+        message: "The idempotency key is already bound to a different task contract.",
+        retryable: false
+      )
+    case .turnMismatch:
+      description = .init(
+        code: "turn_mismatch",
+        message: "The expected turn is no longer the task's active turn.",
+        retryable: false
+      )
+    case .invalidTaskState:
+      description = .init(
+        code: "invalid_task_state",
+        message: "The requested operation is not valid in the task's current state.",
+        retryable: false
+      )
+    case .contractRejected:
+      description = .init(
+        code: "contract_rejected",
+        message: "The task contract did not satisfy local policy.",
         retryable: false
       )
     case .busy:

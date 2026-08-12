@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import BridgeGit
 
 final class BoundedProcessRunnerTests: XCTestCase {
