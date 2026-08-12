@@ -1,12 +1,13 @@
 # Dependency Evidence
 
-Evidence checked on 2026-08-12 against official repositories and releases. Versions are exact and `Package.resolved` is committed because all four critical dependencies are pre-1.0 or infrastructure-sensitive.
+Evidence checked on 2026-08-12 against official repositories and releases. Versions are exact and `Package.resolved` is committed because all five critical dependencies are pre-1.0 or infrastructure-sensitive.
 
 | Dependency | Pin | Product | License | Project boundary | Primary evidence |
 |---|---:|---|---|---|---|
 | modelcontextprotocol/swift-sdk | 0.12.1 | `MCP` | mixed migration: Apache-2.0/MIT; docs CC-BY-4.0 | only `BridgeMCP`; SDK types never enter Domain | [release](https://github.com/modelcontextprotocol/swift-sdk/releases/tag/0.12.1) |
 | groue/GRDB.swift | 7.11.1 | `GRDB` | MIT | only `BridgePersistence`; avoid experimental APIs | [release](https://github.com/groue/GRDB.swift/releases/tag/v7.11.1) |
 | apple/swift-log | 1.15.0 | `Logging` | Apache-2.0 + NOTICE | adapter logging only; one bootstrap and central redaction | [release](https://github.com/apple/swift-log/releases/tag/1.15.0) |
+| apple/swift-nio | 2.101.3 | `NIOCore`, `NIOHTTP1`, `NIOPosix` | Apache-2.0 + NOTICE | only the hardened `BridgeMCP` loopback HTTP adapter; direct dependency, never an assumed transitive product | [release](https://github.com/apple/swift-nio/releases/tag/2.101.3) |
 | openai/tunnel-client | 0.0.11 | helper executable | Apache-2.0 + NOTICE | `BridgeTunnel` process boundary; not an SPM binary target | [release](https://github.com/openai/tunnel-client/releases/tag/v0.0.11) |
 
 ## Version and platform facts
@@ -14,6 +15,7 @@ Evidence checked on 2026-08-12 against official repositories and releases. Versi
 - MCP 0.12.1 supports the Swift 6.1 fallback manifest and macOS 13+; the project targets Swift 6/macOS 14.
 - GRDB 7.11.1 requires Swift 6.1+/Xcode 16.3+ and supports macOS 10.15+.
 - swift-log 1.15.0 provides a Swift 6.1 manifest even though the default manifest uses Swift 6.2.
+- swift-nio 2.101.3 supplies the listener, HTTP/1 codec and explicit write-backpressure primitives; it is pinned directly because `BridgeMCP` imports its products.
 - tunnel-client v0.0.11 is built with Go 1.26.2. Its macOS artifacts target macOS 12+ and are separate arm64/amd64 executables, not Universal 2.
 
 ## Tunnel helper supply-chain contract

@@ -143,6 +143,7 @@ codex app-server generate-json-schema --out DIR
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责 Path Secret、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
+- `BridgeMCP` 的首批公开面固定为五个只读工具；每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。
 
 ## 维护检查

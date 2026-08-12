@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "BridgePolicy", targets: ["BridgePolicy"]),
         .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
         .library(name: "BridgeExecution", targets: ["BridgeExecution"]),
+        .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
     ],
     dependencies: [
@@ -27,6 +28,10 @@ let package = Package(
         .package(
             url: "https://github.com/apple/swift-log.git",
             exact: "1.15.0"
+        ),
+        .package(
+            url: "https://github.com/apple/swift-nio.git",
+            exact: "2.101.3"
         ),
     ],
     targets: [
@@ -62,6 +67,17 @@ let package = Package(
             name: "BridgeExecution",
             dependencies: ["BridgeCodexRPC", "BridgeDomain", "BridgeProjects"]
         ),
+        .target(
+            name: "BridgeMCP",
+            dependencies: [
+                "BridgeDomain",
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ]
+        ),
         .executableTarget(
             name: "CodexRPCFixture",
             dependencies: ["BridgeCodexRPC"]
@@ -93,6 +109,16 @@ let package = Package(
         .testTarget(
             name: "BridgeExecutionTests",
             dependencies: ["BridgeCodexRPC", "BridgeExecution", "BridgeProjects"]
+        ),
+        .testTarget(
+            name: "BridgeMCPTests",
+            dependencies: [
+                "BridgeMCP",
+                .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ]
         ),
     ]
 )

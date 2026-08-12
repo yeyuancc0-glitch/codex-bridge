@@ -2,7 +2,7 @@
 
 Codex Bridge is a local-first native macOS bridge between ChatGPT on the web and the user's local Codex installation. ChatGPT forms a task contract, the local Codex app-server executes it, a separate read-only Luna session supervises it, and the Mac app owns permissions, approvals, state, evidence and connectivity.
 
-> Development status: pre-release. The repository now contains the tested core state, persistence, security, project binding, policy and Codex protocol foundations; MCP transport, full execution, native UI and release packaging are still in development.
+> Development status: pre-release. The repository now contains the tested core state, persistence, security, project binding, policy, Codex protocol and local read-only MCP foundations; Tunnel integration, full execution, native UI and release packaging are still in development.
 
 ## Product boundary
 
@@ -73,6 +73,8 @@ Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fix
 ```
 
 The live fixture owns and removes an empty temporary directory, forces read-only/no-network execution, uses an ephemeral Thread, and never enumerates existing Threads or account data. Available scenarios are `basic`, `steer`, `interrupt`, and `supervisor`.
+
+`BridgeMCP` exposes the first five read-only tools through a secret-path Streamable HTTP endpoint bound only to `127.0.0.1`. Its tests use the pinned Swift MCP SDK client over a real loopback socket; production composition must obtain the 256-bit path secret from Keychain rather than source code or configuration files.
 
 ## Security reporting
 
