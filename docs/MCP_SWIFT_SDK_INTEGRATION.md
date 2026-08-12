@@ -308,9 +308,11 @@ Use real loopback sockets, not only `InMemoryTransport`, to prove:
 
 ### 8.3 MCP Inspector
 
-Run the official MCP Inspector against an ephemeral test endpoint, select Streamable HTTP, and supply the full ephemeral URL. Verify initialization information, the five tools and their annotations/schemas, successful calls, structured errors, cancellation, and reconnect.
+`Scripts/verify-mcp-inspector.sh` runs the official MCP Inspector CLI pinned to `2.1.0` against a fixture endpoint with an ephemeral 256-bit path secret. It verifies initialization negotiation, the five tools and their annotations/schemas, a successful call, a structured `isError` result with text parity, and a fresh independent connection. The command requires Node 22.19.0 or newer.
 
-The local 0.12.1 checkout does not pin or document an Inspector CLI version, so this audit intentionally does not invent one. Before adding a repository command, pin an official Inspector package version in a script/CI manifest and record that version. Never invoke an unpinned `latest` Inspector in a release gate, and never expose the production Keychain path secret in shell history; use a generated test secret.
+Inspector 2.1.0 writes the complete tool result to stdout, emits a `tool_is_error` diagnostic to stderr, and exits with status 5 when a tool returns `isError: true`; the gate checks all three surfaces. The CLI is a one-shot client and exposes no deterministic MCP request-cancellation or same-session reconnect command. Separate real-loopback pinned-SDK/NIO tests prove that cancellation reaches the running query and that GET SSE resumes the same session with `Last-Event-ID`; a second CLI call proves only that a fresh connection succeeds.
+
+Never invoke an unpinned `latest` Inspector in a release gate, and never expose the production Keychain path secret in shell history; the fixture must generate a test-only secret for every run.
 
 ### 8.4 Official conformance
 

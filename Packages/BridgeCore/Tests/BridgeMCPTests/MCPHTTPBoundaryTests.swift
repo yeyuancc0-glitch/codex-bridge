@@ -469,7 +469,7 @@ private func performURLRequest(
   )
 }
 
-private func openSocket(port: Int) throws -> Int32 {
+func openSocket(port: Int) throws -> Int32 {
   let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
   guard descriptor >= 0 else { throw SocketTestError.socket(errno) }
 
@@ -512,7 +512,7 @@ private func openSocket(port: Int) throws -> Int32 {
   return descriptor
 }
 
-private func sendAll(_ data: Data, descriptor: Int32) throws {
+func sendAll(_ data: Data, descriptor: Int32) throws {
   try data.withUnsafeBytes { rawBuffer in
     guard let baseAddress = rawBuffer.baseAddress else { return }
     var sent = 0

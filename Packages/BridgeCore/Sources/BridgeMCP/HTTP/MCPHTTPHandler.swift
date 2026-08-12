@@ -208,7 +208,11 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         channel: channel
       )
     } catch {
-      await notifyEmission(sessionID: sessionID, byteCount: 0, kind: .sessionTerminated)
+      let disconnected = Task.isCancelled || !channel.isActive
+      if state.head.method == .POST || !disconnected {
+        await notifyEmission(sessionID: sessionID, byteCount: 0, kind: .sessionTerminated)
+      }
+      guard !disconnected else { return }
       try? await channel.close().get()
     }
   }

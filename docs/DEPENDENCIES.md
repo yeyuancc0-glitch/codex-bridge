@@ -9,6 +9,7 @@ Evidence checked on 2026-08-12 against official repositories and releases. Versi
 | apple/swift-log | 1.15.0 | `Logging` | Apache-2.0 + NOTICE | adapter logging only; one bootstrap and central redaction | [release](https://github.com/apple/swift-log/releases/tag/1.15.0) |
 | apple/swift-nio | 2.101.3 | `NIOCore`, `NIOHTTP1`, `NIOPosix` | Apache-2.0 + NOTICE | only the hardened `BridgeMCP` loopback HTTP adapter; direct dependency, never an assumed transitive product | [release](https://github.com/apple/swift-nio/releases/tag/2.101.3) |
 | openai/tunnel-client | 0.0.11 | helper executable | Apache-2.0 + NOTICE | `BridgeTunnel` process boundary; not an SPM binary target | [release](https://github.com/openai/tunnel-client/releases/tag/v0.0.11) |
+| @modelcontextprotocol/inspector | 2.1.0 | development CLI | MIT | test-only Streamable HTTP acceptance gate; never bundled in the App | [release](https://github.com/modelcontextprotocol/inspector/releases/tag/2.1.0) |
 
 ## Version and platform facts
 
@@ -17,6 +18,7 @@ Evidence checked on 2026-08-12 against official repositories and releases. Versi
 - swift-log 1.15.0 provides a Swift 6.1 manifest even though the default manifest uses Swift 6.2.
 - swift-nio 2.101.3 supplies the listener, HTTP/1 codec and explicit write-backpressure primitives; it is pinned directly because `BridgeMCP` imports its products.
 - tunnel-client v0.0.11 is built with Go 1.26.2. Its macOS artifacts target macOS 12+ and are separate arm64/amd64 executables, not Universal 2.
+- MCP Inspector 2.1.0 requires Node 22.19.0+; the repository invokes that exact package version without a global installation and never passes a production Keychain secret to it.
 
 ## Tunnel helper supply-chain contract
 

@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "BridgeExecution", targets: ["BridgeExecution"]),
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
+        .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
     ],
     dependencies: [
         .package(
@@ -81,6 +82,11 @@ let package = Package(
         .executableTarget(
             name: "CodexRPCFixture",
             dependencies: ["BridgeCodexRPC"]
+        ),
+        .executableTarget(
+            name: "BridgeMCPInspectorFixture",
+            dependencies: ["BridgeMCP"],
+            path: "Tests/BridgeMCPInspectorFixture"
         ),
         .testTarget(
             name: "BridgeDomainTests",

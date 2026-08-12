@@ -121,6 +121,7 @@ Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/with-xcode.sh swift run --package-path Prototypes/AppServerProbe app-server-probe --help
+Scripts/verify-mcp-inspector.sh
 codex app-server generate-json-schema --out DIR
 ```
 
@@ -144,6 +145,7 @@ codex app-server generate-json-schema --out DIR
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责 Path Secret、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
 - `BridgeMCP` 的首批公开面固定为五个只读工具；每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
+- 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。
 
 ## 维护检查

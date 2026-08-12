@@ -30,6 +30,7 @@ docs/PHASE_LEDGER.md        Evidence-backed implementation status
 - macOS 14 or later
 - Xcode 27 Beta 5 at `/Volumes/fanch/Applications/Xcode-beta.app`, or update `Scripts/with-xcode.sh` for another verified Xcode location
 - Codex CLI with `app-server` support
+- Node.js 22.19 or later for the pinned official MCP Inspector acceptance gate
 - Git
 
 The system-wide `xcode-select` may still point to Command Line Tools. Repository commands use the verified external Xcode explicitly:
@@ -70,11 +71,12 @@ Run the full core suite or a user-authorized isolated live protocol scenario:
 ```bash
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
+Scripts/verify-mcp-inspector.sh
 ```
 
 The live fixture owns and removes an empty temporary directory, forces read-only/no-network execution, uses an ephemeral Thread, and never enumerates existing Threads or account data. Available scenarios are `basic`, `steer`, `interrupt`, and `supervisor`.
 
-`BridgeMCP` exposes the first five read-only tools through a secret-path Streamable HTTP endpoint bound only to `127.0.0.1`. Its tests use the pinned Swift MCP SDK client over a real loopback socket; production composition must obtain the 256-bit path secret from Keychain rather than source code or configuration files.
+`BridgeMCP` exposes the first five read-only tools through a secret-path Streamable HTTP endpoint bound only to `127.0.0.1`. Its tests use the pinned Swift MCP SDK client over a real loopback socket, and the separate gate uses official MCP Inspector 2.1.0 with an ephemeral test-only secret. Production composition must obtain the 256-bit path secret from Keychain rather than source code or configuration files.
 
 ## Security reporting
 
