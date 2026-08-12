@@ -7,8 +7,9 @@ This record is version-specific. Authoritative generated schemas are committed u
 - Codex CLI: `0.147.0-alpha.6.5`
 - Verification date: 2026-08-12
 - Stable schema source: `Schemas/CodexAppServer/0.147.0-alpha.6.5/stable`
-- Real checks completed: process start, `initialize`/`initialized`, `model/list`.
-- Real checks intentionally not yet completed: account data, Thread enumeration, task turn, steer, interrupt, approval and Supervisor.
+- Real checks completed: process start, `initialize`/`initialized`, `model/list`, isolated ephemeral `thread/start`, read-only `turn/start`, `turn/steer`, `turn/interrupt`, and Luna structured-output Supervisor turn.
+- Real checks intentionally not completed: account data, existing Thread enumeration, write turns, or approval decisions.
+- All Thread/Turn checks used fixture-owned empty temporary directories, `approvalPolicy = never`, no network, no tools, and ephemeral Thread state. The fixture enforces a hard event timeout, validates exact outcomes, and removes its directory after every run.
 
 ## Wire envelope
 
@@ -68,6 +69,20 @@ There is no method-discovery response. Capability support is derived from `codex
 - Text input requires `{"type":"text","text":"...","text_elements":[]}`. Do not apply global snake-case conversion because most protocol fields are camelCase.
 - `turn/steer` binds `threadId`, `expectedTurnId` and input.
 - `turn/interrupt` binds `threadId` and `turnId`; user intent is not terminal state until the server confirms the turn stopped/completed.
+- A successful `turn/start` response does not prove the turn is already steerable. Real verification first returned `no active turn to steer`; the correct gate is the matching `turn/started` notification before `turn/steer` or `turn/interrupt`.
+
+## Isolated real task results
+
+Verified on 2026-08-12 with the production `BridgeCodexRPC` adapter and `CodexRPCFixture` executable:
+
+- basic read-only turn: default live model at its first advertised effort returned exactly `READY`, status `completed`, and exact cwd match;
+- steer: after the matching `turn/started` event, same-turn steer replaced the synthetic long response with `STEERED`, status `completed`;
+- interrupt: after the matching `turn/started` event, interrupt produced status `interrupted` without treating the local request as the terminal fact;
+- Supervisor: the dynamically discovered Luna model accepted a JSON Schema and returned a valid `{"decision":"pass","reason":"..."}` object in read-only/no-network mode.
+
+The fixture chooses the current default model and the first currently advertised reasoning effort at runtime; the Supervisor scenario searches the live catalog for Luna. These observed IDs/efforts are evidence, not persisted product defaults.
+
+Each app-server event stream has exactly one consumer cursor. Creating multiple iterators would distribute events between consumers rather than broadcast them and can lose the matching `turn/started` or completion fact.
 
 ## Approvals
 
@@ -79,6 +94,8 @@ Responses are method-specific:
 - legacy exec/apply-patch: `approved`, `approved_for_session`, `denied`, `timed_out`, `abort`.
 
 Never route these through one generic approve/deny struct. Unknown server requests default to a controlled refusal; Supervisor never approves.
+
+The current approval schema does not provide authoritative argv and file-change paths in every request. Automatic approval must correlate `threadId + turnId + itemId/approvalId` with a persisted execution event; shell strings and best-effort `commandActions` are display evidence only. Missing authoritative inputs always require local handling or denial.
 
 ## Rate limits
 

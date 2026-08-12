@@ -10,6 +10,10 @@ let package = Package(
         .library(name: "BridgeSecurity", targets: ["BridgeSecurity"]),
         .library(name: "BridgeCodexRPC", targets: ["BridgeCodexRPC"]),
         .library(name: "BridgePersistence", targets: ["BridgePersistence"]),
+        .library(name: "BridgePolicy", targets: ["BridgePolicy"]),
+        .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
+        .library(name: "BridgeExecution", targets: ["BridgeExecution"]),
+        .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
     ],
     dependencies: [
         .package(
@@ -46,6 +50,22 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),
+        .target(
+            name: "BridgePolicy",
+            dependencies: ["BridgeProjects", "BridgeSecurity"]
+        ),
+        .target(
+            name: "BridgeProjects",
+            dependencies: ["BridgeDomain", "BridgeSecurity"]
+        ),
+        .target(
+            name: "BridgeExecution",
+            dependencies: ["BridgeCodexRPC", "BridgeDomain", "BridgeProjects"]
+        ),
+        .executableTarget(
+            name: "CodexRPCFixture",
+            dependencies: ["BridgeCodexRPC"]
+        ),
         .testTarget(
             name: "BridgeDomainTests",
             dependencies: ["BridgeDomain"]
@@ -61,6 +81,18 @@ let package = Package(
         .testTarget(
             name: "BridgePersistenceTests",
             dependencies: ["BridgePersistence"]
+        ),
+        .testTarget(
+            name: "BridgePolicyTests",
+            dependencies: ["BridgePolicy"]
+        ),
+        .testTarget(
+            name: "BridgeProjectsTests",
+            dependencies: ["BridgeProjects"]
+        ),
+        .testTarget(
+            name: "BridgeExecutionTests",
+            dependencies: ["BridgeCodexRPC", "BridgeExecution", "BridgeProjects"]
         ),
     ]
 )

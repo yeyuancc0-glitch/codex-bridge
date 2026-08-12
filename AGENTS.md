@@ -119,6 +119,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 Scripts/with-xcode.sh swift build --package-path Packages/BridgeCore
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests
+Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/with-xcode.sh swift run --package-path Prototypes/AppServerProbe app-server-probe --help
 codex app-server generate-json-schema --out DIR
 ```
@@ -129,14 +130,19 @@ codex app-server generate-json-schema --out DIR
 
 - `codex app-server` 是实验接口；只信当前本机 Schema、能力协商与真实回归，不能硬编码记忆中的字段。
 - 当前 app-server wire 契约与方案的必要修正记录在 `docs/CODEX_PROTOCOL_COMPATIBILITY.md`；尤其注意无 `jsonrpc` 字段、Thread/Turn 两套 sandbox 表达、开放 reasoning effort 和多种审批响应。
+- `turn/start` 响应只表示请求已受理；必须等待匹配的 `turn/started` 事件后才能 steer 或 interrupt，不能把请求响应当作 active-turn 事实。
 - stdout 是 JSON-RPC 协议通道；任何非 JSON 污染都必须检测，诊断只读 stderr。
 - 进程退出必须原子取消全部等待请求，避免 continuation 泄漏或重复恢复。
 - `CodexAppServerClient` 是一次性进程会话；停止、初始化失败或协议失败后由上层创建新实例，不能复用已终止的 dispatcher/event stream。
 - app-server stdout 与事件队列都必须有硬上限；审批/服务端请求不得静默丢弃，拥塞时终止会话并进入恢复。
+- 每个 app-server 会话只能有一个事件消费 actor；多个 `AsyncStream` iterator 会分流而不是广播，UI/执行器/审批必须订阅该 actor 归一化后的事件。
 - Xcode 27 下不要在 detached task 中用阻塞式 `FileHandle.read(upToCount:)` 驱动管道；使用 `readabilityHandler` 接入有界 `AsyncStream`，再由单消费者解析。
 - Thread 只能按规范化 cwd/worktree 精确绑定，不能按标题或“最近使用”猜测。
+- 自动审批不能信任审批请求里的 shell 字符串或 best-effort `commandActions`；必须用 `threadId + turnId + itemId/approvalId` 关联已持久化的权威执行事件，缺少规范化 argv、路径或大小时一律不自动批准。
+- 只读命令自动放行必须使用固定系统可执行文件路径，不能只看 basename 或未解析的 PATH；配置验证命令仍先经过系统硬拒绝与 wrapper 检查。
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。
+- Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责 Path Secret、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。
 
 ## 维护检查

@@ -43,6 +43,9 @@ private final class AppServerProcessState: @unchecked Sendable {
   let stdinPipe = Pipe()
   let stdoutPipe = Pipe()
   let stderrPipe = Pipe()
+  let exitLock = NSLock()
+  var exitStatus: Int32?
+  var exitWaiters: [CheckedContinuation<Int32, Never>] = []
 
   func terminateIfRunning() {
     if process.isRunning {
@@ -52,8 +55,45 @@ private final class AppServerProcessState: @unchecked Sendable {
 
   func closeHandles() {
     try? stdinPipe.fileHandleForWriting.close()
+    try? stdinPipe.fileHandleForReading.close()
     try? stdoutPipe.fileHandleForReading.close()
+    try? stdoutPipe.fileHandleForWriting.close()
     try? stderrPipe.fileHandleForReading.close()
+    try? stderrPipe.fileHandleForWriting.close()
+  }
+
+  func closeParentCopiesOfChildHandles() {
+    try? stdinPipe.fileHandleForReading.close()
+    try? stdoutPipe.fileHandleForWriting.close()
+    try? stderrPipe.fileHandleForWriting.close()
+  }
+
+  func recordExit(_ status: Int32) {
+    exitLock.lock()
+    guard exitStatus == nil else {
+      exitLock.unlock()
+      return
+    }
+    exitStatus = status
+    let waiters = exitWaiters
+    exitWaiters.removeAll(keepingCapacity: false)
+    exitLock.unlock()
+    for waiter in waiters {
+      waiter.resume(returning: status)
+    }
+  }
+
+  func waitForExit() async -> Int32 {
+    await withCheckedContinuation { continuation in
+      exitLock.lock()
+      if let exitStatus {
+        exitLock.unlock()
+        continuation.resume(returning: exitStatus)
+      } else {
+        exitWaiters.append(continuation)
+        exitLock.unlock()
+      }
+    }
   }
 }
 
@@ -89,6 +129,7 @@ public actor AppServerProcess {
   private let stderrBuffer: BoundedDataBuffer
   private var state: AppServerProcessState?
   private var transport: JSONLineTransport?
+  private var dispatcher: RPCDispatcher?
   private var stderrTask: Task<Void, Never>?
   private var stderrContinuation: AsyncStream<Data>.Continuation?
   private var hasStarted = false
@@ -112,6 +153,7 @@ public actor AppServerProcess {
     )
 
     state.process.terminationHandler = { process in
+      state.recordExit(process.terminationStatus)
       Task {
         await dispatcher.terminate(with: .processExited(process.terminationStatus))
       }
@@ -128,6 +170,7 @@ public actor AppServerProcess {
 
     do {
       try state.process.run()
+      state.closeParentCopiesOfChildHandles()
     } catch {
       await transport.stop()
       state.stderrPipe.fileHandleForReading.readabilityHandler = nil
@@ -136,11 +179,13 @@ public actor AppServerProcess {
       stderrTask?.cancel()
       stderrTask = nil
       state.closeHandles()
+      await dispatcher.terminate(with: .processLaunchFailed(error.localizedDescription))
       throw CodexRPCError.processLaunchFailed(error.localizedDescription)
     }
 
     self.state = state
     self.transport = transport
+    self.dispatcher = dispatcher
   }
 
   public func send(_ value: JSONValue) async throws {
@@ -154,6 +199,9 @@ public actor AppServerProcess {
     guard let state else { return }
     await transport?.stop()
     state.terminateIfRunning()
+    await waitForExitOrKill(state)
+    let status = await state.waitForExit()
+    await dispatcher?.terminate(with: .processExited(status))
     state.stderrPipe.fileHandleForReading.readabilityHandler = nil
     stderrContinuation?.finish()
     stderrContinuation = nil
@@ -161,6 +209,7 @@ public actor AppServerProcess {
     stderrTask = nil
     state.closeHandles()
     transport = nil
+    dispatcher = nil
     self.state = nil
   }
 
@@ -206,5 +255,15 @@ public actor AppServerProcess {
       }
     }
     return (task, pair.continuation)
+  }
+
+  private func waitForExitOrKill(_ state: AppServerProcessState) async {
+    for _ in 0..<40 {
+      guard state.process.isRunning else { return }
+      try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+    guard state.process.isRunning else { return }
+    kill(state.process.processIdentifier, SIGKILL)
+    _ = await state.waitForExit()
   }
 }

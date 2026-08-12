@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 
@@ -17,7 +18,7 @@ final class FakeAppServerTests: XCTestCase {
     addTeardownBlock { await client.stop() }
     try await client.start()
 
-    let response = try await client.request(
+    let response = try await client.performRequest(
       method: "test/fragmented",
       params: .object([:])
     )
@@ -44,8 +45,10 @@ final class FakeAppServerTests: XCTestCase {
     try await client.start()
     var events = client.events.makeAsyncIterator()
 
-    async let first = client.request(method: "test/first", params: .object([:]))
-    async let second = client.request(method: "test/second", params: .object([:]))
+    async let first = client.performRequest(
+      method: "test/first", params: .object([:]))
+    async let second = client.performRequest(
+      method: "test/second", params: .object([:]))
 
     guard case .notification(let notification)? = await events.next() else {
       return XCTFail("Expected a notification before the responses")
@@ -77,7 +80,8 @@ final class FakeAppServerTests: XCTestCase {
     var events = client.events.makeAsyncIterator()
 
     let responseTask = Task {
-      try await client.request(method: "test/waiting", params: .object([:]))
+      try await client.performRequest(
+        method: "test/waiting", params: .object([:]))
     }
     guard case .serverRequest(let request)? = await events.next() else {
       return XCTFail("Expected a server request")
@@ -88,7 +92,8 @@ final class FakeAppServerTests: XCTestCase {
     XCTAssertEqual(request.params?.objectValue?["scope"], .string("test"))
     XCTAssertEqual(request.metadata["futureMetadata"], .integer(9))
 
-    try await client.respond(to: request.id, result: .object(["decision": .string("decline")]))
+    try await client.performResponse(
+      to: request.id, result: .object(["decision": .string("decline")]))
     let response = try await responseTask.value
     XCTAssertEqual(response.objectValue?["valid"], .bool(true))
   }
@@ -107,7 +112,8 @@ final class FakeAppServerTests: XCTestCase {
     try await client.start()
 
     do {
-      _ = try await client.request(method: "test/timeout", params: .object([:]))
+      _ = try await client.performRequest(
+        method: "test/timeout", params: .object([:]))
       XCTFail("Expected timeout")
     } catch {
       XCTAssertEqual(error as? CodexRPCError, .timeout(method: "test/timeout"))
@@ -129,7 +135,8 @@ final class FakeAppServerTests: XCTestCase {
     try await client.start()
 
     let task = Task {
-      try await client.request(method: "test/cancel", params: .object([:]))
+      try await client.performRequest(
+        method: "test/cancel", params: .object([:]))
     }
     try await Task.sleep(nanoseconds: 20_000_000)
     task.cancel()
@@ -155,7 +162,8 @@ final class FakeAppServerTests: XCTestCase {
     try await client.start()
 
     do {
-      _ = try await client.request(method: "test/exit", params: .object([:]))
+      _ = try await client.performRequest(
+        method: "test/exit", params: .object([:]))
       XCTFail("Expected process exit")
     } catch {
       XCTAssertEqual(error as? CodexRPCError, .processExited(23))
@@ -174,7 +182,8 @@ final class FakeAppServerTests: XCTestCase {
     try await client.start()
 
     do {
-      _ = try await client.request(method: "test/contamination", params: .object([:]))
+      _ = try await client.performRequest(
+        method: "test/contamination", params: .object([:]))
       XCTFail("Expected stdout contamination failure")
     } catch {
       XCTAssertEqual(
@@ -261,6 +270,53 @@ final class FakeAppServerTests: XCTestCase {
     XCTAssertEqual(duplicateErrors, 1)
   }
 
+  func testPublicRequestCannotInterleaveWithInitializeHandshake() async throws {
+    let client = makeClient(
+      script: #"""
+        IFS= read -r initialize
+        sleep 0.1
+        printf '%s\n' '{"id":1,"result":{"userAgent":"fake/1","codexHome":"/private/fake","platformFamily":"unix","platformOs":"macos"}}'
+        IFS= read -r initialized
+        sleep 2
+        """#
+    )
+    addTeardownBlock { await client.stop() }
+    try await client.start()
+
+    let initialization = Task {
+      try await client.initialize(clientInfo: .bridge(version: "0.1.0"))
+    }
+    try await Task.sleep(nanoseconds: 20_000_000)
+    do {
+      _ = try await client.request(method: "test/interleaved", params: .object([:]))
+      XCTFail("Expected request to be rejected until initialized notification is sent")
+    } catch {
+      XCTAssertEqual(error as? CodexRPCError, .notInitialized)
+    }
+    _ = try await initialization.value
+  }
+
+  func testLaunchFailureFinishesEventStream() async throws {
+    let client = CodexAppServerClient(
+      configuration: AppServerConfiguration(
+        executableURL: URL(fileURLWithPath: "/definitely/missing/codex-bridge-fixture"),
+        arguments: []
+      )
+    )
+    var events = client.events.makeAsyncIterator()
+
+    do {
+      try await client.start()
+      XCTFail("Expected launch failure")
+    } catch {
+      guard case .processLaunchFailed = error as? CodexRPCError else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+    let event = await events.next()
+    XCTAssertNil(event)
+  }
+
   func testStoppedClientIsExplicitlyOneShot() async throws {
     let client = makeClient(script: "sleep 2")
     try await client.start()
@@ -272,6 +328,24 @@ final class FakeAppServerTests: XCTestCase {
     } catch {
       XCTAssertEqual(error as? CodexRPCError, .alreadyStarted)
     }
+  }
+
+  func testStopForceReapsProcessThatIgnoresTerminate() async throws {
+    let pidURL = FileManager.default.temporaryDirectory.appending(
+      path: "codex-bridge-stop-\(UUID().uuidString).pid")
+    addTeardownBlock { try? FileManager.default.removeItem(at: pidURL) }
+    let client = makeClient(
+      script: "trap '' TERM; printf '%s' \"$$\" > '\(pidURL.path)'; while :; do sleep 1; done"
+    )
+    try await client.start()
+    let pid = try await waitForPID(at: pidURL)
+
+    await client.stop()
+
+    let status = Darwin.kill(pid, 0)
+    let killError = errno
+    XCTAssertEqual(status, -1)
+    XCTAssertEqual(killError, ESRCH)
   }
 
   func testEventOverflowTerminatesInsteadOfDroppingApprovalRequests() async throws {
@@ -288,7 +362,8 @@ final class FakeAppServerTests: XCTestCase {
     try await client.start()
 
     do {
-      _ = try await client.request(method: "test/overflow", params: .object([:]))
+      _ = try await client.performRequest(
+        method: "test/overflow", params: .object([:]))
       XCTFail("Expected event buffer overflow")
     } catch {
       XCTAssertEqual(
@@ -313,5 +388,17 @@ final class FakeAppServerTests: XCTestCase {
       defaultTimeoutNanoseconds: timeoutNanoseconds,
       eventBufferLimit: eventBufferLimit
     )
+  }
+
+  private func waitForPID(at url: URL) async throws -> pid_t {
+    for _ in 0..<100 {
+      if let data = try? Data(contentsOf: url),
+        let value = Int32(String(decoding: data, as: UTF8.self))
+      {
+        return value
+      }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    throw CodexRPCError.timeout(method: "fixture process id")
   }
 }

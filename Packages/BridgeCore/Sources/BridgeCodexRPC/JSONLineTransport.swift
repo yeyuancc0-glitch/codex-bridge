@@ -91,7 +91,9 @@ public actor JSONLineTransport {
   public func write(_ value: JSONValue) throws {
     guard started else { throw CodexRPCError.notStarted }
     do {
-      var data = try JSONEncoder().encode(value)
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = .withoutEscapingSlashes
+      var data = try encoder.encode(value)
       data.append(0x0A)
       try input.value.write(contentsOf: data)
     } catch let error as CodexRPCError {

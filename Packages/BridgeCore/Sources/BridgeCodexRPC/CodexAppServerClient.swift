@@ -19,7 +19,7 @@ public actor CodexAppServerClient {
     }
   }
 
-  public nonisolated let events: AsyncStream<AppServerEvent>
+  package nonisolated let events: AsyncStream<AppServerEvent>
 
   private let process: AppServerProcess
   private let dispatcher: RPCDispatcher
@@ -66,12 +66,12 @@ public actor CodexAppServerClient {
       capabilities: InitializeCapabilities()
     )
     do {
-      let response: InitializeResponse = try await request(
+      let result = try await performRequest(
         method: "initialize",
-        params: params,
-        response: InitializeResponse.self
+        params: JSONValue.encode(params)
       )
-      try await sendNotification(method: "initialized")
+      let response = try result.decode(InitializeResponse.self)
+      try await performNotification(method: "initialized")
       guard lifecycle == .initializing else {
         throw CodexRPCError.notStarted
       }
@@ -95,14 +95,70 @@ public actor CodexAppServerClient {
     )
   }
 
-  public func request<Params, Response>(
+  package func startThread(
+    _ params: ThreadStartParams
+  ) async throws -> ThreadStartResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "thread/start",
+      params: params,
+      response: ThreadStartResponse.self
+    )
+  }
+
+  package func readThread(
+    _ params: ThreadReadParams
+  ) async throws -> ThreadReadResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "thread/read",
+      params: params,
+      response: ThreadReadResponse.self
+    )
+  }
+
+  package func startTurn(
+    _ params: TurnStartParams
+  ) async throws -> TurnStartResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "turn/start",
+      params: params,
+      response: TurnStartResponse.self
+    )
+  }
+
+  package func steerTurn(
+    _ params: TurnSteerParams
+  ) async throws -> TurnSteerResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "turn/steer",
+      params: params,
+      response: TurnSteerResponse.self
+    )
+  }
+
+  package func interruptTurn(
+    _ params: TurnInterruptParams
+  ) async throws -> TurnInterruptResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "turn/interrupt",
+      params: params,
+      response: TurnInterruptResponse.self
+    )
+  }
+
+  package func request<Params, Response>(
     method: String,
     params: Params,
     response: Response.Type,
     timeoutNanoseconds: UInt64? = nil
   ) async throws -> Response
   where Params: Encodable & Sendable, Response: Decodable & Sendable {
-    let result = try await request(
+    try ensureInitialized()
+    let result = try await performRequest(
       method: method,
       params: JSONValue.encode(params),
       timeoutNanoseconds: timeoutNanoseconds
@@ -110,7 +166,50 @@ public actor CodexAppServerClient {
     return try result.decode(response)
   }
 
-  public func request(
+  package func request(
+    method: String,
+    params: JSONValue? = nil,
+    timeoutNanoseconds: UInt64? = nil
+  ) async throws -> JSONValue {
+    try ensureInitialized()
+    return try await performRequest(
+      method: method,
+      params: params,
+      timeoutNanoseconds: timeoutNanoseconds
+    )
+  }
+
+  package func sendNotification(
+    method: String,
+    params: JSONValue? = nil
+  ) async throws {
+    try ensureInitialized()
+    try await performNotification(method: method, params: params)
+  }
+
+  package func respond(to id: RequestID, result: JSONValue) async throws {
+    try ensureInitialized()
+    try await performResponse(to: id, result: result)
+  }
+
+  package func respond(
+    to id: RequestID,
+    errorCode: Int64,
+    message: String,
+    data: JSONValue? = nil
+  ) async throws {
+    try ensureInitialized()
+    try await process.send(
+      RPCEnvelope.error(id: id, code: errorCode, message: message, data: data)
+    )
+  }
+
+  func performResponse(to id: RequestID, result: JSONValue) async throws {
+    guard lifecycle.isRunning else { throw CodexRPCError.notStarted }
+    try await process.send(RPCEnvelope.success(id: id, result: result))
+  }
+
+  func performRequest(
     method: String,
     params: JSONValue? = nil,
     timeoutNanoseconds: UInt64? = nil
@@ -129,29 +228,12 @@ public actor CodexAppServerClient {
     }
   }
 
-  public func sendNotification(
+  private func performNotification(
     method: String,
     params: JSONValue? = nil
   ) async throws {
     guard lifecycle.isRunning else { throw CodexRPCError.notStarted }
     try await process.send(RPCEnvelope.notification(method: method, params: params))
-  }
-
-  public func respond(to id: RequestID, result: JSONValue) async throws {
-    guard lifecycle.isRunning else { throw CodexRPCError.notStarted }
-    try await process.send(RPCEnvelope.success(id: id, result: result))
-  }
-
-  public func respond(
-    to id: RequestID,
-    errorCode: Int64,
-    message: String,
-    data: JSONValue? = nil
-  ) async throws {
-    guard lifecycle.isRunning else { throw CodexRPCError.notStarted }
-    try await process.send(
-      RPCEnvelope.error(id: id, code: errorCode, message: message, data: data)
-    )
   }
 
   public func stderrSnapshot() async -> Data {
@@ -170,5 +252,11 @@ public actor CodexAppServerClient {
     }
     defer { nextRequestID += 1 }
     return .integer(nextRequestID)
+  }
+
+  private func ensureInitialized() throws {
+    guard lifecycle == .initialized else {
+      throw CodexRPCError.notInitialized
+    }
   }
 }
