@@ -94,6 +94,43 @@ final class MCPServerIntegrationTests: XCTestCase {
     XCTAssertNil(stoppedEndpoint)
   }
 
+  func testTunnelHeaderModeCompletesStrictSDKRoundTripWithoutSecretURL() async throws {
+    let secret = String(repeating: "H", count: 43)
+    let server = MCPBridgeServer(
+      appVersion: "0.1.0",
+      queries: IntegrationQueries(),
+      httpConfiguration: try MCPHTTPConfiguration(headerSecret: secret)
+    )
+    let endpoint = try await server.start()
+    XCTAssertEqual(endpoint.localURL.path, "/mcp")
+    XCTAssertFalse(endpoint.localURL.absoluteString.contains(secret))
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.httpAdditionalHeaders = [
+      MCPHTTPConfiguration.tunnelAuthenticationHeader: secret
+    ]
+    let transport = HTTPClientTransport(
+      endpoint: endpoint.localURL,
+      configuration: configuration,
+      streaming: false,
+      sseInitializationTimeout: 1
+    )
+    let client = Client(
+      name: "codex-bridge-tunnel-header-test",
+      version: "1",
+      configuration: .strict
+    )
+    addTeardownBlock {
+      await client.disconnect()
+      await server.stop()
+    }
+
+    let initialized = try await client.connect(transport: transport)
+    XCTAssertEqual(initialized.serverInfo.name, "codex-bridge")
+    let tools = try await client.listTools()
+    XCTAssertEqual(tools.tools.count, MCPToolName.allCases.count)
+  }
+
   func testConcurrentFacadeStopsCompleteBeforeRestart() async throws {
     let server = MCPBridgeServer(
       appVersion: "0.1.0",

@@ -14,8 +14,14 @@ let package = Package(
         .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
         .library(name: "BridgeExecution", targets: ["BridgeExecution"]),
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
+        .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
         .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
+        .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
+        .executable(
+            name: "bridge-tunnel-acceptance-fixture",
+            targets: ["BridgeTunnelAcceptanceFixture"]
+        ),
     ],
     dependencies: [
         .package(
@@ -79,6 +85,10 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
             ]
         ),
+        .target(
+            name: "BridgeTunnel",
+            dependencies: ["BridgeSecurity"]
+        ),
         .executableTarget(
             name: "CodexRPCFixture",
             dependencies: ["BridgeCodexRPC"]
@@ -87,6 +97,15 @@ let package = Package(
             name: "BridgeMCPInspectorFixture",
             dependencies: ["BridgeMCP"],
             path: "Tests/BridgeMCPInspectorFixture"
+        ),
+        .executableTarget(
+            name: "BridgeTunnelFixture",
+            path: "Tests/BridgeTunnelTests/Fixture"
+        ),
+        .executableTarget(
+            name: "BridgeTunnelAcceptanceFixture",
+            dependencies: ["BridgeSecurity", "BridgeTunnel"],
+            path: "Tests/BridgeTunnelAcceptanceFixture"
         ),
         .testTarget(
             name: "BridgeDomainTests",
@@ -125,6 +144,12 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ]
+        ),
+        .testTarget(
+            name: "BridgeTunnelTests",
+            dependencies: ["BridgeTunnel"],
+            path: "Tests/BridgeTunnelTests",
+            exclude: ["Fixture"]
         ),
     ]
 )

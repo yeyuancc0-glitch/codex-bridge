@@ -58,7 +58,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 
 ## 安全不变量
 
-- 本地 MCP 仅回环监听，并使用 Keychain 中的随机 Path Secret。
+- 本地 MCP 仅回环监听，并使用 Keychain 中的 256-bit 随机认证 Secret；Inspector/本机开发可用秘密路径，Tunnel 生产链路必须用固定 `/mcp` 路径与 fd-backed 静态请求头。
 - MCP 不接受任意绝对路径，不提供万能 Shell 工具。
 - 相对路径必须标准化、解析符号链接后再次验证仍在注册根目录内；读取时从根目录描述符逐级 `openat + O_NOFOLLOW`，并复核根与目标文件的 device/inode，防止校验后替换竞态。
 - 默认拒绝 `.env*`、私钥、Keychain、浏览器 Cookie、Codex auth 等敏感路径。
@@ -122,6 +122,9 @@ Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/Brid
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/with-xcode.sh swift run --package-path Prototypes/AppServerProbe app-server-probe --help
 Scripts/verify-mcp-inspector.sh
+Scripts/build-tunnel-helper.sh OUTPUT_DIRECTORY
+Scripts/verify-tunnel-helper.sh HELPER_DIRECTORY TRUSTED_UNSIGNED_SHA256
+Scripts/test-tunnel-helper-config.sh
 codex app-server generate-json-schema --out DIR
 ```
 
@@ -143,7 +146,9 @@ codex app-server generate-json-schema --out DIR
 - 只读命令自动放行必须使用固定系统可执行文件路径，不能只看 basename 或未解析的 PATH；配置验证命令仍先经过系统硬拒绝与 wrapper 检查。
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。
-- Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责 Path Secret、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
+- `tunnel-client` 必须使用调用方预建的 0700 私有根、dirfd/inode 绑定的每次运行目录、Unix-domain health/admin socket 与最小化子进程环境。禁止把配置交给可替换的 pathname；非秘密配置使用固定 argv，Runtime Key 经 fd3、MCP 静态认证头经 fd4。官方 v0.0.11 不支持把 MCP URL 写成 `file:`，所以只传非秘密 `http://127.0.0.1:<port>/mcp`。`/readyz` 只证明本地 MCP 就绪，只有 health peer PID 匹配、严格 ready 且 control-plane poll 成功并新鲜时才可显示 Tunnel 已连接。
+- Tunnel helper 必须先按外部可信的签名后 SHA-256 校验打开的同一 fd，再以 suspended 状态 spawn；只有动态 SecCode 通过宿主 Team requirement 且 CDHash 与静态 fd 身份相同时才恢复和写入秘密。签名前 supply manifest 不能充当运行时信任根。
+- Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责秘密路径或 Tunnel 认证头、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
 - `BridgeMCP` 的首批公开面固定为五个只读工具；每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。

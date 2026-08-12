@@ -9,6 +9,7 @@ public typealias MCPHTTPEmissionObserver =
 
 public enum MCPHTTPConfigurationError: Error, Equatable, Sendable {
   case invalidPathSecret
+  case invalidHeaderSecret
   case invalidLimit
 }
 
@@ -52,8 +53,10 @@ public struct MCPHTTPMetrics: Equatable, Sendable {
 
 public struct MCPHTTPConfiguration: Equatable, Sendable {
   public static let loopbackHost = "127.0.0.1"
+  public static let tunnelAuthenticationHeader = "X-Codex-Bridge-Token"
 
   public let pathSecret: String
+  public let headerSecret: String?
   public let port: Int
   public let maximumRequestTargetBytes: Int
   public let maximumHeaderBytes: Int
@@ -78,9 +81,71 @@ public struct MCPHTTPConfiguration: Equatable, Sendable {
     maximumConnections: Int = 32,
     maximumActiveRequests: Int = 16
   ) throws {
-    guard Self.isValidPathSecret(pathSecret) else {
+    guard Self.isValidSecret(pathSecret) else {
       throw MCPHTTPConfigurationError.invalidPathSecret
     }
+    try self.init(
+      pathSecret: pathSecret,
+      headerSecret: nil,
+      port: port,
+      maximumRequestTargetBytes: maximumRequestTargetBytes,
+      maximumHeaderBytes: maximumHeaderBytes,
+      maximumRequestBodyBytes: maximumRequestBodyBytes,
+      maximumResponseChunkBytes: maximumResponseChunkBytes,
+      headerDeadline: headerDeadline,
+      bodyDeadline: bodyDeadline,
+      responseDeadline: responseDeadline,
+      maximumConnections: maximumConnections,
+      maximumActiveRequests: maximumActiveRequests
+    )
+  }
+
+  public init(
+    headerSecret: String,
+    port: Int = 0,
+    maximumRequestTargetBytes: Int = 2 * 1_024,
+    maximumHeaderBytes: Int = 32 * 1_024,
+    maximumRequestBodyBytes: Int = 1_024 * 1_024,
+    maximumResponseChunkBytes: Int = 256 * 1_024,
+    headerDeadline: Duration = .seconds(5),
+    bodyDeadline: Duration = .seconds(5),
+    responseDeadline: Duration = .seconds(25),
+    maximumConnections: Int = 32,
+    maximumActiveRequests: Int = 16
+  ) throws {
+    guard Self.isValidSecret(headerSecret) else {
+      throw MCPHTTPConfigurationError.invalidHeaderSecret
+    }
+    try self.init(
+      pathSecret: nil,
+      headerSecret: headerSecret,
+      port: port,
+      maximumRequestTargetBytes: maximumRequestTargetBytes,
+      maximumHeaderBytes: maximumHeaderBytes,
+      maximumRequestBodyBytes: maximumRequestBodyBytes,
+      maximumResponseChunkBytes: maximumResponseChunkBytes,
+      headerDeadline: headerDeadline,
+      bodyDeadline: bodyDeadline,
+      responseDeadline: responseDeadline,
+      maximumConnections: maximumConnections,
+      maximumActiveRequests: maximumActiveRequests
+    )
+  }
+
+  private init(
+    pathSecret: String?,
+    headerSecret: String?,
+    port: Int,
+    maximumRequestTargetBytes: Int,
+    maximumHeaderBytes: Int,
+    maximumRequestBodyBytes: Int,
+    maximumResponseChunkBytes: Int,
+    headerDeadline: Duration,
+    bodyDeadline: Duration,
+    responseDeadline: Duration,
+    maximumConnections: Int,
+    maximumActiveRequests: Int
+  ) throws {
     guard
       (0...65_535).contains(port),
       maximumRequestTargetBytes > 0,
@@ -96,7 +161,8 @@ public struct MCPHTTPConfiguration: Equatable, Sendable {
       throw MCPHTTPConfigurationError.invalidLimit
     }
 
-    self.pathSecret = pathSecret
+    self.pathSecret = pathSecret ?? ""
+    self.headerSecret = headerSecret
     self.port = port
     self.maximumRequestTargetBytes = maximumRequestTargetBytes
     self.maximumHeaderBytes = maximumHeaderBytes
@@ -110,10 +176,13 @@ public struct MCPHTTPConfiguration: Equatable, Sendable {
   }
 
   package var routeBytes: [UInt8] {
-    Array("/mcp/\(pathSecret)".utf8)
+    if headerSecret == nil {
+      return Array("/mcp/\(pathSecret)".utf8)
+    }
+    return Array("/mcp".utf8)
   }
 
-  private static func isValidPathSecret(_ value: String) -> Bool {
+  private static func isValidSecret(_ value: String) -> Bool {
     guard value.utf8.count == 43 else { return false }
     return value.utf8.allSatisfy { byte in
       (65...90).contains(byte)

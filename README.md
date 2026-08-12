@@ -2,7 +2,7 @@
 
 Codex Bridge is a local-first native macOS bridge between ChatGPT on the web and the user's local Codex installation. ChatGPT forms a task contract, the local Codex app-server executes it, a separate read-only Luna session supervises it, and the Mac app owns permissions, approvals, state, evidence and connectivity.
 
-> Development status: pre-release. The repository now contains the tested core state, persistence, security, project binding, policy, Codex protocol and local read-only MCP foundations; Tunnel integration, full execution, native UI and release packaging are still in development.
+> Development status: pre-release. The repository now contains the tested core state, persistence, security, project binding, policy, Codex protocol, local read-only MCP and hardened Tunnel process foundations; real ChatGPT acceptance, full execution, native UI and release packaging are still in development.
 
 ## Product boundary
 
@@ -72,11 +72,13 @@ Run the full core suite or a user-authorized isolated live protocol scenario:
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/verify-mcp-inspector.sh
+Scripts/build-tunnel-helper.sh OUTPUT_DIRECTORY
+Scripts/test-tunnel-helper-config.sh
 ```
 
 The live fixture owns and removes an empty temporary directory, forces read-only/no-network execution, uses an ephemeral Thread, and never enumerates existing Threads or account data. Available scenarios are `basic`, `steer`, `interrupt`, and `supervisor`.
 
-`BridgeMCP` exposes the first five read-only tools through a secret-path Streamable HTTP endpoint bound only to `127.0.0.1`. Its tests use the pinned Swift MCP SDK client over a real loopback socket, and the separate gate uses official MCP Inspector 2.1.0 with an ephemeral test-only secret. Production composition must obtain the 256-bit path secret from Keychain rather than source code or configuration files.
+`BridgeMCP` exposes the first five read-only tools only on `127.0.0.1`. MCP Inspector keeps an ephemeral test-only secret path. The Tunnel production mode instead uses a non-secret `/mcp` URL plus a 256-bit static header secret supplied to the official helper through fd4; the HTTP boundary validates it in constant time and strips it before SDK dispatch. `BridgeTunnel` validates the exact signed helper identity, owns its bounded process lifecycle, and requires strict local readiness plus a fresh control-plane poll before accepting remote submissions. Real Runtime Key and ChatGPT Developer Mode acceptance remain user-driven gates.
 
 ## Security reporting
 

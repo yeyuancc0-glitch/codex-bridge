@@ -83,6 +83,51 @@ final class MCPHTTPBoundaryTests: XCTestCase {
     XCTAssertEqual(callSnapshot.count, 0)
   }
 
+  func testTunnelHeaderModeUsesNonSecretRouteAndFailsClosedBeforeHandler() async throws {
+    let calls = CallCounter()
+    let listener = MCPHTTPListener(
+      configuration: try MCPHTTPConfiguration(headerSecret: secret),
+      handler: { request in
+        await calls.record(
+          path: request.path,
+          authenticationHeader: request.headers[MCPHTTPConfiguration.tunnelAuthenticationHeader]
+        )
+        return .data(Data("ready".utf8))
+      }
+    )
+    addTeardownBlock { await listener.stop() }
+    let endpoint = try await listener.start()
+
+    for headers in [
+      [:],
+      [MCPHTTPConfiguration.tunnelAuthenticationHeader: String(repeating: "B", count: 43)],
+    ] {
+      let rejected = try await rawRequest(
+        port: endpoint.port,
+        target: "/mcp",
+        method: "POST",
+        headers: headers,
+        body: Data("{}".utf8)
+      )
+      XCTAssertEqual(rejected.statusCode, 404)
+      XCTAssertTrue(rejected.body.isEmpty)
+    }
+
+    let accepted = try await rawRequest(
+      port: endpoint.port,
+      target: "/mcp",
+      method: "POST",
+      headers: [MCPHTTPConfiguration.tunnelAuthenticationHeader: secret],
+      body: Data("{}".utf8)
+    )
+    XCTAssertEqual(accepted.statusCode, 200)
+    XCTAssertEqual(accepted.body, Data("ready".utf8))
+    let snapshot = await calls.snapshot()
+    XCTAssertEqual(snapshot.count, 1)
+    XCTAssertEqual(snapshot.lastPath, "/mcp")
+    XCTAssertNil(snapshot.authenticationHeader)
+  }
+
   func testMethodAndFixedAndChunkedBodyLimitsFailClosed() async throws {
     let calls = CallCounter()
     let maximumBodyBytes = 1_024
@@ -353,14 +398,16 @@ final class MCPHTTPBoundaryTests: XCTestCase {
 private actor CallCounter {
   private(set) var count = 0
   private(set) var lastPath: String?
+  private(set) var authenticationHeader: String?
 
-  func record(path: String?) {
+  func record(path: String?, authenticationHeader: String? = nil) {
     count += 1
     lastPath = path
+    self.authenticationHeader = authenticationHeader
   }
 
-  func snapshot() -> (count: Int, lastPath: String?) {
-    (count, lastPath)
+  func snapshot() -> (count: Int, lastPath: String?, authenticationHeader: String?) {
+    (count, lastPath, authenticationHeader)
   }
 }
 

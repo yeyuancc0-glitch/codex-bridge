@@ -108,6 +108,10 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       reject(status: .notFound, context: context)
       return
     }
+    guard hasValidAuthenticationHeader(head.headers) else {
+      reject(status: .notFound, context: context)
+      return
+    }
     guard isAllowedMethod(head.method) else {
       reject(status: .methodNotAllowed, allow: "POST, GET, DELETE", context: context)
       return
@@ -360,6 +364,8 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   private func makeRequest(_ state: RequestState) -> MCP.HTTPRequest {
     var headers: [String: String] = [:]
     for (name, value) in state.head.headers {
+      guard name.lowercased() != MCPHTTPConfiguration.tunnelAuthenticationHeader.lowercased()
+      else { continue }
       if let existing = headers[name] {
         headers[name] = "\(existing), \(value)"
       } else {
@@ -412,6 +418,13 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       difference |= Int(left ^ right)
     }
     return difference == 0
+  }
+
+  private func hasValidAuthenticationHeader(_ headers: HTTPHeaders) -> Bool {
+    guard let expected = configuration.headerSecret else { return true }
+    let values = headers[canonicalForm: MCPHTTPConfiguration.tunnelAuthenticationHeader]
+    guard values.count == 1 else { return false }
+    return constantTimeEqual(Array(values[0].utf8), Array(expected.utf8))
   }
 
   private func isAllowedMethod(_ method: HTTPMethod) -> Bool {

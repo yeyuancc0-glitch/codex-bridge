@@ -17,7 +17,7 @@ Evidence checked on 2026-08-12 against official repositories and releases. Versi
 - GRDB 7.11.1 requires Swift 6.1+/Xcode 16.3+ and supports macOS 10.15+.
 - swift-log 1.15.0 provides a Swift 6.1 manifest even though the default manifest uses Swift 6.2.
 - swift-nio 2.101.3 supplies the listener, HTTP/1 codec and explicit write-backpressure primitives; it is pinned directly because `BridgeMCP` imports its products.
-- tunnel-client v0.0.11 is built with Go 1.26.2. Its macOS artifacts target macOS 12+ and are separate arm64/amd64 executables, not Universal 2.
+- tunnel-client v0.0.11 is built with Go 1.26.2. Its macOS artifacts target macOS 12+ and are separate arm64/amd64 executables, not Universal 2. The integration and secret-passing contract is recorded in [`TUNNEL_CLIENT_INTEGRATION.md`](./TUNNEL_CLIENT_INTEGRATION.md).
 - MCP Inspector 2.1.0 requires Node 22.19.0+; the repository invokes that exact package version without a global installation and never passes a production Keychain secret to it.
 
 ## Tunnel helper supply-chain contract
@@ -33,10 +33,12 @@ Release packaging must:
 
 1. download only the pinned archives and validate the official hashes;
 2. combine both `tunnel-client` Mach-O files into a derived Universal 2 helper;
-3. keep source archive hashes and the derived helper hash in a manifest;
-4. sign the helper explicitly before the main App with Developer ID and Hardened Runtime;
+3. keep source archive hashes and the unsigned Universal 2 hash in the supply manifest (`bd0a2caf0d3047f10a08f2422f7d07db03ab55e3c58c72575b1cbf684d60475d` for the pinned inputs);
+4. sign the helper explicitly before the main App with Developer ID and Hardened Runtime, then recompute its post-sign SHA-256 into an App-signature-covered resource used by `TunnelConfiguration`;
 5. notarize and run Gatekeeper verification on the final App;
 6. retain all required LICENSE/NOTICE texts.
+
+`verify-tunnel-helper.sh` requires the trusted unsigned hash as a separate argument and performs static checks without executing its input; the manifest cannot self-attest. On Apple Silicon, `test-tunnel-helper-config.sh` separately pins both the official arm64 archive hash and its embedded linker-signed helper hash, then executes that exact image through the production suspended-process/CDHash boundary to prove official `doctor` accepts the non-secret `/mcp` URL plus fd-backed static header. These are pre-sign supply/compatibility gates, not substitutes for the final Developer ID signature and post-sign runtime hash.
 
 Do not publish the release archive binary unchanged: arm64 is only ad-hoc signed and amd64 is unsigned. Only include the pinned `cloudflared 2026.7.2` companion when the selected deployment mode needs it; ordinary OpenAI control-plane operation should not expand the bundle without evidence.
 

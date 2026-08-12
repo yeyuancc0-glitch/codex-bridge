@@ -166,9 +166,12 @@ public actor MCPBridgeServer {
   }
 
   private func makeEndpoint(_ bound: MCPHTTPBoundEndpoint) throws -> MCPBridgeEndpoint {
+    let path =
+      httpConfiguration.headerSecret == nil
+      ? "/mcp/\(httpConfiguration.pathSecret)" : "/mcp"
     guard
       let url = URL(
-        string: "http://\(bound.host):\(bound.port)/mcp/\(httpConfiguration.pathSecret)"
+        string: "http://\(bound.host):\(bound.port)\(path)"
       )
     else {
       throw MCPBridgeServerError.invalidBoundEndpoint
