@@ -13,6 +13,10 @@ let package = Package(
         .library(name: "BridgePolicy", targets: ["BridgePolicy"]),
         .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
         .library(name: "BridgeExecution", targets: ["BridgeExecution"]),
+        .library(name: "BridgeCoordinator", targets: ["BridgeCoordinator"]),
+        .library(name: "BridgeGit", targets: ["BridgeGit"]),
+        .library(name: "BridgeReporting", targets: ["BridgeReporting"]),
+        .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
@@ -75,6 +79,13 @@ let package = Package(
             dependencies: ["BridgeCodexRPC", "BridgeDomain", "BridgeProjects"]
         ),
         .target(
+            name: "BridgeCoordinator",
+            dependencies: ["BridgeDomain", "BridgePersistence", "BridgeProjects"]
+        ),
+        .target(name: "BridgeGit"),
+        .target(name: "BridgeReporting"),
+        .target(name: "BridgeSupervisor"),
+        .target(
             name: "BridgeMCP",
             dependencies: [
                 "BridgeDomain",
@@ -134,6 +145,22 @@ let package = Package(
         .testTarget(
             name: "BridgeExecutionTests",
             dependencies: ["BridgeCodexRPC", "BridgeExecution", "BridgeProjects"]
+        ),
+        .testTarget(
+            name: "BridgeCoordinatorTests",
+            dependencies: ["BridgeCoordinator", "BridgePersistence"]
+        ),
+        .testTarget(
+            name: "BridgeGitTests",
+            dependencies: ["BridgeGit"]
+        ),
+        .testTarget(
+            name: "BridgeReportingTests",
+            dependencies: ["BridgeReporting"]
+        ),
+        .testTarget(
+            name: "BridgeSupervisorTests",
+            dependencies: ["BridgeSupervisor"]
         ),
         .testTarget(
             name: "BridgeMCPTests",

@@ -11,5 +11,6 @@ public enum EventStoreError: Error, Equatable, Sendable {
   case idempotencyMismatch(origin: String, key: IdempotencyKey)
   case invalidLockSet
   case lockUnavailable(String)
+  case lockOwnershipMismatch(String)
   case corruptEvent(taskID: TaskID, sequence: Int64)
 }

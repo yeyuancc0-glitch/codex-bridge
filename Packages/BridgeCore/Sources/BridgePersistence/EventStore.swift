@@ -116,6 +116,13 @@ public actor EventStore {
     }
   }
 
+  public func taskIDs() throws -> [TaskID] {
+    try database.read { db in
+      try String.fetchAll(db, sql: "SELECT task_id FROM tasks ORDER BY created_at, task_id")
+        .map(TaskID.init(rawValue:))
+    }
+  }
+
   public func claimSubmission(
     origin: String,
     key: IdempotencyKey,
@@ -199,6 +206,39 @@ public actor EventStore {
         sql: "SELECT owner_task_id FROM locks WHERE lock_key = ?",
         arguments: [lockKey]
       ).map(TaskID.init(rawValue:))
+    }
+  }
+
+  public func releaseLocks(
+    _ lockKeys: [String],
+    ownerTaskID: TaskID
+  ) throws {
+    let orderedKeys = try Self.validatedLockKeys(lockKeys, ownerTaskID: ownerTaskID)
+    try database.write { db in
+      for key in orderedKeys {
+        let owner = try String.fetchOne(
+          db,
+          sql: "SELECT owner_task_id FROM locks WHERE lock_key = ?",
+          arguments: [key]
+        )
+        guard owner == nil || owner == ownerTaskID.rawValue else {
+          throw EventStoreError.lockOwnershipMismatch(key)
+        }
+      }
+      try db.execute(
+        sql: "DELETE FROM locks WHERE owner_task_id = ? AND lock_key IN (?, ?)",
+        arguments: [ownerTaskID.rawValue, orderedKeys[0], orderedKeys[1]]
+      )
+    }
+  }
+
+  public func lockKeysOwned(by ownerTaskID: TaskID) throws -> [String] {
+    try database.read { db in
+      try String.fetchAll(
+        db,
+        sql: "SELECT lock_key FROM locks WHERE owner_task_id = ? ORDER BY lock_key",
+        arguments: [ownerTaskID.rawValue]
+      )
     }
   }
 

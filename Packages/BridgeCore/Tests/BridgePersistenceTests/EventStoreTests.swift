@@ -159,6 +159,45 @@ final class EventStoreTests: XCTestCase {
     XCTAssertEqual(heldLockOwner, ownerA)
   }
 
+  func testOnlyOwnerCanAtomicallyReleaseItsTwoLocks() async throws {
+    let store = try EventStore.inMemory()
+    let owner = TaskID(rawValue: "task-lock-owner")
+    let stranger = TaskID(rawValue: "task-lock-stranger")
+    try await store.acquireLocks(["thread:one", "worktree:one"], ownerTaskID: owner)
+
+    do {
+      try await store.releaseLocks(
+        ["thread:one", "worktree:one"],
+        ownerTaskID: stranger
+      )
+      XCTFail("Expected lock ownership enforcement")
+    } catch {
+      XCTAssertEqual(error as? EventStoreError, .lockOwnershipMismatch("thread:one"))
+    }
+    let threadOwner = try await store.lockOwner(for: "thread:one")
+    let worktreeOwner = try await store.lockOwner(for: "worktree:one")
+    XCTAssertEqual(threadOwner, owner)
+    XCTAssertEqual(worktreeOwner, owner)
+
+    try await store.releaseLocks(["worktree:one", "thread:one"], ownerTaskID: owner)
+    let releasedThreadOwner = try await store.lockOwner(for: "thread:one")
+    let releasedWorktreeOwner = try await store.lockOwner(for: "worktree:one")
+    XCTAssertNil(releasedThreadOwner)
+    XCTAssertNil(releasedWorktreeOwner)
+    try await store.releaseLocks(["thread:one", "worktree:one"], ownerTaskID: owner)
+  }
+
+  func testTaskAndOwnedLockQueriesAreStableAndOrdered() async throws {
+    let store = try EventStore.inMemory()
+    let owner = TaskID(rawValue: "task-query-owner")
+    try await store.acquireLocks(["worktree:z", "thread:a"], ownerTaskID: owner)
+
+    let taskIDs = try await store.taskIDs()
+    let keys = try await store.lockKeysOwned(by: owner)
+    XCTAssertEqual(taskIDs, [owner])
+    XCTAssertEqual(keys, ["thread:a", "worktree:z"])
+  }
+
   private func makeEvent(
     taskID: TaskID,
     sequence: Int64,
