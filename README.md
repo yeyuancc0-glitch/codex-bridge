@@ -80,6 +80,7 @@ Run the full core suite or a user-authorized isolated live protocol scenario:
 
 ```bash
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
+Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/XcodeUITests test
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/verify-mcp-inspector.sh
 Scripts/build-tunnel-helper.sh OUTPUT_DIRECTORY

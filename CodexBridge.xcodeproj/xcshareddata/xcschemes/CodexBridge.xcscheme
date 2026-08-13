@@ -21,6 +21,20 @@
                ReferencedContainer = "container:CodexBridge.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "03E000000000000000000001"
+               BuildableName = "CodexBridgeUITests.xctest"
+               BlueprintName = "CodexBridgeUITests"
+               ReferencedContainer = "container:CodexBridge.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -30,6 +44,17 @@
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "03E000000000000000000001"
+               BuildableName = "CodexBridgeUITests.xctest"
+               BlueprintName = "CodexBridgeUITests"
+               ReferencedContainer = "container:CodexBridge.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

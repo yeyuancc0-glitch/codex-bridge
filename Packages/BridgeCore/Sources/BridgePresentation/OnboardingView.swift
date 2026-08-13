@@ -29,6 +29,8 @@ public struct OnboardingView: View {
       footer
     }
     .frame(minWidth: 640, minHeight: 520)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Codex Bridge 首次设置")
     .animation(
       reduceMotion ? nil : .easeOut(duration: 0.16),
       value: store.presentation.currentStep

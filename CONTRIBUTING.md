@@ -13,9 +13,10 @@ Codex Bridge accepts focused changes that preserve its local-first architecture 
 
 ```bash
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
-Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests
+Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests UITests
 Scripts/verify-mcp-inspector.sh
 Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/Xcode build CODE_SIGNING_ALLOWED=NO
+Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/XcodeUITests test
 ```
 
 Set `CODEX_BRIDGE_XCODE_DEVELOPER_DIR` when complete Xcode is installed somewhere other than the repository's verified development location or `/Applications/Xcode.app`.

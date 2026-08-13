@@ -110,6 +110,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - `BridgePipeline`：按不可变执行作用域持久化 Git、验证、Supervisor 与报告元数据，并维护可恢复的 finalization saga；普通查询不返回原始证据 payload。
 - `Prototypes/AppServerProbe`：阶段 0 可行性验证；稳定后能力进入 `BridgeCodexRPC`。
 - `Tests/`：真实集成、安全、UI 和隔离 Fixture；任务结束清理无长期价值的产物。
+- `UITests/`：Xcode 原生 App 自动化与无障碍验收；必须使用隔离用户目录，不能读取真实 Application Support 数据。
 
 ## 设计与产品原则
 
@@ -148,6 +149,7 @@ Scripts/with-xcode.sh swift build --package-path Packages/BridgeCore
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests
 Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/Xcode build CODE_SIGNING_ALLOWED=NO
+Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/XcodeUITests test
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/with-xcode.sh swift run --package-path Prototypes/AppServerProbe app-server-probe --help
 Scripts/verify-mcp-inspector.sh
