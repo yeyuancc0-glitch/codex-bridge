@@ -328,6 +328,7 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     project: RegisteredProject,
     baseline: GitBaselineEvidence
   ) throws -> RegisteredRoot {
+    try project.validateCurrentRoots()
     let repositoryRoot = project.repositoryRoot
     guard repositoryRoot.canonicalPath == baseline.canonicalRootPath,
       repositoryRoot.identity.device == baseline.rootIdentity?.device,

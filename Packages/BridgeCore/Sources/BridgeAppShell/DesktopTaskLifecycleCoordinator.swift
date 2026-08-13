@@ -5,9 +5,14 @@ import Foundation
 
 protocol DesktopTaskProjectionReading: Sendable {
   func task(_ taskID: TaskID) async throws -> TaskProjection
+  func reconcileActiveTasksAfterWake() async throws -> [TaskProjection]
 }
 
 extension TaskCoordinator: DesktopTaskProjectionReading {}
+
+extension DesktopTaskProjectionReading {
+  func reconcileActiveTasksAfterWake() async throws -> [TaskProjection] { [] }
+}
 
 protocol DesktopLifecycleConnectionControlling: Sendable {
   func suspendRemoteAdmissionsForSleep() async
@@ -399,6 +404,8 @@ actor DesktopTaskLifecycleCoordinator {
       isRevalidatingWake = true
       defer { isRevalidatingWake = false }
       do {
+        _ = try await coordinator.reconcileActiveTasksAfterWake()
+        guard isCurrent(generation) else { return }
         try await refreshAfterTaskChange()
         guard isCurrent(generation) else { return }
         try await connection.revalidateRemoteAdmissionsAfterWake()

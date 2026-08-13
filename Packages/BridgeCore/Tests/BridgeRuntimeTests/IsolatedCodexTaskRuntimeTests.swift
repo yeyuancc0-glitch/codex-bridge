@@ -611,6 +611,162 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     XCTAssertNil(streamEnd)
   }
 
+  func testReconciliationReadsExactCompletedTurnWithoutStartingAnotherTurn() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: reconciliationScript(
+        root: fixture.root.path,
+        threadStatus: #"{"type":"idle"}"#,
+        turns: [turnJSON(id: "turn-recovery", status: "completed")]
+      )
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let binding = ExecutionBinding(
+      threadID: ThreadID(rawValue: "thread-recovery"),
+      turnID: TurnID(rawValue: "turn-recovery"),
+      turnGeneration: 7
+    )
+
+    let result = try await runtime.reconcile(
+      taskID: TaskID(rawValue: "task-recovery-completed"),
+      submission: makeSubmission(
+        projectID: fixture.projectID,
+        thread: .existing(binding.threadID)
+      ),
+      binding: binding
+    )
+
+    XCTAssertEqual(result, .observed(binding: binding, status: .completed))
+  }
+
+  func testReconciliationOnlyReportsRunningForUniqueExactActiveTurn() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: reconciliationScript(
+        root: fixture.root.path,
+        threadStatus: #"{"type":"active","activeFlags":[]}"#,
+        turns: [turnJSON(id: "turn-recovery", status: "inProgress")]
+      )
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let binding = ExecutionBinding(
+      threadID: ThreadID(rawValue: "thread-recovery"),
+      turnID: TurnID(rawValue: "turn-recovery"),
+      turnGeneration: 3
+    )
+
+    let result = try await runtime.reconcile(
+      taskID: TaskID(rawValue: "task-recovery-running"),
+      submission: makeSubmission(
+        projectID: fixture.projectID,
+        thread: .existing(binding.threadID)
+      ),
+      binding: binding
+    )
+
+    XCTAssertEqual(result, .observed(binding: binding, status: .observedRunning))
+  }
+
+  func testReconciliationRejectsMalformedActiveThreadStatus() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: reconciliationScript(
+        root: fixture.root.path,
+        threadStatus: #"{"type":"active"}"#,
+        turns: [turnJSON(id: "turn-recovery", status: "inProgress")]
+      )
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let binding = ExecutionBinding(
+      threadID: ThreadID(rawValue: "thread-recovery"),
+      turnID: TurnID(rawValue: "turn-recovery"),
+      turnGeneration: 4
+    )
+
+    let result = try await runtime.reconcile(
+      taskID: TaskID(rawValue: "task-recovery-malformed-status"),
+      submission: makeSubmission(
+        projectID: fixture.projectID,
+        thread: .existing(binding.threadID)
+      ),
+      binding: binding
+    )
+
+    XCTAssertEqual(result, .ambiguous)
+  }
+
+  func testReconciliationFailsClosedForConflictingActiveTurns() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: reconciliationScript(
+        root: fixture.root.path,
+        threadStatus: #"{"type":"active","activeFlags":[]}"#,
+        turns: [
+          turnJSON(id: "turn-recovery", status: "inProgress"),
+          turnJSON(id: "turn-other", status: "inProgress"),
+        ]
+      )
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let binding = ExecutionBinding(
+      threadID: ThreadID(rawValue: "thread-recovery"),
+      turnID: TurnID(rawValue: "turn-recovery"),
+      turnGeneration: 2
+    )
+
+    let result = try await runtime.reconcile(
+      taskID: TaskID(rawValue: "task-recovery-conflict"),
+      submission: makeSubmission(
+        projectID: fixture.projectID,
+        thread: .existing(binding.threadID)
+      ),
+      binding: binding
+    )
+
+    XCTAssertEqual(result, .ambiguous)
+  }
+
+  func testStartPreparedRejectsExecutionRootIdentityReplacement() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: prepareOnlyScript(root: fixture.root.path)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let taskID = TaskID(rawValue: "task-root-replaced")
+    let submission = makeSubmission(projectID: fixture.projectID, thread: .new)
+    let preparation = try await runtime.prepare(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: nil
+    )
+    let moved = fixture.root.deletingLastPathComponent().appending(
+      path: "bridge-runtime-moved-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.moveItem(at: fixture.root, to: moved)
+    try FileManager.default.createDirectory(at: fixture.root, withIntermediateDirectories: false)
+    defer {
+      try? FileManager.default.removeItem(at: fixture.root)
+      try? FileManager.default.moveItem(at: moved, to: fixture.root)
+    }
+
+    do {
+      _ = try await runtime.startPrepared(
+        taskID: taskID,
+        submission: submission,
+        preparation: preparation
+      )
+      XCTFail("Expected the replaced execution root to fail closed")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .projectLocationInvalid)
+    }
+  }
+
   private struct Fixture {
     let root: URL
     let projectID: ProjectID
@@ -729,6 +885,41 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
       .replacingOccurrences(of: "__THREAD__", with: thread)
       .replacingOccurrences(of: "__TURN__", with: turn)
       .replacingOccurrences(of: "__COMPLETED__", with: completed)
+  }
+
+  private func reconciliationScript(
+    root: String,
+    threadStatus: String,
+    turns: [String]
+  ) -> String {
+    let thread = """
+      {"id":"thread-recovery","cwd":"\(root)","status":\(threadStatus),"turns":[\(turns.joined(separator: ","))]}
+      """
+    return #"""
+      IFS= read -r initialize
+      printf '%s\n' '{"id":1,"result":{"userAgent":"fixture/1","codexHome":"/private/fixture","platformFamily":"unix","platformOs":"macos"}}'
+      IFS= read -r initialized
+      IFS= read -r thread_read
+      case "$thread_read" in *'"method":"thread/read"'*) ;; *) exit 71 ;; esac
+      case "$thread_read" in *'"threadId":"thread-recovery"'*) ;; *) exit 71 ;; esac
+      case "$thread_read" in *'"includeTurns":true'*) ;; *) exit 71 ;; esac
+      printf '%s\n' '{"id":2,"result":{"thread":__THREAD__}}'
+      if IFS= read -r unexpected; then exit 72; fi
+      """#
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+  }
+
+  private func prepareOnlyScript(root: String) -> String {
+    let thread = threadJSON(id: "thread-prepared", root: root)
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        if IFS= read -r turn_start; then exit 73; fi
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
   }
 
   private func semanticFactsScript(root: String) -> String {

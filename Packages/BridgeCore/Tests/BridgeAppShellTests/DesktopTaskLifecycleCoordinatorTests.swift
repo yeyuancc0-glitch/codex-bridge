@@ -97,8 +97,10 @@ final class DesktopTaskLifecycleCoordinatorTests: XCTestCase {
 
     let suspended = await connection.suspendCount
     let drains = await connection.drainCount
+    let reconciliations = await projectionReader.reconciliationCount()
     XCTAssertEqual(suspended, 1)
     XCTAssertEqual(drains, 1)
+    XCTAssertEqual(reconciliations, 1)
     await coordinator.shutdown()
   }
 
@@ -391,6 +393,7 @@ final class DesktopTaskLifecycleCoordinatorTests: XCTestCase {
 
 private actor StaticTaskProjectionReader: DesktopTaskProjectionReading {
   private let projections: [TaskID: TaskProjection]
+  private var reconciliations = 0
 
   init(projections: [TaskID: TaskProjection]) {
     self.projections = projections
@@ -402,6 +405,13 @@ private actor StaticTaskProjectionReader: DesktopTaskProjectionReading {
     }
     return projection
   }
+
+  func reconcileActiveTasksAfterWake() -> [TaskProjection] {
+    reconciliations += 1
+    return []
+  }
+
+  func reconciliationCount() -> Int { reconciliations }
 }
 
 private actor RecordingTaskNotifier: DesktopTaskNotificationDelivering {

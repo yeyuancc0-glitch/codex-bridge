@@ -165,7 +165,7 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
 
   func beginWakeRevalidation() -> Transition? {
     lock.withLock {
-      guard state == .asleep else { return nil }
+      guard state == .asleep || state == .open else { return nil }
       epoch &+= 1
       state = .revalidating
       return Transition(epoch: epoch, reopensOnSuccess: true)

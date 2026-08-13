@@ -330,6 +330,24 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testOrphanAndRepeatedWakeRevalidationAreIdempotent() async throws {
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(),
+      monitorInterval: .seconds(60)
+    )
+    _ = try await runtime.configureLocal(
+      authentication: .path(secret: String(repeating: "w", count: 43))
+    )
+
+    try await runtime.revalidateRemoteAdmissionsAfterWake()
+    try await runtime.revalidateRemoteAdmissionsAfterWake()
+
+    let health = await runtime.health()
+    XCTAssertEqual(health.lifecycle, .ready)
+    await runtime.stop()
+  }
+
   func testSleepSupersedesAnOlderReplacementTransition() throws {
     let gate = DesktopRemoteAdmissionGate()
     let transition = try XCTUnwrap(gate.beginReplacement())

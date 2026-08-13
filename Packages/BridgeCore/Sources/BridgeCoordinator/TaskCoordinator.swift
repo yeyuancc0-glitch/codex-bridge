@@ -36,10 +36,10 @@ public actor TaskCoordinator {
     let lastSequence: Int64
   }
 
-  private let store: EventStore
+  let store: EventStore
   private let admission: any TaskAdmissionPolicy
-  private let runtime: any TaskExecutionRuntime
-  private let pipeline: (any TaskPipelineLifecycle)?
+  let runtime: any TaskExecutionRuntime
+  let pipeline: (any TaskPipelineLifecycle)?
   private let encoder: JSONEncoder
   private let decoder = JSONDecoder()
   private var workers: [TaskID: Task<Void, Never>] = [:]
@@ -608,10 +608,11 @@ public actor TaskCoordinator {
         {
           continue
         }
-        guard Self.requiresRecovery(current.aggregate.phase) else { continue }
-        current = try await appendDomain(.recoveryStarted, taskID: taskID)
-        current = try await appendDomain(.recoveryAmbiguous, taskID: taskID)
-        recovered.append(current)
+        guard Self.requiresRecovery(current.aggregate.phase) || current.aggregate.phase == .unknown
+        else { continue }
+        if let reconciled = try await reconcileRecovery(current) {
+          recovered.append(reconciled)
+        }
       }
       cursor = taskIDs.last
     }
@@ -623,14 +624,15 @@ public actor TaskCoordinator {
     guard current.aggregate.phase == .recovering else {
       throw TaskCoordinatorError.recoveryRequiresReconciliation(current.aggregate.phase)
     }
-    let releasesLocks = phase.isTerminal || phase == .suspended
+    guard phase == .suspended else {
+      throw TaskCoordinatorError.recoveryRequiresReconciliation(phase)
+    }
     let projection = try await appendDomain(
       .recoveryResolved(to: phase),
       taskID: taskID,
-      releasesOwnedLocks: releasesLocks
+      releasesOwnedLocks: true
     )
     try await pipeline?.discardTaskState(taskID: taskID)
-    if phase == .preparing { requestStart(taskID) }
     return projection
   }
 
@@ -669,6 +671,45 @@ public actor TaskCoordinator {
       throw TaskCoordinatorError.recoveryRequiresReconciliation(current.aggregate.phase)
     }
     return try await appendDomain(.recoveryStarted, taskID: taskID)
+  }
+
+  func commitRecoveryEvents(
+    _ events: [TaskEvent],
+    current: TaskProjection,
+    releasesOwnedLocks: Bool = false
+  ) async throws -> TaskProjection {
+    var aggregate = current.aggregate
+    var sequence = current.lastSequence
+    let createdAt = Date()
+    var envelopes: [TaskEventEnvelope] = []
+    for event in events {
+      aggregate = try TaskReducer.reduce(aggregate, event: event)
+      sequence = try Self.nextSequence(after: sequence, taskID: current.aggregate.id)
+      envelopes.append(
+        try envelope(
+          .domain(event),
+          taskID: current.aggregate.id,
+          sequence: sequence,
+          createdAt: createdAt
+        )
+      )
+    }
+    let projection = TaskProjection(aggregate: aggregate, lastSequence: sequence)
+    let snapshot = try stateSnapshot(for: projection)
+    if releasesOwnedLocks {
+      try await store.appendBatchReleasingOwnedLocks(
+        envelopes,
+        expectedLastSequence: current.lastSequence,
+        snapshot: snapshot
+      )
+    } else {
+      try await store.appendBatch(
+        envelopes,
+        expectedLastSequence: current.lastSequence,
+        snapshot: snapshot
+      )
+    }
+    return projection
   }
 
   private func requestStart(_ taskID: TaskID) {

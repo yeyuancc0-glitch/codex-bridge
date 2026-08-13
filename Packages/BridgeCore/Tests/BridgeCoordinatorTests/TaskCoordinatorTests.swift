@@ -756,6 +756,212 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(suspendedLocks, [])
   }
 
+  func testRecoveryMovesExactCompletedTurnToVerifyingWithoutStartingAnotherTurn() async throws {
+    let store = try EventStore.inMemory()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "recover-completed", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+
+    let recoveringRuntime = FakeRuntime(reconciliationStatus: .completed)
+    let restarted = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: recoveringRuntime
+    )
+    let recovered = try await restarted.recoverIncompleteTasks()
+
+    XCTAssertEqual(recovered.map(\.aggregate.phase), [.verifying])
+    let startCount = await recoveringRuntime.startCount()
+    let locks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertEqual(startCount, 0)
+    XCTAssertEqual(locks.count, 2)
+  }
+
+  func testRecoveryFailsExactFailedTurnAndReleasesLocks() async throws {
+    let store = try EventStore.inMemory()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "recover-failed", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+
+    let restarted = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime(reconciliationStatus: .failed)
+    )
+    let recovered = try await restarted.recoverIncompleteTasks()
+
+    XCTAssertEqual(recovered.map(\.aggregate.phase), [.failed])
+    let locks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertTrue(locks.isEmpty)
+  }
+
+  func testRecoveryUsesPersistedSuspendIntentForExactInterruptedTurn() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "recover-interrupted", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    _ = try await coordinator.suspend(taskID: submitted.aggregate.id)
+
+    let restarted = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime(reconciliationStatus: .interrupted)
+    )
+    let recovered = try await restarted.recoverIncompleteTasks()
+
+    XCTAssertEqual(recovered.map(\.aggregate.phase), [.suspended])
+    let locks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertTrue(locks.isEmpty)
+  }
+
+  func testLaterRecoveryCanResolvePreviouslyUnknownCompletedTurn() async throws {
+    let store = try EventStore.inMemory()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "recover-later", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let ambiguous = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    _ = try await ambiguous.recoverIncompleteTasks()
+    let unknown = try await ambiguous.task(submitted.aggregate.id)
+    XCTAssertEqual(unknown.aggregate.phase, .unknown)
+
+    let completed = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime(reconciliationStatus: .completed)
+    )
+    let recovered = try await completed.recoverIncompleteTasks()
+
+    XCTAssertEqual(recovered.map(\.aggregate.phase), [.verifying])
+    let verifying = try await completed.task(submitted.aggregate.id)
+    XCTAssertEqual(verifying.aggregate.phase, .verifying)
+  }
+
+  func testRecoveryCannotOverwriteAConcurrentTaskMutation() async throws {
+    let store = try EventStore.inMemory()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "recover-cas", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let running = try await coordinator.task(submitted.aggregate.id)
+    let binding = try XCTUnwrap(running.aggregate.binding)
+    let gate = SteerGate(failsOnRelease: false)
+    let recoveringRuntime = FakeRuntime(
+      reconciliationGate: gate,
+      reconciliationStatus: .completed
+    )
+    let restarted = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: recoveringRuntime
+    )
+    let recovery = Task {
+      try await restarted.recoverIncompleteTasks()
+    }
+    await gate.waitUntilStarted()
+
+    _ = try await restarted.steerWithResult(
+      taskID: submitted.aggregate.id,
+      expectedTurnID: binding.turnID,
+      prompt: "Keep the persisted intent authoritative."
+    )
+    await gate.release()
+
+    do {
+      _ = try await recovery.value
+      XCTFail("Expected recovery CAS conflict")
+    } catch EventStoreError.optimisticConcurrencyConflict {}
+    let projection = try await restarted.task(submitted.aggregate.id)
+    XCTAssertEqual(projection.aggregate.phase, .running)
+    XCTAssertEqual(projection.lastSequence, running.lastSequence + 1)
+  }
+
+  func testWakeRootInvalidationAbortsBeforeFailureReleasesLocks() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime(reconciliationStatus: .invalidated)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "wake-invalidated", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+
+    _ = try await coordinator.reconcileActiveTasksAfterWake()
+    try await waitForPhase(.failed, taskID: taskID, coordinator: coordinator)
+
+    let abortCount = await runtime.abortCount()
+    let locks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertEqual(abortCount, 1)
+    XCTAssertTrue(locks.isEmpty)
+  }
+
+  func testWakeCannotKeepRunningWithoutAnAttachedObservationSession() async throws {
+    let store = try EventStore.inMemory()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "wake-observed-only", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let restarted = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime(reconciliationStatus: .observedRunning)
+    )
+
+    let reconciled = try await restarted.reconcileActiveTasksAfterWake()
+
+    XCTAssertEqual(reconciled.map(\.aggregate.phase), [.unknown])
+    let locks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertEqual(locks.count, 2)
+  }
+
   func testRecoveryReleasesLegacyLocksForSuspendedTask() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -900,6 +1106,8 @@ private actor FakeRuntime: TaskExecutionRuntime {
   private let failInterrupt: Bool
   private let steerGate: SteerGate?
   private let approvalGate: SteerGate?
+  private let reconciliationGate: SteerGate?
+  private let reconciliationStatus: TaskExecutionReconciliationStatus?
   private var starts = 0
   private var taskStarts: [TaskID: UInt64] = [:]
   private var interrupts = 0
@@ -914,12 +1122,16 @@ private actor FakeRuntime: TaskExecutionRuntime {
     failApprovalResolution: Bool = false,
     failInterrupt: Bool = false,
     steerGate: SteerGate? = nil,
-    approvalGate: SteerGate? = nil
+    approvalGate: SteerGate? = nil,
+    reconciliationGate: SteerGate? = nil,
+    reconciliationStatus: TaskExecutionReconciliationStatus? = nil
   ) {
     self.failApprovalResolution = failApprovalResolution
     self.failInterrupt = failInterrupt
     self.steerGate = steerGate
     self.approvalGate = approvalGate
+    self.reconciliationGate = reconciliationGate
+    self.reconciliationStatus = reconciliationStatus
   }
 
   func lockKeys(
@@ -1002,6 +1214,16 @@ private actor FakeRuntime: TaskExecutionRuntime {
     aborts += 1
     bindings[taskID] = nil
     continuations.removeValue(forKey: taskID)?.finish()
+  }
+
+  func reconcile(
+    taskID _: TaskID,
+    submission _: TaskSubmission,
+    binding: ExecutionBinding
+  ) async -> TaskExecutionReconciliationResult {
+    if let reconciliationGate { _ = await reconciliationGate.block() }
+    guard let reconciliationStatus else { return .ambiguous }
+    return .observed(binding: binding, status: reconciliationStatus)
   }
 
   func emit(_ observation: TaskExecutionObservation, taskID: TaskID) {

@@ -91,6 +91,16 @@ The fixture chooses the current default model and the first currently advertised
 
 Each app-server event stream has exactly one consumer cursor. Creating multiple iterators would distribute events between consumers rather than broadcast them and can lose the matching `turn/started` or completion fact.
 
+## Startup and wake reconciliation
+
+- `thread/read(includeTurns: true)` returns Thread status and bounded Turn history. This version has closed Turn statuses (`completed`, `interrupted`, `failed`, `inProgress`) but no `turn/read`, active-turn attachment, event replay, `thread/subscribe`, or old-turn resume method.
+- Recovery inspection runs in a fresh one-shot app-server and sends only `initialize` plus `thread/read`. Bridge requires the exact persisted Thread ID, exact registered cwd, unique bounded Turn IDs, a known Thread status, and the exact persisted Turn ID before accepting a fact.
+- Exact `completed`, `interrupted`, or `failed` is authoritative enough to reduce the persisted task without starting another Turn. Root identity and current project policy are revalidated first.
+- `inProgress` is accepted only when the Thread is active and that Turn is the sole in-progress Turn. This proves a read-time observation, not ownership of the original event stream. Without the original attached Runtime session, Bridge moves the task to `unknown` and retains its Thread/worktree locks.
+- Recovery must never call `thread/resume` followed by `turn/start`: that starts a new generation and cannot recover the old Turn. Wake handling keeps remote submission closed until task reconciliation, durable fact refresh, and current-transport revalidation complete.
+
+These boundaries have fake app-server process coverage. Credentialed recovery against a real existing user Thread remains a release acceptance item.
+
 ## Approvals
 
 Responses are method-specific:

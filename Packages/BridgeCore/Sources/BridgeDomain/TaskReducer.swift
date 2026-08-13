@@ -500,6 +500,7 @@ extension TaskReducer {
       .suspended,
       .verifying,
       .completed,
+      .interrupted,
     ]
     guard allowedTargets.contains(target) else {
       throw TaskTransitionError.invalidRecoveryTarget(target)
@@ -515,7 +516,7 @@ extension TaskReducer {
       next.resolvingApprovalIDs.removeAll()
       next.approvalEvidenceByID.removeAll()
     }
-    if target == .suspended || target == .verifying || target == .completed {
+    if target == .suspended || target == .verifying || target.isTerminal {
       next.stopIntent = nil
     }
     return next

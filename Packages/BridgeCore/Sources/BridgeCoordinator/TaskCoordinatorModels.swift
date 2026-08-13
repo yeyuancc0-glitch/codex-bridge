@@ -51,6 +51,24 @@ public enum TaskExecutionObservation: Equatable, Sendable {
   case failed(reason: String)
 }
 
+public enum TaskExecutionReconciliationStatus: Equatable, Sendable {
+  /// The runtime still owns the exact session and its observation stream.
+  case attached
+  /// A read-only wire snapshot reported the exact turn as running, but the runtime
+  /// cannot reattach to its observation stream.
+  case observedRunning
+  case completed
+  case interrupted
+  case failed
+  /// The registered project/root or execution policy no longer authorizes the session.
+  case invalidated
+}
+
+public enum TaskExecutionReconciliationResult: Equatable, Sendable {
+  case observed(binding: ExecutionBinding, status: TaskExecutionReconciliationStatus)
+  case ambiguous
+}
+
 public enum TaskPlanStepStatus: String, Codable, Equatable, Sendable {
   case pending
   case inProgress
@@ -325,6 +343,11 @@ public protocol TaskExecutionRuntime: Sendable {
   func steer(taskID: TaskID, binding: ExecutionBinding, prompt: String) async throws
   func interrupt(taskID: TaskID, binding: ExecutionBinding) async throws
   func abortSession(taskID: TaskID, binding: ExecutionBinding) async throws
+  func reconcile(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    binding: ExecutionBinding
+  ) async throws -> TaskExecutionReconciliationResult
 }
 
 /// Opt-in durable startup protocol used by production runtimes.
@@ -354,6 +377,14 @@ public enum TaskExecutionRuntimeCompatibilityError: Error, Equatable, Sendable {
 }
 
 extension TaskExecutionRuntime {
+  public func reconcile(
+    taskID _: TaskID,
+    submission _: TaskSubmission,
+    binding _: ExecutionBinding
+  ) async throws -> TaskExecutionReconciliationResult {
+    .ambiguous
+  }
+
   public func approvalEvidence(
     taskID _: TaskID,
     approvalID _: ApprovalID

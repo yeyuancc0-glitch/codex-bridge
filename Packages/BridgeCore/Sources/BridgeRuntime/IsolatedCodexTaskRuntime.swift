@@ -81,6 +81,7 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     let preparation: PreparedTaskExecution
     let submission: TaskSubmission
     let root: RegisteredRoot
+    let repositoryRoot: RegisteredRoot
   }
 
   private struct TerminatingSession: Sendable {
@@ -249,7 +250,8 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       preparedStates[taskID] = PreparedState(
         preparation: preparation,
         submission: submission,
-        root: location.root
+        root: location.root,
+        repositoryRoot: location.repositoryRoot
       )
       return preparation
     } catch let error as IsolatedCodexTaskRuntimeError {
@@ -272,6 +274,12 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       state.submission == submission, let session = sessions[taskID]
     else {
       throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
+    do {
+      try state.root.validateCurrentIdentity()
+      try state.repositoryRoot.validateCurrentIdentity()
+    } catch {
+      throw IsolatedCodexTaskRuntimeError.projectLocationInvalid
     }
     let turn: TurnStartResponse
     do {
@@ -340,6 +348,68 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       throw IsolatedCodexTaskRuntimeError.sessionUnavailable
     }
     return await session.approvalEvidence(approvalID)
+  }
+
+  public func reconcile(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    binding: ExecutionBinding
+  ) async throws -> TaskExecutionReconciliationResult {
+    let location: AuthorizedLocation
+    do {
+      location = try await authorizedLocation(for: submission)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      return .observed(binding: binding, status: .invalidated)
+    }
+    if let session = sessions[taskID] {
+      guard sessionBindings[taskID] == binding else { return .ambiguous }
+      guard !(await session.hasTerminated()) else { return .ambiguous }
+      return .observed(binding: binding, status: .attached)
+    }
+    guard terminatingSessions[taskID] == nil, preparationReservations[taskID] == nil else {
+      return .ambiguous
+    }
+    do {
+      let client = CodexAppServerClient(
+        configuration: configuration.appServer,
+        defaultTimeoutNanoseconds: configuration.requestTimeoutNanoseconds,
+        eventBufferLimit: configuration.eventBufferLimit
+      )
+      let drain = Task {
+        for await event in client.events {
+          guard case .serverRequest(let request) = event else { continue }
+          try? await client.respond(
+            to: request.id,
+            errorCode: -32601,
+            message: "Recovery inspection cannot approve operations."
+          )
+        }
+      }
+      defer { drain.cancel() }
+      do {
+        try await client.start()
+        _ = try await client.initialize(clientInfo: configuration.clientInfo)
+        let response = try await client.readThreadForReconciliation(
+          ThreadReadParams(threadId: binding.threadID.rawValue, includeTurns: true)
+        )
+        await client.stop()
+        return Self.reconciliationResult(
+          response,
+          binding: binding,
+          canonicalRoot: location.root.canonicalPath
+        )
+      } catch {
+        await client.stop()
+        if error is CancellationError { throw error }
+        return .ambiguous
+      }
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      return .ambiguous
+    }
   }
 
   public func finalizeApprovalResolution(
@@ -737,6 +807,67 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     else {
       throw IsolatedCodexTaskRuntimeError.threadMismatch
     }
+  }
+
+  private static func reconciliationResult(
+    _ response: ThreadReconciliationReadResponse,
+    binding: ExecutionBinding,
+    canonicalRoot: String
+  ) -> TaskExecutionReconciliationResult {
+    let thread = response.thread
+    guard isSafeWireIdentifier(thread.id), thread.id == binding.threadID.rawValue,
+      thread.cwd == canonicalRoot, validReconciliationThreadStatus(thread.status),
+      !thread.turns.isEmpty, thread.turns.count <= 4_096
+    else { return .ambiguous }
+
+    var seen = Set<String>()
+    var exact: CodexReconciliationTurn?
+    var inProgressCount = 0
+    for turn in thread.turns {
+      guard isSafeWireIdentifier(turn.id), seen.insert(turn.id).inserted else {
+        return .ambiguous
+      }
+      if turn.status == "inProgress" { inProgressCount += 1 }
+      if turn.id == binding.turnID.rawValue { exact = turn }
+    }
+    guard let exact else { return .ambiguous }
+    switch exact.status {
+    case "completed":
+      return .observed(binding: binding, status: .completed)
+    case "interrupted":
+      return .observed(binding: binding, status: .interrupted)
+    case "failed":
+      return .observed(binding: binding, status: .failed)
+    case "inProgress":
+      guard inProgressCount == 1, reconciliationThreadIsActive(thread.status) else {
+        return .ambiguous
+      }
+      return .observed(binding: binding, status: .observedRunning)
+    default:
+      return .ambiguous
+    }
+  }
+
+  private static func validReconciliationThreadStatus(_ value: JSONValue) -> Bool {
+    guard let object = value.objectValue, let type = object["type"]?.stringValue else {
+      return false
+    }
+    switch type {
+    case "notLoaded", "idle", "systemError":
+      return true
+    case "active":
+      guard case .array(let flags)? = object["activeFlags"] else { return false }
+      return flags.allSatisfy {
+        guard let flag = $0.stringValue else { return false }
+        return flag == "waitingOnApproval" || flag == "waitingOnUserInput"
+      }
+    default:
+      return false
+    }
+  }
+
+  private static func reconciliationThreadIsActive(_ value: JSONValue) -> Bool {
+    value.objectValue?["type"]?.stringValue == "active"
   }
 
   private static func isSafeWireIdentifier(_ value: String) -> Bool {
