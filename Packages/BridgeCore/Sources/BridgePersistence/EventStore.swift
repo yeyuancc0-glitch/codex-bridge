@@ -9,7 +9,7 @@ public actor EventStore {
     case rekeyOwned(from: [String], to: [String])
   }
 
-  private let database: DatabaseQueue
+  let database: DatabaseQueue
   private var changeContinuations: [UUID: AsyncStream<TaskID>.Continuation] = [:]
 
   public init(path: String) throws {

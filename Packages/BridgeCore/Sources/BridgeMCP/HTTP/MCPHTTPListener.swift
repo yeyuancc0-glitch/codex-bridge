@@ -126,6 +126,7 @@ public actor MCPHTTPListener {
       return
     }
     isStopping = true
+    admission.beginStopping()
     currentStartID = nil
     let channel = serverChannel
     let group = eventLoopGroup
@@ -137,7 +138,9 @@ public actor MCPHTTPListener {
     for child in children {
       try? await child.close().get()
     }
+    await admission.waitForRequestDrain()
     try? await group?.shutdownGracefully()
+    admission.resetAfterStop()
     isStopping = false
     let waiters = stopWaiters
     stopWaiters.removeAll(keepingCapacity: false)

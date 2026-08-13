@@ -21,6 +21,12 @@ actor DesktopMCPTaskOperations: BridgeMCPTaskOperations {
     await admission.setRemoteCheck(check)
   }
 
+  func setRemoteAdmissionLeaseCheck(
+    _ check: (@Sendable () async -> DesktopRemoteAdmissionLease?)?
+  ) async {
+    await admission.setRemoteLeaseCheck(check)
+  }
+
   func getTask(
     taskID: String,
     deadline: ContinuousClock.Instant
@@ -69,7 +75,8 @@ actor DesktopMCPTaskOperations: BridgeMCPTaskOperations {
     _ submission: TaskSubmission,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPTaskSubmissionReceipt {
-    try await admission.requireSubmissionAllowed()
+    let lease = try await admission.acquireSubmissionLease()
+    defer { lease?.release() }
     return try await application.submitTask(submission, deadline: deadline)
   }
 
@@ -110,6 +117,7 @@ actor DesktopMCPTaskOperations: BridgeMCPTaskOperations {
 actor DesktopMCPTaskAdmission {
   private var requiresHealthyRemote = false
   private var remoteCheck: (@Sendable () async -> Bool)?
+  private var remoteLeaseCheck: (@Sendable () async -> DesktopRemoteAdmissionLease?)?
 
   func configure(requiresHealthyRemote: Bool) {
     self.requiresHealthyRemote = requiresHealthyRemote
@@ -119,10 +127,28 @@ actor DesktopMCPTaskAdmission {
     remoteCheck = check
   }
 
+  func setRemoteLeaseCheck(
+    _ check: (@Sendable () async -> DesktopRemoteAdmissionLease?)?
+  ) {
+    remoteLeaseCheck = check
+  }
+
   func requireSubmissionAllowed() async throws {
-    guard requiresHealthyRemote else { return }
+    let lease = try await acquireSubmissionLease()
+    lease?.release()
+  }
+
+  func acquireSubmissionLease() async throws -> DesktopRemoteAdmissionLease? {
+    guard requiresHealthyRemote else { return nil }
+    if let remoteLeaseCheck {
+      guard let lease = await remoteLeaseCheck() else {
+        throw BridgeMCPQueryError.unavailable
+      }
+      return lease
+    }
     guard let remoteCheck, await remoteCheck() else {
       throw BridgeMCPQueryError.unavailable
     }
+    return nil
   }
 }

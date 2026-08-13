@@ -3,6 +3,7 @@ import BridgeApplication
 import BridgeCoordinator
 import BridgeDomain
 import BridgeMCP
+import BridgePersistence
 import BridgePresentation
 import BridgeProjects
 import BridgeTunnel
@@ -17,7 +18,8 @@ struct DesktopPresentationProjection {
     diagnostics: [LogEntryPresentation],
     connection: DesktopTransportHealth = .stopped,
     operatorState: DesktopOperatorState = DesktopOperatorState(),
-    canExportSupportBundle: Bool = false
+    canExportSupportBundle: Bool = false,
+    lifecyclePreferences: LifecyclePreferences = .defaults
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     let taskRows = tasks.map { taskRow($0.0, projects: projectsByID, events: $0.1) }
@@ -99,7 +101,7 @@ struct DesktopPresentationProjection {
           canExport: canExportSupportBundle
         )
       ),
-      settings: .ready(settings())
+      settings: .ready(settings(lifecyclePreferences))
     )
   }
 
@@ -607,7 +609,7 @@ struct DesktopPresentationProjection {
     return components.string ?? "127.0.0.1"
   }
 
-  private static func settings() -> SettingsPagePresentation {
+  private static func settings(_ preferences: LifecyclePreferences) -> SettingsPagePresentation {
     SettingsPagePresentation(
       general: [
         SettingTogglePresentation(
@@ -622,19 +624,27 @@ struct DesktopPresentationProjection {
         SettingTogglePresentation(
           id: "task-notifications",
           title: "任务通知",
-          detail: "将在通知权限配置完成后启用",
-          isOn: false,
-          isEnabled: false
+          detail: preferences.notificationsEnabled
+            ? "终态任务按持久事件序号去重投递" : "开启时由 macOS 请求通知权限",
+          isOn: preferences.notificationsEnabled,
+          isEnabled: true
         )
       ],
       security: [
+        SettingTogglePresentation(
+          id: "idle-sleep-prevention",
+          title: "运行任务时防止自动休眠",
+          detail: "仅在存在权威活跃任务快照时保持系统活动",
+          isOn: preferences.idleSleepEnabled,
+          isEnabled: true
+        ),
         SettingTogglePresentation(
           id: "remote-receiving",
           title: "接收远程任务",
           detail: "Tunnel 严格就绪前保持关闭",
           isOn: false,
           isEnabled: false
-        )
+        ),
       ],
       retentionSummary: "任务事件持久保存；支持包仅导出脱敏结构化事实"
     )

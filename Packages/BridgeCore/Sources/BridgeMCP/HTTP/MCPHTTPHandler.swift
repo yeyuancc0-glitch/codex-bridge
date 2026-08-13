@@ -28,7 +28,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   private let admission: MCPHTTPAdmission
   private let writability = MCPHTTPWritability()
   private var inputState = InputState.waiting
-  private var requestAdmitted = false
+  private var requestLease: MCPHTTPRequestLease?
   private var headerTimeout: Scheduled<Void>?
   private var bodyTimeout: Scheduled<Void>?
   private var responseTimeout: Scheduled<Void>?
@@ -80,7 +80,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   package func channelInactive(context: ChannelHandlerContext) {
     cancelTimeouts()
     responseTask?.cancel()
-    releaseRequest()
+    if responseTask == nil { releaseRequest() }
     releaseConnection(context.channel)
     writability.update(isWritable: false, isOpen: false)
     context.fireChannelInactive()
@@ -89,6 +89,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   package func errorCaught(context: ChannelHandlerContext, error: any Error) {
     cancelTimeouts()
     responseTask?.cancel()
+    if responseTask == nil { releaseRequest() }
     context.close(promise: nil)
   }
 
@@ -120,11 +121,11 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       reject(status: .requestHeaderFieldsTooLarge, context: context)
       return
     }
-    guard admission.admitRequest() else {
+    guard let lease = admission.admitRequest() else {
       reject(status: .tooManyRequests, context: context)
       return
     }
-    requestAdmitted = true
+    requestLease = lease
 
     guard let contentLength = validContentLength(head.headers) else {
       reject(status: .badRequest, context: context)
@@ -169,13 +170,20 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       let eventLoop = context.eventLoop
       activeResponseSessionID = request.sessionID
       scheduleResponseTimeout(channel: channel, eventLoop: eventLoop)
+      let lease = requestLease
+      requestLease = nil
+      guard let lease else {
+        reject(status: .badRequest, context: context)
+        return
+      }
       nonisolated(unsafe) let sendableContext = context
       responseTask = Task {
         await handle(
           request,
           channel: channel,
           eventLoop: eventLoop,
-          context: sendableContext
+          context: sendableContext,
+          lease: lease
         )
       }
     case .rejecting:
@@ -189,8 +197,10 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     _ state: RequestState,
     channel: any Channel,
     eventLoop: any EventLoop,
-    context: ChannelHandlerContext
+    context: ChannelHandlerContext,
+    lease: MCPHTTPRequestLease
   ) async {
+    defer { lease.release() }
     let request = makeRequest(state)
     let response = await handler(request)
     let sessionID = state.sessionID ?? responseSessionID(response)
@@ -353,7 +363,6 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       self.responseTimeout?.cancel()
       self.responseTimeout = nil
       self.activeResponseSessionID = nil
-      self.releaseRequest()
       guard sendableContext.channel.isActive else { return }
       self.inputState = .waiting
       self.responseTask = nil
@@ -498,9 +507,9 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   }
 
   private func releaseRequest() {
-    guard requestAdmitted else { return }
-    requestAdmitted = false
-    admission.releaseRequest()
+    let lease = requestLease
+    requestLease = nil
+    lease?.release()
   }
 
   private func releaseConnection(_ channel: any Channel) {

@@ -26,6 +26,10 @@ actor DesktopMCPRuntime {
   private var server: MCPBridgeServer?
   private var endpoint: MCPBridgeEndpoint?
   private var authentication: DesktopMCPAuthentication?
+  private var lifecycleGeneration: UInt64 = 0
+  private var isShutdown = false
+  private var mutationActive = false
+  private var mutationWaiters: [CheckedContinuation<Void, Never>] = []
 
   init(application: BridgeApplicationService, status: BridgeStatusStore) {
     self.application = application
@@ -34,7 +38,12 @@ actor DesktopMCPRuntime {
   }
 
   func start(authentication requested: DesktopMCPAuthentication) async throws -> URL {
+    await beginMutation()
+    defer { endMutation() }
+    guard !isShutdown else { throw DesktopBackendError.operationFailed }
     if requested == authentication, let endpoint { return endpoint.localURL }
+    lifecycleGeneration &+= 1
+    let generation = lifecycleGeneration
     if let server { await server.stop() }
     let configuration: MCPHTTPConfiguration
     switch requested {
@@ -53,6 +62,10 @@ actor DesktopMCPRuntime {
       httpConfiguration: configuration
     )
     let endpoint = try await server.start()
+    guard !isShutdown, generation == lifecycleGeneration else {
+      await server.stop()
+      throw CancellationError()
+    }
     self.server = server
     self.endpoint = endpoint
     authentication = requested
@@ -121,6 +134,21 @@ actor DesktopMCPRuntime {
   }
 
   func stop() async {
+    await beginMutation()
+    defer { endMutation() }
+    lifecycleGeneration &+= 1
+    await stopCurrentServer()
+  }
+
+  func shutdown() async {
+    isShutdown = true
+    await beginMutation()
+    defer { endMutation() }
+    lifecycleGeneration &+= 1
+    await stopCurrentServer()
+  }
+
+  private func stopCurrentServer() async {
     let server = server
     self.server = nil
     endpoint = nil
@@ -129,10 +157,33 @@ actor DesktopMCPRuntime {
     await status.update(Self.statusSnapshot(mcpState: "stopped"))
   }
 
+  private func beginMutation() async {
+    guard mutationActive else {
+      mutationActive = true
+      return
+    }
+    await withCheckedContinuation { mutationWaiters.append($0) }
+  }
+
+  private func endMutation() {
+    guard let next = mutationWaiters.first else {
+      mutationActive = false
+      return
+    }
+    mutationWaiters.removeFirst()
+    next.resume()
+  }
+
   func setRemoteTaskAdmissionCheck(
     _ check: (@Sendable () async -> Bool)?
   ) async {
     await taskOperations.setRemoteAdmissionCheck(check)
+  }
+
+  func setRemoteTaskAdmissionLeaseCheck(
+    _ check: (@Sendable () async -> DesktopRemoteAdmissionLease?)?
+  ) async {
+    await taskOperations.setRemoteAdmissionLeaseCheck(check)
   }
 
   private static func statusSnapshot(mcpState: String) -> BridgeStatusSnapshot {

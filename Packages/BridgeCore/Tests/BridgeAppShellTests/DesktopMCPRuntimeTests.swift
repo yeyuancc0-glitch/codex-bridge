@@ -53,6 +53,14 @@ final class DesktopMCPRuntimeTests: XCTestCase {
     )
 
     await backend.shutdown()
+    await assertThrowsErrorAsync(
+      try await DesktopMCPRuntime.validate(
+        transport: DesktopBoundedHTTPTransport(
+          endpoint: localURL,
+          authorization: "Bearer bounded-transport-test"
+        )
+      )
+    )
   }
 
   func testRemoteSubmitPublishesLocalConfirmationAndCanBeRejected() async throws {

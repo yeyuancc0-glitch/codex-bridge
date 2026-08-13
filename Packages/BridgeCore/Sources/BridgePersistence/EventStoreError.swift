@@ -13,4 +13,8 @@ public enum EventStoreError: Error, Equatable, Sendable {
   case lockUnavailable(String)
   case lockOwnershipMismatch(String)
   case corruptEvent(taskID: TaskID, sequence: Int64)
+  case notificationCursorConflict(consumerID: String, expected: Int64, actual: Int64)
+  case notificationCandidateMismatch(String)
+  case notificationLeaseUnavailable(String)
+  case notificationNotFound(consumerID: String, stableKey: String)
 }

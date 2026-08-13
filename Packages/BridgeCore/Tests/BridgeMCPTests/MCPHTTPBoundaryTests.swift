@@ -1,6 +1,8 @@
 import Darwin
 import Foundation
 import MCP
+import NIOEmbedded
+import NIOHTTP1
 import XCTest
 
 @testable import BridgeMCP
@@ -326,6 +328,51 @@ final class MCPHTTPBoundaryTests: XCTestCase {
     }
   }
 
+  func testDisconnectBeforeRequestEndReleasesAdmissionLease() async throws {
+    let admission = MCPHTTPAdmission(maximumConnections: 1, maximumActiveRequests: 1)
+    let handler = MCPHTTPHandler(
+      configuration: try MCPHTTPConfiguration(pathSecret: secret),
+      handler: { _ in .ok() },
+      emissionObserver: nil,
+      admission: admission
+    )
+    let channel = EmbeddedChannel(handler: handler)
+    var head = HTTPRequestHead(version: .http1_1, method: .POST, uri: route)
+    head.headers.add(name: "Content-Length", value: "5")
+
+    XCTAssertNoThrow(try channel.writeInbound(HTTPServerRequestPart.head(head)))
+    XCTAssertEqual(admission.metrics().activeRequests, 1)
+
+    XCTAssertNoThrow(try channel.close().wait())
+    channel.embeddedEventLoop.run()
+    XCTAssertEqual(admission.metrics().activeRequests, 0)
+  }
+
+  func testRequestLeaseReleaseIsIdempotentAndCannotDrainAnotherRequest() async throws {
+    let admission = MCPHTTPAdmission(maximumConnections: 2, maximumActiveRequests: 2)
+    let first = try XCTUnwrap(admission.admitRequest())
+    let second = try XCTUnwrap(admission.admitRequest())
+    let drained = CompletionProbe()
+    admission.beginStopping()
+    let drainTask = Task {
+      await admission.waitForRequestDrain()
+      await drained.markCompleted()
+    }
+
+    first.release()
+    first.release()
+    try await Task.sleep(for: .milliseconds(20))
+    let completedAfterFirstRelease = await drained.isCompleted
+    XCTAssertFalse(completedAfterFirstRelease)
+    XCTAssertEqual(admission.metrics().activeRequests, 1)
+
+    second.release()
+    await drainTask.value
+    let completedAfterSecondRelease = await drained.isCompleted
+    XCTAssertTrue(completedAfterSecondRelease)
+    XCTAssertEqual(admission.metrics().activeRequests, 0)
+  }
+
   private var route: String {
     "/mcp/\(secret)"
   }
@@ -468,6 +515,14 @@ private actor RequestGate {
     for waiter in pending {
       waiter.resume()
     }
+  }
+}
+
+private actor CompletionProbe {
+  private(set) var isCompleted = false
+
+  func markCompleted() {
+    isCompleted = true
   }
 }
 

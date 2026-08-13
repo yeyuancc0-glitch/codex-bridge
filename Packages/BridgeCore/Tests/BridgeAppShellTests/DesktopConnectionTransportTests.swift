@@ -217,6 +217,167 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testSleepDrainWaitsForAnAdmittedRemoteSubmissionLease() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(tunnel: tunnel),
+      monitorInterval: .seconds(60)
+    )
+    let tunnelID = try TunnelID(validating: "tunnel_\(String(repeating: "a", count: 32))")
+    _ = try await runtime.configureSecureTunnel(
+      tunnelID: tunnelID,
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.test"),
+      localMCPHeaderSecret: String(repeating: "m", count: 43)
+    )
+    let acquiredLease = await runtime.acquireRemoteSubmissionLease()
+    let lease = try XCTUnwrap(acquiredLease)
+    let probe = ConnectionDrainProbe()
+    await runtime.suspendRemoteAdmissionsForSleep()
+    let drain = Task {
+      await runtime.waitForRemoteSubmissionDrain()
+      await probe.markDrained()
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    let drainedBeforeRelease = await probe.isDrained
+    XCTAssertFalse(drainedBeforeRelease)
+
+    lease.release()
+    await drain.value
+    let drainedAfterRelease = await probe.isDrained
+    XCTAssertTrue(drainedAfterRelease)
+    await runtime.stop()
+  }
+
+  func testSleepImmediatelyClosesRemoteAdmissionUntilWakeRevalidation() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(tunnel: tunnel),
+      monitorInterval: .seconds(60)
+    )
+    let tunnelID = try TunnelID(validating: "tunnel_\(String(repeating: "a", count: 32))")
+    _ = try await runtime.configureSecureTunnel(
+      tunnelID: tunnelID,
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.test"),
+      localMCPHeaderSecret: String(repeating: "j", count: 43)
+    )
+
+    let acceptedBeforeSleep = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertTrue(acceptedBeforeSleep)
+    let testCountBeforeWake = await tunnel.admissionTestCount()
+    await runtime.suspendRemoteAdmissionsForSleep()
+    let acceptedWhileAsleep = await runtime.acceptsRemoteSubmissionsNow()
+    let sleepingHealth = await runtime.health()
+    XCTAssertFalse(acceptedWhileAsleep)
+    XCTAssertFalse(sleepingHealth.acceptsRemoteSubmissions)
+
+    try await runtime.revalidateRemoteAdmissionsAfterWake()
+    let acceptedAfterWake = await runtime.acceptsRemoteSubmissionsNow()
+    let testCountAfterWake = await tunnel.admissionTestCount()
+    XCTAssertTrue(acceptedAfterWake)
+    XCTAssertGreaterThanOrEqual(testCountAfterWake - testCountBeforeWake, 2)
+    await runtime.stop()
+  }
+
+  func testFailedWakeRevalidationLeavesRemoteAdmissionClosed() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(tunnel: tunnel),
+      monitorInterval: .seconds(60)
+    )
+    let tunnelID = try TunnelID(validating: "tunnel_\(String(repeating: "a", count: 32))")
+    _ = try await runtime.configureSecureTunnel(
+      tunnelID: tunnelID,
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.test"),
+      localMCPHeaderSecret: String(repeating: "k", count: 43)
+    )
+    await runtime.suspendRemoteAdmissionsForSleep()
+    await tunnel.setLifecycle(.degraded)
+
+    do {
+      try await runtime.revalidateRemoteAdmissionsAfterWake()
+      XCTFail("Expected wake revalidation to fail")
+    } catch {
+      XCTAssertEqual(error as? DesktopTransportError, .connectionFailed)
+    }
+    let acceptedAfterFailure = await runtime.acceptsRemoteSubmissionsNow()
+    let failedHealth = await runtime.health()
+    XCTAssertFalse(acceptedAfterFailure)
+    XCTAssertFalse(failedHealth.acceptsRemoteSubmissions)
+    await runtime.stop()
+  }
+
+  func testLocalModeWakeRevalidationSucceedsWithoutClaimingRemoteAdmission() async throws {
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(),
+      monitorInterval: .seconds(60)
+    )
+    _ = try await runtime.configureLocal(
+      authentication: .path(secret: String(repeating: "l", count: 43))
+    )
+    await runtime.suspendRemoteAdmissionsForSleep()
+
+    try await runtime.revalidateRemoteAdmissionsAfterWake()
+
+    let health = await runtime.health()
+    let accepts = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertEqual(health.lifecycle, .ready)
+    XCTAssertFalse(health.acceptsRemoteSubmissions)
+    XCTAssertFalse(accepts)
+    await runtime.stop()
+  }
+
+  func testSleepSupersedesAnOlderReplacementTransition() throws {
+    let gate = DesktopRemoteAdmissionGate()
+    let transition = try XCTUnwrap(gate.beginReplacement())
+
+    gate.closeForSleep()
+
+    XCTAssertTrue(gate.complete(transition))
+    XCTAssertFalse(gate.snapshot().permitsRemoteSubmissions)
+  }
+
+  func testPermanentShutdownSupersedesAnOlderWakeTransition() throws {
+    let gate = DesktopRemoteAdmissionGate()
+    gate.closeForSleep()
+    let transition = try XCTUnwrap(gate.beginWakeRevalidation())
+
+    gate.closePermanently()
+
+    XCTAssertFalse(gate.complete(transition))
+    XCTAssertFalse(gate.snapshot().permitsRemoteSubmissions)
+  }
+
+  func testShutdownPermanentlyRejectsLaterConfiguration() async throws {
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(),
+      monitorInterval: .seconds(60)
+    )
+
+    await runtime.shutdown()
+
+    do {
+      _ = try await runtime.configureLocal(
+        authentication: .path(secret: String(repeating: "z", count: 43))
+      )
+      XCTFail("Expected a stopped runtime to reject replacement")
+    } catch {
+      XCTAssertEqual(error as? DesktopTransportError, .connectionFailed)
+    }
+  }
+
+}
+
+private actor ConnectionDrainProbe {
+  private(set) var isDrained = false
+
+  func markDrained() {
+    isDrained = true
+  }
 }
 
 private actor ConnectionTestMCP: DesktopMCPServing {
@@ -260,6 +421,7 @@ private actor ConnectionTestRemoteMCP: DesktopRemoteMCPTesting {
 private actor ConnectionTestTunnel: DesktopTunnelManaging {
   private var starts = 0
   private var stops = 0
+  private var admissionTests = 0
   private var lifecycle = TunnelLifecycle.stopped
 
   func start() {
@@ -271,7 +433,10 @@ private actor ConnectionTestTunnel: DesktopTunnelManaging {
     lifecycle = .stopped
   }
   func state() -> TunnelLifecycle { lifecycle }
-  func acceptsRemoteSubmissions() -> Bool { lifecycle == .ready }
+  func acceptsRemoteSubmissions() -> Bool {
+    admissionTests += 1
+    return lifecycle == .ready
+  }
   func diagnostics() -> TunnelDiagnostics {
     TunnelDiagnostics(
       standardOutput: "",
@@ -283,6 +448,7 @@ private actor ConnectionTestTunnel: DesktopTunnelManaging {
   func startCount() -> Int { starts }
   func stopCount() -> Int { stops }
   func setLifecycle(_ value: TunnelLifecycle) { lifecycle = value }
+  func admissionTestCount() -> Int { admissionTests }
 }
 
 private actor ConnectionTestTunnelFactory: DesktopTunnelManagerBuilding {

@@ -1,10 +1,32 @@
 import Foundation
 @preconcurrency import NIOCore
 
+package final class MCPHTTPRequestLease: @unchecked Sendable {
+  private let lock = NSLock()
+  private var admission: MCPHTTPAdmission?
+
+  fileprivate init(admission: MCPHTTPAdmission) {
+    self.admission = admission
+  }
+
+  package func release() {
+    let admission = lock.withLock { () -> MCPHTTPAdmission? in
+      let current = self.admission
+      self.admission = nil
+      return current
+    }
+    admission?.releaseRequest()
+  }
+
+  deinit { release() }
+}
+
 package final class MCPHTTPAdmission: @unchecked Sendable {
   private struct State {
     var channels: [ObjectIdentifier: any Channel] = [:]
     var activeRequests = 0
+    var isStopping = false
+    var drainWaiters: [CheckedContinuation<Void, Never>] = []
   }
 
   private let lock = NSLock()
@@ -19,7 +41,7 @@ package final class MCPHTTPAdmission: @unchecked Sendable {
 
   package func register(_ channel: any Channel) -> Bool {
     lock.withLock {
-      guard state.channels.count < maximumConnections else { return false }
+      guard !state.isStopping, state.channels.count < maximumConnections else { return false }
       state.channels[ObjectIdentifier(channel)] = channel
       return true
     }
@@ -31,17 +53,42 @@ package final class MCPHTTPAdmission: @unchecked Sendable {
     }
   }
 
-  package func admitRequest() -> Bool {
+  package func admitRequest() -> MCPHTTPRequestLease? {
     lock.withLock {
-      guard state.activeRequests < maximumActiveRequests else { return false }
+      guard !state.isStopping, state.activeRequests < maximumActiveRequests else { return nil }
       state.activeRequests += 1
-      return true
+      return MCPHTTPRequestLease(admission: self)
     }
   }
 
-  package func releaseRequest() {
-    lock.withLock {
+  fileprivate func releaseRequest() {
+    let waiters = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
       state.activeRequests = max(0, state.activeRequests - 1)
+      guard state.activeRequests == 0 else { return [] }
+      let current = state.drainWaiters
+      state.drainWaiters.removeAll(keepingCapacity: false)
+      return current
+    }
+    for waiter in waiters { waiter.resume() }
+  }
+
+  package func beginStopping() {
+    lock.withLock { state.isStopping = true }
+  }
+
+  package func resetAfterStop() {
+    lock.withLock { state.isStopping = false }
+  }
+
+  package func waitForRequestDrain() async {
+    if lock.withLock({ state.activeRequests == 0 }) { return }
+    await withCheckedContinuation { continuation in
+      let resumeNow = lock.withLock { () -> Bool in
+        guard state.activeRequests > 0 else { return true }
+        state.drainWaiters.append(continuation)
+        return false
+      }
+      if resumeNow { continuation.resume() }
     }
   }
 

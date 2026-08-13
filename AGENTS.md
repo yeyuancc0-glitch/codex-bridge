@@ -66,6 +66,8 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 生产任务流水线在持久化 turn 启动意图后、真正启动 app-server turn 前保存 Git baseline；最终化必须绑定精确 task/thread/turn/generation/event sequence。应用重启时按 Finalizer → Pipeline preflight → 通用任务恢复的顺序处理，避免把可继续完成的 verifying 任务降为 unknown。
 - 生产验证命令只能消费绑定 task/project/root/command/generation 的一次性本机授权句柄；缺少句柄时只记录明确的 unavailable 证据，禁止调用兼容用的直接批准接口或伪造 passed。
 - 原生本机任务使用独立 `macos.app` origin，只允许 read-only、无网络、动态目录中精确存在的 execution model/effort，以及精确 `gpt-5.6-luna` Supervisor；existing Thread 在 claim 前必须重新核对项目 cwd。Thread/history/model 目录只作不持久化的有界投影，所有 catalog 操作共享单飞门并受整体 deadline 约束。
+- App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
+- `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；`didWake` 只能在任务事实刷新和当前 Transport 严格复核后重新开放，不能把该复核冒充完整的 app-server/Thread/Git 恢复。
 
 ## 安全不变量
 
@@ -77,6 +79,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 默认拒绝 `.env*`、私钥、Keychain、浏览器 Cookie、Codex auth 等敏感路径。
 - Runtime Key 只用于 Tunnel，永不传给 Codex/Luna，永不写日志或支持包。
 - 支持包只能从明确允许的有界结构化事实生成；不导出 Endpoint、项目/任务标识、原始输出、源文件或凭证。导出 JSON 上限 1 MiB，以规范化目录描述符逐级无跟随打开，再用 `0600` 临时文件原子替换。
+- App 启动必须持有私有 0700 数据根目录 inode 和 0600 lock file 的跨进程租约；退出先停止并排空全部本地 MCP 请求，再关闭 lifecycle、Connection、Supervisor 与 Execution，旧 wake 或连接替换不得重新开放提交。
 - 网络默认关闭；包安装、网络、Git 写和项目外访问要求本机确认。
 - 高风险删除、系统写、凭证读取、生产迁移直接拒绝。
 - 同一 Thread 同时最多一个 Bridge active turn；写任务持有项目工作树锁。
@@ -159,6 +162,7 @@ codex app-server generate-json-schema --out DIR
 - `codex app-server` 是实验接口；只信当前本机 Schema、能力协商与真实回归，不能硬编码记忆中的字段。
 - 当前 app-server wire 契约与方案的必要修正记录在 `docs/CODEX_PROTOCOL_COMPATIBILITY.md`；尤其注意无 `jsonrpc` 字段、Thread/Turn 两套 sandbox 表达、开放 reasoning effort 和多种审批响应。
 - `turn/start` 响应只表示请求已受理；必须等待匹配的 `turn/started` 事件后才能 steer 或 interrupt，不能把请求响应当作 active-turn 事实。
+- EventStore 持久事件 kind 使用 `task.<domainKind>` 前缀；生命周期消费者必须匹配真实存储值。变更日志迁移只记录迁移后的事件，禁止为通知同步回填全部历史事件导致启动无界扫描。
 - stdout 是 JSON-RPC 协议通道；任何非 JSON 污染都必须检测，诊断只读 stderr。
 - 进程退出必须原子取消全部等待请求，避免 continuation 泄漏或重复恢复。
 - `CodexAppServerClient` 是一次性进程会话；停止、初始化失败或协议失败后由上层创建新实例，不能复用已终止的 dispatcher/event stream。
@@ -178,6 +182,7 @@ codex app-server generate-json-schema --out DIR
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责秘密路径或 Tunnel 认证头、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
 - `BridgeMCP` 无任务后端时保持五个只读工具兼容；注入任务后端后追加七个任务查询/提交/steer/interrupt 工具，但不远程公开 Codex 审批。每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
 - `BridgeMCP` 注入项目操作后再追加 `get_project`、受限文件 search/read 与 `open_in_codex`；任务和项目后端同时启用时共 16 个工具。项目工具仍只接受 `project_id` 与相对路径，打开 Codex 前必须重新核对 Thread cwd 属于该项目。
+- MCP HTTP admission 必须用幂等 request lease 转移所有权：未收到 request end 的断连由 channel 释放，进入业务 Task 后只由 Task 释放；App shutdown 关闭 listener 后必须等待全部业务 lease 排空，不能用裸计数布尔或 `responseTask == nil` 推断所有权。
 - 原生 App 生产组合必须注入完整 16 工具；Secure Tunnel 的 `submit_task` 每次调用都直接核对当前 generation 的严格 Tunnel 健康，不能依赖轮询缓存，本机 Path Secret 模式仅用于本机开发与 Inspector。
 - UI 的任务刷新由 `EventStore.taskChanges()` 提供提交后的有界提示，但任务事实仍只从事件存储重新投影；本机任务确认不得改写远端提交的 model/effort，缺少权威操作证据的 Codex 审批只能拒绝。
 - 原生任务证据必须由用户选中任务后按需读取，不得在全局任务刷新时对历史终态任务批量解码；缓存必须绑定 `task + binding generation + event sequence + report reference` 并保持有界，校验失败明确显示 unavailable，禁止伪装为空证据。
@@ -185,6 +190,7 @@ codex app-server generate-json-schema --out DIR
 - 本地验证器不是 OS sandbox。本机明确批准验证命令后，项目程序或工具链插件仍可能自行读取项目外文件或联网；已知网络命令和 Shell wrapper 必须硬拒绝，发布前若要声称强隔离必须另接真正的进程沙箱。
 - Execution 与 Supervisor 都必须动态核对精确 model/effort；Luna 不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
+- 数据根目录 inode 的 advisory lock 只能绑定已打开对象；若发布威胁模型要求抵抗同一 UID 主动 rename 并重建整个数据根，必须另接稳定父锚或 LaunchServices/launchd 单实例机制，不能把当前目录锁描述为已覆盖该攻击。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。
 
 ## 维护检查

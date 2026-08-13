@@ -793,9 +793,21 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     return result
   }
 
-  func updateSetting(key: String, enabled: Bool) throws {
-    _ = (key, enabled)
-    throw DesktopBackendError.operationFailed
+  func updateSetting(key: String, enabled: Bool) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let lifecycle = try requireComposition().lifecycleCoordinator
+    switch key {
+    case "task-notifications":
+      try await lifecycle.updateNotificationsEnabled(enabled)
+    case "idle-sleep-prevention":
+      try await lifecycle.updateIdleSleepEnabled(enabled)
+    default:
+      throw DesktopBackendError.operationFailed
+    }
+    try checkRunning()
+    try await publishCurrentFacts()
   }
 
   func shutdown() async {
@@ -806,6 +818,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
     isShuttingDown = true
     failCompositionWaiters()
+    await composition?.mcpRuntime.shutdown()
+    await composition?.lifecycleCoordinator.closeRemoteAdmissions()
     let bootstrap = bootstrapTask
     bootstrap?.cancel()
     await bootstrap?.value
@@ -896,6 +910,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     bootstrapTask = Task { [weak self] in
       guard let self else { return }
       let failed: Bool
+      var createdComposition: DesktopComposition?
       do {
         let composition = try await DesktopComposition.make(
           dataDirectoryURL: self.dataDirectoryURL,
@@ -904,11 +919,20 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
           bundleURL: self.bundleURL,
           catalog: self.catalog
         )
+        createdComposition = composition
         try Task.checkCancellation()
-        failed = await !self.finishBootstrap(composition)
+        let installed = await self.finishBootstrap(composition)
+        if !installed, await self.isShuttingDown {
+          await composition.shutdown()
+          failed = false
+        } else {
+          failed = !installed
+        }
       } catch is CancellationError {
+        await createdComposition?.shutdown()
         failed = false
       } catch {
+        await createdComposition?.shutdown()
         failed = true
       }
       await self.finishBootstrapTask(failed: failed)
@@ -1125,6 +1149,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let composition = try requireComposition()
     let connection = await composition.connectionRuntime.health()
     let canExportSupportBundle = await system.supportsSupportBundleExport
+    let lifecyclePreferences = try await composition.lifecycleCoordinator.preferences()
     try checkRunning()
     let projects = try await composition.repository.allProjects()
     try checkRunning()
@@ -1173,7 +1198,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         connection: connection,
         operatorState: operatorState,
         canExportSupportBundle: canExportSupportBundleOverride
-          ?? (canExportSupportBundle && !isExportingSupportBundle)
+          ?? (canExportSupportBundle && !isExportingSupportBundle),
+        lifecyclePreferences: lifecyclePreferences
       ),
       pendingSheet: DesktopPresentationProjection.pendingSheet(
         projects: orderedProjects,

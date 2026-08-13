@@ -16,6 +16,7 @@ import BridgeVerification
 import Foundation
 
 struct DesktopComposition: Sendable {
+  let instanceLease: DesktopApplicationInstanceLease
   let eventStore: EventStore
   let repository: ApplicationRepository
   let registry: ProjectRegistry
@@ -28,7 +29,10 @@ struct DesktopComposition: Sendable {
   let pipelineOrchestrator: TaskPipelineOrchestrator
   let supervisorRuntime: CodexSupervisorRuntime
   let verificationAuthorization: DesktopVerificationAuthorizationService
+  let mcpRuntime: DesktopMCPRuntime
   let connectionRuntime: DesktopConnectionRuntime
+  let taskLifecycle: DesktopTaskLifecycleService
+  let lifecycleCoordinator: DesktopTaskLifecycleCoordinator
 
   static func make(
     dataDirectoryURL: URL,
@@ -38,6 +42,7 @@ struct DesktopComposition: Sendable {
     catalog suppliedCatalog: (any CodexCatalogQuerying)? = nil
   ) async throws -> DesktopComposition {
     let paths = try DesktopDataStore.prepare(at: dataDirectoryURL)
+    let instanceLease = try DesktopApplicationInstanceLease(directoryURL: paths.directoryURL)
     let eventStore = try EventStore(path: paths.eventStoreURL.path)
     let repository = try ApplicationRepository(path: paths.applicationRepositoryURL.path)
     let registry = ProjectRegistry(repository: repository)
@@ -153,6 +158,7 @@ struct DesktopComposition: Sendable {
       coordinator: coordinator
     )
     let mcpRuntime = DesktopMCPRuntime(application: application, status: status)
+    let admissionGate = DesktopRemoteAdmissionGate()
     let connectionRuntime = DesktopConnectionRuntime(
       mcp: mcpRuntime,
       tunnelFactory: BundledDesktopTunnelManagerFactory(
@@ -160,12 +166,46 @@ struct DesktopComposition: Sendable {
         dataDirectoryURL: dataDirectoryURL,
         secretStore: secretStore
       ),
-      status: status
+      status: status,
+      admissionGate: admissionGate
     )
-    await mcpRuntime.setRemoteTaskAdmissionCheck { [weak connectionRuntime] in
-      await connectionRuntime?.acceptsRemoteSubmissionsNow() ?? false
+    await mcpRuntime.setRemoteTaskAdmissionLeaseCheck { [weak connectionRuntime] in
+      await connectionRuntime?.acquireRemoteSubmissionLease()
+    }
+    let lifecyclePreferences = try await eventStore.lifecyclePreferences()
+    let lifecycleOwner = UUID().uuidString.lowercased()
+    let notificationLedger = DesktopTaskNotificationLedger(
+      store: eventStore,
+      ownerInstanceID: lifecycleOwner
+    )
+    let powerSource = await MainActor.run {
+      WorkspaceDesktopPowerEventSource {
+        _ = admissionGate.closeForSleep()
+      }
+    }
+    let taskLifecycle = DesktopTaskLifecycleService(
+      notifications: UserNotificationDesktopTaskNotifier(),
+      notificationStore: notificationLedger,
+      idleSleep: ProcessInfoDesktopIdleSleepPreventer(),
+      powerSource: powerSource,
+      notificationDeliveryEnabled: lifecyclePreferences.notificationsEnabled,
+      idleSleepPreventionEnabled: lifecyclePreferences.idleSleepEnabled
+    )
+    let lifecycleCoordinator = DesktopTaskLifecycleCoordinator(
+      eventStore: eventStore,
+      coordinator: coordinator,
+      service: taskLifecycle,
+      connection: connectionRuntime,
+      ownerInstanceID: lifecycleOwner
+    )
+    do {
+      try await lifecycleCoordinator.start()
+    } catch {
+      await lifecycleCoordinator.shutdown()
+      throw error
     }
     return DesktopComposition(
+      instanceLease: instanceLease,
       eventStore: eventStore,
       repository: repository,
       registry: registry,
@@ -178,13 +218,19 @@ struct DesktopComposition: Sendable {
       pipelineOrchestrator: pipelineOrchestrator,
       supervisorRuntime: supervisorRuntime,
       verificationAuthorization: verificationAuthorization,
-      connectionRuntime: connectionRuntime
+      mcpRuntime: mcpRuntime,
+      connectionRuntime: connectionRuntime,
+      taskLifecycle: taskLifecycle,
+      lifecycleCoordinator: lifecycleCoordinator
     )
   }
 
   func shutdown() async {
-    await connectionRuntime.stop()
+    await mcpRuntime.shutdown()
+    await lifecycleCoordinator.shutdown()
+    await connectionRuntime.shutdown()
     await supervisorRuntime.shutdown()
     await taskRuntime.shutdown()
+    instanceLease.release()
   }
 }
