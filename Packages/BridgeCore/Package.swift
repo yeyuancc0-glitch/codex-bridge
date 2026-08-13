@@ -361,6 +361,7 @@ let package = Package(
                 "BridgeTunnel",
                 "BridgeVerification",
                 .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
         .testTarget(

@@ -304,6 +304,9 @@ private struct TaskDetailView: View {
     } message: {
       Text("授权只绑定当前任务、Turn、项目目录和已登记命令，五分钟后失效；不会授权未来任务。")
     }
+    .task(id: "\(task.id):\(task.status.rawValue)") {
+      _ = await store.perform(.loadTaskEvidence(task.id))
+    }
   }
 
   private var controlBar: some View {
@@ -355,6 +358,12 @@ private struct TaskDetailView: View {
       .pickerStyle(.menu)
       .frame(width: 160)
       Spacer()
+      evidenceStatus
+      Button("刷新证据", systemImage: "arrow.clockwise") {
+        Task { _ = await store.perform(.loadTaskEvidence(task.id)) }
+      }
+      .buttonStyle(.borderless)
+      .disabled(task.evidenceState == .loading)
       if let startedAt = task.startedAt {
         Text("开始于 \(startedAt.bridgeFormatted)")
           .font(.caption)
@@ -364,7 +373,42 @@ private struct TaskDetailView: View {
   }
 
   @ViewBuilder
+  private var evidenceStatus: some View {
+    switch task.evidenceState {
+    case .notLoaded:
+      Text("按需读取")
+        .foregroundStyle(.secondary)
+    case .loading:
+      ProgressView()
+        .controlSize(.small)
+        .accessibilityLabel("正在读取任务证据")
+    case .available:
+      Label("已核验", systemImage: "checkmark.shield")
+        .foregroundStyle(.secondary)
+    case .unavailable:
+      Label("不可用", systemImage: "exclamationmark.triangle")
+        .foregroundStyle(.orange)
+    }
+  }
+
+  @ViewBuilder
   private var evidenceContent: some View {
+    if case .unavailable(let message) = task.evidenceState {
+      ContentUnavailableView(
+        "证据不可用",
+        systemImage: "exclamationmark.triangle",
+        description: Text(message)
+      )
+    } else if task.evidenceState == .loading {
+      ProgressView("正在核对持久证据…")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else {
+      selectedEvidenceContent
+    }
+  }
+
+  @ViewBuilder
+  private var selectedEvidenceContent: some View {
     switch store.selectedTaskEvidenceTab {
     case .summary:
       TaskSummaryEvidence(task: task)

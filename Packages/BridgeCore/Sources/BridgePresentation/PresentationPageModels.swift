@@ -140,6 +140,7 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
   public let currentStep: String?
   public let finalSummary: String?
   public let timeline: [TaskEvidenceEventPresentation]
+  public let evidenceState: TaskEvidenceLoadPresentation
   public let commands: [String]
   public let changedFiles: [String]
   public let diffSummary: String?
@@ -166,6 +167,7 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     currentStep: String? = nil,
     finalSummary: String? = nil,
     timeline: [TaskEvidenceEventPresentation] = [],
+    evidenceState: TaskEvidenceLoadPresentation = .notLoaded,
     commands: [String] = [],
     changedFiles: [String] = [],
     diffSummary: String? = nil,
@@ -191,6 +193,7 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     self.currentStep = currentStep
     self.finalSummary = finalSummary
     self.timeline = timeline
+    self.evidenceState = evidenceState
     self.commands = commands
     self.changedFiles = changedFiles
     self.diffSummary = diffSummary
@@ -202,6 +205,13 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     self.canOpenInCodex = canOpenInCodex
     self.canInterrupt = canInterrupt
   }
+}
+
+public enum TaskEvidenceLoadPresentation: Equatable, Sendable {
+  case notLoaded
+  case loading
+  case available
+  case unavailable(String)
 }
 
 public struct TaskPagePresentation: Equatable, Sendable {

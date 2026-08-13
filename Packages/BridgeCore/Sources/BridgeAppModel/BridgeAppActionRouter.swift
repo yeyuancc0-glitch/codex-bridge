@@ -67,6 +67,8 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.openThreadInCodex(projectID: projectID, threadID: threadID)
     case .openTaskInCodex(let taskID):
       try await backend.openTaskInCodex(taskID)
+    case .loadTaskEvidence(let taskID):
+      try await backend.loadTaskEvidence(taskID)
     case .prepareReadOnlyTask(let projectID, let threadID):
       try await backend.prepareReadOnlyTask(projectID: projectID, threadID: threadID)
     case .dismissReadOnlyTask:

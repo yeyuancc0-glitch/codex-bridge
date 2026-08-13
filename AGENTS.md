@@ -180,6 +180,7 @@ codex app-server generate-json-schema --out DIR
 - `BridgeMCP` 注入项目操作后再追加 `get_project`、受限文件 search/read 与 `open_in_codex`；任务和项目后端同时启用时共 16 个工具。项目工具仍只接受 `project_id` 与相对路径，打开 Codex 前必须重新核对 Thread cwd 属于该项目。
 - 原生 App 生产组合必须注入完整 16 工具；Secure Tunnel 的 `submit_task` 每次调用都直接核对当前 generation 的严格 Tunnel 健康，不能依赖轮询缓存，本机 Path Secret 模式仅用于本机开发与 Inspector。
 - UI 的任务刷新由 `EventStore.taskChanges()` 提供提交后的有界提示，但任务事实仍只从事件存储重新投影；本机任务确认不得改写远端提交的 model/effort，缺少权威操作证据的 Codex 审批只能拒绝。
+- 原生任务证据必须由用户选中任务后按需读取，不得在全局任务刷新时对历史终态任务批量解码；缓存必须绑定 `task + binding generation + event sequence + report reference` 并保持有界，校验失败明确显示 unavailable，禁止伪装为空证据。
 - 最终 Git patch 使用 0700/0600 私有持久存储、digest 绑定、有界 LRU、跨实例文件锁和提交标记裁剪；首次访问形成受总容量约束的验证快照，MCP 分页必须按真实双形态 200 KiB 编码预算和 UTF-8 边界缩页。
 - 本地验证器不是 OS sandbox。本机明确批准验证命令后，项目程序或工具链插件仍可能自行读取项目外文件或联网；已知网络命令和 Shell wrapper 必须硬拒绝，发布前若要声称强隔离必须另接真正的进程沙箱。
 - Execution 与 Supervisor 都必须动态核对精确 model/effort；Luna 不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。

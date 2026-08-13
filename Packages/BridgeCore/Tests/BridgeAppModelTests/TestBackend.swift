@@ -13,6 +13,7 @@ enum BackendEvent: Equatable, Sendable {
   case testConnection
   case receivingPaused(Bool)
   case openTask(String)
+  case loadTaskEvidence(String)
   case openThread(String)
   case openBoundThread(projectID: String, threadID: String)
   case selectThreadProject(String)
@@ -89,6 +90,9 @@ actor TestBackend: BridgeAppBackend {
     recordedEvents.append(.openBoundThread(projectID: projectID, threadID: threadID))
   }
   func openTaskInCodex(_ taskID: String) { recordedEvents.append(.openTask(taskID)) }
+  func loadTaskEvidence(_ taskID: String) {
+    recordedEvents.append(.loadTaskEvidence(taskID))
+  }
   func prepareReadOnlyTask(projectID: String?, threadID: String?) {
     recordedEvents.append(.prepareReadOnly(projectID: projectID, threadID: threadID))
   }

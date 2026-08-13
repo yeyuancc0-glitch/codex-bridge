@@ -179,6 +179,7 @@ public protocol BridgeAppBackend: Sendable {
   func openThreadInCodex(_ threadID: String) async throws
   func openThreadInCodex(projectID: String, threadID: String) async throws
   func openTaskInCodex(_ taskID: String) async throws
+  func loadTaskEvidence(_ taskID: String) async throws
   func prepareReadOnlyTask(projectID: String?, threadID: String?) async throws
   func dismissReadOnlyTask() async throws
   func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws
@@ -190,9 +191,15 @@ public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
   case verificationAuthorizationUnsupported
   case threadCatalogOperationUnsupported
   case localTaskComposerUnsupported
+  case taskEvidenceUnsupported
 }
 
 extension BridgeAppBackend {
+  public func loadTaskEvidence(_ taskID: String) async throws {
+    _ = taskID
+    throw BridgeAppBackendCompatibilityError.taskEvidenceUnsupported
+  }
+
   public func authorizeTaskVerification(_ taskID: String) async throws {
     _ = taskID
     throw BridgeAppBackendCompatibilityError.verificationAuthorizationUnsupported

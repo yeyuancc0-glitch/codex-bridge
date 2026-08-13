@@ -22,6 +22,7 @@ struct DesktopComposition: Sendable {
   let taskRuntime: IsolatedCodexTaskRuntime
   let coordinator: TaskCoordinator
   let application: BridgeApplicationService
+  let taskEvidence: DesktopTaskEvidenceProjection
   let pipelineArtifacts: PipelineArtifactStore
   let pipelineFinalizer: PipelineFinalizer
   let pipelineOrchestrator: TaskPipelineOrchestrator
@@ -145,6 +146,12 @@ struct DesktopComposition: Sendable {
       ),
       openCodexURL: { url in await system.open(url) }
     )
+    let taskEvidence = DesktopTaskEvidenceProjection(
+      artifacts: pipelineArtifacts,
+      patches: patchStore,
+      reports: repository,
+      coordinator: coordinator
+    )
     let mcpRuntime = DesktopMCPRuntime(application: application, status: status)
     let connectionRuntime = DesktopConnectionRuntime(
       mcp: mcpRuntime,
@@ -165,6 +172,7 @@ struct DesktopComposition: Sendable {
       taskRuntime: taskRuntime,
       coordinator: coordinator,
       application: application,
+      taskEvidence: taskEvidence,
       pipelineArtifacts: pipelineArtifacts,
       pipelineFinalizer: pipelineFinalizer,
       pipelineOrchestrator: pipelineOrchestrator,

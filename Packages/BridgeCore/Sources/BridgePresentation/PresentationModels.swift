@@ -152,6 +152,7 @@ public enum PresentationAction: Equatable, Sendable {
   case openThreadInCodex(String)
   case openBoundThreadInCodex(projectID: String, threadID: String)
   case openTaskInCodex(String)
+  case loadTaskEvidence(String)
   case prepareReadOnlyTask(projectID: String?, threadID: String?)
   case dismissReadOnlyTask
   case submitReadOnlyTask(ReadOnlyTaskDraftPresentation)

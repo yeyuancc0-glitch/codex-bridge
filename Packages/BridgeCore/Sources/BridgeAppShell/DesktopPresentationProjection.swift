@@ -12,6 +12,8 @@ struct DesktopPresentationProjection {
   static func snapshot(
     projects: [RegisteredProject],
     tasks: [(TaskProjection, [TaskEventEnvelope])],
+    evidenceByTaskID: [TaskID: DesktopTaskEvidenceValues] = [:],
+    evidenceStateByTaskID: [TaskID: TaskEvidenceLoadPresentation] = [:],
     diagnostics: [LogEntryPresentation],
     connection: DesktopTransportHealth = .stopped,
     operatorState: DesktopOperatorState = DesktopOperatorState(),
@@ -19,7 +21,15 @@ struct DesktopPresentationProjection {
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     let taskRows = tasks.map { taskRow($0.0, projects: projectsByID, events: $0.1) }
-    let taskDetails = tasks.map { taskDetail($0.0, projects: projectsByID, events: $0.1) }
+    let taskDetails = tasks.map {
+      taskDetail(
+        $0.0,
+        projects: projectsByID,
+        events: $0.1,
+        evidence: evidenceByTaskID[$0.0.aggregate.id] ?? .empty,
+        evidenceState: evidenceStateByTaskID[$0.0.aggregate.id] ?? .notLoaded
+      )
+    }
     let projectRows = projects.map(project)
     let approvals = tasks.flatMap { approvalRows($0.0, events: $0.1) }
     let approvalDetails = tasks.flatMap { approvalDetails($0.0) }
@@ -364,7 +374,9 @@ struct DesktopPresentationProjection {
   private static func taskDetail(
     _ projection: TaskProjection,
     projects: [ProjectID: RegisteredProject],
-    events: [TaskEventEnvelope]
+    events: [TaskEventEnvelope],
+    evidence: DesktopTaskEvidenceValues,
+    evidenceState: TaskEvidenceLoadPresentation
   ) -> TaskDetailPresentation {
     let aggregate = projection.aggregate
     return TaskDetailPresentation(
@@ -382,6 +394,12 @@ struct DesktopPresentationProjection {
       currentStep: aggregate.phase.label,
       finalSummary: aggregate.reportReference == nil ? nil : "最终报告已存储",
       timeline: events.suffix(200).map(event),
+      evidenceState: evidenceState,
+      commands: evidence.commands,
+      changedFiles: evidence.changedFiles,
+      diffSummary: evidence.diffSummary,
+      supervisionSummary: evidence.supervisionSummary,
+      verificationSummary: evidence.verificationSummary,
       verificationCommands: projects[aggregate.submission.projectID]?.verificationCommands.map(
         command
       ) ?? [],

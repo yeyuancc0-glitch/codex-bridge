@@ -43,6 +43,12 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
 }
 
 actor LiveBridgeAppBackend: BridgeAppBackend {
+  private enum EvidenceCache: Sendable {
+    case loading(DesktopTaskEvidenceIdentity)
+    case ready(DesktopTaskEvidenceIdentity, DesktopTaskEvidenceValues)
+    case unavailable(DesktopTaskEvidenceIdentity, String)
+  }
+
   private static let maximumVisibleHistoryEntries = 500
   private static let maximumVisibleThreads = 500
   private static let threadPageLimit = 100
@@ -62,10 +68,13 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private var factsRequest: UInt64 = 0
   private var diagnostics: [LogEntryPresentation] = []
   private var operatorState = DesktopOperatorState()
+  private var taskEvidenceCache: EvidenceCache?
   private var isShuttingDown = false
   private var shutdownFinished = false
   private var activeOperations = 0
   private var isRunningCatalogOperation = false
+  private var isLoadingTaskEvidence = false
+  private var pendingTaskEvidenceID: TaskID?
   private var isExportingSupportBundle = false
   private var operationDrainWaiters: [CheckedContinuation<Void, Never>] = []
   private var compositionWaiters: [CheckedContinuation<Void, Error>] = []
@@ -543,6 +552,66 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let opened = await system.open(url)
     try checkRunning()
     guard opened else { throw DesktopBackendError.operationFailed }
+  }
+
+  func loadTaskEvidence(_ taskIDValue: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(taskIDValue)
+    let requestedTaskID = TaskID(rawValue: taskIDValue)
+    guard !isLoadingTaskEvidence else {
+      pendingTaskEvidenceID = requestedTaskID
+      return
+    }
+    isLoadingTaskEvidence = true
+    defer { isLoadingTaskEvidence = false }
+    let composition = try requireComposition()
+    var taskID: TaskID? = requestedTaskID
+    while let currentTaskID = taskID {
+      pendingTaskEvidenceID = nil
+      try await loadAndPublishTaskEvidence(
+        currentTaskID,
+        composition: composition
+      )
+      taskID = pendingTaskEvidenceID
+    }
+  }
+
+  private func loadAndPublishTaskEvidence(
+    _ taskID: TaskID,
+    composition: DesktopComposition
+  ) async throws {
+    let initial = try await composition.coordinator.task(taskID)
+    let requestIdentity = DesktopTaskEvidenceIdentity(initial)
+    try checkRunning()
+    taskEvidenceCache = .loading(requestIdentity)
+    try await publishCurrentFacts()
+
+    do {
+      let result = try await loadTaskEvidence(
+        taskID: taskID,
+        composition: composition
+      )
+      guard Self.evidenceByteCount(result.values) <= 2 * 1_024 * 1_024 else {
+        throw DesktopBackendError.operationFailed
+      }
+      taskEvidenceCache = .ready(result.identity, result.values)
+    } catch is CancellationError {
+      taskEvidenceCache = nil
+      throw CancellationError()
+    } catch {
+      let current = try? await composition.coordinator.task(taskID)
+      if let current, DesktopTaskEvidenceIdentity(current) == requestIdentity {
+        taskEvidenceCache = .unavailable(
+          requestIdentity,
+          "持久证据未通过完整性核验；任务事实保持不变。"
+        )
+      } else {
+        taskEvidenceCache = nil
+      }
+    }
+    try checkRunning()
+    try await publishCurrentFacts()
   }
 
   func prepareReadOnlyTask(projectID requestedProjectID: String?, threadID: String?) async throws {
@@ -1060,6 +1129,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let projects = try await composition.repository.allProjects()
     try checkRunning()
     var tasks: [(TaskProjection, [TaskEventEnvelope])] = []
+    var evidenceByTaskID: [TaskID: DesktopTaskEvidenceValues] = [:]
+    var evidenceStateByTaskID: [TaskID: TaskEvidenceLoadPresentation] = [:]
     let identifiers = try await composition.eventStore.recentlyUpdatedTaskIDs(limit: 500)
     try checkRunning()
     for taskID in identifiers {
@@ -1073,6 +1144,18 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       )
       try checkRunning()
       tasks.append((projection, events))
+      let key = DesktopTaskEvidenceIdentity(projection)
+      switch taskEvidenceCache {
+      case .loading(let cachedKey) where cachedKey == key:
+        evidenceStateByTaskID[taskID] = .loading
+      case .ready(let cachedKey, let values) where cachedKey == key:
+        evidenceByTaskID[taskID] = values
+        evidenceStateByTaskID[taskID] = .available
+      case .unavailable(let cachedKey, let message) where cachedKey == key:
+        evidenceStateByTaskID[taskID] = .unavailable(message)
+      default:
+        evidenceStateByTaskID[taskID] = .notLoaded
+      }
     }
     tasks.sort { lhs, rhs in
       (lhs.1.last?.createdAt ?? .distantPast) > (rhs.1.last?.createdAt ?? .distantPast)
@@ -1084,6 +1167,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       presentation: DesktopPresentationProjection.snapshot(
         projects: orderedProjects,
         tasks: tasks,
+        evidenceByTaskID: evidenceByTaskID,
+        evidenceStateByTaskID: evidenceStateByTaskID,
         diagnostics: diagnostics,
         connection: connection,
         operatorState: operatorState,
@@ -1095,6 +1180,36 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         tasks: tasks
       )
     )
+  }
+
+  private func loadTaskEvidence(
+    taskID: TaskID,
+    composition: DesktopComposition
+  ) async throws -> DesktopTaskEvidenceProjectionResult {
+    for attempt in 0..<2 {
+      do {
+        return try await composition.taskEvidence.projectBound(
+          taskID: taskID,
+          deadline: ContinuousClock.now.advanced(by: .seconds(3))
+        )
+      } catch DesktopTaskEvidenceProjectionError.scopeMismatch where attempt == 0 {
+        try Task.checkCancellation()
+        try checkRunning()
+      }
+    }
+    throw DesktopTaskEvidenceProjectionError.scopeMismatch
+  }
+
+  private static func evidenceByteCount(_ values: DesktopTaskEvidenceValues) -> Int {
+    let strings =
+      values.commands + values.changedFiles
+      + [values.diffSummary, values.supervisionSummary, values.verificationSummary].compactMap {
+        $0
+      }
+    return strings.reduce(into: 0) { total, value in
+      let (next, overflow) = total.addingReportingOverflow(value.utf8.count)
+      total = overflow ? Int.max : next
+    }
   }
 
   private func publish(

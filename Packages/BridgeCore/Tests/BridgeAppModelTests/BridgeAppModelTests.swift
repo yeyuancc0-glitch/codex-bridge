@@ -253,10 +253,12 @@ final class BridgeAppModelTests: XCTestCase {
     let interrupted = await model.presentationStore.perform(.interruptTask("task-1"))
     let authorized = await model.presentationStore.perform(.authorizeTaskVerification("task-1"))
     let openedTask = await model.presentationStore.perform(.openTaskInCodex("task-1"))
+    let loadedEvidence = await model.presentationStore.perform(.loadTaskEvidence("task-1"))
     let openedThread = await model.presentationStore.perform(.openThreadInCodex("thread-1"))
     XCTAssertTrue(interrupted)
     XCTAssertTrue(authorized)
     XCTAssertTrue(openedTask)
+    XCTAssertTrue(loadedEvidence)
     XCTAssertTrue(openedThread)
 
     XCTAssertEqual(receipt, BridgeAppTaskReceipt(taskID: "task-1", reusedExistingTask: false))
@@ -265,7 +267,8 @@ final class BridgeAppModelTests: XCTestCase {
       events,
       [
         .submit(submission), .steer(steer), .interrupt("task-1"),
-        .authorizeVerification("task-1"), .openTask("task-1"), .openThread("thread-1"),
+        .authorizeVerification("task-1"), .openTask("task-1"),
+        .loadTaskEvidence("task-1"), .openThread("thread-1"),
       ]
     )
   }
