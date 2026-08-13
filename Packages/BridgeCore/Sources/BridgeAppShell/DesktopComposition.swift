@@ -133,8 +133,8 @@ struct DesktopComposition: Sendable {
         mcpState: "stopped",
         tunnelState: "stopped",
         executionState: "idle",
-        supervisorState: "idle",
-        degradations: [],
+        supervisorState: "unavailable",
+        degradations: [DesktopSupervisorAvailability.degradation],
         pendingApprovalCount: 0
       )
     )
@@ -157,7 +157,11 @@ struct DesktopComposition: Sendable {
       reports: repository,
       coordinator: coordinator
     )
-    let mcpRuntime = DesktopMCPRuntime(application: application, status: status)
+    let mcpRuntime = DesktopMCPRuntime(
+      application: application,
+      status: status,
+      supervisorAvailable: DesktopSupervisorAvailability.productionReviewAvailable
+    )
     let admissionGate = DesktopRemoteAdmissionGate()
     let connectionRuntime = DesktopConnectionRuntime(
       mcp: mcpRuntime,
@@ -233,4 +237,10 @@ struct DesktopComposition: Sendable {
     await taskRuntime.shutdown()
     instanceLease.release()
   }
+}
+
+enum DesktopSupervisorAvailability {
+  static let productionReviewAvailable = false
+  static let degradation =
+    "Luna supervision is disabled because evidence-only process isolation is unavailable."
 }

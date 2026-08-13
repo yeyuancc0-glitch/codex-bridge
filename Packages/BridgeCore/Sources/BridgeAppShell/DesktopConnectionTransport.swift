@@ -551,13 +551,14 @@ actor DesktopConnectionRuntime {
     if !health.acceptsRemoteSubmissions {
       degradations.append("Remote ChatGPT connectivity is not available.")
     }
+    degradations.append(DesktopSupervisorAvailability.degradation)
     await status.update(
       BridgeStatusSnapshot(
         appVersion: "0.1.0",
         mcpState: health.localMCPURL == nil ? "stopped" : "ready",
         tunnelState: health.lifecycle.rawValue,
         executionState: "idle",
-        supervisorState: "idle",
+        supervisorState: "unavailable",
         degradations: degradations,
         pendingApprovalCount: 0
       )

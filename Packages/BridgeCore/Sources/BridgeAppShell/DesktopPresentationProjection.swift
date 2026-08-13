@@ -256,7 +256,9 @@ struct DesktopPresentationProjection {
         !supervisors.contains(where: { $0.id == candidate.id })
       }
       let blocker: String?
-      if projectOptions.isEmpty {
+      if !DesktopSupervisorAvailability.productionReviewAvailable {
+        blocker = DesktopSupervisorAvailability.degradation
+      } else if projectOptions.isEmpty {
         blocker = "没有可读项目。"
       } else if executions.isEmpty {
         blocker = "当前 Codex 目录没有可用的 Execution 模型。"
@@ -390,7 +392,8 @@ struct DesktopPresentationProjection {
       model: aggregate.submission.execution.model,
       effort: aggregate.submission.execution.effort,
       status: status(aggregate.phase),
-      supervisorStatus: aggregate.submission.supervisor.enabled ? .waiting : .paused,
+      supervisorStatus: DesktopSupervisorAvailability.productionReviewAvailable
+        ? (aggregate.submission.supervisor.enabled ? .waiting : .paused) : .blocked,
       startedAt: events.first(where: { $0.kind == "task.domain.turnStarted" })?.createdAt,
       plan: aggregate.submission.contract.requirements,
       currentStep: aggregate.phase.label,

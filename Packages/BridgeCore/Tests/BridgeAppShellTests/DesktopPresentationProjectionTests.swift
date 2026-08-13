@@ -46,6 +46,10 @@ final class DesktopPresentationProjectionTests: XCTestCase {
     XCTAssertFalse(detail.canAllow)
     XCTAssertTrue(detail.commandArguments.isEmpty)
     XCTAssertNil(detail.fileOperation)
+    guard case .ready(let taskPage) = snapshot.tasks else {
+      return XCTFail("Expected task projection")
+    }
+    XCTAssertEqual(taskPage.details.first?.supervisorStatus, .blocked)
   }
 
   func testCodexApprovalProjectsCorrelatedEvidenceWithoutEnablingAllow() throws {

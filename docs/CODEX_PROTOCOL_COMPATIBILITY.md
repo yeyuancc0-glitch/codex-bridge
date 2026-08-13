@@ -80,6 +80,13 @@ Verified on 2026-08-12 with the production `BridgeCodexRPC` adapter and `CodexRP
 - interrupt: after the matching `turn/started` event, interrupt produced status `interrupted` without treating the local request as the terminal fact;
 - Supervisor: the dynamically discovered Luna model accepted a JSON Schema and returned a valid `{"decision":"pass","reason":"..."}` object in read-only/no-network mode.
 
+This Supervisor fixture proves structured-output protocol compatibility only. The current
+`thread/start` and `turn/start` contracts expose no verified switch that disables core file-reading
+tools. `readOnly`, no network, `approvalPolicy = never`, an empty cwd, and developer instructions do
+not prove evidence-only confinement. Production Supervisor review therefore remains disabled until
+an OS-level evidence-only process boundary or a future tested no-tools protocol capability prevents
+project and user-directory reads.
+
 The fixture chooses the current default model and the first currently advertised reasoning effort at runtime; the Supervisor scenario searches the live catalog for Luna. These observed IDs/efforts are evidence, not persisted product defaults.
 
 Each app-server event stream has exactly one consumer cursor. Creating multiple iterators would distribute events between consumers rather than broadcast them and can lose the matching `turn/started` or completion fact.

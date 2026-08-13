@@ -18,6 +18,7 @@ public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {
   public let maximumPendingApprovals: Int
   public let maximumKnownItems: Int
   public let maximumKnownItemEvidenceBytes: Int
+  public let maximumSemanticEvidenceBytes: Int
 
   public init(
     appServer: AppServerConfiguration = .codex(),
@@ -30,7 +31,8 @@ public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {
     maximumConcurrentSessions: Int = 4,
     maximumPendingApprovals: Int = 16,
     maximumKnownItems: Int = 2_048,
-    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024
+    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024,
+    maximumSemanticEvidenceBytes: Int = 4 * 1_024 * 1_024
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
@@ -43,6 +45,7 @@ public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {
     self.maximumPendingApprovals = max(1, maximumPendingApprovals)
     self.maximumKnownItems = max(1, maximumKnownItems)
     self.maximumKnownItemEvidenceBytes = max(1, maximumKnownItemEvidenceBytes)
+    self.maximumSemanticEvidenceBytes = max(1, maximumSemanticEvidenceBytes)
   }
 }
 
@@ -212,6 +215,7 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       maximumPendingApprovals: configuration.maximumPendingApprovals,
       maximumKnownItems: configuration.maximumKnownItems,
       maximumKnownItemEvidenceBytes: configuration.maximumKnownItemEvidenceBytes,
+      maximumSemanticEvidenceBytes: configuration.maximumSemanticEvidenceBytes,
       maximumSessionNanoseconds: configuration.maximumSessionNanoseconds,
       projectRoot: location.root,
       onTermination: { [weak self] taskID, session in

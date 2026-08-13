@@ -63,7 +63,7 @@ final class DesktopMCPRuntimeTests: XCTestCase {
     )
   }
 
-  func testRemoteSubmitPublishesLocalConfirmationAndCanBeRejected() async throws {
+  func testRemoteSubmitFailsClosedWhileSupervisorIsolationIsUnavailable() async throws {
     let root = temporaryDirectory()
     let data = root.appendingPathComponent("Data", isDirectory: true)
     let project = root.appendingPathComponent("Project", isDirectory: true)
@@ -107,44 +107,18 @@ final class DesktopMCPRuntimeTests: XCTestCase {
     )
     let result = try await context.value
     let structured = try XCTUnwrap(result.structuredContent?.objectValue)
-    guard case .string(let taskID) = structured["task_id"] else {
-      return XCTFail("Expected a task identifier")
-    }
-    XCTAssertEqual(structured["phase"], "awaitingLocalApproval")
-    XCTAssertEqual(structured["local_approval_required"], true)
+    XCTAssertEqual(result.isError, true)
+    XCTAssertEqual(structured["error"]?.objectValue?["code"], "unavailable")
 
-    let snapshot = try await pendingConfirmation(from: backend)
-    guard case .taskConfirmation(let confirmation) = snapshot.pendingSheet else {
-      return XCTFail("Expected a local task confirmation sheet")
+    let updates = await backend.stateUpdates()
+    var iterator = updates.makeAsyncIterator()
+    let nextSnapshot = try await iterator.next()
+    let snapshot = try XCTUnwrap(nextSnapshot)
+    guard case .ready(let taskPage) = snapshot.presentation.tasks else {
+      return XCTFail("Expected the durable task projection")
     }
-    XCTAssertEqual(confirmation.id, taskID)
-    XCTAssertEqual(confirmation.projectName, "Project")
-    XCTAssertFalse(confirmation.canRunReadOnly)
-
-    do {
-      try await backend.resolveLocalTask(
-        requestID: taskID,
-        decision: .start,
-        model: "different-model",
-        effort: "high"
-      )
-      XCTFail("Expected immutable execution settings to be enforced")
-    } catch {
-      XCTAssertEqual(error as? DesktopBackendError, .operationFailed)
-    }
-
-    try await backend.resolveLocalTask(
-      requestID: taskID,
-      decision: .reject,
-      model: "gpt-5.6-sol",
-      effort: "high"
-    )
-    let rejected = try await backendSnapshot(from: backend) { snapshot in
-      guard case .ready(let page) = snapshot.presentation.tasks else { return false }
-      return page.tasks.contains { $0.id == taskID && $0.status == .blocked }
-        && snapshot.pendingSheet == nil
-    }
-    XCTAssertNil(rejected.pendingSheet)
+    XCTAssertTrue(taskPage.tasks.isEmpty)
+    XCTAssertNil(snapshot.pendingSheet)
   }
 
   private func submissionArguments(projectID: String) -> [String: Value] {
@@ -175,35 +149,6 @@ final class DesktopMCPRuntimeTests: XCTestCase {
         "verification": [],
       ],
     ]
-  }
-
-  private func pendingConfirmation(
-    from backend: LiveBridgeAppBackend
-  ) async throws -> BridgeAppStateSnapshot {
-    try await backendSnapshot(from: backend) { snapshot in
-      if case .taskConfirmation = snapshot.pendingSheet { return true }
-      return false
-    }
-  }
-
-  private func backendSnapshot(
-    from backend: LiveBridgeAppBackend,
-    matching predicate: @escaping @Sendable (BridgeAppStateSnapshot) -> Bool
-  ) async throws -> BridgeAppStateSnapshot {
-    let updates = await backend.stateUpdates()
-    return try await withThrowingTaskGroup(of: BridgeAppStateSnapshot.self) { group in
-      group.addTask {
-        for try await snapshot in updates where predicate(snapshot) { return snapshot }
-        throw MCPRuntimeTestError.streamEnded
-      }
-      group.addTask {
-        try await Task.sleep(for: .seconds(3))
-        throw MCPRuntimeTestError.timeout
-      }
-      let snapshot = try await group.next()!
-      group.cancelAll()
-      return snapshot
-    }
   }
 
   private func temporaryDirectory() -> URL {

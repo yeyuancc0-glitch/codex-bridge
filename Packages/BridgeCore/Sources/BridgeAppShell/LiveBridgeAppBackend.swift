@@ -680,6 +680,9 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   }
 
   func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws {
+    guard DesktopSupervisorAvailability.productionReviewAvailable else {
+      throw DesktopBackendError.operationFailed
+    }
     try beginOperation()
     defer { endOperation() }
     try beginCatalogOperation()

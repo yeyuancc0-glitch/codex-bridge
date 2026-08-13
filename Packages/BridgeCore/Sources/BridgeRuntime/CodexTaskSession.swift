@@ -2,6 +2,7 @@ import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
 import BridgeSecurity
+import CryptoKit
 import Foundation
 
 actor CodexTaskSession {
@@ -57,6 +58,7 @@ actor CodexTaskSession {
   private let maximumPendingApprovals: Int
   private let maximumKnownItems: Int
   private let maximumKnownItemEvidenceBytes: Int
+  private let maximumSemanticEvidenceBytes: Int
   private let maximumSessionNanoseconds: UInt64
   private let projectRoot: RegisteredRoot
   private let onTermination: @Sendable (TaskID, CodexTaskSession) async -> Void
@@ -65,10 +67,12 @@ actor CodexTaskSession {
   private var expectedThreadID: String?
   private var binding: ExecutionBinding?
   private var startedTurnIDs: Set<String> = []
-  private var seenItems: Set<ItemCorrelation> = []
+  private var seenItems: [ItemCorrelation: String] = [:]
   private var knownItems: [ItemCorrelation: KnownItem] = [:]
   private var knownItemEvidenceBytes = 0
   private var usedRequests: Set<RequestCorrelation> = []
+  private var seenSemanticSources: Set<String> = []
+  private var semanticEvidenceBytes = 0
   private var pendingApprovals: [ApprovalID: PendingApproval] = [:]
   private var approvalBarriers: Set<ApprovalID> = []
   private var deferredRequests: [RPCServerRequest] = []
@@ -82,6 +86,7 @@ actor CodexTaskSession {
     maximumPendingApprovals: Int,
     maximumKnownItems: Int,
     maximumKnownItemEvidenceBytes: Int,
+    maximumSemanticEvidenceBytes: Int,
     maximumSessionNanoseconds: UInt64,
     projectRoot: RegisteredRoot,
     onTermination: @escaping @Sendable (TaskID, CodexTaskSession) async -> Void
@@ -97,6 +102,7 @@ actor CodexTaskSession {
     self.maximumPendingApprovals = maximumPendingApprovals
     self.maximumKnownItems = maximumKnownItems
     self.maximumKnownItemEvidenceBytes = maximumKnownItemEvidenceBytes
+    self.maximumSemanticEvidenceBytes = maximumSemanticEvidenceBytes
     self.maximumSessionNanoseconds = maximumSessionNanoseconds
     self.projectRoot = projectRoot
     self.onTermination = onTermination
@@ -302,13 +308,13 @@ actor CodexTaskSession {
       guard
         correlation.threadID == expectedThreadID,
         startedTurnIDs.contains(correlation.turnID),
-        !seenItems.contains(correlation),
+        seenItems[correlation] == nil,
         seenItems.count < maximumKnownItems
       else {
         await fail(reason: "Codex emitted an invalid item event.")
         return
       }
-      seenItems.insert(correlation)
+      seenItems[correlation] = item.type
       guard item.type == "commandExecution" || item.type == "fileChange" else { return }
       let evidence: CodexApprovalItemEvidence
       let source: (digest: String, byteCount: Int)
@@ -336,6 +342,17 @@ actor CodexTaskSession {
         sourceDigest: source.digest
       )
       knownItemEvidenceBytes += source.byteCount
+    case "turn/plan/updated":
+      await processSemanticNotification(notification)
+    case "item/completed":
+      guard let item = parseItem(notification.params),
+        seenItems[item.correlation] == item.type
+      else {
+        await fail(reason: "Codex emitted an invalid completed item event.")
+        return
+      }
+      guard item.type == "commandExecution" || item.type == "fileChange" else { return }
+      await processSemanticNotification(notification)
     case "turn/completed":
       do {
         guard case .turnCompleted(let completed) = try notification.decodedCodexNotification()
@@ -360,6 +377,93 @@ actor CodexTaskSession {
       }
     default:
       return
+    }
+  }
+
+  private func processSemanticNotification(_ notification: RPCNotification) async {
+    let semantic: TaskSemanticExecutionObservation
+    do {
+      let evidence = try CodexApprovalWireDecoder.decodeSemanticNotification(notification)
+      semantic = try makeSemanticObservation(evidence, source: notification.params)
+      if seenSemanticSources.contains(semantic.sourceID) { return }
+      let byteCount = try Self.semanticByteCount(semantic)
+      guard seenSemanticSources.count < maximumKnownItems,
+        byteCount <= maximumSemanticEvidenceBytes - semanticEvidenceBytes
+      else {
+        throw IsolatedCodexTaskRuntimeError.protocolViolation
+      }
+      semanticEvidenceBytes += byteCount
+    } catch {
+      await fail(reason: "Codex emitted invalid semantic execution evidence.")
+      return
+    }
+    seenSemanticSources.insert(semantic.sourceID)
+    yield(.semantic(semantic))
+  }
+
+  private func makeSemanticObservation(
+    _ evidence: CodexSemanticExecutionEvidence,
+    source: JSONValue?
+  ) throws -> TaskSemanticExecutionObservation {
+    switch evidence {
+    case .planChanged(let plan):
+      try requireActiveSemanticBinding(threadID: plan.threadID, turnID: plan.turnID)
+      let steps = try plan.steps.map { step in
+        try TaskPlanStepSnapshot(
+          text: OutboundContentSecurity.redacted(step.text, maximumUTF8Bytes: 4_096),
+          status: Self.planStatus(step.status)
+        )
+      }
+      let explanation = plan.explanation.map {
+        OutboundContentSecurity.redacted($0, maximumUTF8Bytes: 8_192)
+      }
+      return try TaskSemanticExecutionObservation(
+        sourceID: try Self.semanticSourceID(prefix: "plan", source: source),
+        evidence: .planChanged(try TaskPlanSnapshot(steps: steps, explanation: explanation))
+      )
+    case .commandCompleted(let command):
+      let correlation = Self.itemCorrelation(command.item)
+      try requireCompletedItem(correlation, type: "commandExecution")
+      return try TaskSemanticExecutionObservation(
+        sourceID: try Self.semanticSourceID(prefix: "command", source: source),
+        evidence: .commandCompleted(
+          try TaskCommandCompletion(
+            itemID: command.item.itemID,
+            displayCommand: OutboundContentSecurity.redacted(
+              command.displayCommand,
+              maximumUTF8Bytes: 4_096
+            ),
+            exitCode: command.exitCode,
+            status: try Self.commandStatus(command.status)
+          )
+        )
+      )
+    case .fileChangeCompleted(let file):
+      let correlation = Self.itemCorrelation(file.item)
+      try requireCompletedItem(correlation, type: "fileChange")
+      return try TaskSemanticExecutionObservation(
+        sourceID: try Self.semanticSourceID(prefix: "file", source: source),
+        evidence: .fileChangeCompleted(
+          try TaskFileChangeCompletion(
+            itemID: file.item.itemID,
+            changeCount: file.changes.count,
+            status: try Self.fileStatus(file.status)
+          )
+        )
+      )
+    }
+  }
+
+  private func requireActiveSemanticBinding(threadID: String, turnID: String) throws {
+    guard threadID == expectedThreadID, startedTurnIDs.contains(turnID) else {
+      throw IsolatedCodexTaskRuntimeError.bindingMismatch
+    }
+  }
+
+  private func requireCompletedItem(_ item: ItemCorrelation, type: String) throws {
+    try requireActiveSemanticBinding(threadID: item.threadID, turnID: item.turnID)
+    guard seenItems[item] == type, knownItems[item]?.type == type else {
+      throw IsolatedCodexTaskRuntimeError.protocolViolation
     }
   }
 
@@ -623,6 +727,54 @@ actor CodexTaskSession {
   private static func isValidWireIdentifier(_ value: String) -> Bool {
     !value.isEmpty && value.utf8.count <= CodexApprovalWireLimits.identifierBytes
       && !value.contains("\0")
+  }
+
+  private static func semanticSourceID(prefix: String, source: JSONValue?) throws -> String {
+    guard let source else { throw IsolatedCodexTaskRuntimeError.protocolViolation }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let digest = SHA256.hash(data: try encoder.encode(source)).map {
+      String(format: "%02x", $0)
+    }.joined()
+    return "\(prefix)_\(digest)"
+  }
+
+  private static func semanticByteCount(_ observation: TaskSemanticExecutionObservation) throws
+    -> Int
+  {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return try encoder.encode(observation).count
+  }
+
+  private static func planStatus(_ status: CodexPlanStepStatus) -> TaskPlanStepStatus {
+    switch status {
+    case .pending: .pending
+    case .inProgress: .inProgress
+    case .completed: .completed
+    }
+  }
+
+  private static func commandStatus(
+    _ status: CodexCommandExecutionStatus
+  ) throws -> TaskCommandCompletionStatus {
+    switch status {
+    case .completed: .completed
+    case .failed: .failed
+    case .declined: .declined
+    case .inProgress: throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
+  }
+
+  private static func fileStatus(
+    _ status: CodexFileChangeStatus
+  ) throws -> TaskFileChangeCompletionStatus {
+    switch status {
+    case .completed: .completed
+    case .failed: .failed
+    case .declined: .declined
+    case .inProgress: throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
   }
 
 }

@@ -6,9 +6,11 @@ import Foundation
 actor DesktopMCPTaskOperations: BridgeMCPTaskOperations {
   private let application: BridgeApplicationService
   private let admission = DesktopMCPTaskAdmission()
+  private let supervisorAvailable: Bool
 
-  init(application: BridgeApplicationService) {
+  init(application: BridgeApplicationService, supervisorAvailable: Bool = false) {
     self.application = application
+    self.supervisorAvailable = supervisorAvailable
   }
 
   func configure(requiresHealthyRemote: Bool) async {
@@ -31,7 +33,22 @@ actor DesktopMCPTaskOperations: BridgeMCPTaskOperations {
     taskID: String,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPTaskSnapshot {
-    try await application.getTask(taskID: taskID, deadline: deadline)
+    let snapshot = try await application.getTask(taskID: taskID, deadline: deadline)
+    guard !supervisorAvailable else { return snapshot }
+    return MCPTaskSnapshot(
+      taskID: snapshot.taskID,
+      phase: snapshot.phase,
+      activity: snapshot.activity,
+      threadID: snapshot.threadID,
+      turnID: snapshot.turnID,
+      currentPlan: snapshot.currentPlan,
+      currentStep: snapshot.currentStep,
+      supervisorState: "unavailable",
+      changedFileCount: snapshot.changedFileCount,
+      verificationSummary: snapshot.verificationSummary,
+      finalReportAvailable: snapshot.finalReportAvailable,
+      updatedAt: snapshot.updatedAt
+    )
   }
 
   func getTaskEvents(
@@ -75,6 +92,7 @@ actor DesktopMCPTaskOperations: BridgeMCPTaskOperations {
     _ submission: TaskSubmission,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPTaskSubmissionReceipt {
+    guard supervisorAvailable else { throw BridgeMCPQueryError.unavailable }
     let lease = try await admission.acquireSubmissionLease()
     defer { lease?.release() }
     return try await application.submitTask(submission, deadline: deadline)

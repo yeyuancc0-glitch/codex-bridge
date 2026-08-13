@@ -6,6 +6,30 @@ import XCTest
 @testable import BridgeSupervisor
 
 final class CodexSupervisorRuntimeTests: XCTestCase {
+  func testProductionConfigurationRejectsReviewBeforeStartingProcess() async throws {
+    let root = try temporaryRoot()
+    let registered = try RegisteredRoot(capturing: root)
+    let marker = root.appending(path: "process-started")
+    let runtime = CodexSupervisorRuntime(
+      configuration: CodexSupervisorRuntimeConfiguration(
+        appServer: AppServerConfiguration(
+          executableURL: URL(fileURLWithPath: "/bin/sh"),
+          arguments: ["-c", "touch \"\(marker.path)\""]
+        ),
+        clientInfo: .bridge(version: "supervisor-tests")
+      )
+    )
+
+    do {
+      _ = try await runtime.review(
+        try checkpoint(sequence: 1, stage: .progress),
+        root: registered
+      )
+      XCTFail("Expected evidence isolation to be unavailable")
+    } catch CodexSupervisorRuntimeError.evidenceIsolationUnavailable {}
+    XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+  }
+
   func testReusesOneReadOnlyThreadAndDecodesStrictDecisions() async throws {
     let root = try temporaryRoot()
     let registered = try RegisteredRoot(capturing: root)
@@ -66,7 +90,7 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
   }
 
   private func configuration(script: String) -> CodexSupervisorRuntimeConfiguration {
-    CodexSupervisorRuntimeConfiguration(
+    CodexSupervisorRuntimeConfiguration.unconfinedProtocolTest(
       appServer: AppServerConfiguration(
         executableURL: URL(fileURLWithPath: "/bin/sh"),
         arguments: ["-c", script],

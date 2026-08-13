@@ -37,10 +37,27 @@ public struct TaskPipelineVerifyingContext: Equatable, Sendable {
   }
 }
 
+public struct TaskPipelineSemanticContext: Equatable, Sendable {
+  public let projection: TaskProjection
+  public let binding: ExecutionBinding
+  public let observation: TaskSemanticExecutionObservation
+
+  public init(
+    projection: TaskProjection,
+    binding: ExecutionBinding,
+    observation: TaskSemanticExecutionObservation
+  ) {
+    self.projection = projection
+    self.binding = binding
+    self.observation = observation
+  }
+}
+
 public protocol TaskPipelineLifecycle: Sendable {
   func prepareForLegacyTurnStart(taskID: TaskID, submission: TaskSubmission) async throws
   func prepareForTurnStart(_ context: TaskPipelinePreStartContext) async throws
   func recordStartedTurn(_ context: TaskPipelineStartedContext) async throws
+  func recordSemanticObservation(_ context: TaskPipelineSemanticContext) async throws
   func finalizeVerifyingTask(_ context: TaskPipelineVerifyingContext) async throws
   func discardTaskState(taskID: TaskID) async throws
 }
@@ -82,6 +99,10 @@ public actor DeferredTaskPipelineLifecycle: TaskPipelineLifecycle {
     try await requiredTarget().recordStartedTurn(context)
   }
 
+  public func recordSemanticObservation(_ context: TaskPipelineSemanticContext) async throws {
+    try await requiredTarget().recordSemanticObservation(context)
+  }
+
   public func finalizeVerifyingTask(_ context: TaskPipelineVerifyingContext) async throws {
     try await requiredTarget().finalizeVerifyingTask(context)
   }
@@ -103,6 +124,8 @@ extension TaskPipelineLifecycle {
   public func prepareForTurnStart(_: TaskPipelinePreStartContext) async throws {}
 
   public func recordStartedTurn(_: TaskPipelineStartedContext) async throws {}
+
+  public func recordSemanticObservation(_: TaskPipelineSemanticContext) async throws {}
 
   public func finalizeVerifyingTask(_: TaskPipelineVerifyingContext) async throws {}
 

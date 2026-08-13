@@ -9,6 +9,66 @@ import XCTest
 @testable import BridgeRuntime
 
 final class IsolatedCodexTaskRuntimeTests: XCTestCase {
+  func testEmitsBoundedRedactedSemanticExecutionFacts() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: semanticFactsScript(root: fixture.root.path)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let session = try await runtime.start(
+      taskID: TaskID(rawValue: "task-semantic"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var observations = session.observations.makeAsyncIterator()
+
+    guard case .semantic(let plan)? = await observations.next(),
+      case .planChanged(let planValue) = plan.evidence
+    else { return XCTFail("Expected a plan fact") }
+    XCTAssertEqual(planValue.steps.first?.text, "Inspect [REDACTED]")
+    XCTAssertEqual(planValue.explanation, "[REDACTED]")
+
+    guard case .semantic(let command)? = await observations.next(),
+      case .commandCompleted(let commandValue) = command.evidence
+    else { return XCTFail("Expected a command fact") }
+    XCTAssertEqual(commandValue.displayCommand, "[REDACTED]")
+    XCTAssertEqual(commandValue.exitCode, 1)
+    XCTAssertEqual(commandValue.status, .failed)
+
+    guard case .semantic(let file)? = await observations.next(),
+      case .fileChangeCompleted(let fileValue) = file.evidence
+    else { return XCTFail("Expected a file-change fact") }
+    XCTAssertEqual(fileValue.changeCount, 1)
+    XCTAssertEqual(fileValue.status, .completed)
+    XCTAssertFalse(String(describing: file).contains("secret-diff-payload"))
+    let terminal = await observations.next()
+    XCTAssertEqual(terminal, .turnCompleted)
+  }
+
+  func testSemanticExecutionEvidenceBudgetFailsClosed() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: semanticFactsScript(root: fixture.root.path),
+      maximumSemanticEvidenceBytes: 1
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let session = try await runtime.start(
+      taskID: TaskID(rawValue: "task-semantic-budget"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var observations = session.observations.makeAsyncIterator()
+
+    guard case .failed(let reason)? = await observations.next() else {
+      return XCTFail("Expected the semantic evidence budget to fail closed")
+    }
+    XCTAssertEqual(reason, "Codex emitted invalid semantic execution evidence.")
+    let streamEnd = await observations.next()
+    XCTAssertNil(streamEnd)
+  }
+
   func testNewThreadApprovalUsesAuthoritativeItemCorrelation() async throws {
     let fixture = try await makeFixture()
     let script = newThreadApprovalScript(root: fixture.root.path)
@@ -579,7 +639,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
   private func makeRuntime(
     fixture: Fixture,
     script: String,
-    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024
+    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024,
+    maximumSemanticEvidenceBytes: Int = 4 * 1_024 * 1_024
   ) -> IsolatedCodexTaskRuntime {
     let location = RuntimeProjectLocation(
       workingDirectoryURL: fixture.root,
@@ -589,7 +650,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
       fixture: fixture,
       script: script,
       locations: ClosureRuntimeProjectLocationResolver { _ in location },
-      maximumKnownItemEvidenceBytes: maximumKnownItemEvidenceBytes
+      maximumKnownItemEvidenceBytes: maximumKnownItemEvidenceBytes,
+      maximumSemanticEvidenceBytes: maximumSemanticEvidenceBytes
     )
   }
 
@@ -597,7 +659,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     fixture: Fixture,
     script: String,
     locations: any RuntimeProjectLocationResolving,
-    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024
+    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024,
+    maximumSemanticEvidenceBytes: Int = 4 * 1_024 * 1_024
   ) -> IsolatedCodexTaskRuntime {
     return IsolatedCodexTaskRuntime(
       registry: fixture.registry,
@@ -611,7 +674,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
         requestTimeoutNanoseconds: 1_000_000_000,
         startEventTimeoutNanoseconds: 1_000_000_000,
         maximumSessionNanoseconds: 5_000_000_000,
-        maximumKnownItemEvidenceBytes: maximumKnownItemEvidenceBytes
+        maximumKnownItemEvidenceBytes: maximumKnownItemEvidenceBytes,
+        maximumSemanticEvidenceBytes: maximumSemanticEvidenceBytes
       )
     )
   }
@@ -658,6 +722,35 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
         IFS= read -r approval
         case "$approval" in *'"id":"approval-1"'*) ;; *) exit 33 ;; esac
         case "$approval" in *'"decision":"decline"'*) ;; *) exit 33 ;; esac
+        printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
+        sleep 2
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+      .replacingOccurrences(of: "__TURN__", with: turn)
+      .replacingOccurrences(of: "__COMPLETED__", with: completed)
+  }
+
+  private func semanticFactsScript(root: String) -> String {
+    let thread = threadJSON(id: "thread-new", root: root)
+    let turn = turnJSON(id: "turn-new", status: "inProgress")
+    let completed = turnJSON(id: "turn-new", status: "completed")
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        IFS= read -r turn_start
+        printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
+        printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-message","type":"agentMessage","text":"ordinary message"}}}'
+        printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-new","turnId":"turn-new","completedAtMs":1,"item":{"id":"item-message","type":"agentMessage","text":"ordinary message"}}}'
+        printf '%s\n' '{"method":"turn/plan/updated","params":{"threadId":"thread-new","turnId":"turn-new","explanation":"password=actual-secret-value","plan":[{"step":"Inspect /Users/alice/private","status":"inProgress"}]}}'
+        printf '%s\n' '{"method":"turn/plan/updated","params":{"threadId":"thread-new","turnId":"turn-new","explanation":"password=actual-secret-value","plan":[{"step":"Inspect /Users/alice/private","status":"inProgress"}]}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":2,"item":{"id":"item-command","type":"commandExecution","command":"password=actual-secret-value","commandActions":[],"cwd":"__ROOT__","status":"inProgress"}}}'
+        printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-new","turnId":"turn-new","completedAtMs":3,"item":{"id":"item-command","type":"commandExecution","command":"password=actual-secret-value","commandActions":[],"cwd":"__ROOT__","status":"failed","exitCode":1,"aggregatedOutput":"must-not-persist"}}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":4,"item":{"id":"item-file","type":"fileChange","status":"inProgress","changes":[{"path":"Sources/App.swift","diff":"secret-diff-payload","kind":{"type":"update","move_path":null}}]}}}'
+        printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-new","turnId":"turn-new","completedAtMs":5,"item":{"id":"item-file","type":"fileChange","status":"completed","changes":[{"path":"Sources/App.swift","diff":"secret-diff-payload","kind":{"type":"update","move_path":null}}]}}}'
         printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
         sleep 2
         """#

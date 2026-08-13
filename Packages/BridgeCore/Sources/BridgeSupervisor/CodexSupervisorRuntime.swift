@@ -9,6 +9,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
   public let reviewTimeoutNanoseconds: UInt64
   public let eventBufferLimit: Int
   public let maximumConcurrentTasks: Int
+  package let permitsUnconfinedProjectReadForProtocolTesting: Bool
 
   public init(
     appServer: AppServerConfiguration = .codex(),
@@ -24,6 +25,45 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     self.reviewTimeoutNanoseconds = max(1, reviewTimeoutNanoseconds)
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.maximumConcurrentTasks = max(1, maximumConcurrentTasks)
+    permitsUnconfinedProjectReadForProtocolTesting = false
+  }
+
+  package static func unconfinedProtocolTest(
+    appServer: AppServerConfiguration,
+    clientInfo: CodexClientInfo,
+    requestTimeoutNanoseconds: UInt64 = 180_000_000_000,
+    reviewTimeoutNanoseconds: UInt64 = 180_000_000_000,
+    eventBufferLimit: Int = 128,
+    maximumConcurrentTasks: Int = 2
+  ) -> Self {
+    Self(
+      appServer: appServer,
+      clientInfo: clientInfo,
+      requestTimeoutNanoseconds: requestTimeoutNanoseconds,
+      reviewTimeoutNanoseconds: reviewTimeoutNanoseconds,
+      eventBufferLimit: eventBufferLimit,
+      maximumConcurrentTasks: maximumConcurrentTasks,
+      permitsUnconfinedProjectReadForProtocolTesting: true
+    )
+  }
+
+  private init(
+    appServer: AppServerConfiguration,
+    clientInfo: CodexClientInfo,
+    requestTimeoutNanoseconds: UInt64,
+    reviewTimeoutNanoseconds: UInt64,
+    eventBufferLimit: Int,
+    maximumConcurrentTasks: Int,
+    permitsUnconfinedProjectReadForProtocolTesting: Bool
+  ) {
+    self.appServer = appServer
+    self.clientInfo = clientInfo
+    self.requestTimeoutNanoseconds = max(1, requestTimeoutNanoseconds)
+    self.reviewTimeoutNanoseconds = max(1, reviewTimeoutNanoseconds)
+    self.eventBufferLimit = max(1, eventBufferLimit)
+    self.maximumConcurrentTasks = max(1, maximumConcurrentTasks)
+    self.permitsUnconfinedProjectReadForProtocolTesting =
+      permitsUnconfinedProjectReadForProtocolTesting
   }
 }
 
@@ -43,6 +83,7 @@ public enum CodexSupervisorRuntimeError: Error, Equatable, Sendable {
   case responseTooLarge
   case reviewTimedOut
   case unsafeCheckpoint
+  case evidenceIsolationUnavailable
   case processFailed
 }
 
@@ -61,6 +102,9 @@ public actor CodexSupervisorRuntime {
     model: String = "gpt-5.6-luna",
     effort: String = "medium"
   ) async throws -> SupervisorDecision {
+    guard configuration.permitsUnconfinedProjectReadForProtocolTesting else {
+      throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
+    }
     try Self.validate(checkpoint: checkpoint, root: root, model: model, effort: effort)
     let liveRoot: RegisteredRoot
     do {
@@ -189,7 +233,7 @@ public actor CodexSupervisorRuntime {
       true
     case .invalidTaskIdentifier, .invalidModel, .invalidEffort, .rootChanged, .taskLimitReached,
       .reviewAlreadyActive, .modelUnavailable, .effortUnavailable, .responseMissing,
-      .responseTooLarge, .unsafeCheckpoint:
+      .responseTooLarge, .unsafeCheckpoint, .evidenceIsolationUnavailable:
       false
     }
   }

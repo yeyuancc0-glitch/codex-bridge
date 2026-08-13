@@ -31,9 +31,16 @@ actor DesktopMCPRuntime {
   private var mutationActive = false
   private var mutationWaiters: [CheckedContinuation<Void, Never>] = []
 
-  init(application: BridgeApplicationService, status: BridgeStatusStore) {
+  init(
+    application: BridgeApplicationService,
+    status: BridgeStatusStore,
+    supervisorAvailable: Bool = false
+  ) {
     self.application = application
-    taskOperations = DesktopMCPTaskOperations(application: application)
+    taskOperations = DesktopMCPTaskOperations(
+      application: application,
+      supervisorAvailable: supervisorAvailable
+    )
     self.status = status
   }
 
@@ -192,8 +199,8 @@ actor DesktopMCPRuntime {
       mcpState: mcpState,
       tunnelState: "stopped",
       executionState: "idle",
-      supervisorState: "idle",
-      degradations: [],
+      supervisorState: "unavailable",
+      degradations: [DesktopSupervisorAvailability.degradation],
       pendingApprovalCount: 0
     )
   }

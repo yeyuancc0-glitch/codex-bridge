@@ -73,6 +73,47 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertTrue(ownedLocks.isEmpty)
   }
 
+  func testSemanticExecutionFactPersistsBeforePipelineCallback() async throws {
+    let store = try EventStore.inMemory()
+    let order = PipelineLifecycleOrder()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime,
+      pipeline: RecordingPipelineLifecycle(order: order)
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "semantic-fact", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let before = try await coordinator.task(taskID).lastSequence
+    let observation = try TaskSemanticExecutionObservation(
+      sourceID: "plan-source",
+      evidence: .planChanged(
+        try TaskPlanSnapshot(
+          steps: [try TaskPlanStepSnapshot(text: "Implement", status: .inProgress)],
+          explanation: nil
+        )
+      )
+    )
+
+    await runtime.emit(.semantic(observation), taskID: taskID)
+    for _ in 0..<100 {
+      if try await coordinator.task(taskID).lastSequence > before { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+
+    let projection = try await coordinator.task(taskID)
+    XCTAssertEqual(projection.aggregate.phase, .running)
+    XCTAssertEqual(projection.lastSequence, before + 1)
+    let stored = try await store.events(for: taskID)
+    XCTAssertEqual(stored.last?.kind, "task.semantic")
+    let pipelineEvents = await order.events()
+    XCTAssertEqual(pipelineEvents.last, "pipeline.semantic")
+  }
+
   func testIdempotentLocallyApprovedTaskRunsThroughFinalReport() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -1016,6 +1057,10 @@ private struct RecordingPipelineLifecycle: TaskPipelineLifecycle {
 
   func recordStartedTurn(_: TaskPipelineStartedContext) async {
     await order.append("pipeline.started")
+  }
+
+  func recordSemanticObservation(_: TaskPipelineSemanticContext) async {
+    await order.append("pipeline.semantic")
   }
 }
 

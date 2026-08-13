@@ -188,6 +188,110 @@ final class CodexApprovalWireDecoderTests: XCTestCase {
     )
   }
 
+  func testDecodesBoundedPlanUpdateSemanticEvidence() throws {
+    let notification = RPCNotification(
+      method: "turn/plan/updated",
+      params: .object([
+        "threadId": .string("thread-1"),
+        "turnId": .string("turn-1"),
+        "explanation": .string("The implementation plan changed."),
+        "plan": .array([
+          .object(["step": .string("Inspect"), "status": .string("completed")]),
+          .object(["step": .string("Implement"), "status": .string("inProgress")]),
+        ]),
+      ])
+    )
+
+    guard
+      case .planChanged(let evidence) =
+        try CodexApprovalWireDecoder.decodeSemanticNotification(notification)
+    else { return XCTFail("Expected plan evidence") }
+    XCTAssertEqual(evidence.threadID, "thread-1")
+    XCTAssertEqual(evidence.steps.map(\.status), [.completed, .inProgress])
+  }
+
+  func testDecodesCompletedCommandAndFileSemanticEvidence() throws {
+    let command = RPCNotification(
+      method: "item/completed",
+      params: .object([
+        "threadId": .string("thread-1"),
+        "turnId": .string("turn-1"),
+        "completedAtMs": .integer(8),
+        "item": .object([
+          "id": .string("command-1"),
+          "type": .string("commandExecution"),
+          "command": .string("swift test"),
+          "status": .string("failed"),
+          "exitCode": .integer(1),
+        ]),
+      ])
+    )
+    guard
+      case .commandCompleted(let commandEvidence) =
+        try CodexApprovalWireDecoder.decodeSemanticNotification(command)
+    else { return XCTFail("Expected command completion") }
+    XCTAssertEqual(commandEvidence.exitCode, 1)
+    XCTAssertEqual(commandEvidence.status, .failed)
+
+    let file = RPCNotification(
+      method: "item/completed",
+      params: .object([
+        "threadId": .string("thread-1"),
+        "turnId": .string("turn-1"),
+        "completedAtMs": .integer(9),
+        "item": .object([
+          "id": .string("file-1"),
+          "type": .string("fileChange"),
+          "status": .string("completed"),
+          "changes": .array([
+            fileUpdate(
+              path: "Sources/App.swift",
+              diff: "+let ready = true",
+              kind: .object(["type": .string("add")])
+            )
+          ]),
+        ]),
+      ])
+    )
+    guard
+      case .fileChangeCompleted(let fileEvidence) =
+        try CodexApprovalWireDecoder.decodeSemanticNotification(file)
+    else { return XCTFail("Expected file completion") }
+    XCTAssertEqual(fileEvidence.changes.count, 1)
+    XCTAssertEqual(fileEvidence.status, .completed)
+  }
+
+  func testSemanticDecoderRejectsInProgressCompletionAndUnknownPlanStatus() {
+    let command = RPCNotification(
+      method: "item/completed",
+      params: .object([
+        "threadId": .string("thread-1"),
+        "turnId": .string("turn-1"),
+        "completedAtMs": .integer(8),
+        "item": .object([
+          "id": .string("command-1"),
+          "type": .string("commandExecution"),
+          "command": .string("swift test"),
+          "status": .string("inProgress"),
+          "exitCode": .null,
+        ]),
+      ])
+    )
+    XCTAssertThrowsError(try CodexApprovalWireDecoder.decodeSemanticNotification(command))
+
+    let plan = RPCNotification(
+      method: "turn/plan/updated",
+      params: .object([
+        "threadId": .string("thread-1"),
+        "turnId": .string("turn-1"),
+        "plan": .array([
+          .object(["step": .string("Inspect"), "status": .string("future")])
+        ]),
+      ])
+    )
+    XCTAssertThrowsError(try CodexApprovalWireDecoder.decodeSemanticNotification(plan))
+  }
+
   func testDecodesEveryCommandActionAndFileChangeKind() throws {
     var params = commonParams()
     params["commandActions"] = .array([

@@ -51,6 +51,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 所有 MCP SDK 类型封装在 MCP 适配层，不能渗入领域层。
 - Execution 与 Supervisor 请求、事件、生命周期和失败恢复完全隔离。
 - Supervisor 只读、无网络、`approvalPolicy = never`，不能修改项目或批准风险操作。
+- 当前 app-server `thread/start` / `turn/start` 没有可验证的 core-tools 禁用字段；`readOnly` 不能证明 Luna 无法读取项目或用户文件。Production Supervisor 必须保持 unavailable，直到 evidence-only 进程隔离经真实恶意读取回归证明有效，不能只靠空 cwd 或提示词宣称安全。
 - Policy Engine 是安全边界；模型判断只是证据，不能扩大权限。
 - 任务事件追加写入，当前状态从事件归约；禁止修改历史事件。
 - `TaskPhase` 与 `TaskActivity` 分离：监督/纠偏是 activity，不伪造生命周期变化；恢复使用 `recovering/unknown`，完成必须已有最终报告。
@@ -190,6 +191,7 @@ codex app-server generate-json-schema --out DIR
 - 最终 Git patch 使用 0700/0600 私有持久存储、digest 绑定、有界 LRU、跨实例文件锁和提交标记裁剪；首次访问形成受总容量约束的验证快照，MCP 分页必须按真实双形态 200 KiB 编码预算和 UTF-8 边界缩页。
 - 本地验证器不是 OS sandbox。本机明确批准验证命令后，项目程序或工具链插件仍可能自行读取项目外文件或联网；已知网络命令和 Shell wrapper 必须硬拒绝，发布前若要声称强隔离必须另接真正的进程沙箱。
 - Execution 与 Supervisor 都必须动态核对精确 model/effort；Luna 不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
+- Supervisor 的 checkpoint 出站过滤只约束提示内容，不约束同一 app-server 进程自行读取文件。没有 OS 级 evidence-only 隔离或经实测的 no-tools 协议能力时，终局复核和持续 checkpoint 都不得在 production 启动进程；状态必须诚实显示 unavailable。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 数据根目录 inode 的 advisory lock 只能绑定已打开对象；若发布威胁模型要求抵抗同一 UID 主动 rename 并重建整个数据根，必须另接稳定父锚或 LaunchServices/launchd 单实例机制，不能把当前目录锁描述为已覆盖该攻击。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。

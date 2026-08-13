@@ -8,6 +8,7 @@ public actor TaskCoordinator {
     case submission(TaskSubmission)
     case domain(TaskEvent)
     case runtimeIntent(TaskRuntimeIntentRecord)
+    case semantic(TaskSemanticExecutionObservation)
     case finalization(TaskFinalizationRecord)
   }
 
@@ -884,7 +885,7 @@ public actor TaskCoordinator {
       switch observation {
       case .turnCompleted, .turnStopped, .failed:
         return
-      case .codexApprovalRequested:
+      case .codexApprovalRequested, .semantic:
         break
       }
       guard let phase = try? await task(taskID).aggregate.phase else { return }
@@ -934,6 +935,17 @@ public actor TaskCoordinator {
       try await pipeline?.discardTaskState(taskID: taskID)
     case .codexApprovalRequested:
       break
+    case .semantic(let semantic):
+      guard let binding = projection.aggregate.binding else {
+        throw TaskCoordinatorError.corruptTask(taskID)
+      }
+      try await pipeline?.recordSemanticObservation(
+        TaskPipelineSemanticContext(
+          projection: projection,
+          binding: binding,
+          observation: semantic
+        )
+      )
     }
   }
 
@@ -957,6 +969,18 @@ public actor TaskCoordinator {
         taskID: taskID,
         binding: binding
       )
+    case .semantic(let semantic):
+      let projection = TaskProjection(
+        aggregate: current.aggregate,
+        lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+      )
+      try await append(
+        .semantic(semantic),
+        taskID: taskID,
+        expectedSequence: current.lastSequence,
+        projection: projection
+      )
+      return projection
     case .turnCompleted:
       event = .turnCompleted
       releasesLocks = false
@@ -1233,6 +1257,8 @@ public actor TaskCoordinator {
           aggregate = try TaskReducer.reduce(current, event: event)
         case .runtimeIntent:
           guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
+        case .semantic:
+          guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
         case .finalization:
           guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
         }
@@ -1412,6 +1438,7 @@ public actor TaskCoordinator {
     case .submission: "task.submission"
     case .domain(let event): "task.\(event.kind)"
     case .runtimeIntent: "task.runtimeIntent"
+    case .semantic: "task.semantic"
     case .finalization: "task.finalizationAuthorization"
     }
   }
