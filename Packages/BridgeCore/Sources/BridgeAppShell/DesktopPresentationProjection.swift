@@ -473,7 +473,7 @@ struct DesktopPresentationProjection {
       if evidence.omittedOperationCount > 0 {
         consequences.append("另有 \(evidence.omittedOperationCount) 项操作未在摘要中展示。")
       }
-      consequences.append("当前版本尚未完成确定性策略裁决，因此只能拒绝。")
+      consequences.append("当前 app-server 不提供原子文件变更能力，因此只能拒绝。")
       return CodexApprovalPresentation(
         id: approval.rawValue,
         taskID: projection.aggregate.id.rawValue,

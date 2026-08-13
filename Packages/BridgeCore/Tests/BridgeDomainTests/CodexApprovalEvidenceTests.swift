@@ -42,15 +42,105 @@ final class CodexApprovalEvidenceTests: XCTestCase {
     }
   }
 
+  func testFullFileManifestRoundTripsAndLegacyEvidenceDefaultsToNil() throws {
+    let entry = try manifestEntry(path: "Sources/App.swift", byteCount: 12)
+    let manifest = try CodexApprovalFileChangeManifest(
+      entries: [entry],
+      totalDiffBytes: 12,
+      rootDevice: 42,
+      rootInode: 84
+    )
+    let evidence = try makeEvidence(
+      kind: .fileChange,
+      authority: .correlatedFileChanges,
+      fileChangeManifest: manifest
+    )
+    let data = try JSONEncoder().encode(evidence)
+
+    let decoded = try JSONDecoder().decode(CodexApprovalEvidence.self, from: data)
+    XCTAssertEqual(decoded.fileChangeManifest, manifest)
+
+    var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    legacy.removeValue(forKey: "fileChangeManifest")
+    let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+    XCTAssertNil(
+      try JSONDecoder().decode(CodexApprovalEvidence.self, from: legacyData).fileChangeManifest)
+  }
+
+  func testFileManifestRejectsInvalidPathsKindsAndBounds() throws {
+    XCTAssertThrowsError(try manifestEntry(path: "../outside", byteCount: 1)) { error in
+      XCTAssertEqual(error as? CodexApprovalEvidenceError, .invalidText)
+    }
+    XCTAssertThrowsError(
+      try CodexApprovalFileChangeManifestEntry(
+        path: "Sources/App.swift",
+        kind: .add,
+        movePath: "Sources/Main.swift",
+        diffByteCount: 1,
+        diffSHA256: String(repeating: "a", count: 64)
+      )
+    ) { error in
+      XCTAssertEqual(error as? CodexApprovalEvidenceError, .invalidCollection)
+    }
+    XCTAssertThrowsError(
+      try manifestEntry(
+        path: "Sources/App.swift",
+        byteCount: CodexApprovalFileChangeManifest.maximumTotalDiffBytes + 1
+      )
+    ) { error in
+      XCTAssertEqual(error as? CodexApprovalEvidenceError, .invalidCollection)
+    }
+    let entry = try manifestEntry(path: "Sources/App.swift", byteCount: 1)
+    XCTAssertThrowsError(
+      try CodexApprovalFileChangeManifest(
+        entries: Array(repeating: entry, count: 101),
+        totalDiffBytes: 101,
+        rootDevice: 1,
+        rootInode: 2
+      )
+    ) { error in
+      XCTAssertEqual(error as? CodexApprovalEvidenceError, .invalidCollection)
+    }
+    XCTAssertThrowsError(
+      try CodexApprovalFileChangeManifest(
+        entries: [entry],
+        totalDiffBytes: 2,
+        rootDevice: 1,
+        rootInode: 2
+      )
+    ) { error in
+      XCTAssertEqual(error as? CodexApprovalEvidenceError, .invalidCollection)
+    }
+    let largeEntries = try (0..<CodexApprovalFileChangeManifest.maximumEntries).map { index in
+      try manifestEntry(
+        path: "Sources/\(index)-\(String(repeating: "x", count: 1_500))",
+        byteCount: 1
+      )
+    }
+    XCTAssertThrowsError(
+      try CodexApprovalFileChangeManifest(
+        entries: largeEntries,
+        totalDiffBytes: largeEntries.count,
+        rootDevice: 1,
+        rootInode: 2
+      )
+    ) { error in
+      XCTAssertEqual(error as? CodexApprovalEvidenceError, .invalidCollection)
+    }
+  }
+
   private func makeEvidence(
+    kind: CodexApprovalEvidenceKind = .command,
+    authority: CodexApprovalEvidenceAuthority = .correlatedDisplayOnly,
     displayCommand: String? = "/usr/bin/git status",
     displayArguments: [String] = ["Read repository status"],
-    digest: String = String(repeating: "a", count: 64)
+    digest: String = String(repeating: "a", count: 64),
+    fileChangeManifest: CodexApprovalFileChangeManifest? = nil
   ) throws -> CodexApprovalEvidence {
     try CodexApprovalEvidence(
       approvalID: ApprovalID(rawValue: "apr-evidence"),
-      kind: .command,
-      authority: .correlatedDisplayOnly,
+      kind: kind,
+      authority: authority,
       threadID: ThreadID(rawValue: "thread-evidence"),
       turnID: TurnID(rawValue: "turn-evidence"),
       itemID: "item-evidence",
@@ -61,7 +151,21 @@ final class CodexApprovalEvidenceTests: XCTestCase {
       displayArguments: displayArguments,
       workingDirectory: "/private/project",
       reason: "Codex requested permission to continue.",
-      evidenceDigest: digest
+      evidenceDigest: digest,
+      fileChangeManifest: fileChangeManifest
+    )
+  }
+
+  private func manifestEntry(
+    path: String,
+    byteCount: Int
+  ) throws -> CodexApprovalFileChangeManifestEntry {
+    try CodexApprovalFileChangeManifestEntry(
+      path: path,
+      kind: .update,
+      movePath: "Sources/Main.swift",
+      diffByteCount: byteCount,
+      diffSHA256: String(repeating: "b", count: 64)
     )
   }
 }

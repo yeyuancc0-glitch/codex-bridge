@@ -213,7 +213,7 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       maximumKnownItems: configuration.maximumKnownItems,
       maximumKnownItemEvidenceBytes: configuration.maximumKnownItemEvidenceBytes,
       maximumSessionNanoseconds: configuration.maximumSessionNanoseconds,
-      projectRoot: location.root.canonicalPath,
+      projectRoot: location.root,
       onTermination: { [weak self] taskID, session in
         await self?.removeSession(taskID: taskID, matching: session)
       }
@@ -321,6 +321,7 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     approvalID: ApprovalID,
     approved: Bool
   ) async throws {
+    guard !approved else { throw IsolatedCodexTaskRuntimeError.approvalUnavailable }
     guard let session = sessions[taskID] else {
       throw IsolatedCodexTaskRuntimeError.sessionUnavailable
     }

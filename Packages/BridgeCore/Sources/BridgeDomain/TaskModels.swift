@@ -159,6 +159,8 @@ public struct StopIntent: Codable, Equatable, Sendable {
 }
 
 public struct TaskAggregate: Codable, Equatable, Sendable {
+  public static let maximumApprovalEvidenceEncodedBytes = 256 * 1_024
+
   public let id: TaskID
   public let submission: TaskSubmission
   public internal(set) var phase: TaskPhase
@@ -220,6 +222,13 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
         [ApprovalID: CodexApprovalEvidence].self,
         forKey: .approvalEvidenceByID
       ) ?? [:]
+    guard Self.approvalEvidenceFitsBudget(approvalEvidenceByID) else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .approvalEvidenceByID,
+        in: container,
+        debugDescription: "Approval evidence exceeds the aggregate byte limit."
+      )
+    }
     stopIntent = try container.decodeIfPresent(StopIntent.self, forKey: .stopIntent)
     reportReference = try container.decodeIfPresent(String.self, forKey: .reportReference)
     failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
@@ -240,5 +249,12 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
     try container.encodeIfPresent(reportReference, forKey: .reportReference)
     try container.encodeIfPresent(failureReason, forKey: .failureReason)
     try container.encodeIfPresent(recoveryOrigin, forKey: .recoveryOrigin)
+  }
+
+  static func approvalEvidenceFitsBudget(
+    _ evidenceByID: [ApprovalID: CodexApprovalEvidence]
+  ) -> Bool {
+    guard let data = try? JSONEncoder().encode(evidenceByID) else { return false }
+    return data.count <= Self.maximumApprovalEvidenceEncodedBytes
   }
 }

@@ -73,7 +73,7 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertTrue(ownedLocks.isEmpty)
   }
 
-  func testIdempotentApprovedTaskRunsThroughCodexApprovalAndFinalReport() async throws {
+  func testIdempotentLocallyApprovedTaskRunsThroughFinalReport() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
     let coordinator = TaskCoordinator(
@@ -95,21 +95,6 @@ final class TaskCoordinatorTests: XCTestCase {
     let startsAfterApproval = await runtime.startCount()
     XCTAssertEqual(startsAfterApproval, 1)
 
-    let approvalID = ApprovalID(rawValue: "approval-one")
-    await runtime.emit(.codexApprovalRequested(approvalID), taskID: submitted.aggregate.id)
-    try await waitForPhase(
-      .awaitingCodexApproval,
-      taskID: submitted.aggregate.id,
-      coordinator: coordinator
-    )
-    _ = try await coordinator.resolveCodexApproval(
-      taskID: submitted.aggregate.id,
-      approvalID: approvalID,
-      approved: true
-    )
-    let approvalResponses = await runtime.approvalResponses()
-    XCTAssertEqual(approvalResponses, [approvalID: true])
-
     await runtime.emit(.turnCompleted, taskID: submitted.aggregate.id)
     try await waitForPhase(.verifying, taskID: submitted.aggregate.id, coordinator: coordinator)
     let completed = try await coordinator.complete(
@@ -124,6 +109,39 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(completedLocks, [])
     XCTAssertEqual(completedSnapshot?.lastEventSequence, completed.lastSequence)
     XCTAssertEqual(completedSnapshot?.recoveryRequired, false)
+  }
+
+  func testCodexApprovalCannotBeAuthorized() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "approval-authorize-denied", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let approvalID = ApprovalID(rawValue: "approval-authorize-denied")
+    await runtime.emit(.codexApprovalRequested(approvalID), taskID: taskID)
+    try await waitForPhase(.awaitingCodexApproval, taskID: taskID, coordinator: coordinator)
+
+    do {
+      _ = try await coordinator.resolveCodexApproval(
+        taskID: taskID,
+        approvalID: approvalID,
+        approved: true
+      )
+      XCTFail("Expected Codex approval authorization to fail closed")
+    } catch TaskCoordinatorError.codexApprovalAuthorizationUnavailable {}
+
+    let projection = try await coordinator.task(taskID)
+    XCTAssertTrue(projection.aggregate.pendingApprovalIDs.contains(approvalID))
+    XCTAssertTrue(projection.aggregate.resolvingApprovalIDs.isEmpty)
+    let responses = await runtime.approvalResponses()
+    XCTAssertTrue(responses.isEmpty)
   }
 
   func testApprovalEvidenceAndPendingTicketCommitAtomically() async throws {
@@ -236,7 +254,7 @@ final class TaskCoordinatorTests: XCTestCase {
       _ = try await coordinator.resolveCodexApproval(
         taskID: submitted.aggregate.id,
         approvalID: approvalID,
-        approved: true
+        approved: false
       )
       XCTFail("Expected runtime approval failure")
     } catch FakeRuntimeError.approvalResolutionFailed {}
@@ -275,7 +293,7 @@ final class TaskCoordinatorTests: XCTestCase {
       try await coordinator.resolveCodexApproval(
         taskID: taskID,
         approvalID: approvalID,
-        approved: true
+        approved: false
       )
     }
     await gate.waitUntilStarted()
@@ -296,10 +314,10 @@ final class TaskCoordinatorTests: XCTestCase {
 
     await gate.release()
     let resolved = try await first.value
-    XCTAssertEqual(resolved.aggregate.phase, .running)
+    XCTAssertEqual(resolved.aggregate.phase, .awaitingCodexApproval)
     XCTAssertTrue(resolved.aggregate.resolvingApprovalIDs.isEmpty)
     let responses = await runtime.approvalResponses()
-    XCTAssertEqual(responses, [approvalID: true])
+    XCTAssertEqual(responses, [approvalID: false])
     let kinds = try await store.events(for: taskID).map(\.kind)
     XCTAssertEqual(kinds.filter { $0 == "task.runtimeIntent" }.count, intentCountBefore + 1)
     XCTAssertEqual(kinds.filter { $0 == "task.codexApprovalResolutionRequested" }.count, 1)
@@ -326,7 +344,7 @@ final class TaskCoordinatorTests: XCTestCase {
       try await coordinator.resolveCodexApproval(
         taskID: taskID,
         approvalID: approvalID,
-        approved: true
+        approved: false
       )
     }
     await gate.waitUntilStarted()

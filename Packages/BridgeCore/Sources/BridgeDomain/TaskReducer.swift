@@ -219,6 +219,9 @@ extension TaskReducer {
 
     var next = aggregate
     next.approvalEvidenceByID[evidence.approvalID] = evidence
+    guard TaskAggregate.approvalEvidenceFitsBudget(next.approvalEvidenceByID) else {
+      throw invalidTransition(aggregate, event: event)
+    }
     return next
   }
 

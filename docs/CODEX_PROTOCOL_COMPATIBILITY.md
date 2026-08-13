@@ -95,7 +95,7 @@ Responses are method-specific:
 
 Never route these through one generic approve/deny struct. Unknown server requests default to a controlled refusal; Supervisor never approves.
 
-The current approval schema does not provide authoritative argv and file-change paths in every request. Automatic approval must correlate `threadId + turnId + itemId/approvalId` with a persisted execution event; shell strings and best-effort `commandActions` are display evidence only. Missing authoritative inputs always require local handling or denial.
+The current approval schema does not provide authoritative argv in command requests. Automatic approval must correlate `threadId + turnId + itemId/approvalId` with a persisted execution event; shell strings and best-effort `commandActions` are display evidence only. File-change item evidence can be normalized into a bounded complete manifest and bound to the registered root identity, but the app-server still applies it by pathname after Bridge responds. Because Bridge cannot make path validation and mutation one atomic operation, command, file-change and permissions approvals remain deny-only in production.
 
 ## Rate limits
 

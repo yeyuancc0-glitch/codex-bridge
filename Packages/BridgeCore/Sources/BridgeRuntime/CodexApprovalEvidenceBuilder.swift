@@ -11,7 +11,7 @@ enum CodexApprovalEvidenceBuilder {
     requestParameters: JSONValue,
     itemEvidence: CodexApprovalItemEvidence?,
     itemSourceDigest: String,
-    projectRoot: String
+    root: RegisteredRoot
   ) throws -> CodexApprovalEvidence {
     guard let itemEvidence,
       request.correlation.item == itemEvidence.item,
@@ -29,7 +29,7 @@ enum CodexApprovalEvidenceBuilder {
         request: command,
         execution: execution,
         digest: digest,
-        projectRoot: projectRoot
+        root: root
       )
     case (.fileChange(let file), .fileChange(let changes)):
       return try fileEvidence(
@@ -37,7 +37,7 @@ enum CodexApprovalEvidenceBuilder {
         request: file,
         changes: changes,
         digest: digest,
-        projectRoot: projectRoot
+        root: root
       )
     case (.permissions(let permissions), .commandExecution(let execution)):
       return try permissionsEvidence(
@@ -45,7 +45,7 @@ enum CodexApprovalEvidenceBuilder {
         request: permissions,
         execution: execution,
         digest: digest,
-        projectRoot: projectRoot
+        root: root
       )
     default:
       throw IsolatedCodexTaskRuntimeError.protocolViolation
@@ -57,13 +57,13 @@ enum CodexApprovalEvidenceBuilder {
     request: CodexCommandApprovalRequest,
     execution: CodexCommandExecutionEvidence,
     digest: String,
-    projectRoot: String
+    root: RegisteredRoot
   ) throws -> CodexApprovalEvidence {
     try validateCommandCorrelation(request, execution: execution)
     let actions = execution.displayActions
-    let summaries = commandSummaries(request, actions: actions, projectRoot: projectRoot)
+    let summaries = commandSummaries(request, actions: actions, projectRoot: root.canonicalPath)
     let paths = actions.compactMap(actionPath).prefix(8).map {
-      safePath($0, projectRoot: projectRoot)
+      safePath($0, projectRoot: root.canonicalPath)
     }
     return try CodexApprovalEvidence(
       approvalID: approvalID,
@@ -84,7 +84,7 @@ enum CodexApprovalEvidenceBuilder {
       omittedOperationCount: max(0, summaries.count - 8),
       workingDirectory: safePath(
         request.displayWorkingDirectory ?? execution.workingDirectory,
-        projectRoot: projectRoot
+        projectRoot: root.canonicalPath
       ),
       reason: safeText(request.reason, maximumBytes: 2 * 1_024),
       evidenceDigest: digest
@@ -96,17 +96,16 @@ enum CodexApprovalEvidenceBuilder {
     request: CodexFileChangeApprovalRequest,
     changes: CodexFileChangeEvidence,
     digest: String,
-    projectRoot: String
+    root: RegisteredRoot
   ) throws -> CodexApprovalEvidence {
-    let rawPaths = changes.changes.flatMap { change -> [String] in
-      switch change.kind {
-      case .add, .delete:
-        [change.path]
-      case .update(let movePath):
-        [change.path] + (movePath.map { [$0] } ?? [])
-      }
+    guard changes.status == .inProgress,
+      let grantRoot = request.grantRoot,
+      normalizedAbsolutePath(grantRoot) == root.canonicalPath
+    else { throw IsolatedCodexTaskRuntimeError.protocolViolation }
+    let manifest = try fileManifest(changes, root: root)
+    let rawPaths = manifest.entries.flatMap { entry in
+      [entry.path] + (entry.movePath.map { [$0] } ?? [])
     }
-    let paths = rawPaths.prefix(8).map { safePath($0, projectRoot: projectRoot) }
     return try CodexApprovalEvidence(
       approvalID: approvalID,
       kind: .fileChange,
@@ -117,12 +116,88 @@ enum CodexApprovalEvidenceBuilder {
       callbackID: request.correlation.callbackID,
       startedAtMilliseconds: request.correlation.startedAtMilliseconds,
       operationTitle: "Codex 文件变更审批",
-      changedPaths: Array(paths),
+      changedPaths: Array(rawPaths.prefix(8)),
       omittedOperationCount: max(0, rawPaths.count - 8),
-      workingDirectory: safePath(request.grantRoot ?? projectRoot, projectRoot: projectRoot),
+      workingDirectory: ".",
       reason: safeText(request.reason, maximumBytes: 2 * 1_024),
-      evidenceDigest: digest
+      evidenceDigest: digest,
+      fileChangeManifest: manifest
     )
+  }
+
+  private static func fileManifest(
+    _ evidence: CodexFileChangeEvidence,
+    root: RegisteredRoot
+  ) throws -> CodexApprovalFileChangeManifest {
+    guard !evidence.changes.isEmpty,
+      evidence.changes.count <= CodexApprovalFileChangeManifest.maximumEntries
+    else { throw IsolatedCodexTaskRuntimeError.protocolViolation }
+    var totalBytes = 0
+    let entries = try evidence.changes.map { change in
+      let byteCount = change.diff.utf8.count
+      let (nextTotal, overflow) = totalBytes.addingReportingOverflow(byteCount)
+      guard !overflow, nextTotal <= CodexApprovalFileChangeManifest.maximumTotalDiffBytes else {
+        throw IsolatedCodexTaskRuntimeError.protocolViolation
+      }
+      totalBytes = nextTotal
+      let kind: CodexApprovalFileChangeKind
+      let movePath: String?
+      switch change.kind {
+      case .add:
+        kind = .add
+        movePath = nil
+      case .delete:
+        kind = .delete
+        movePath = nil
+      case .update(let rawMovePath):
+        kind = .update
+        movePath = try rawMovePath.map { try relativePath($0, root: root) }
+      }
+      return try CodexApprovalFileChangeManifestEntry(
+        path: relativePath(change.path, root: root),
+        kind: kind,
+        movePath: movePath,
+        diffByteCount: byteCount,
+        diffSHA256: SHA256.hash(data: Data(change.diff.utf8)).map {
+          String(format: "%02x", $0)
+        }.joined()
+      )
+    }
+    return try CodexApprovalFileChangeManifest(
+      entries: entries,
+      totalDiffBytes: totalBytes,
+      rootDevice: root.identity.device,
+      rootInode: root.identity.inode
+    )
+  }
+
+  private static func relativePath(_ value: String, root: RegisteredRoot) throws -> String {
+    guard !value.isEmpty, value.utf8.count <= CodexApprovalWireLimits.stringBytes,
+      !value.hasPrefix("~"), !value.lowercased().hasPrefix("file:"), !value.contains("\0"),
+      value.rangeOfCharacter(from: .controlCharacters) == nil,
+      let normalizedRoot = normalizedAbsolutePath(root.canonicalPath),
+      normalizedRoot == root.canonicalPath
+    else { throw IsolatedCodexTaskRuntimeError.protocolViolation }
+    let candidate = value.hasPrefix("/") ? value : normalizedRoot + "/" + value
+    guard let normalized = normalizedAbsolutePath(candidate) else {
+      throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
+    let prefix = normalizedRoot.hasSuffix("/") ? normalizedRoot : normalizedRoot + "/"
+    guard normalized.hasPrefix(prefix) else {
+      throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
+    do {
+      return try SecureRelativePath(String(normalized.dropFirst(prefix.count))).value
+    } catch {
+      throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
+  }
+
+  private static func normalizedAbsolutePath(_ value: String) -> String? {
+    guard value.hasPrefix("/"), !value.contains("\0"),
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else { return nil }
+    return URL(fileURLWithPath: value).standardizedFileURL.path
   }
 
   private static func permissionsEvidence(
@@ -130,12 +205,12 @@ enum CodexApprovalEvidenceBuilder {
     request: CodexPermissionsApprovalRequest,
     execution: CodexCommandExecutionEvidence,
     digest: String,
-    projectRoot: String
+    root: RegisteredRoot
   ) throws -> CodexApprovalEvidence {
     guard request.workingDirectory == execution.workingDirectory else {
       throw IsolatedCodexTaskRuntimeError.protocolViolation
     }
-    let summaries = permissionSummaries(request.permissions, projectRoot: projectRoot)
+    let summaries = permissionSummaries(request.permissions, projectRoot: root.canonicalPath)
     return try CodexApprovalEvidence(
       approvalID: approvalID,
       kind: .permissions,
@@ -149,7 +224,7 @@ enum CodexApprovalEvidenceBuilder {
       displayCommand: safeText(execution.displayCommand, maximumBytes: 8 * 1_024),
       displayArguments: Array(summaries.prefix(8)),
       omittedOperationCount: max(0, summaries.count - 8),
-      workingDirectory: safePath(request.workingDirectory, projectRoot: projectRoot),
+      workingDirectory: safePath(request.workingDirectory, projectRoot: root.canonicalPath),
       reason: safeText(request.reason, maximumBytes: 2 * 1_024),
       evidenceDigest: digest
     )

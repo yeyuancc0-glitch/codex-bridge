@@ -20,6 +20,134 @@ public enum CodexApprovalEvidenceError: Error, Equatable, Sendable {
   case invalidCollection
 }
 
+public enum CodexApprovalFileChangeKind: String, Codable, Equatable, Sendable {
+  case add
+  case delete
+  case update
+}
+
+public struct CodexApprovalFileChangeManifestEntry: Codable, Equatable, Sendable {
+  public let path: String
+  public let kind: CodexApprovalFileChangeKind
+  public let movePath: String?
+  public let diffByteCount: Int
+  public let diffSHA256: String
+
+  public init(
+    path: String,
+    kind: CodexApprovalFileChangeKind,
+    movePath: String? = nil,
+    diffByteCount: Int,
+    diffSHA256: String
+  ) throws {
+    guard Self.validRelativePath(path), movePath.map(Self.validRelativePath) ?? true else {
+      throw CodexApprovalEvidenceError.invalidText
+    }
+    guard (kind == .update) || movePath == nil, diffByteCount >= 0,
+      diffByteCount <= CodexApprovalFileChangeManifest.maximumTotalDiffBytes
+    else {
+      throw CodexApprovalEvidenceError.invalidCollection
+    }
+    guard CodexApprovalEvidence.validDigest(diffSHA256) else {
+      throw CodexApprovalEvidenceError.invalidDigest
+    }
+    self.path = path
+    self.kind = kind
+    self.movePath = movePath
+    self.diffByteCount = diffByteCount
+    self.diffSHA256 = diffSHA256
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let value = try Persisted(from: decoder)
+    try self.init(
+      path: value.path,
+      kind: value.kind,
+      movePath: value.movePath,
+      diffByteCount: value.diffByteCount,
+      diffSHA256: value.diffSHA256
+    )
+  }
+
+  private struct Persisted: Codable {
+    let path: String
+    let kind: CodexApprovalFileChangeKind
+    let movePath: String?
+    let diffByteCount: Int
+    let diffSHA256: String
+  }
+
+  private static func validRelativePath(_ value: String) -> Bool {
+    guard !value.isEmpty, value.utf8.count <= 4 * 1_024, !value.hasPrefix("/"),
+      !value.hasPrefix("~"), !value.lowercased().hasPrefix("file:"), !value.contains("\0"),
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else { return false }
+    let components = value.split(separator: "/", omittingEmptySubsequences: false)
+    return components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+  }
+}
+
+public struct CodexApprovalFileChangeManifest: Codable, Equatable, Sendable {
+  public static let maximumEntries = 100
+  public static let maximumTotalDiffBytes = 2 * 1_024 * 1_024
+  public static let maximumEncodedBytes = 128 * 1_024
+
+  public let entries: [CodexApprovalFileChangeManifestEntry]
+  public let totalDiffBytes: Int
+  public let rootDevice: UInt64
+  public let rootInode: UInt64
+
+  public init(
+    entries: [CodexApprovalFileChangeManifestEntry],
+    totalDiffBytes: Int,
+    rootDevice: UInt64,
+    rootInode: UInt64
+  ) throws {
+    guard !entries.isEmpty, entries.count <= Self.maximumEntries,
+      totalDiffBytes >= 0, totalDiffBytes <= Self.maximumTotalDiffBytes
+    else {
+      throw CodexApprovalEvidenceError.invalidCollection
+    }
+    let calculated = entries.reduce(into: 0) { total, entry in
+      let (next, overflow) = total.addingReportingOverflow(entry.diffByteCount)
+      total = overflow ? Int.max : next
+    }
+    guard calculated == totalDiffBytes else {
+      throw CodexApprovalEvidenceError.invalidCollection
+    }
+    let persisted = Persisted(
+      entries: entries,
+      totalDiffBytes: totalDiffBytes,
+      rootDevice: rootDevice,
+      rootInode: rootInode
+    )
+    guard let encoded = try? JSONEncoder().encode(persisted),
+      encoded.count <= Self.maximumEncodedBytes
+    else { throw CodexApprovalEvidenceError.invalidCollection }
+    self.entries = entries
+    self.totalDiffBytes = totalDiffBytes
+    self.rootDevice = rootDevice
+    self.rootInode = rootInode
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let value = try Persisted(from: decoder)
+    try self.init(
+      entries: value.entries,
+      totalDiffBytes: value.totalDiffBytes,
+      rootDevice: value.rootDevice,
+      rootInode: value.rootInode
+    )
+  }
+
+  private struct Persisted: Codable {
+    let entries: [CodexApprovalFileChangeManifestEntry]
+    let totalDiffBytes: Int
+    let rootDevice: UInt64
+    let rootInode: UInt64
+  }
+}
+
 public struct CodexApprovalEvidence: Codable, Equatable, Sendable {
   public let approvalID: ApprovalID
   public let kind: CodexApprovalEvidenceKind
@@ -37,6 +165,7 @@ public struct CodexApprovalEvidence: Codable, Equatable, Sendable {
   public let workingDirectory: String?
   public let reason: String?
   public let evidenceDigest: String
+  public let fileChangeManifest: CodexApprovalFileChangeManifest?
 
   public init(
     approvalID: ApprovalID,
@@ -54,7 +183,8 @@ public struct CodexApprovalEvidence: Codable, Equatable, Sendable {
     omittedOperationCount: Int = 0,
     workingDirectory: String? = nil,
     reason: String? = nil,
-    evidenceDigest: String
+    evidenceDigest: String,
+    fileChangeManifest: CodexApprovalFileChangeManifest? = nil
   ) throws {
     guard Self.validIdentifier(approvalID.rawValue), Self.validIdentifier(threadID.rawValue),
       Self.validIdentifier(turnID.rawValue), Self.validIdentifier(itemID),
@@ -73,6 +203,8 @@ public struct CodexApprovalEvidence: Codable, Equatable, Sendable {
       Self.validTexts(displayArguments, maximumCount: 8, maximumBytesEach: 512),
       Self.validTexts(changedPaths, maximumCount: 8, maximumBytesEach: 1_024)
     else { throw CodexApprovalEvidenceError.invalidCollection }
+    guard fileChangeManifest == nil || (kind == .fileChange && authority == .correlatedFileChanges)
+    else { throw CodexApprovalEvidenceError.invalidCollection }
 
     self.approvalID = approvalID
     self.kind = kind
@@ -90,6 +222,7 @@ public struct CodexApprovalEvidence: Codable, Equatable, Sendable {
     self.workingDirectory = workingDirectory
     self.reason = reason
     self.evidenceDigest = evidenceDigest
+    self.fileChangeManifest = fileChangeManifest
   }
 
   public init(from decoder: any Decoder) throws {
@@ -110,7 +243,8 @@ public struct CodexApprovalEvidence: Codable, Equatable, Sendable {
       omittedOperationCount: value.omittedOperationCount,
       workingDirectory: value.workingDirectory,
       reason: value.reason,
-      evidenceDigest: value.evidenceDigest
+      evidenceDigest: value.evidenceDigest,
+      fileChangeManifest: value.fileChangeManifest
     )
   }
 
@@ -137,6 +271,7 @@ extension CodexApprovalEvidence {
     let workingDirectory: String?
     let reason: String?
     let evidenceDigest: String
+    let fileChangeManifest: CodexApprovalFileChangeManifest?
 
     init(_ value: CodexApprovalEvidence) {
       approvalID = value.approvalID
@@ -155,6 +290,7 @@ extension CodexApprovalEvidence {
       workingDirectory = value.workingDirectory
       reason = value.reason
       evidenceDigest = value.evidenceDigest
+      fileChangeManifest = value.fileChangeManifest
     }
   }
 
@@ -162,7 +298,7 @@ extension CodexApprovalEvidence {
     !value.isEmpty && value.utf8.count <= 256 && !value.contains("\0")
   }
 
-  private static func validDigest(_ value: String) -> Bool {
+  fileprivate static func validDigest(_ value: String) -> Bool {
     let lowercaseHex = Set("0123456789abcdef")
     return value.count == 64 && value.allSatisfy(lowercaseHex.contains)
   }

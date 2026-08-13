@@ -2,6 +2,7 @@ import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
 import BridgeProjects
+import BridgeSecurity
 import Foundation
 import XCTest
 
@@ -60,10 +61,19 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     XCTAssertEqual(evidence.itemID, "item-1")
     XCTAssertEqual(evidence.displayCommand, "[REDACTED]")
     XCTAssertEqual(evidence.workingDirectory, ".")
+    XCTAssertNil(evidence.fileChangeManifest)
+    do {
+      try await runtime.resolveApproval(
+        taskID: TaskID(rawValue: "task-new"),
+        approvalID: approvalID,
+        approved: true
+      )
+      XCTFail("Expected Codex approval authorization to fail closed")
+    } catch IsolatedCodexTaskRuntimeError.approvalUnavailable {}
     try await runtime.resolveApproval(
       taskID: TaskID(rawValue: "task-new"),
       approvalID: approvalID,
-      approved: true
+      approved: false
     )
     try await Task.sleep(nanoseconds: 100_000_000)
     let eventsBeforeCommit = await recorder.snapshot()
@@ -133,6 +143,14 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     XCTAssertEqual(evidence.kind, .fileChange)
     XCTAssertEqual(evidence.authority, .correlatedFileChanges)
     XCTAssertEqual(evidence.changedPaths, ["Sources/App.swift", "Sources/Main.swift"])
+    let manifest = try XCTUnwrap(evidence.fileChangeManifest)
+    XCTAssertEqual(manifest.entries.count, 1)
+    XCTAssertEqual(manifest.entries[0].path, "Sources/App.swift")
+    XCTAssertEqual(manifest.entries[0].movePath, "Sources/Main.swift")
+    XCTAssertEqual(manifest.entries[0].diffByteCount, "secret-diff-payload".utf8.count)
+    XCTAssertEqual(manifest.totalDiffBytes, "secret-diff-payload".utf8.count)
+    XCTAssertEqual(manifest.rootDevice, try RegisteredRoot(capturing: fixture.root).identity.device)
+    XCTAssertEqual(manifest.rootInode, try RegisteredRoot(capturing: fixture.root).identity.inode)
     XCTAssertFalse(String(describing: evidence).contains("secret-diff-payload"))
 
     try await runtime.resolveApproval(taskID: taskID, approvalID: approvalID, approved: false)
@@ -169,6 +187,7 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     XCTAssertEqual(evidence.workingDirectory, ".")
     XCTAssertTrue(evidence.displayArguments.contains("网络访问：保持关闭"))
     XCTAssertTrue(evidence.displayArguments.contains("文件系统 write：[REDACTED]"))
+    XCTAssertNil(evidence.fileChangeManifest)
 
     try await runtime.resolveApproval(taskID: taskID, approvalID: approvalID, approved: false)
     await runtime.finalizeApprovalResolution(
@@ -638,7 +657,7 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
         printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-1","approvalId":null,"startedAtMs":1,"command":"/usr/bin/git status","cwd":"__ROOT__","reason":"Inspect the working tree."}}'
         IFS= read -r approval
         case "$approval" in *'"id":"approval-1"'*) ;; *) exit 33 ;; esac
-        case "$approval" in *'"decision":"accept"'*) ;; *) exit 33 ;; esac
+        case "$approval" in *'"decision":"decline"'*) ;; *) exit 33 ;; esac
         printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
         sleep 2
         """#

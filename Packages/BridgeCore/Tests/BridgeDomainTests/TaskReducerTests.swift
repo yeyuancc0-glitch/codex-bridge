@@ -179,6 +179,54 @@ final class TaskReducerTests: XCTestCase {
     XCTAssertThrowsError(try apply(.codexApprovalEvidenceRecorded(wrongTurn), to: task))
   }
 
+  func testApprovalEvidenceAggregateBudgetRejectsBeforeSnapshotCapacity() throws {
+    let evidence = try (0..<3).map { index in
+      let approvalID = ApprovalID(rawValue: "apr-large-\(index)")
+      let entries = try (0..<CodexApprovalFileChangeManifest.maximumEntries).map { entryIndex in
+        try CodexApprovalFileChangeManifestEntry(
+          path: "Sources/\(index)-\(entryIndex)-\(String(repeating: "x", count: 800))",
+          kind: .update,
+          movePath: "Sources/Target-\(entryIndex).swift",
+          diffByteCount: 1,
+          diffSHA256: String(repeating: "a", count: 64)
+        )
+      }
+      let manifest = try CodexApprovalFileChangeManifest(
+        entries: entries,
+        totalDiffBytes: entries.count,
+        rootDevice: 1,
+        rootInode: 2
+      )
+      return try CodexApprovalEvidence(
+        approvalID: approvalID,
+        kind: .fileChange,
+        authority: .correlatedFileChanges,
+        threadID: ThreadID(rawValue: "thread-1"),
+        turnID: TurnID(rawValue: "turn-1"),
+        itemID: "item-large-\(index)",
+        startedAtMilliseconds: Int64(index),
+        operationTitle: "File change approval",
+        evidenceDigest: String(repeating: "b", count: 64),
+        fileChangeManifest: manifest
+      )
+    }
+
+    var task = try runningTask()
+    for value in evidence.prefix(2) {
+      task = try apply(.codexApprovalEvidenceRecorded(value), to: task)
+      task = try apply(.codexApprovalRequested(value.approvalID), to: task)
+    }
+    XCTAssertLessThan(
+      try JSONEncoder().encode(task.approvalEvidenceByID).count,
+      TaskAggregate.maximumApprovalEvidenceEncodedBytes
+    )
+    XCTAssertThrowsError(try apply(.codexApprovalEvidenceRecorded(evidence[2]), to: task))
+
+    task.approvalEvidenceByID[evidence[2].approvalID] = evidence[2]
+    let oversized = try JSONEncoder().encode(task)
+    XCTAssertThrowsError(try JSONDecoder().decode(TaskAggregate.self, from: oversized))
+  }
+
   func testDeniedCodexApprovalRequestsStopButDoesNotClaimInterruption() throws {
     let approvalID = ApprovalID(rawValue: "apr-denied")
     let intent = StopIntent(

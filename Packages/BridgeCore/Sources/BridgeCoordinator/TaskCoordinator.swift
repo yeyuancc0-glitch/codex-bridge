@@ -160,6 +160,7 @@ public actor TaskCoordinator {
     approvalID: ApprovalID,
     approved: Bool
   ) async throws -> TaskProjection {
+    guard !approved else { throw TaskCoordinatorError.codexApprovalAuthorizationUnavailable }
     guard Self.isValidIdentifier(approvalID.rawValue) else {
       throw TaskCoordinatorError.invalidApprovalIdentifier
     }

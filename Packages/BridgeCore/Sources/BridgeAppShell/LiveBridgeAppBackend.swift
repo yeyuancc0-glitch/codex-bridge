@@ -239,7 +239,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       approved: false
     )
     try checkRunning()
-    appendDiagnostic("已拒绝一项缺少权威证据的 Codex 审批。", status: .blocked)
+    appendDiagnostic("已拒绝一项缺少原子执行保证的 Codex 审批。", status: .blocked)
     try await publishCurrentFacts()
   }
 

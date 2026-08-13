@@ -1,6 +1,7 @@
 import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
+import BridgeSecurity
 import Foundation
 
 actor CodexTaskSession {
@@ -57,7 +58,7 @@ actor CodexTaskSession {
   private let maximumKnownItems: Int
   private let maximumKnownItemEvidenceBytes: Int
   private let maximumSessionNanoseconds: UInt64
-  private let projectRoot: String
+  private let projectRoot: RegisteredRoot
   private let onTermination: @Sendable (TaskID, CodexTaskSession) async -> Void
   private var eventTask: Task<Void, Never>?
   private var lifetimeTask: Task<Void, Never>?
@@ -82,7 +83,7 @@ actor CodexTaskSession {
     maximumKnownItems: Int,
     maximumKnownItemEvidenceBytes: Int,
     maximumSessionNanoseconds: UInt64,
-    projectRoot: String,
+    projectRoot: RegisteredRoot,
     onTermination: @escaping @Sendable (TaskID, CodexTaskSession) async -> Void
   ) {
     let pair = AsyncStream.makeStream(
@@ -430,7 +431,7 @@ actor CodexTaskSession {
         requestParameters: request.params ?? .null,
         itemEvidence: knownItem.evidence,
         itemSourceDigest: knownItem.sourceDigest,
-        projectRoot: projectRoot
+        root: projectRoot
       )
     } catch {
       await rejectInvalidApproval(request)

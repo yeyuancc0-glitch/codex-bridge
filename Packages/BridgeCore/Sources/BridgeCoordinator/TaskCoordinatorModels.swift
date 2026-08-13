@@ -226,6 +226,7 @@ public enum TaskCoordinatorError: Error, Equatable, Sendable {
   case unsupportedPermissionMode(String)
   case executionUnavailable(TaskID)
   case invalidApprovalIdentifier
+  case codexApprovalAuthorizationUnavailable
   case invalidSteerPrompt
   case invalidFailureReason
   case invalidFinalizationAuthorization
