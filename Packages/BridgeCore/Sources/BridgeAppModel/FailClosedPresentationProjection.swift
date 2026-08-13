@@ -129,6 +129,7 @@ enum FailClosedPresentationProjection {
       operationID: value.operationID,
       operationTitle: value.operationTitle,
       commandArguments: value.commandArguments,
+      evidenceItems: value.evidenceItems,
       fileOperation: value.fileOperation,
       workingDirectory: value.workingDirectory,
       reason: value.reason,

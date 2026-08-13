@@ -63,6 +63,10 @@ public protocol TaskExecutionRuntime: Sendable {
     previousBinding: ExecutionBinding?
   ) async throws -> TaskExecutionSession
   func resolveApproval(taskID: TaskID, approvalID: ApprovalID, approved: Bool) async throws
+  func approvalEvidence(
+    taskID: TaskID,
+    approvalID: ApprovalID
+  ) async throws -> CodexApprovalEvidence?
   func finalizeApprovalResolution(
     taskID: TaskID,
     approvalID: ApprovalID,
@@ -100,6 +104,13 @@ public enum TaskExecutionRuntimeCompatibilityError: Error, Equatable, Sendable {
 }
 
 extension TaskExecutionRuntime {
+  public func approvalEvidence(
+    taskID _: TaskID,
+    approvalID _: ApprovalID
+  ) async throws -> CodexApprovalEvidence? {
+    nil
+  }
+
   public func lockKeys(
     for submission: TaskSubmission,
     previousBinding _: ExecutionBinding?

@@ -200,6 +200,7 @@ public struct CodexApprovalPresentation: Identifiable, Equatable, Sendable {
   public let operationID: String?
   public let operationTitle: String
   public let commandArguments: [String]
+  public let evidenceItems: [String]
   public let fileOperation: String?
   public let workingDirectory: String
   public let reason: String
@@ -216,6 +217,7 @@ public struct CodexApprovalPresentation: Identifiable, Equatable, Sendable {
     operationID: String? = nil,
     operationTitle: String,
     commandArguments: [String] = [],
+    evidenceItems: [String] = [],
     fileOperation: String? = nil,
     workingDirectory: String,
     reason: String,
@@ -231,12 +233,14 @@ public struct CodexApprovalPresentation: Identifiable, Equatable, Sendable {
     self.operationID = operationID
     self.operationTitle = operationTitle
     self.commandArguments = commandArguments
+    self.evidenceItems = evidenceItems
     self.fileOperation = fileOperation
     self.workingDirectory = workingDirectory
     self.reason = reason
     self.supervisorRisk = supervisorRisk
     self.consequences = consequences
-    let hasOperation = !commandArguments.isEmpty || !(fileOperation?.isEmpty ?? true)
+    let hasOperation =
+      !commandArguments.isEmpty || !evidenceItems.isEmpty || !(fileOperation?.isEmpty ?? true)
     self.canAllow = canAllow && hasOperation && !workingDirectory.isEmpty && !consequences.isEmpty
   }
 }

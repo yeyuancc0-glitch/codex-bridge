@@ -935,8 +935,12 @@ public actor TaskCoordinator {
       guard Self.isValidIdentifier(approvalID.rawValue) else {
         throw TaskCoordinatorError.invalidApprovalIdentifier
       }
-      event = .codexApprovalRequested(approvalID)
-      releasesLocks = false
+      return try await applyApprovalRequest(
+        approvalID,
+        current: current,
+        taskID: taskID,
+        binding: binding
+      )
     case .turnCompleted:
       event = .turnCompleted
       releasesLocks = false
@@ -959,6 +963,64 @@ public actor TaskCoordinator {
       expectedSequence: current.lastSequence,
       releasesOwnedLocks: releasesLocks,
       projection: projection
+    )
+    return projection
+  }
+
+  private func applyApprovalRequest(
+    _ approvalID: ApprovalID,
+    current: TaskProjection,
+    taskID: TaskID,
+    binding: ExecutionBinding
+  ) async throws -> TaskProjection {
+    let requested = TaskEvent.codexApprovalRequested(approvalID)
+    guard
+      let evidence = try await runtime.approvalEvidence(
+        taskID: taskID,
+        approvalID: approvalID
+      )
+    else {
+      let aggregate = try TaskReducer.reduce(current.aggregate, event: requested)
+      let projection = TaskProjection(
+        aggregate: aggregate,
+        lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+      )
+      try await append(
+        .domain(requested),
+        taskID: taskID,
+        expectedSequence: current.lastSequence,
+        projection: projection
+      )
+      return projection
+    }
+    guard evidence.approvalID == approvalID, evidence.threadID == binding.threadID,
+      evidence.turnID == binding.turnID
+    else { throw TaskCoordinatorError.corruptTask(taskID) }
+
+    let evidenceEvent = TaskEvent.codexApprovalEvidenceRecorded(evidence)
+    let withEvidence = try TaskReducer.reduce(current.aggregate, event: evidenceEvent)
+    let aggregate = try TaskReducer.reduce(withEvidence, event: requested)
+    let evidenceSequence = try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+    let requestSequence = try Self.nextSequence(after: evidenceSequence, taskID: taskID)
+    let projection = TaskProjection(aggregate: aggregate, lastSequence: requestSequence)
+    let createdAt = Date()
+    try await store.appendBatch(
+      [
+        try envelope(
+          .domain(evidenceEvent),
+          taskID: taskID,
+          sequence: evidenceSequence,
+          createdAt: createdAt
+        ),
+        try envelope(
+          .domain(requested),
+          taskID: taskID,
+          sequence: requestSequence,
+          createdAt: createdAt
+        ),
+      ],
+      expectedLastSequence: current.lastSequence,
+      snapshot: try stateSnapshot(for: projection)
     )
     return projection
   }

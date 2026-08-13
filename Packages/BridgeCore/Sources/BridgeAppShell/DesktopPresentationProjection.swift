@@ -211,10 +211,11 @@ struct DesktopPresentationProjection {
     events: [TaskEventEnvelope]
   ) -> [ApprovalRowPresentation] {
     projection.aggregate.pendingApprovalIDs.sorted { $0.rawValue < $1.rawValue }.map { approval in
-      ApprovalRowPresentation(
+      let evidence = projection.aggregate.approvalEvidenceByID[approval]
+      return ApprovalRowPresentation(
         id: approval.rawValue,
         source: "Codex Execution",
-        summary: "等待不可变操作证据；当前不能批准",
+        summary: evidence?.operationTitle ?? "等待不可变操作证据；当前不能批准",
         risk: .blocked,
         requestedAt: events.last?.createdAt ?? .distantPast
       )
@@ -227,17 +228,47 @@ struct DesktopPresentationProjection {
     guard let binding = projection.aggregate.binding else { return [] }
     return projection.aggregate.pendingApprovalIDs.sorted { $0.rawValue < $1.rawValue }.map {
       approval in
-      CodexApprovalPresentation(
+      guard let evidence = projection.aggregate.approvalEvidenceByID[approval] else {
+        return CodexApprovalPresentation(
+          id: approval.rawValue,
+          taskID: projection.aggregate.id.rawValue,
+          source: "Codex Execution",
+          threadID: binding.threadID.rawValue,
+          turnID: binding.turnID.rawValue,
+          operationTitle: "缺少权威操作证据",
+          workingDirectory: "未展示：缺少权威 cwd 证据",
+          reason: "Bridge 尚未收到可持久化的操作证据与影响范围。",
+          supervisorRisk: "安全阻断：当前只能拒绝此请求。",
+          consequences: ["允许操作保持关闭；拒绝会精确回复这一审批请求。"],
+          canAllow: false
+        )
+      }
+      var evidenceItems = evidence.displayArguments
+      if let displayCommand = evidence.displayCommand {
+        evidenceItems.insert("展示命令：\(displayCommand)", at: 0)
+      }
+      var consequences = ["证据摘要 SHA-256：\(evidence.evidenceDigest)"]
+      if evidence.omittedOperationCount > 0 {
+        consequences.append("另有 \(evidence.omittedOperationCount) 项操作未在摘要中展示。")
+      }
+      consequences.append("当前版本尚未完成确定性策略裁决，因此只能拒绝。")
+      return CodexApprovalPresentation(
         id: approval.rawValue,
         taskID: projection.aggregate.id.rawValue,
         source: "Codex Execution",
         threadID: binding.threadID.rawValue,
         turnID: binding.turnID.rawValue,
-        operationTitle: "缺少权威操作证据",
-        workingDirectory: "未展示：缺少权威 cwd 证据",
-        reason: "Bridge 尚未收到可持久化的 argv、文件操作与影响范围。",
-        supervisorRisk: "安全阻断：当前只能拒绝此请求。",
-        consequences: ["允许操作保持关闭；拒绝会精确回复这一审批请求。"],
+        operationID: evidence.itemID,
+        operationTitle: evidence.operationTitle,
+        evidenceItems: evidenceItems,
+        fileOperation: evidence.changedPaths.isEmpty
+          ? nil : evidence.changedPaths.joined(separator: "、"),
+        workingDirectory: evidence.workingDirectory ?? "未提供",
+        reason: evidence.reason ?? "Codex 未提供原因。",
+        supervisorRisk: evidence.authority == .correlatedDisplayOnly
+          ? "命令字符串仅供展示，不具备 argv 权威性。"
+          : "请求已与当前 Thread、Turn 和 Item 精确关联。",
+        consequences: consequences,
         canAllow: false
       )
     }

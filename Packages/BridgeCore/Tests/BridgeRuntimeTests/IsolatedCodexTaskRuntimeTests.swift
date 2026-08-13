@@ -49,6 +49,17 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     else {
       return XCTFail("Expected a correlated approval request")
     }
+    let capturedEvidence = try await runtime.approvalEvidence(
+      taskID: TaskID(rawValue: "task-new"),
+      approvalID: approvalID
+    )
+    let evidence = try XCTUnwrap(capturedEvidence)
+    XCTAssertEqual(evidence.authority, .correlatedDisplayOnly)
+    XCTAssertEqual(evidence.threadID.rawValue, "thread-new")
+    XCTAssertEqual(evidence.turnID.rawValue, "turn-new")
+    XCTAssertEqual(evidence.itemID, "item-1")
+    XCTAssertEqual(evidence.displayCommand, "[REDACTED]")
+    XCTAssertEqual(evidence.workingDirectory, ".")
     try await runtime.resolveApproval(
       taskID: TaskID(rawValue: "task-new"),
       approvalID: approvalID,
@@ -66,6 +77,177 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     let completed = try await recorder.waitForEvent(at: 1)
     XCTAssertEqual(completed, .turnCompleted)
     try await recorder.waitForEnd()
+  }
+
+  func testFileApprovalPersistsCorrelatedChangedPathsWithoutRawDiff() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(fixture: fixture, script: fileApprovalScript(root: fixture.root.path))
+    addTeardownBlock { await runtime.shutdown() }
+    let taskID = TaskID(rawValue: "task-file-approval")
+    let session = try await runtime.start(
+      taskID: taskID,
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var observations = session.observations.makeAsyncIterator()
+    guard case .codexApprovalRequested(let approvalID)? = await observations.next() else {
+      return XCTFail("Expected a file approval request")
+    }
+    let captured = try await runtime.approvalEvidence(taskID: taskID, approvalID: approvalID)
+    let evidence = try XCTUnwrap(captured)
+    XCTAssertEqual(evidence.kind, .fileChange)
+    XCTAssertEqual(evidence.authority, .correlatedFileChanges)
+    XCTAssertEqual(evidence.changedPaths, ["Sources/App.swift", "Sources/Main.swift"])
+    XCTAssertFalse(String(describing: evidence).contains("secret-diff-payload"))
+
+    try await runtime.resolveApproval(taskID: taskID, approvalID: approvalID, approved: false)
+    await runtime.finalizeApprovalResolution(
+      taskID: taskID,
+      approvalID: approvalID,
+      committed: true
+    )
+    let completed = await observations.next()
+    XCTAssertEqual(completed, .turnCompleted)
+  }
+
+  func testPermissionsApprovalPersistsClosedProfileAndRedactsExternalPaths() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: permissionsApprovalScript(root: fixture.root.path)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let taskID = TaskID(rawValue: "task-permissions-approval")
+    let session = try await runtime.start(
+      taskID: taskID,
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var observations = session.observations.makeAsyncIterator()
+    guard case .codexApprovalRequested(let approvalID)? = await observations.next() else {
+      return XCTFail("Expected a permissions approval request")
+    }
+    let captured = try await runtime.approvalEvidence(taskID: taskID, approvalID: approvalID)
+    let evidence = try XCTUnwrap(captured)
+    XCTAssertEqual(evidence.kind, .permissions)
+    XCTAssertEqual(evidence.authority, .requestedPermissionProfile)
+    XCTAssertEqual(evidence.workingDirectory, ".")
+    XCTAssertTrue(evidence.displayArguments.contains("网络访问：保持关闭"))
+    XCTAssertTrue(evidence.displayArguments.contains("文件系统 write：[REDACTED]"))
+
+    try await runtime.resolveApproval(taskID: taskID, approvalID: approvalID, approved: false)
+    await runtime.finalizeApprovalResolution(
+      taskID: taskID,
+      approvalID: approvalID,
+      committed: true
+    )
+    let completed = await observations.next()
+    XCTAssertEqual(completed, .turnCompleted)
+  }
+
+  func testDuplicateApprovalItemIdentityFailsSession() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: invalidApprovalItemScript(root: fixture.root.path, duplicate: true)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let session = try await runtime.start(
+      taskID: TaskID(rawValue: "task-duplicate-item"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var observations = session.observations.makeAsyncIterator()
+    let failure = await observations.next()
+    let end = await observations.next()
+
+    XCTAssertEqual(
+      failure,
+      .failed(reason: "Codex emitted an invalid item event.")
+    )
+    XCTAssertNil(end)
+
+    let reusedRuntime = makeRuntime(
+      fixture: fixture,
+      script: invalidApprovalItemScript(
+        root: fixture.root.path,
+        duplicate: true,
+        firstItemType: "reasoning",
+        duplicateItemType: "commandExecution"
+      )
+    )
+    addTeardownBlock { await reusedRuntime.shutdown() }
+    let reusedSession = try await reusedRuntime.start(
+      taskID: TaskID(rawValue: "task-reused-item"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var reusedObservations = reusedSession.observations.makeAsyncIterator()
+    let reusedFailure = await reusedObservations.next()
+    XCTAssertEqual(
+      reusedFailure,
+      .failed(reason: "Codex emitted an invalid item event.")
+    )
+
+    let reverseRuntime = makeRuntime(
+      fixture: fixture,
+      script: invalidApprovalItemScript(
+        root: fixture.root.path,
+        duplicate: true,
+        firstItemType: "commandExecution",
+        duplicateItemType: "reasoning"
+      )
+    )
+    addTeardownBlock { await reverseRuntime.shutdown() }
+    let reverseSession = try await reverseRuntime.start(
+      taskID: TaskID(rawValue: "task-reversed-item"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var reverseObservations = reverseSession.observations.makeAsyncIterator()
+    let reverseFailure = await reverseObservations.next()
+    XCTAssertEqual(
+      reverseFailure,
+      .failed(reason: "Codex emitted an invalid item event.")
+    )
+  }
+
+  func testTerminalApprovalItemAndEvidenceBudgetFailClosed() async throws {
+    let fixture = try await makeFixture()
+    let terminalRuntime = makeRuntime(
+      fixture: fixture,
+      script: invalidApprovalItemScript(root: fixture.root.path, status: "completed")
+    )
+    addTeardownBlock { await terminalRuntime.shutdown() }
+    let terminalSession = try await terminalRuntime.start(
+      taskID: TaskID(rawValue: "task-terminal-item"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var terminalObservations = terminalSession.observations.makeAsyncIterator()
+    let terminalFailure = await terminalObservations.next()
+    XCTAssertEqual(
+      terminalFailure,
+      .failed(reason: "Codex emitted invalid approval item evidence.")
+    )
+
+    let boundedRuntime = makeRuntime(
+      fixture: fixture,
+      script: invalidApprovalItemScript(root: fixture.root.path),
+      maximumKnownItemEvidenceBytes: 32
+    )
+    addTeardownBlock { await boundedRuntime.shutdown() }
+    let boundedSession = try await boundedRuntime.start(
+      taskID: TaskID(rawValue: "task-bounded-evidence"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var boundedObservations = boundedSession.observations.makeAsyncIterator()
+    let boundedFailure = await boundedObservations.next()
+    XCTAssertEqual(
+      boundedFailure,
+      .failed(reason: "Codex approval evidence capacity was exceeded.")
+    )
   }
 
   func testExistingThreadResumeAdvancesGenerationAndBindsSteerAndInterrupt() async throws {
@@ -340,7 +522,11 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     return Fixture(root: canonicalRoot, projectID: project.id, registry: registry)
   }
 
-  private func makeRuntime(fixture: Fixture, script: String) -> IsolatedCodexTaskRuntime {
+  private func makeRuntime(
+    fixture: Fixture,
+    script: String,
+    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024
+  ) -> IsolatedCodexTaskRuntime {
     let location = RuntimeProjectLocation(
       workingDirectoryURL: fixture.root,
       repositoryRootURL: fixture.root
@@ -348,14 +534,16 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     return makeRuntime(
       fixture: fixture,
       script: script,
-      locations: ClosureRuntimeProjectLocationResolver { _ in location }
+      locations: ClosureRuntimeProjectLocationResolver { _ in location },
+      maximumKnownItemEvidenceBytes: maximumKnownItemEvidenceBytes
     )
   }
 
   private func makeRuntime(
     fixture: Fixture,
     script: String,
-    locations: any RuntimeProjectLocationResolving
+    locations: any RuntimeProjectLocationResolving,
+    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024
   ) -> IsolatedCodexTaskRuntime {
     return IsolatedCodexTaskRuntime(
       registry: fixture.registry,
@@ -368,7 +556,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
         clientInfo: .bridge(version: "runtime-tests"),
         requestTimeoutNanoseconds: 1_000_000_000,
         startEventTimeoutNanoseconds: 1_000_000_000,
-        maximumSessionNanoseconds: 5_000_000_000
+        maximumSessionNanoseconds: 5_000_000_000,
+        maximumKnownItemEvidenceBytes: maximumKnownItemEvidenceBytes
       )
     )
   }
@@ -410,8 +599,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
         case "$turn_start" in *'"effort":"medium"'*) ;; *) exit 32 ;; esac
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
         printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
-        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-1","type":"commandExecution"}}}'
-        printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-1","approvalId":null,"startedAtMs":1}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-1","type":"commandExecution","command":"/usr/bin/git status","commandActions":[],"cwd":"__ROOT__","status":"inProgress"}}}'
+        printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-1","approvalId":null,"startedAtMs":1,"command":"/usr/bin/git status","cwd":"__ROOT__","reason":"Inspect the working tree."}}'
         IFS= read -r approval
         case "$approval" in *'"id":"approval-1"'*) ;; *) exit 33 ;; esac
         case "$approval" in *'"decision":"accept"'*) ;; *) exit 33 ;; esac
@@ -460,6 +649,97 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
       .replacingOccurrences(of: "__INTERRUPTED__", with: interrupted)
   }
 
+  private func fileApprovalScript(root: String) -> String {
+    let thread = threadJSON(id: "thread-new", root: root)
+    let turn = turnJSON(id: "turn-new", status: "inProgress")
+    let completed = turnJSON(id: "turn-new", status: "completed")
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        IFS= read -r turn_start
+        printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
+        printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":2,"item":{"id":"item-file","type":"fileChange","status":"inProgress","changes":[{"path":"Sources/App.swift","diff":"secret-diff-payload","kind":{"type":"update","move_path":"Sources/Main.swift"}}]}}}'
+        printf '%s\n' '{"id":"approval-file","method":"item/fileChange/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-file","startedAtMs":2,"grantRoot":"__ROOT__","reason":"Apply the requested update."}}'
+        IFS= read -r approval
+        case "$approval" in *'"id":"approval-file"'*) ;; *) exit 61 ;; esac
+        case "$approval" in *'"decision":"decline"'*) ;; *) exit 61 ;; esac
+        printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
+        sleep 2
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+      .replacingOccurrences(of: "__TURN__", with: turn)
+      .replacingOccurrences(of: "__COMPLETED__", with: completed)
+  }
+
+  private func permissionsApprovalScript(root: String) -> String {
+    let thread = threadJSON(id: "thread-new", root: root)
+    let turn = turnJSON(id: "turn-new", status: "inProgress")
+    let completed = turnJSON(id: "turn-new", status: "completed")
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        IFS= read -r turn_start
+        printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
+        printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":3,"item":{"id":"item-command","type":"commandExecution","command":"tool run","commandActions":[],"cwd":"__ROOT__","status":"inProgress"}}}'
+        printf '%s\n' '{"id":"approval-permissions","method":"item/permissions/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-command","startedAtMs":3,"cwd":"__ROOT__","permissions":{"fileSystem":{"entries":[{"access":"write","path":{"type":"path","path":"/private/outside"}}]},"network":{"enabled":false}},"reason":"Request a bounded permission profile."}}'
+        IFS= read -r approval
+        case "$approval" in *'"id":"approval-permissions"'*) ;; *) exit 62 ;; esac
+        case "$approval" in *'"permissions":{}'*) ;; *) exit 62 ;; esac
+        case "$approval" in *'"scope":"turn"'*) ;; *) exit 62 ;; esac
+        printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
+        sleep 2
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+      .replacingOccurrences(of: "__TURN__", with: turn)
+      .replacingOccurrences(of: "__COMPLETED__", with: completed)
+  }
+
+  private func invalidApprovalItemScript(
+    root: String,
+    status: String = "inProgress",
+    duplicate: Bool = false,
+    firstItemType: String = "commandExecution",
+    duplicateItemType: String? = nil
+  ) -> String {
+    let thread = threadJSON(id: "thread-new", root: root)
+    let turn = turnJSON(id: "turn-new", status: "inProgress")
+    let item =
+      #"{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-1","type":"__TYPE__","command":"tool run","commandActions":[],"cwd":"__ROOT__","status":"__STATUS__"}}}"#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__STATUS__", with: status)
+      .replacingOccurrences(of: "__TYPE__", with: firstItemType)
+    let repeated =
+      duplicateItemType.map {
+        item.replacingOccurrences(of: #""type":"\#(firstItemType)""#, with: #""type":"\#($0)""#)
+      } ?? item
+    let duplicateItem = duplicate ? "printf '%s\\n' '\(repeated)'" : ""
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        IFS= read -r turn_start
+        printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
+        printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+        printf '%s\n' '__ITEM__'
+        __DUPLICATE__
+        sleep 2
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+      .replacingOccurrences(of: "__TURN__", with: turn)
+      .replacingOccurrences(of: "__ITEM__", with: item)
+      .replacingOccurrences(of: "__DUPLICATE__", with: duplicateItem)
+  }
+
   private func invalidApprovalScript(root: String) -> String {
     let thread = threadJSON(id: "thread-new", root: root)
     let turn = turnJSON(id: "turn-new", status: "inProgress")
@@ -494,8 +774,8 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
         IFS= read -r turn_start
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
         printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
-        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-1","type":"commandExecution"}}}'
-        printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-1","approvalId":null,"startedAtMs":1}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-1","type":"commandExecution","command":"/usr/bin/git status","commandActions":[],"cwd":"__ROOT__","status":"inProgress"}}}'
+        printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-1","approvalId":null,"startedAtMs":1,"command":"/usr/bin/git status","cwd":"__ROOT__"}}'
         sleep 0.1
         printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
         sleep 2

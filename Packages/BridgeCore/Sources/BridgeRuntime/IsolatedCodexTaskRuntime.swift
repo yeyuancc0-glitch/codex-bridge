@@ -17,6 +17,7 @@ public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {
   public let maximumConcurrentSessions: Int
   public let maximumPendingApprovals: Int
   public let maximumKnownItems: Int
+  public let maximumKnownItemEvidenceBytes: Int
 
   public init(
     appServer: AppServerConfiguration = .codex(),
@@ -28,7 +29,8 @@ public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {
     observationBufferLimit: Int = 64,
     maximumConcurrentSessions: Int = 4,
     maximumPendingApprovals: Int = 16,
-    maximumKnownItems: Int = 2_048
+    maximumKnownItems: Int = 2_048,
+    maximumKnownItemEvidenceBytes: Int = 4 * 1_024 * 1_024
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
@@ -40,6 +42,7 @@ public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {
     self.maximumConcurrentSessions = max(1, maximumConcurrentSessions)
     self.maximumPendingApprovals = max(1, maximumPendingApprovals)
     self.maximumKnownItems = max(1, maximumKnownItems)
+    self.maximumKnownItemEvidenceBytes = max(1, maximumKnownItemEvidenceBytes)
   }
 }
 
@@ -208,7 +211,9 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       observationBufferLimit: configuration.observationBufferLimit,
       maximumPendingApprovals: configuration.maximumPendingApprovals,
       maximumKnownItems: configuration.maximumKnownItems,
+      maximumKnownItemEvidenceBytes: configuration.maximumKnownItemEvidenceBytes,
       maximumSessionNanoseconds: configuration.maximumSessionNanoseconds,
+      projectRoot: location.root.canonicalPath,
       onTermination: { [weak self] taskID, session in
         await self?.removeSession(taskID: taskID, matching: session)
       }
@@ -317,6 +322,16 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       throw IsolatedCodexTaskRuntimeError.sessionUnavailable
     }
     try await session.resolveApproval(approvalID, approved: approved)
+  }
+
+  public func approvalEvidence(
+    taskID: TaskID,
+    approvalID: ApprovalID
+  ) async throws -> CodexApprovalEvidence? {
+    guard let session = sessions[taskID] else {
+      throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
+    return await session.approvalEvidence(approvalID)
   }
 
   public func finalizeApprovalResolution(

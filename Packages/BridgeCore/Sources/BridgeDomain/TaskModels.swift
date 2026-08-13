@@ -166,6 +166,7 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
   public internal(set) var binding: ExecutionBinding?
   public internal(set) var pendingApprovalIDs: Set<ApprovalID>
   public internal(set) var resolvingApprovalIDs: Set<ApprovalID>
+  public internal(set) var approvalEvidenceByID: [ApprovalID: CodexApprovalEvidence]
   public internal(set) var stopIntent: StopIntent?
   public internal(set) var reportReference: String?
   public internal(set) var failureReason: String?
@@ -179,6 +180,7 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
     self.binding = nil
     self.pendingApprovalIDs = []
     self.resolvingApprovalIDs = []
+    self.approvalEvidenceByID = [:]
     self.stopIntent = nil
     self.reportReference = nil
     self.failureReason = nil
@@ -193,6 +195,7 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
     case binding
     case pendingApprovalIDs
     case resolvingApprovalIDs
+    case approvalEvidenceByID
     case stopIntent
     case reportReference
     case failureReason
@@ -212,6 +215,11 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
         Set<ApprovalID>.self,
         forKey: .resolvingApprovalIDs
       ) ?? []
+    approvalEvidenceByID =
+      try container.decodeIfPresent(
+        [ApprovalID: CodexApprovalEvidence].self,
+        forKey: .approvalEvidenceByID
+      ) ?? [:]
     stopIntent = try container.decodeIfPresent(StopIntent.self, forKey: .stopIntent)
     reportReference = try container.decodeIfPresent(String.self, forKey: .reportReference)
     failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
@@ -227,6 +235,7 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
     try container.encodeIfPresent(binding, forKey: .binding)
     try container.encode(pendingApprovalIDs, forKey: .pendingApprovalIDs)
     try container.encode(resolvingApprovalIDs, forKey: .resolvingApprovalIDs)
+    try container.encode(approvalEvidenceByID, forKey: .approvalEvidenceByID)
     try container.encodeIfPresent(stopIntent, forKey: .stopIntent)
     try container.encodeIfPresent(reportReference, forKey: .reportReference)
     try container.encodeIfPresent(failureReason, forKey: .failureReason)

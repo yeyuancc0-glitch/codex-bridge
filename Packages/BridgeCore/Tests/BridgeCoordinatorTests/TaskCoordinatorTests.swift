@@ -126,6 +126,51 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(completedSnapshot?.recoveryRequired, false)
   }
 
+  func testApprovalEvidenceAndPendingTicketCommitAtomically() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "approval-evidence", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let currentBinding = try await coordinator.task(taskID).aggregate.binding
+    let binding = try XCTUnwrap(currentBinding)
+    let approvalID = ApprovalID(rawValue: "approval-evidence")
+    let evidence = try CodexApprovalEvidence(
+      approvalID: approvalID,
+      kind: .permissions,
+      authority: .requestedPermissionProfile,
+      threadID: binding.threadID,
+      turnID: binding.turnID,
+      itemID: "item-permissions",
+      startedAtMilliseconds: 42,
+      operationTitle: "Permission profile approval",
+      displayArguments: ["write Sources/**"],
+      workingDirectory: "/private/project",
+      evidenceDigest: String(repeating: "d", count: 64)
+    )
+    await runtime.setApprovalEvidence(evidence, taskID: taskID)
+    await runtime.emit(.codexApprovalRequested(approvalID), taskID: taskID)
+    try await waitForPhase(.awaitingCodexApproval, taskID: taskID, coordinator: coordinator)
+
+    let projection = try await coordinator.task(taskID)
+    XCTAssertEqual(projection.aggregate.approvalEvidenceByID[approvalID], evidence)
+    let events = try await store.events(for: taskID)
+    XCTAssertEqual(
+      Array(events.suffix(2).map(\.kind)),
+      [
+        "task.codexApprovalEvidenceRecorded",
+        "task.codexApprovalRequested",
+      ])
+    XCTAssertEqual(events[events.count - 2].createdAt, events.last?.createdAt)
+  }
+
   func testExistingIdempotentTaskDoesNotReevaluateAdmissionPolicy() async throws {
     let admission = OneShotAdmission()
     let coordinator = TaskCoordinator(
@@ -803,6 +848,7 @@ private actor FakeRuntime: TaskExecutionRuntime {
   private var continuations: [TaskID: AsyncStream<TaskExecutionObservation>.Continuation] = [:]
   private var bindings: [TaskID: ExecutionBinding] = [:]
   private var responses: [ApprovalID: Bool] = [:]
+  private var approvalEvidenceByTask: [TaskID: CodexApprovalEvidence] = [:]
   private var steers: [(binding: ExecutionBinding, prompt: String)] = []
 
   init(
@@ -867,6 +913,14 @@ private actor FakeRuntime: TaskExecutionRuntime {
     responses[approvalID] = approved
   }
 
+  func approvalEvidence(
+    taskID: TaskID,
+    approvalID: ApprovalID
+  ) -> CodexApprovalEvidence? {
+    guard approvalEvidenceByTask[taskID]?.approvalID == approvalID else { return nil }
+    return approvalEvidenceByTask[taskID]
+  }
+
   func finalizeApprovalResolution(
     taskID _: TaskID,
     approvalID _: ApprovalID,
@@ -893,6 +947,10 @@ private actor FakeRuntime: TaskExecutionRuntime {
 
   func emit(_ observation: TaskExecutionObservation, taskID: TaskID) {
     continuations[taskID]?.yield(observation)
+  }
+
+  func setApprovalEvidence(_ evidence: CodexApprovalEvidence, taskID: TaskID) {
+    approvalEvidenceByTask[taskID] = evidence
   }
 
   func finish(taskID: TaskID) {

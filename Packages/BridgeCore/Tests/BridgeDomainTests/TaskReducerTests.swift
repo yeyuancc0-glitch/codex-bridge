@@ -140,6 +140,45 @@ final class TaskReducerTests: XCTestCase {
     XCTAssertTrue(task.resolvingApprovalIDs.isEmpty)
   }
 
+  func testApprovalEvidenceIsBoundToActiveTurnAndRemovedWithResolution() throws {
+    let approvalID = ApprovalID(rawValue: "apr-evidence")
+    let evidence = try CodexApprovalEvidence(
+      approvalID: approvalID,
+      kind: .fileChange,
+      authority: .correlatedFileChanges,
+      threadID: ThreadID(rawValue: "thread-1"),
+      turnID: TurnID(rawValue: "turn-1"),
+      itemID: "item-file",
+      startedAtMilliseconds: 12,
+      operationTitle: "File change approval",
+      changedPaths: ["Sources/App.swift"],
+      evidenceDigest: String(repeating: "b", count: 64)
+    )
+    var task = try runningTask()
+    task = try apply(.codexApprovalEvidenceRecorded(evidence), to: task)
+    task = try apply(.codexApprovalRequested(approvalID), to: task)
+
+    XCTAssertEqual(task.approvalEvidenceByID[approvalID], evidence)
+    XCTAssertThrowsError(try apply(.turnCompleted, to: task))
+
+    task = try apply(.codexApprovalApproved(approvalID), to: task)
+    XCTAssertEqual(task.phase, .running)
+    XCTAssertTrue(task.approvalEvidenceByID.isEmpty)
+
+    let wrongTurn = try CodexApprovalEvidence(
+      approvalID: ApprovalID(rawValue: "apr-wrong-turn"),
+      kind: .fileChange,
+      authority: .correlatedFileChanges,
+      threadID: ThreadID(rawValue: "thread-1"),
+      turnID: TurnID(rawValue: "turn-other"),
+      itemID: "item-file",
+      startedAtMilliseconds: 12,
+      operationTitle: "File change approval",
+      evidenceDigest: String(repeating: "c", count: 64)
+    )
+    XCTAssertThrowsError(try apply(.codexApprovalEvidenceRecorded(wrongTurn), to: task))
+  }
+
   func testDeniedCodexApprovalRequestsStopButDoesNotClaimInterruption() throws {
     let approvalID = ApprovalID(rawValue: "apr-denied")
     let intent = StopIntent(
@@ -380,11 +419,13 @@ final class TaskReducerTests: XCTestCase {
       JSONSerialization.jsonObject(with: encoded) as? [String: Any]
     )
     object.removeValue(forKey: "resolvingApprovalIDs")
+    object.removeValue(forKey: "approvalEvidenceByID")
     let legacyData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
 
     let decoded = try JSONDecoder().decode(TaskAggregate.self, from: legacyData)
 
     XCTAssertTrue(decoded.resolvingApprovalIDs.isEmpty)
+    XCTAssertTrue(decoded.approvalEvidenceByID.isEmpty)
     XCTAssertEqual(decoded.phase, .running)
   }
 }

@@ -181,6 +181,13 @@ struct CodexApprovalSheet: View {
           EvidenceText(text: "argv[\(index)] = \(argument)")
         }
       }
+      if !approval.evidenceItems.isEmpty {
+        Text("Codex 提供的展示证据（不是 argv）")
+          .font(.subheadline.weight(.semibold))
+        ForEach(Array(approval.evidenceItems.enumerated()), id: \.offset) { _, item in
+          EvidenceText(text: item)
+        }
+      }
       if let fileOperation = approval.fileOperation {
         MetadataRow(label: "文件操作", value: fileOperation, monospaced: true)
       }

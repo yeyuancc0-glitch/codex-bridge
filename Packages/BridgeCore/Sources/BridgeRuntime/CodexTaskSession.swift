@@ -39,6 +39,13 @@ actor CodexTaskSession {
     let requestID: RequestID
     let correlation: RequestCorrelation
     let kind: ApprovalKind
+    let evidence: CodexApprovalEvidence
+  }
+
+  private struct KnownItem: Sendable {
+    let type: String
+    let evidence: CodexApprovalItemEvidence
+    let sourceDigest: String
   }
 
   nonisolated let observations: AsyncStream<TaskExecutionObservation>
@@ -48,14 +55,18 @@ actor CodexTaskSession {
   private let observationContinuation: AsyncStream<TaskExecutionObservation>.Continuation
   private let maximumPendingApprovals: Int
   private let maximumKnownItems: Int
+  private let maximumKnownItemEvidenceBytes: Int
   private let maximumSessionNanoseconds: UInt64
+  private let projectRoot: String
   private let onTermination: @Sendable (TaskID, CodexTaskSession) async -> Void
   private var eventTask: Task<Void, Never>?
   private var lifetimeTask: Task<Void, Never>?
   private var expectedThreadID: String?
   private var binding: ExecutionBinding?
   private var startedTurnIDs: Set<String> = []
-  private var knownItems: [ItemCorrelation: String] = [:]
+  private var seenItems: Set<ItemCorrelation> = []
+  private var knownItems: [ItemCorrelation: KnownItem] = [:]
+  private var knownItemEvidenceBytes = 0
   private var usedRequests: Set<RequestCorrelation> = []
   private var pendingApprovals: [ApprovalID: PendingApproval] = [:]
   private var approvalBarriers: Set<ApprovalID> = []
@@ -69,7 +80,9 @@ actor CodexTaskSession {
     observationBufferLimit: Int,
     maximumPendingApprovals: Int,
     maximumKnownItems: Int,
+    maximumKnownItemEvidenceBytes: Int,
     maximumSessionNanoseconds: UInt64,
+    projectRoot: String,
     onTermination: @escaping @Sendable (TaskID, CodexTaskSession) async -> Void
   ) {
     let pair = AsyncStream.makeStream(
@@ -82,7 +95,9 @@ actor CodexTaskSession {
     observationContinuation = pair.continuation
     self.maximumPendingApprovals = maximumPendingApprovals
     self.maximumKnownItems = maximumKnownItems
+    self.maximumKnownItemEvidenceBytes = maximumKnownItemEvidenceBytes
     self.maximumSessionNanoseconds = maximumSessionNanoseconds
+    self.projectRoot = projectRoot
     self.onTermination = onTermination
   }
 
@@ -177,6 +192,10 @@ actor CodexTaskSession {
       await fail(reason: "Codex approval response failed.")
       throw IsolatedCodexTaskRuntimeError.runtimeUnavailable
     }
+  }
+
+  func approvalEvidence(_ approvalID: ApprovalID) -> CodexApprovalEvidence? {
+    pendingApprovals[approvalID]?.evidence
   }
 
   func finalizeApprovalResolution(_ approvalID: ApprovalID, committed: Bool) async {
@@ -282,12 +301,40 @@ actor CodexTaskSession {
       guard
         correlation.threadID == expectedThreadID,
         startedTurnIDs.contains(correlation.turnID),
-        knownItems.count < maximumKnownItems
+        !seenItems.contains(correlation),
+        seenItems.count < maximumKnownItems
       else {
         await fail(reason: "Codex emitted an invalid item event.")
         return
       }
-      knownItems[correlation] = item.type
+      seenItems.insert(correlation)
+      guard item.type == "commandExecution" || item.type == "fileChange" else { return }
+      let evidence: CodexApprovalItemEvidence
+      let source: (digest: String, byteCount: Int)
+      do {
+        evidence = try CodexApprovalWireDecoder.decodeItemStarted(notification)
+        guard Self.itemCorrelation(evidence.item) == correlation,
+          Self.isInProgress(evidence)
+        else {
+          throw IsolatedCodexTaskRuntimeError.protocolViolation
+        }
+        source = try CodexApprovalEvidenceBuilder.canonicalSource(
+          notification.params ?? .null
+        )
+      } catch {
+        await fail(reason: "Codex emitted invalid approval item evidence.")
+        return
+      }
+      guard source.byteCount <= maximumKnownItemEvidenceBytes - knownItemEvidenceBytes else {
+        await fail(reason: "Codex approval evidence capacity was exceeded.")
+        return
+      }
+      knownItems[correlation] = KnownItem(
+        type: item.type,
+        evidence: evidence,
+        sourceDigest: source.digest
+      )
+      knownItemEvidenceBytes += source.byteCount
     case "turn/completed":
       do {
         guard case .turnCompleted(let completed) = try notification.decodedCodexNotification()
@@ -346,74 +393,97 @@ actor CodexTaskSession {
   }
 
   private func processServerRequest(_ request: RPCServerRequest) async {
-    guard let binding,
-      let parsed = parseApproval(request),
+    guard let binding else {
+      await rejectInvalidApproval(request)
+      return
+    }
+    let parsed:
+      (
+        correlation: RequestCorrelation, request: CodexApprovalRequest, expectedItemType: String
+      )
+    do {
+      parsed = try parseApproval(request)
+    } catch {
+      await rejectInvalidApproval(request)
+      return
+    }
+    guard
       parsed.correlation.item.threadID == binding.threadID.rawValue,
       parsed.correlation.item.turnID == binding.turnID.rawValue,
-      knownItems[parsed.correlation.item] == parsed.expectedItemType,
+      let knownItem = knownItems[parsed.correlation.item],
+      knownItem.type == parsed.expectedItemType,
       !usedRequests.contains(parsed.correlation),
       usedRequests.count < maximumKnownItems,
       pendingApprovals.count < maximumPendingApprovals
     else {
-      try? await client.respond(
-        to: request.id,
-        errorCode: -32602,
-        message: "Approval request rejected by Codex Bridge."
-      )
-      await fail(reason: "Codex approval correlation was invalid.")
+      await rejectInvalidApproval(request)
       return
     }
-    usedRequests.insert(parsed.correlation)
     let approvalID = ApprovalID(
       rawValue: "apr_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
     )
+    let evidence: CodexApprovalEvidence
+    do {
+      evidence = try CodexApprovalEvidenceBuilder.build(
+        approvalID: approvalID,
+        request: parsed.request,
+        requestParameters: request.params ?? .null,
+        itemEvidence: knownItem.evidence,
+        itemSourceDigest: knownItem.sourceDigest,
+        projectRoot: projectRoot
+      )
+    } catch {
+      await rejectInvalidApproval(request)
+      return
+    }
+    usedRequests.insert(parsed.correlation)
     pendingApprovals[approvalID] = PendingApproval(
       requestID: request.id,
       correlation: parsed.correlation,
-      kind: parsed.kind
+      kind: responseKind(parsed.request, rawParameters: request.params),
+      evidence: evidence
     )
     yield(.codexApprovalRequested(approvalID))
   }
 
-  private func parseApproval(_ request: RPCServerRequest) -> (
-    correlation: RequestCorrelation, kind: ApprovalKind, expectedItemType: String
-  )? {
-    guard let params = request.params?.objectValue,
-      let threadID = params["threadId"]?.stringValue,
-      let turnID = params["turnId"]?.stringValue,
-      let itemID = params["itemId"]?.stringValue,
-      !threadID.isEmpty,
-      !turnID.isEmpty,
-      !itemID.isEmpty
-    else {
-      return nil
-    }
-    let callbackID: String?
-    if params["approvalId"] == .null || params["approvalId"] == nil {
-      callbackID = nil
-    } else {
-      guard let value = params["approvalId"]?.stringValue, !value.isEmpty else { return nil }
-      callbackID = value
-    }
-    let item = ItemCorrelation(threadID: threadID, turnID: turnID, itemID: itemID)
+  private func parseApproval(_ request: RPCServerRequest) throws -> (
+    correlation: RequestCorrelation, request: CodexApprovalRequest, expectedItemType: String
+  ) {
+    let decoded = try CodexApprovalWireDecoder.decode(request)
+    let key = decoded.correlation.item
+    let item = ItemCorrelation(threadID: key.threadID, turnID: key.turnID, itemID: key.itemID)
     let correlation = RequestCorrelation(
       method: request.method,
       item: item,
-      callbackID: callbackID
+      callbackID: decoded.correlation.callbackID
     )
-    switch request.method {
-    case "item/commandExecution/requestApproval":
-      return (correlation, .command, "commandExecution")
-    case "item/fileChange/requestApproval":
-      return (correlation, .fileChange, "fileChange")
-    case "item/permissions/requestApproval":
-      guard let permissions = params["permissions"], permissions.objectValue != nil else {
-        return nil
+    let expectedItemType =
+      switch decoded {
+      case .command, .permissions: "commandExecution"
+      case .fileChange: "fileChange"
       }
-      return (correlation, .permissions(permissions), "commandExecution")
-    default:
-      return nil
+    return (correlation, decoded, expectedItemType)
+  }
+
+  private func responseKind(
+    _ request: CodexApprovalRequest,
+    rawParameters: JSONValue?
+  ) -> ApprovalKind {
+    switch request {
+    case .command: .command
+    case .fileChange: .fileChange
+    case .permissions:
+      .permissions(rawParameters?.objectValue?["permissions"] ?? .object([:]))
     }
+  }
+
+  private func rejectInvalidApproval(_ request: RPCServerRequest) async {
+    try? await client.respond(
+      to: request.id,
+      errorCode: -32602,
+      message: "Approval request rejected by Codex Bridge."
+    )
+    await fail(reason: "Codex approval correlation was invalid.")
   }
 
   private func parseItem(_ params: JSONValue?) -> (correlation: ItemCorrelation, type: String)? {
@@ -423,7 +493,12 @@ actor CodexTaskSession {
       let item = object["item"]?.objectValue,
       let itemID = item["id"]?.stringValue,
       let type = item["type"]?.stringValue,
-      !itemID.isEmpty
+      Self.isValidWireIdentifier(threadID),
+      Self.isValidWireIdentifier(turnID),
+      Self.isValidWireIdentifier(itemID),
+      !type.isEmpty,
+      type.utf8.count <= 64,
+      !type.contains("\0")
     else {
       return nil
     }
@@ -532,4 +607,21 @@ actor CodexTaskSession {
     "applyPatchApproval",
     "execCommandApproval",
   ]
+
+  private static func itemCorrelation(_ key: CodexApprovalItemKey) -> ItemCorrelation {
+    ItemCorrelation(threadID: key.threadID, turnID: key.turnID, itemID: key.itemID)
+  }
+
+  private static func isInProgress(_ evidence: CodexApprovalItemEvidence) -> Bool {
+    switch evidence {
+    case .commandExecution(let command): command.status == .inProgress
+    case .fileChange(let change): change.status == .inProgress
+    }
+  }
+
+  private static func isValidWireIdentifier(_ value: String) -> Bool {
+    !value.isEmpty && value.utf8.count <= CodexApprovalWireLimits.identifierBytes
+      && !value.contains("\0")
+  }
+
 }

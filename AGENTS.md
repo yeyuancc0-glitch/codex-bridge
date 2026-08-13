@@ -164,6 +164,7 @@ codex app-server generate-json-schema --out DIR
 - Xcode 27 下不要在 detached task 中用阻塞式 `FileHandle.read(upToCount:)` 驱动管道；使用 `readabilityHandler` 接入有界 `AsyncStream`，再由单消费者解析。
 - Thread 只能按规范化 cwd/worktree 精确绑定，不能按标题或“最近使用”猜测。
 - 自动审批不能信任审批请求里的 shell 字符串或 best-effort `commandActions`；必须用 `threadId + turnId + itemId/approvalId` 关联已持久化的权威执行事件，缺少规范化 argv、路径或大小时一律不自动批准。
+- 三类 app-server 审批请求必须使用有界强类型模型解码，并与同一 `item/started` 的 immutable identity、时间和 `inProgress` 状态精确关联；审批证据与 pending 事实原子持久化。命令字符串与 `commandActions` 只作为明确标注的展示证据，未形成规范化权威操作前 UI 只能拒绝。
 - 只读命令自动放行必须使用固定系统可执行文件路径，不能只看 basename 或未解析的 PATH；配置验证命令仍先经过系统硬拒绝与 wrapper 检查。
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Git 证据命令只能用固定 `/usr/bin/git`、最小环境和已打开目录 fd 作为 cwd；仓库本地 filter、fsmonitor、include、textconv/command 或任何 `filter` attribute 都必须在执行 status/diff 前 fail-closed，防止证据收集执行项目代码。

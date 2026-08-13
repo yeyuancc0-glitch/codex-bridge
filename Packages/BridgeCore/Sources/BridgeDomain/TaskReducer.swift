@@ -5,6 +5,7 @@ public enum TaskEvent: Codable, Equatable, Sendable {
   case localApprovalResolved(approved: Bool)
   case preparationStarted
   case turnStarted(ExecutionBinding)
+  case codexApprovalEvidenceRecorded(CodexApprovalEvidence)
   case codexApprovalRequested(ApprovalID)
   case codexApprovalResolutionRequested(ApprovalID, approved: Bool)
   case codexApprovalApproved(ApprovalID)
@@ -30,6 +31,7 @@ public enum TaskEvent: Codable, Equatable, Sendable {
     case .localApprovalResolved: "localApprovalResolved"
     case .preparationStarted: "preparationStarted"
     case .turnStarted: "turnStarted"
+    case .codexApprovalEvidenceRecorded: "codexApprovalEvidenceRecorded"
     case .codexApprovalRequested: "codexApprovalRequested"
     case .codexApprovalResolutionRequested: "codexApprovalResolutionRequested"
     case .codexApprovalApproved: "codexApprovalApproved"
@@ -84,6 +86,8 @@ public enum TaskReducer {
       return try startPreparation(aggregate, event: event)
     case .turnStarted(let binding):
       return try startTurn(aggregate, binding: binding, event: event)
+    case .codexApprovalEvidenceRecorded(let evidence):
+      return try recordCodexApprovalEvidence(aggregate, evidence: evidence, event: event)
     case .codexApprovalRequested(let approvalID):
       return try requestCodexApproval(aggregate, approvalID: approvalID, event: event)
     case .codexApprovalResolutionRequested(let approvalID, _):
@@ -200,6 +204,24 @@ extension TaskReducer {
     return next
   }
 
+  fileprivate static func recordCodexApprovalEvidence(
+    _ aggregate: TaskAggregate,
+    evidence: CodexApprovalEvidence,
+    event: TaskEvent
+  ) throws -> TaskAggregate {
+    try requirePhase(aggregate, [.running, .awaitingCodexApproval], event: event)
+    guard aggregate.binding?.threadID == evidence.threadID,
+      aggregate.binding?.turnID == evidence.turnID,
+      aggregate.approvalEvidenceByID[evidence.approvalID] == nil,
+      !aggregate.pendingApprovalIDs.contains(evidence.approvalID),
+      !aggregate.resolvingApprovalIDs.contains(evidence.approvalID)
+    else { throw invalidTransition(aggregate, event: event) }
+
+    var next = aggregate
+    next.approvalEvidenceByID[evidence.approvalID] = evidence
+    return next
+  }
+
   fileprivate static func approveCodexApproval(
     _ aggregate: TaskAggregate,
     approvalID: ApprovalID,
@@ -216,6 +238,7 @@ extension TaskReducer {
     var next = aggregate
     next.pendingApprovalIDs.remove(approvalID)
     next.resolvingApprovalIDs.remove(approvalID)
+    next.approvalEvidenceByID[approvalID] = nil
     next.phase =
       next.pendingApprovalIDs.isEmpty && next.resolvingApprovalIDs.isEmpty
       ? .running : .awaitingCodexApproval
@@ -260,6 +283,7 @@ extension TaskReducer {
     var next = aggregate
     next.pendingApprovalIDs.remove(approvalID)
     next.resolvingApprovalIDs.remove(approvalID)
+    next.approvalEvidenceByID[approvalID] = nil
     next.stopIntent = intent
     return next
   }
@@ -328,6 +352,7 @@ extension TaskReducer {
     next.activity = .idle
     next.pendingApprovalIDs.removeAll()
     next.resolvingApprovalIDs.removeAll()
+    next.approvalEvidenceByID.removeAll()
     next.stopIntent = nil
     return next
   }
@@ -337,7 +362,9 @@ extension TaskReducer {
     event: TaskEvent
   ) throws -> TaskAggregate {
     try requirePhase(aggregate, [.running, .awaitingCodexApproval], event: event)
-    guard aggregate.pendingApprovalIDs.isEmpty, aggregate.resolvingApprovalIDs.isEmpty else {
+    guard aggregate.pendingApprovalIDs.isEmpty, aggregate.resolvingApprovalIDs.isEmpty,
+      aggregate.approvalEvidenceByID.isEmpty
+    else {
       throw invalidTransition(aggregate, event: event)
     }
 
@@ -408,6 +435,7 @@ extension TaskReducer {
     next.activity = .idle
     next.pendingApprovalIDs.removeAll()
     next.resolvingApprovalIDs.removeAll()
+    next.approvalEvidenceByID.removeAll()
     next.stopIntent = nil
     next.failureReason = reason
     next.recoveryOrigin = nil
@@ -482,6 +510,7 @@ extension TaskReducer {
     if target != .awaitingCodexApproval {
       next.pendingApprovalIDs.removeAll()
       next.resolvingApprovalIDs.removeAll()
+      next.approvalEvidenceByID.removeAll()
     }
     if target == .suspended || target == .verifying || target == .completed {
       next.stopIntent = nil
@@ -610,11 +639,15 @@ extension TaskReducer {
     }
     if target == .running,
       !aggregate.pendingApprovalIDs.isEmpty || !aggregate.resolvingApprovalIDs.isEmpty
+        || !aggregate.approvalEvidenceByID.isEmpty
     {
       throw TaskTransitionError.invalidRecoveryTarget(target)
     }
     if target == .awaitingCodexApproval,
       aggregate.pendingApprovalIDs.isEmpty || !aggregate.resolvingApprovalIDs.isEmpty
+        || !Set(aggregate.approvalEvidenceByID.keys).isSubset(
+          of: aggregate.pendingApprovalIDs
+        )
     {
       throw TaskTransitionError.invalidRecoveryTarget(target)
     }
