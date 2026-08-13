@@ -146,6 +146,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
   public let supervisionSummary: String?
   public let verificationSummary: String?
   public let diagnosticSummary: String?
+  public let canOpenInCodex: Bool
+  public let canInterrupt: Bool
 
   public init(
     id: String,
@@ -167,7 +169,9 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     diffSummary: String? = nil,
     supervisionSummary: String? = nil,
     verificationSummary: String? = nil,
-    diagnosticSummary: String? = nil
+    diagnosticSummary: String? = nil,
+    canOpenInCodex: Bool = true,
+    canInterrupt: Bool = true
   ) {
     self.id = id
     self.title = title
@@ -189,6 +193,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     self.supervisionSummary = supervisionSummary
     self.verificationSummary = verificationSummary
     self.diagnosticSummary = diagnosticSummary
+    self.canOpenInCodex = canOpenInCodex
+    self.canInterrupt = canInterrupt
   }
 }
 
@@ -199,5 +205,11 @@ public struct TaskPagePresentation: Equatable, Sendable {
   public init(tasks: [TaskRowPresentation], details: [TaskDetailPresentation]) {
     self.tasks = tasks
     self.details = details
+  }
+}
+
+extension TaskDetailPresentation {
+  var canRequestInterrupt: Bool {
+    canInterrupt && (status == .running || status == .waiting || status == .checking)
   }
 }

@@ -20,6 +20,8 @@ struct LogsPage: View {
         Button("导出脱敏支持包", systemImage: "square.and.arrow.up") {
           Task { await store.perform(.exportSupportBundle) }
         }
+        .disabled(!logExportIsAvailable)
+        .help(logExportIsAvailable ? "导出脱敏诊断事实" : "支持包导出尚未接通")
       }
       LoadStateView(
         state: store.snapshot.logs,
@@ -29,6 +31,11 @@ struct LogsPage: View {
       }
     }
     .padding(BridgeTheme.spacingPage)
+  }
+
+  private var logExportIsAvailable: Bool {
+    guard case .ready(let page) = store.snapshot.logs else { return false }
+    return page.canExport
   }
 }
 

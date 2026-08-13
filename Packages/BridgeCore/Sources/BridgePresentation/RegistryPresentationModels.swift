@@ -1,5 +1,11 @@
 import Foundation
 
+public enum ProjectPermissionPresentation: String, Equatable, Sendable {
+  case denied
+  case requiresLocalApproval
+  case allowed
+}
+
 public struct ProjectPresentation: Identifiable, Equatable, Sendable {
   public let id: String
   public let name: String
@@ -10,10 +16,15 @@ public struct ProjectPresentation: Identifiable, Equatable, Sendable {
   public let canWrite: Bool
   public let networkAllowed: Bool
   public let requiresLocalConfirmation: Bool
+  public let readPermission: ProjectPermissionPresentation
+  public let writePermission: ProjectPermissionPresentation
+  public let networkPermission: ProjectPermissionPresentation
   public let verificationCommands: [String]
   public let threadCount: Int
   public let lastTaskTitle: String?
   public let isAvailable: Bool
+  public let threadCountIsKnown: Bool
+  public let gitFactsKnown: Bool
 
   public init(
     id: String,
@@ -28,7 +39,12 @@ public struct ProjectPresentation: Identifiable, Equatable, Sendable {
     verificationCommands: [String] = [],
     threadCount: Int,
     lastTaskTitle: String? = nil,
-    isAvailable: Bool
+    isAvailable: Bool,
+    threadCountIsKnown: Bool = true,
+    gitFactsKnown: Bool = true,
+    readPermission: ProjectPermissionPresentation? = nil,
+    writePermission: ProjectPermissionPresentation? = nil,
+    networkPermission: ProjectPermissionPresentation? = nil
   ) {
     self.id = id
     self.name = name
@@ -39,10 +55,30 @@ public struct ProjectPresentation: Identifiable, Equatable, Sendable {
     self.canWrite = canWrite
     self.networkAllowed = networkAllowed
     self.requiresLocalConfirmation = requiresLocalConfirmation
+    self.readPermission = readPermission ?? (canRead ? .allowed : .denied)
+    self.writePermission =
+      writePermission
+      ?? Self.permission(canUse: canWrite, requiresLocalConfirmation: requiresLocalConfirmation)
+    self.networkPermission =
+      networkPermission
+      ?? Self.permission(
+        canUse: networkAllowed,
+        requiresLocalConfirmation: requiresLocalConfirmation
+      )
     self.verificationCommands = verificationCommands
     self.threadCount = threadCount
     self.lastTaskTitle = lastTaskTitle
     self.isAvailable = isAvailable
+    self.threadCountIsKnown = threadCountIsKnown
+    self.gitFactsKnown = gitFactsKnown
+  }
+
+  private static func permission(
+    canUse: Bool,
+    requiresLocalConfirmation: Bool
+  ) -> ProjectPermissionPresentation {
+    guard canUse else { return .denied }
+    return requiresLocalConfirmation ? .requiresLocalApproval : .allowed
   }
 }
 
@@ -64,6 +100,11 @@ public struct ThreadPresentation: Identifiable, Equatable, Sendable {
   public let updatedAt: Date
   public let isOccupied: Bool
   public let canArchive: Bool
+  public let canOpenInCodex: Bool
+  public let canReadHistory: Bool
+  public let canContinue: Bool
+  public let canCreateTask: Bool
+  public let modelIsKnown: Bool
 
   public init(
     id: String,
@@ -74,7 +115,12 @@ public struct ThreadPresentation: Identifiable, Equatable, Sendable {
     status: PresentationStatus,
     updatedAt: Date,
     isOccupied: Bool,
-    canArchive: Bool = false
+    canArchive: Bool = false,
+    canOpenInCodex: Bool = true,
+    canReadHistory: Bool = true,
+    canContinue: Bool = true,
+    canCreateTask: Bool = true,
+    modelIsKnown: Bool = true
   ) {
     self.id = id
     self.preview = preview
@@ -85,6 +131,11 @@ public struct ThreadPresentation: Identifiable, Equatable, Sendable {
     self.updatedAt = updatedAt
     self.isOccupied = isOccupied
     self.canArchive = canArchive
+    self.canOpenInCodex = canOpenInCodex
+    self.canReadHistory = canReadHistory
+    self.canContinue = canContinue
+    self.canCreateTask = canCreateTask
+    self.modelIsKnown = modelIsKnown
   }
 }
 
@@ -95,5 +146,35 @@ public struct ThreadPagePresentation: Equatable, Sendable {
   public init(threads: [ThreadPresentation], projectFilterName: String? = nil) {
     self.threads = threads
     self.projectFilterName = projectFilterName
+  }
+}
+
+extension ProjectPresentation {
+  var threadCountDisplayValue: String {
+    threadCountIsKnown ? String(threadCount) : "未读取"
+  }
+
+  var branchDisplayValue: String {
+    guard gitFactsKnown else { return "Git 状态未读取" }
+    return branch ?? "非 Git 仓库"
+  }
+
+  var workingTreeDisplayValue: String {
+    guard gitFactsKnown else { return "Git 状态未读取" }
+    return isDirty ? "有未提交修改" : "干净"
+  }
+
+  var showsDirtyIndicator: Bool {
+    gitFactsKnown && isDirty
+  }
+}
+
+extension ThreadPresentation {
+  var modelDisplayValue: String {
+    modelIsKnown ? model : "未读取"
+  }
+
+  var canContinueNow: Bool {
+    canContinue && !isOccupied
   }
 }

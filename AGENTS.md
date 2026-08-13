@@ -45,6 +45,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 ```
 
 - `TaskCoordinator` + `EventStore` 是任务事实的唯一来源；ViewModel 只做 `@MainActor` 投影。
+- 任务投影快照只是事件日志的原子派生缓存：与事件序号 CAS 在同一 SQLite 事务推进；缺失或落后的快照必须从有界事件页重建，不能截断历史来猜测状态。
 - 项目访问唯一来源是 `ProjectRegistry`；MCP 只接受不可猜测的 `project_id` 和相对路径。
 - 所有 app-server SDK/Schema 差异封装在 Codex RPC 适配层。
 - 所有 MCP SDK 类型封装在 MCP 适配层，不能渗入领域层。
@@ -76,6 +77,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 ## 项目结构记忆
 
 - `App/`：应用入口、窗口、菜单栏、资源与 Entitlements。
+- `CodexBridge.xcodeproj` / `BridgeAppShell`：真实 macOS App target 与组合根；主窗口和菜单栏共享同一个 `BridgeDesktopRuntime`，Application Support 数据目录固定 0700、数据库文件固定 0600，退出必须等待 bootstrap 和在途本机操作收口。
 - `UI/`：Onboarding、Overview、Projects、Threads、Tasks、Approvals、Connections、Logs、Settings 与共享原生组件。
 - `Packages/BridgeCore/Sources/BridgeDomain`：值对象、任务状态机、错误和协议。
 - `BridgeCodexRPC`：Codex 进程、JSON-RPC、能力协商和版本兼容。
@@ -130,6 +132,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 Scripts/with-xcode.sh swift build --package-path Packages/BridgeCore
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive Packages/BridgeCore/Sources Packages/BridgeCore/Tests
+Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/Xcode build CODE_SIGNING_ALLOWED=NO
 Scripts/with-xcode.sh swift run --package-path Packages/BridgeCore codex-rpc-fixture basic
 Scripts/with-xcode.sh swift run --package-path Prototypes/AppServerProbe app-server-probe --help
 Scripts/verify-mcp-inspector.sh
@@ -139,7 +142,7 @@ Scripts/test-tunnel-helper-config.sh
 codex app-server generate-json-schema --out DIR
 ```
 
-- 完整 App 构建、UI Test、签名和公证命令在建立 Xcode 工程后补充。
+- UI Test、Release 签名和公证命令在对应 target 与发布流水线建立后补充。
 
 ## 常见坑与注意事项
 

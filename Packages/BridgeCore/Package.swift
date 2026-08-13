@@ -24,6 +24,7 @@ let package = Package(
         .library(name: "BridgeFiles", targets: ["BridgeFiles"]),
         .library(name: "BridgePresentation", targets: ["BridgePresentation"]),
         .library(name: "BridgeAppModel", targets: ["BridgeAppModel"]),
+        .library(name: "BridgeAppShell", targets: ["BridgeAppShell"]),
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
@@ -143,6 +144,19 @@ let package = Package(
         .target(
             name: "BridgeAppModel",
             dependencies: ["BridgePresentation"]
+        ),
+        .target(
+            name: "BridgeAppShell",
+            dependencies: [
+                "BridgeAppModel",
+                "BridgeCoordinator",
+                "BridgeDomain",
+                "BridgePersistence",
+                "BridgePresentation",
+                "BridgeProjects",
+                "BridgeRepositories",
+                "BridgeSecurity",
+            ]
         ),
         .target(
             name: "BridgeMCP",
@@ -281,6 +295,16 @@ let package = Package(
         .testTarget(
             name: "BridgeAppModelTests",
             dependencies: ["BridgeAppModel", "BridgePresentation"]
+        ),
+        .testTarget(
+            name: "BridgeAppShellTests",
+            dependencies: [
+                "BridgeAppShell",
+                "BridgeAppModel",
+                "BridgeDomain",
+                "BridgePresentation",
+                "BridgeProjects",
+            ]
         ),
         .testTarget(
             name: "BridgeMCPTests",

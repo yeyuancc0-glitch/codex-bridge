@@ -52,7 +52,10 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(completed.aggregate.phase, .completed)
     XCTAssertEqual(completed.aggregate.reportReference, "report://task/final.json")
     let completedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    let completedSnapshot = try await store.stateSnapshot(for: submitted.aggregate.id)
     XCTAssertEqual(completedLocks, [])
+    XCTAssertEqual(completedSnapshot?.lastEventSequence, completed.lastSequence)
+    XCTAssertEqual(completedSnapshot?.recoveryRequired, false)
   }
 
   func testExistingIdempotentTaskDoesNotReevaluateAdmissionPolicy() async throws {
@@ -450,6 +453,41 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(suspended.aggregate.phase, .suspended)
     let suspendedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
     XCTAssertEqual(suspendedLocks, [])
+  }
+
+  func testRecoveryReleasesLegacyLocksForSuspendedTask() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "legacy-suspended-locks", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    _ = try await coordinator.suspend(taskID: taskID)
+    await runtime.emit(.turnStopped, taskID: taskID)
+    try await waitForPhase(.suspended, taskID: taskID, coordinator: coordinator)
+    try await store.acquireLocks(
+      ["legacy:thread", "legacy:worktree"],
+      ownerTaskID: taskID
+    )
+
+    let restarted = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let recovered = try await restarted.recoverIncompleteTasks()
+
+    XCTAssertTrue(recovered.isEmpty)
+    let remainingLocks = try await store.lockKeysOwned(by: taskID)
+    let restored = try await restarted.task(taskID)
+    XCTAssertTrue(remainingLocks.isEmpty)
+    XCTAssertEqual(restored.aggregate.phase, .suspended)
   }
 
   func testMismatchedIdempotentPayloadAndInvalidFinalAuthorizationFailClosed() async throws {

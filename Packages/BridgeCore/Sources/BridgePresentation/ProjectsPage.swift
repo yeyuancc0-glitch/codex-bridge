@@ -85,12 +85,12 @@ private struct ProjectRow: View {
       VStack(alignment: .leading, spacing: BridgeTheme.spacingTight) {
         Text(project.name)
           .font(.body.weight(.medium))
-        Text(project.branch ?? "非 Git 仓库")
+        Text(project.branchDisplayValue)
           .font(.caption)
           .foregroundStyle(.secondary)
       }
       Spacer()
-      if project.isDirty {
+      if project.showsDirtyIndicator {
         Label("有未提交修改", systemImage: "circle.fill")
           .labelStyle(.iconOnly)
           .foregroundStyle(.orange)
@@ -99,7 +99,7 @@ private struct ProjectRow: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "\(project.name)，\(project.isAvailable ? "可用" : "离线")，\(project.isDirty ? "有未提交修改" : "工作区干净")"
+      "\(project.name)，\(project.isAvailable ? "可用" : "离线")，\(project.workingTreeDisplayValue)"
     )
   }
 }
@@ -126,13 +126,12 @@ private struct ProjectDetail: View {
         Divider()
         SectionHeading("路径与 Git")
         MetadataRow(label: "规范化路径", value: project.normalizedPath, monospaced: true)
-        MetadataRow(label: "分支", value: project.branch ?? "不适用", monospaced: true)
-        MetadataRow(label: "工作区", value: project.isDirty ? "有未提交修改" : "干净")
+        MetadataRow(label: "分支", value: project.branchDisplayValue, monospaced: true)
+        MetadataRow(label: "工作区", value: project.workingTreeDisplayValue)
         SectionHeading("权限")
-        permissionRow("读取", allowed: project.canRead)
-        permissionRow("写入", allowed: project.canWrite)
-        permissionRow("网络", allowed: project.networkAllowed)
-        permissionRow("本地确认", allowed: project.requiresLocalConfirmation)
+        permissionRow("读取", permission: project.readPermission)
+        permissionRow("写入", permission: project.writePermission)
+        permissionRow("网络", permission: project.networkPermission)
         SectionHeading("验证命令")
         if project.verificationCommands.isEmpty {
           Text("未配置验证命令")
@@ -143,19 +142,31 @@ private struct ProjectDetail: View {
           }
         }
         SectionHeading("使用情况")
-        MetadataRow(label: "线程数量", value: String(project.threadCount))
+        MetadataRow(
+          label: "线程数量",
+          value: project.threadCountDisplayValue
+        )
         MetadataRow(label: "最近任务", value: project.lastTaskTitle ?? "无")
       }
       .frame(maxWidth: BridgeTheme.readableTextWidth, alignment: .leading)
     }
   }
 
-  private func permissionRow(_ title: String, allowed: Bool) -> some View {
-    Label(
-      allowed ? "\(title)：允许" : "\(title)：不允许",
-      systemImage: allowed ? "checkmark.circle" : "minus.circle"
+  private func permissionRow(
+    _ title: String,
+    permission: ProjectPermissionPresentation
+  ) -> some View {
+    let value: (text: String, icon: String, emphasized: Bool) =
+      switch permission {
+      case .allowed: ("允许", "checkmark.circle", true)
+      case .requiresLocalApproval: ("需要本机确认", "exclamationmark.circle", true)
+      case .denied: ("不允许", "minus.circle", false)
+      }
+    return Label(
+      "\(title)：\(value.text)",
+      systemImage: value.icon
     )
-    .foregroundStyle(allowed ? .primary : .secondary)
-    .accessibilityLabel("\(title)权限：\(allowed ? "允许" : "不允许")")
+    .foregroundStyle(value.emphasized ? .primary : .secondary)
+    .accessibilityLabel("\(title)权限：\(value.text)")
   }
 }

@@ -53,7 +53,7 @@ private struct ThreadList: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-              Text("\(thread.projectName) · \(thread.source) · \(thread.model)")
+              Text("\(thread.projectName) · \(thread.source) · \(thread.modelDisplayValue)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -68,17 +68,21 @@ private struct ThreadList: View {
               Button("在 Codex 中打开", systemImage: "arrow.up.forward.app") {
                 Task { await store.perform(.openThreadInCodex(thread.id)) }
               }
+              .disabled(!thread.canOpenInCodex)
+              .help(thread.canOpenInCodex ? "在 Codex 中打开此线程" : "Codex 打开能力尚不可用")
               Menu("更多操作", systemImage: "ellipsis.circle") {
                 Button("读取历史", systemImage: "clock.arrow.circlepath") {
                   Task { await store.perform(.readThreadHistory(thread.id)) }
                 }
+                .disabled(!thread.canReadHistory)
                 Button("继续线程", systemImage: "arrow.forward.circle") {
                   Task { await store.perform(.continueThread(thread.id)) }
                 }
-                .disabled(thread.isOccupied)
+                .disabled(!thread.canContinueNow)
                 Button("创建新任务", systemImage: "plus.circle") {
                   Task { await store.perform(.createTaskFromThread(thread.id)) }
                 }
+                .disabled(!thread.canCreateTask)
                 Button("复制 Thread ID", systemImage: "doc.on.doc") {
                   Task { await store.perform(.copyThreadID(thread.id)) }
                 }

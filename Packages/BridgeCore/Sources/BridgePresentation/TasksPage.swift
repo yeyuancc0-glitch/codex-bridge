@@ -102,7 +102,12 @@ private struct TaskDetailView: View {
         Button("在 Codex 中打开", systemImage: "arrow.up.forward.app") {
           Task { await store.perform(.openTaskInCodex(task.id)) }
         }
-        .help("在 Codex 桌面端打开此任务绑定的线程")
+        .disabled(!task.canOpenInCodex)
+        .help(
+          task.canOpenInCodex
+            ? "在 Codex 桌面端打开此任务绑定的线程"
+            : "任务尚未绑定可打开的 Codex 线程"
+        )
         Button("中断", systemImage: "stop.circle", role: .destructive) {
           Task { await store.perform(.interruptTask(task.id)) }
         }
@@ -177,6 +182,6 @@ private struct TaskDetailView: View {
   }
 
   private var canInterrupt: Bool {
-    task.status == .running || task.status == .waiting || task.status == .checking
+    task.canRequestInterrupt
   }
 }

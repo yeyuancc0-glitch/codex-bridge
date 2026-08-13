@@ -23,6 +23,11 @@ public actor TaskCoordinator {
     let detail: String
   }
 
+  private struct StoredProjection: Codable {
+    let aggregate: TaskAggregate
+    let lastSequence: Int64
+  }
+
   private let store: EventStore
   private let admission: any TaskAdmissionPolicy
   private let runtime: any TaskExecutionRuntime
@@ -82,12 +87,21 @@ public actor TaskCoordinator {
         createdAt: createdAt
       )
     }
+    let initialAggregate = try TaskReducer.reduce(
+      TaskAggregate(id: candidate, submission: submission),
+      event: firstEvent
+    )
+    let initialProjection = TaskProjection(
+      aggregate: initialAggregate,
+      lastSequence: Int64(initialEvents.count)
+    )
     let taskID = try await store.claimSubmission(
       origin: normalizedOrigin,
       key: submission.idempotencyKey,
       requestFingerprint: fingerprint,
       taskID: candidate,
       initialEvents: initialEvents,
+      initialSnapshot: try stateSnapshot(for: initialProjection),
       createdAt: createdAt
     )
     guard let projection = try await projectionIfPresent(taskID) else {
@@ -137,7 +151,8 @@ public actor TaskCoordinator {
     try await append(
       .runtimeIntent(intent),
       taskID: taskID,
-      expectedSequence: current.lastSequence
+      expectedSequence: current.lastSequence,
+      projection: try advancedProjection(current)
     )
     var responseSent = false
     var resolutionCommitted = false
@@ -259,7 +274,8 @@ public actor TaskCoordinator {
     try await append(
       .runtimeIntent(intent),
       taskID: taskID,
-      expectedSequence: current.lastSequence
+      expectedSequence: current.lastSequence,
+      projection: try advancedProjection(current)
     )
     do {
       try await runtime.steer(taskID: taskID, binding: binding, prompt: normalized)
@@ -325,7 +341,8 @@ public actor TaskCoordinator {
     try await append(
       .finalization(record),
       taskID: taskID,
-      expectedSequence: current.lastSequence
+      expectedSequence: current.lastSequence,
+      projection: try advancedProjection(current)
     )
     _ = try await appendDomain(.finalReportStored(reference: reference), taskID: taskID)
     let completed = try await appendDomain(
@@ -340,16 +357,24 @@ public actor TaskCoordinator {
 
   public func recoverIncompleteTasks() async throws -> [TaskProjection] {
     var recovered: [TaskProjection] = []
-    for taskID in try await store.taskIDs() {
-      var current = try await task(taskID)
-      if current.aggregate.phase.isTerminal {
-        try await releaseOwnedLocks(taskID)
-        continue
+    var cursor: TaskID?
+    while true {
+      try Task.checkCancellation()
+      let taskIDs = try await store.taskIDsRequiringRecovery(afterTaskID: cursor, limit: 200)
+      guard !taskIDs.isEmpty else { break }
+      for taskID in taskIDs {
+        try Task.checkCancellation()
+        var current = try await task(taskID)
+        if current.aggregate.phase.isTerminal || current.aggregate.phase == .suspended {
+          try await releaseOwnedLocks(taskID)
+          continue
+        }
+        guard Self.requiresRecovery(current.aggregate.phase) else { continue }
+        current = try await appendDomain(.recoveryStarted, taskID: taskID)
+        current = try await appendDomain(.recoveryAmbiguous, taskID: taskID)
+        recovered.append(current)
       }
-      guard Self.requiresRecovery(current.aggregate.phase) else { continue }
-      current = try await appendDomain(.recoveryStarted, taskID: taskID)
-      current = try await appendDomain(.recoveryAmbiguous, taskID: taskID)
-      recovered.append(current)
+      cursor = taskIDs.last
     }
     return recovered
   }
@@ -500,12 +525,16 @@ public actor TaskCoordinator {
       event = .failureRecorded(reason: reason)
       releasesLocks = true
     }
-    _ = try TaskReducer.reduce(current.aggregate, event: event)
+    let aggregate = try TaskReducer.reduce(current.aggregate, event: event)
     try await append(
       .domain(event),
       taskID: taskID,
       expectedSequence: current.lastSequence,
-      releasesOwnedLocks: releasesLocks
+      releasesOwnedLocks: releasesLocks,
+      projection: TaskProjection(
+        aggregate: aggregate,
+        lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+      )
     )
     return true
   }
@@ -540,13 +569,17 @@ public actor TaskCoordinator {
       guard !current.aggregate.phase.isTerminal,
         current.aggregate.binding == expectedBinding
       else { return }
-      _ = try TaskReducer.reduce(current.aggregate, event: event)
+      let aggregate = try TaskReducer.reduce(current.aggregate, event: event)
       do {
         try await append(
           .domain(event),
           taskID: taskID,
           expectedSequence: current.lastSequence,
-          releasesOwnedLocks: true
+          releasesOwnedLocks: true,
+          projection: TaskProjection(
+            aggregate: aggregate,
+            lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+          )
         )
         return
       } catch EventStoreError.optimisticConcurrencyConflict(let conflictedTaskID, _, _) {
@@ -579,32 +612,44 @@ public actor TaskCoordinator {
     releasesOwnedLocks: Bool = false
   ) async throws -> TaskProjection {
     let current = try await task(taskID)
-    _ = try TaskReducer.reduce(current.aggregate, event: event)
+    let aggregate = try TaskReducer.reduce(current.aggregate, event: event)
+    let projection = TaskProjection(
+      aggregate: aggregate,
+      lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+    )
     try await append(
       .domain(event),
       taskID: taskID,
       expectedSequence: current.lastSequence,
-      releasesOwnedLocks: releasesOwnedLocks
+      releasesOwnedLocks: releasesOwnedLocks,
+      projection: projection
     )
-    return try await task(taskID)
+    return projection
   }
 
   private func append(
     _ record: StoredRecord,
     taskID: TaskID,
     expectedSequence: Int64,
-    releasesOwnedLocks: Bool = false
+    releasesOwnedLocks: Bool = false,
+    projection: TaskProjection? = nil
   ) async throws {
-    let sequence = expectedSequence + 1
+    let sequence = try Self.nextSequence(after: expectedSequence, taskID: taskID)
     let event = try envelope(record, taskID: taskID, sequence: sequence, createdAt: Date())
+    let snapshot = try projection.map(stateSnapshot)
     if releasesOwnedLocks {
       try await store.appendReleasingOwnedLocks(
         event,
-        expectedLastSequence: expectedSequence
+        expectedLastSequence: expectedSequence,
+        snapshot: snapshot
       )
       return
     }
-    try await store.append(event, expectedLastSequence: expectedSequence)
+    try await store.append(
+      event,
+      expectedLastSequence: expectedSequence,
+      snapshot: snapshot
+    )
   }
 
   private func envelope(
@@ -628,34 +673,113 @@ public actor TaskCoordinator {
   }
 
   private func projectionIfPresent(_ taskID: TaskID) async throws -> TaskProjection? {
-    let envelopes = try await store.events(for: taskID)
-    guard !envelopes.isEmpty else { return nil }
+    let storedSnapshot = try await store.stateSnapshot(for: taskID)
     var aggregate: TaskAggregate?
-    var expectedSequence: Int64 = 1
-    for envelope in envelopes {
-      guard envelope.sequence == expectedSequence, envelope.schemaVersion == 1 else {
+    var expectedSequence: Int64
+    if let storedSnapshot {
+      guard storedSnapshot.schemaVersion == 1 else {
         throw TaskCoordinatorError.corruptTask(taskID)
       }
-      expectedSequence += 1
-      let record = try decoder.decode(StoredRecord.self, from: envelope.payload)
-      guard envelope.kind == Self.kind(record) else {
+      let projection = try decoder.decode(StoredProjection.self, from: storedSnapshot.payload)
+      guard projection.aggregate.id == taskID,
+        projection.lastSequence == storedSnapshot.lastEventSequence
+      else {
         throw TaskCoordinatorError.corruptTask(taskID)
       }
-      switch record {
-      case .submission(let submission):
-        guard aggregate == nil else { throw TaskCoordinatorError.corruptTask(taskID) }
-        aggregate = TaskAggregate(id: taskID, submission: submission)
-      case .domain(let event):
-        guard let current = aggregate else { throw TaskCoordinatorError.corruptTask(taskID) }
-        aggregate = try TaskReducer.reduce(current, event: event)
-      case .runtimeIntent:
-        guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
-      case .finalization:
-        guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
+      aggregate = projection.aggregate
+      expectedSequence = try Self.nextSequence(
+        after: storedSnapshot.lastEventSequence,
+        taskID: taskID
+      )
+    } else {
+      expectedSequence = 1
+    }
+    var readEvent = false
+    while true {
+      try Task.checkCancellation()
+      let envelopes = try await store.events(
+        for: taskID,
+        afterSequence: expectedSequence - 1,
+        limit: 500
+      )
+      if envelopes.isEmpty { break }
+      readEvent = true
+      for envelope in envelopes {
+        try Task.checkCancellation()
+        guard envelope.sequence == expectedSequence, envelope.schemaVersion == 1 else {
+          throw TaskCoordinatorError.corruptTask(taskID)
+        }
+        expectedSequence = try Self.nextSequence(after: expectedSequence, taskID: taskID)
+        let record = try decoder.decode(StoredRecord.self, from: envelope.payload)
+        guard envelope.kind == Self.kind(record) else {
+          throw TaskCoordinatorError.corruptTask(taskID)
+        }
+        switch record {
+        case .submission(let submission):
+          guard aggregate == nil else { throw TaskCoordinatorError.corruptTask(taskID) }
+          aggregate = TaskAggregate(id: taskID, submission: submission)
+        case .domain(let event):
+          guard let current = aggregate else { throw TaskCoordinatorError.corruptTask(taskID) }
+          aggregate = try TaskReducer.reduce(current, event: event)
+        case .runtimeIntent:
+          guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
+        case .finalization:
+          guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
+        }
       }
     }
+    guard aggregate != nil || readEvent else { return nil }
     guard let aggregate else { throw TaskCoordinatorError.corruptTask(taskID) }
-    return TaskProjection(aggregate: aggregate, lastSequence: expectedSequence - 1)
+    let projection = TaskProjection(aggregate: aggregate, lastSequence: expectedSequence - 1)
+    guard try await store.lastEventSequence(for: taskID) == projection.lastSequence else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
+    if readEvent {
+      do {
+        try await store.saveStateSnapshot(
+          try stateSnapshot(for: projection),
+          expectedLastSequence: projection.lastSequence
+        )
+      } catch EventStoreError.optimisticConcurrencyConflict {
+        return try await projectionIfPresent(taskID)
+      }
+    }
+    return projection
+  }
+
+  private func stateSnapshot(for projection: TaskProjection) throws -> TaskStateSnapshot {
+    let payload = try encoder.encode(
+      StoredProjection(
+        aggregate: projection.aggregate,
+        lastSequence: projection.lastSequence
+      )
+    )
+    guard payload.count <= 512 * 1024 else {
+      throw TaskCoordinatorError.submissionTooLarge
+    }
+    return TaskStateSnapshot(
+      taskID: projection.aggregate.id,
+      lastEventSequence: projection.lastSequence,
+      schemaVersion: 1,
+      payload: payload,
+      recoveryRequired: Self.requiresRecovery(projection.aggregate.phase)
+    )
+  }
+
+  private func advancedProjection(_ current: TaskProjection) throws -> TaskProjection {
+    TaskProjection(
+      aggregate: current.aggregate,
+      lastSequence: try Self.nextSequence(
+        after: current.lastSequence,
+        taskID: current.aggregate.id
+      )
+    )
+  }
+
+  private static func nextSequence(after sequence: Int64, taskID: TaskID) throws -> Int64 {
+    let (next, overflow) = sequence.addingReportingOverflow(1)
+    guard !overflow else { throw TaskCoordinatorError.corruptTask(taskID) }
+    return next
   }
 
   private static func validateSubmission(

@@ -23,30 +23,35 @@ public actor EventStore {
 
   public func append(
     _ event: TaskEventEnvelope,
-    expectedLastSequence: Int64
+    expectedLastSequence: Int64,
+    snapshot: TaskStateSnapshot? = nil
   ) throws {
     try persist(
       event,
       expectedLastSequence: expectedLastSequence,
-      releasesOwnedLocks: false
+      releasesOwnedLocks: false,
+      snapshot: snapshot
     )
   }
 
   public func appendReleasingOwnedLocks(
     _ event: TaskEventEnvelope,
-    expectedLastSequence: Int64
+    expectedLastSequence: Int64,
+    snapshot: TaskStateSnapshot? = nil
   ) throws {
     try persist(
       event,
       expectedLastSequence: expectedLastSequence,
-      releasesOwnedLocks: true
+      releasesOwnedLocks: true,
+      snapshot: snapshot
     )
   }
 
   private func persist(
     _ event: TaskEventEnvelope,
     expectedLastSequence: Int64,
-    releasesOwnedLocks: Bool
+    releasesOwnedLocks: Bool,
+    snapshot: TaskStateSnapshot?
   ) throws {
     guard expectedLastSequence >= 0 else {
       throw EventStoreError.invalidArgument("expectedLastSequence")
@@ -59,6 +64,7 @@ public actor EventStore {
         actual: event.sequence
       )
     }
+    try Self.validate(snapshot: snapshot, event: event)
 
     try database.write { db in
       try Self.ensureTask(event.taskID, createdAt: event.createdAt, in: db)
@@ -107,6 +113,10 @@ public actor EventStore {
           event.createdAt.timeIntervalSince1970,
         ]
       )
+
+      if let snapshot {
+        try Self.upsert(snapshot, in: db)
+      }
 
       guard releasesOwnedLocks else { return }
       let lockCount =
@@ -177,10 +187,100 @@ public actor EventStore {
     }
   }
 
+  public func stateSnapshot(for taskID: TaskID) throws -> TaskStateSnapshot? {
+    try database.read { db in
+      guard
+        let row = try Row.fetchOne(
+          db,
+          sql: """
+            SELECT task_id, last_event_seq, schema_version, payload, recovery_required
+            FROM task_state_snapshots
+            WHERE task_id = ?
+            """,
+          arguments: [taskID.rawValue]
+        )
+      else { return nil }
+      return try Self.decodeSnapshot(row)
+    }
+  }
+
+  public func saveStateSnapshot(
+    _ snapshot: TaskStateSnapshot,
+    expectedLastSequence: Int64
+  ) throws {
+    guard snapshot.lastEventSequence == expectedLastSequence else {
+      throw EventStoreError.invalidArgument("snapshot.lastEventSequence")
+    }
+    try Self.validate(snapshot: snapshot)
+    try database.write { db in
+      let actual =
+        try Int64.fetchOne(
+          db,
+          sql: "SELECT last_event_seq FROM tasks WHERE task_id = ?",
+          arguments: [snapshot.taskID.rawValue]
+        ) ?? 0
+      guard actual == expectedLastSequence else {
+        throw EventStoreError.optimisticConcurrencyConflict(
+          taskID: snapshot.taskID,
+          expectedLastSequence: expectedLastSequence,
+          actualLastSequence: actual
+        )
+      }
+      try Self.upsert(snapshot, in: db)
+    }
+  }
+
   public func taskIDs() throws -> [TaskID] {
     try database.read { db in
       try String.fetchAll(db, sql: "SELECT task_id FROM tasks ORDER BY created_at, task_id")
         .map(TaskID.init(rawValue:))
+    }
+  }
+
+  public func recentlyUpdatedTaskIDs(limit: Int) throws -> [TaskID] {
+    guard (1...500).contains(limit) else {
+      throw EventStoreError.invalidArgument("limit")
+    }
+    return try database.read { db in
+      try String.fetchAll(
+        db,
+        sql: "SELECT task_id FROM tasks ORDER BY updated_at DESC, task_id LIMIT ?",
+        arguments: [limit]
+      ).map(TaskID.init(rawValue:))
+    }
+  }
+
+  public func taskIDsRequiringRecovery(
+    afterTaskID: TaskID? = nil,
+    limit: Int
+  ) throws -> [TaskID] {
+    guard (1...500).contains(limit) else {
+      throw EventStoreError.invalidArgument("limit")
+    }
+    return try database.read { db in
+      try String.fetchAll(
+        db,
+        sql: """
+          SELECT tasks.task_id
+          FROM tasks
+          LEFT JOIN task_state_snapshots
+            ON task_state_snapshots.task_id = tasks.task_id
+          WHERE tasks.task_id > ?
+            AND (
+              task_state_snapshots.task_id IS NULL
+              OR task_state_snapshots.recovery_required = 1
+              OR task_state_snapshots.last_event_seq != tasks.last_event_seq
+              OR EXISTS (
+                SELECT 1
+                FROM locks
+                WHERE locks.owner_task_id = tasks.task_id
+              )
+            )
+          ORDER BY tasks.task_id
+          LIMIT ?
+          """,
+        arguments: [afterTaskID?.rawValue ?? "", limit]
+      ).map(TaskID.init(rawValue:))
     }
   }
 
@@ -241,6 +341,7 @@ public actor EventStore {
     requestFingerprint: String,
     taskID: TaskID,
     initialEvents: [TaskEventEnvelope],
+    initialSnapshot: TaskStateSnapshot? = nil,
     createdAt: Date = Date()
   ) throws -> TaskID {
     try Self.validateClaim(
@@ -250,6 +351,12 @@ public actor EventStore {
       taskID: taskID
     )
     try Self.validateInitialEvents(initialEvents, taskID: taskID)
+    if let initialSnapshot {
+      guard let lastEvent = initialEvents.last else {
+        throw EventStoreError.invalidArgument("initialSnapshot")
+      }
+      try Self.validate(snapshot: initialSnapshot, event: lastEvent)
+    }
 
     return try database.write { db in
       if let existing = try Self.existingClaim(
@@ -280,6 +387,9 @@ public actor EventStore {
           taskID.rawValue,
         ]
       )
+      if let initialSnapshot {
+        try Self.upsert(initialSnapshot, in: db)
+      }
       return taskID
     }
   }
@@ -400,6 +510,78 @@ public actor EventStore {
         createdAt.timeIntervalSince1970,
         createdAt.timeIntervalSince1970,
       ]
+    )
+  }
+
+  private static func validate(
+    snapshot: TaskStateSnapshot?,
+    event: TaskEventEnvelope
+  ) throws {
+    guard let snapshot else { return }
+    try validate(snapshot: snapshot)
+    guard snapshot.taskID == event.taskID,
+      snapshot.lastEventSequence == event.sequence
+    else {
+      throw EventStoreError.invalidArgument("snapshot")
+    }
+  }
+
+  private static func validate(snapshot: TaskStateSnapshot) throws {
+    guard !snapshot.taskID.rawValue.isEmpty,
+      snapshot.lastEventSequence > 0,
+      !snapshot.payload.isEmpty,
+      snapshot.payload.count <= 512 * 1024
+    else {
+      throw EventStoreError.invalidArgument("snapshot")
+    }
+  }
+
+  private static func upsert(
+    _ snapshot: TaskStateSnapshot,
+    in db: Database
+  ) throws {
+    try db.execute(
+      sql: """
+        INSERT INTO task_state_snapshots (
+            task_id, last_event_seq, schema_version, payload, recovery_required
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+            last_event_seq = excluded.last_event_seq,
+            schema_version = excluded.schema_version,
+            payload = excluded.payload,
+            recovery_required = excluded.recovery_required
+        """,
+      arguments: [
+        snapshot.taskID.rawValue,
+        snapshot.lastEventSequence,
+        Int(snapshot.schemaVersion),
+        snapshot.payload,
+        snapshot.recoveryRequired,
+      ]
+    )
+  }
+
+  private static func decodeSnapshot(_ row: Row) throws -> TaskStateSnapshot {
+    let taskID = TaskID(rawValue: row["task_id"])
+    let sequence: Int64 = row["last_event_seq"]
+    let storedSchemaVersion: Int64 = row["schema_version"]
+    let payload: Data = row["payload"]
+    let storedRecoveryRequired: Int64 = row["recovery_required"]
+    guard !taskID.rawValue.isEmpty,
+      sequence > 0,
+      let schemaVersion = UInt16(exactly: storedSchemaVersion),
+      !payload.isEmpty,
+      payload.count <= 512 * 1024,
+      storedRecoveryRequired == 0 || storedRecoveryRequired == 1
+    else {
+      throw EventStoreError.corruptEvent(taskID: taskID, sequence: sequence)
+    }
+    return TaskStateSnapshot(
+      taskID: taskID,
+      lastEventSequence: sequence,
+      schemaVersion: schemaVersion,
+      payload: payload,
+      recoveryRequired: storedRecoveryRequired == 1
     )
   }
 

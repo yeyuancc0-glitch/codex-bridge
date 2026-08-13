@@ -289,6 +289,139 @@ final class EventStoreTests: XCTestCase {
     XCTAssertEqual(keys, ["thread:a", "worktree:z"])
   }
 
+  func testRecentlyUpdatedTaskIDsAreBoundedAndNewestFirst() async throws {
+    let store = try EventStore.inMemory()
+    let older = TaskID(rawValue: "task-older")
+    let newer = TaskID(rawValue: "task-newer")
+    try await store.append(
+      makeEvent(taskID: older, sequence: 1),
+      expectedLastSequence: 0
+    )
+    try await store.append(
+      TaskEventEnvelope(
+        taskID: newer,
+        sequence: 1,
+        schemaVersion: 1,
+        source: "test",
+        kind: "task.progress",
+        severity: "info",
+        payload: Data(),
+        createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+      ),
+      expectedLastSequence: 0
+    )
+
+    let identifiers = try await store.recentlyUpdatedTaskIDs(limit: 1)
+
+    XCTAssertEqual(identifiers, [newer])
+    for limit in [0, 501] {
+      do {
+        _ = try await store.recentlyUpdatedTaskIDs(limit: limit)
+        XCTFail("Expected limit \(limit) to be rejected")
+      } catch {
+        XCTAssertEqual(error as? EventStoreError, .invalidArgument("limit"))
+      }
+    }
+  }
+
+  func testSnapshotAndEventAdvanceAtomicallyAndDriveRecoveryQuery() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-snapshot")
+    let first = makeEvent(taskID: taskID, sequence: 1)
+    let snapshot = TaskStateSnapshot(
+      taskID: taskID,
+      lastEventSequence: 1,
+      schemaVersion: 1,
+      payload: Data("snapshot-one".utf8),
+      recoveryRequired: true
+    )
+
+    try await store.append(first, expectedLastSequence: 0, snapshot: snapshot)
+
+    let stored = try await store.stateSnapshot(for: taskID)
+    let recoveryIDs = try await store.taskIDsRequiringRecovery(limit: 10)
+    XCTAssertEqual(stored, snapshot)
+    XCTAssertEqual(recoveryIDs, [taskID])
+
+    let terminalSnapshot = TaskStateSnapshot(
+      taskID: taskID,
+      lastEventSequence: 2,
+      schemaVersion: 1,
+      payload: Data("snapshot-two".utf8),
+      recoveryRequired: false
+    )
+    try await store.append(
+      makeEvent(taskID: taskID, sequence: 2),
+      expectedLastSequence: 1,
+      snapshot: terminalSnapshot
+    )
+
+    let terminalRecoveryIDs = try await store.taskIDsRequiringRecovery(limit: 10)
+    let storedTerminalSnapshot = try await store.stateSnapshot(for: taskID)
+    XCTAssertEqual(storedTerminalSnapshot, terminalSnapshot)
+    XCTAssertTrue(terminalRecoveryIDs.isEmpty)
+
+    try await store.acquireLocks(
+      ["thread:snapshot", "worktree:snapshot"],
+      ownerTaskID: taskID
+    )
+    let lockedTerminalIDs = try await store.taskIDsRequiringRecovery(limit: 10)
+    XCTAssertEqual(lockedTerminalIDs, [taskID])
+    try await store.releaseLocks(
+      ["thread:snapshot", "worktree:snapshot"],
+      ownerTaskID: taskID
+    )
+  }
+
+  func testSnapshotMismatchAndStaleSaveCannotDivergeFromEventSequence() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-snapshot-cas")
+    let mismatched = TaskStateSnapshot(
+      taskID: taskID,
+      lastEventSequence: 2,
+      schemaVersion: 1,
+      payload: Data("mismatch".utf8),
+      recoveryRequired: false
+    )
+    do {
+      try await store.append(
+        makeEvent(taskID: taskID, sequence: 1),
+        expectedLastSequence: 0,
+        snapshot: mismatched
+      )
+      XCTFail("Expected mismatched snapshot rejection")
+    } catch {
+      XCTAssertEqual(error as? EventStoreError, .invalidArgument("snapshot"))
+    }
+    let missingSequence = try await store.lastEventSequence(for: taskID)
+    XCTAssertNil(missingSequence)
+
+    try await store.append(makeEvent(taskID: taskID, sequence: 1), expectedLastSequence: 0)
+    let stale = TaskStateSnapshot(
+      taskID: taskID,
+      lastEventSequence: 1,
+      schemaVersion: 1,
+      payload: Data("stale".utf8),
+      recoveryRequired: false
+    )
+    try await store.append(makeEvent(taskID: taskID, sequence: 2), expectedLastSequence: 1)
+    do {
+      try await store.saveStateSnapshot(stale, expectedLastSequence: 1)
+      XCTFail("Expected stale snapshot rejection")
+    } catch {
+      XCTAssertEqual(
+        error as? EventStoreError,
+        .optimisticConcurrencyConflict(
+          taskID: taskID,
+          expectedLastSequence: 1,
+          actualLastSequence: 2
+        )
+      )
+    }
+    let missingSnapshot = try await store.stateSnapshot(for: taskID)
+    XCTAssertNil(missingSnapshot)
+  }
+
   private func makeEvent(
     taskID: TaskID,
     sequence: Int64,

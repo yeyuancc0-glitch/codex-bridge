@@ -126,6 +126,8 @@ private struct ConnectionContent: View {
           Button("测试连接", systemImage: "stethoscope") {
             Task { await store.perform(.testConnection) }
           }
+          .disabled(!page.canTest)
+          .help(page.canTest ? "检查当前连接路径" : "连接测试尚不可用")
           .keyboardShortcut("t", modifiers: [.command, .shift])
         }
         VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
@@ -159,7 +161,12 @@ private struct ConnectionContent: View {
             }
           )
         )
-        .help("暂停只影响新提交，不会中断本地正在运行的任务")
+        .disabled(!page.canChangeReceiving)
+        .help(
+          page.canChangeReceiving
+            ? "暂停只影响新提交，不会中断本地正在运行的任务"
+            : "接收策略尚未接通"
+        )
       }
       .frame(maxWidth: BridgeTheme.readableTextWidth, alignment: .leading)
     }

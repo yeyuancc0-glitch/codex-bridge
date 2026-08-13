@@ -44,19 +44,25 @@ public struct ConnectionPagePresentation: Equatable, Sendable {
   public let nodes: [ConnectionNodePresentation]
   public let receivingPaused: Bool
   public let lastError: String?
+  public let canChangeReceiving: Bool
+  public let canTest: Bool
 
   public init(
     mode: String,
     endpoint: String,
     nodes: [ConnectionNodePresentation],
     receivingPaused: Bool,
-    lastError: String? = nil
+    lastError: String? = nil,
+    canChangeReceiving: Bool = true,
+    canTest: Bool = true
   ) {
     self.mode = mode
     self.endpoint = endpoint
     self.nodes = nodes
     self.receivingPaused = receivingPaused
     self.lastError = lastError
+    self.canChangeReceiving = canChangeReceiving
+    self.canTest = canTest
   }
 }
 
@@ -85,10 +91,16 @@ public struct LogEntryPresentation: Identifiable, Equatable, Sendable {
 public struct LogPagePresentation: Equatable, Sendable {
   public let entries: [LogEntryPresentation]
   public let isStreaming: Bool
+  public let canExport: Bool
 
-  public init(entries: [LogEntryPresentation], isStreaming: Bool) {
+  public init(
+    entries: [LogEntryPresentation],
+    isStreaming: Bool,
+    canExport: Bool = true
+  ) {
     self.entries = entries
     self.isStreaming = isStreaming
+    self.canExport = canExport
   }
 }
 
