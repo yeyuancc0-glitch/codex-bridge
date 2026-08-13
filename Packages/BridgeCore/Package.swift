@@ -160,6 +160,7 @@ let package = Package(
                 "BridgeRepositories",
                 "BridgeSecurity",
                 "BridgeTunnel",
+                .product(name: "Logging", package: "swift-log"),
                 .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
@@ -311,6 +312,7 @@ let package = Package(
                 "BridgePresentation",
                 "BridgeProjects",
                 "BridgeSecurity",
+                "BridgeTunnel",
             ]
         ),
         .testTarget(

@@ -6,6 +6,7 @@ import BridgeMCP
 import BridgePersistence
 import BridgeProjects
 import BridgeRepositories
+import BridgeSecurity
 import Foundation
 
 struct DesktopComposition: Sendable {
@@ -13,11 +14,13 @@ struct DesktopComposition: Sendable {
   let repository: ApplicationRepository
   let registry: ProjectRegistry
   let coordinator: TaskCoordinator
-  let mcpRuntime: DesktopMCPRuntime
+  let connectionRuntime: DesktopConnectionRuntime
 
   static func make(
     dataDirectoryURL: URL,
-    system: any DesktopSystemServing
+    system: any DesktopSystemServing,
+    secretStore: any SecretStore = KeychainSecretStore(),
+    bundleURL: URL = Bundle.main.bundleURL
   ) async throws -> DesktopComposition {
     let paths = try DesktopDataStore.prepare(at: dataDirectoryURL)
     let eventStore = try EventStore(path: paths.eventStoreURL.path)
@@ -55,17 +58,26 @@ struct DesktopComposition: Sendable {
       openCodexURL: { url in await system.open(url) }
     )
     let mcpRuntime = DesktopMCPRuntime(application: application, status: status)
+    let connectionRuntime = DesktopConnectionRuntime(
+      mcp: mcpRuntime,
+      tunnelFactory: BundledDesktopTunnelManagerFactory(
+        bundleURL: bundleURL,
+        dataDirectoryURL: dataDirectoryURL,
+        secretStore: secretStore
+      ),
+      status: status
+    )
     return DesktopComposition(
       eventStore: eventStore,
       repository: repository,
       registry: registry,
       coordinator: coordinator,
-      mcpRuntime: mcpRuntime
+      connectionRuntime: connectionRuntime
     )
   }
 
   func shutdown() async {
-    await mcpRuntime.stop()
+    await connectionRuntime.stop()
   }
 }
 

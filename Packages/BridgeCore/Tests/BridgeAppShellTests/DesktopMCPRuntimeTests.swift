@@ -14,9 +14,17 @@ final class DesktopMCPRuntimeTests: XCTestCase {
 
     let project = try await backend.onboardingProject()
     XCTAssertNil(project)
-    try await backend.startLocalMCP(
-      authentication: .path(secret: String(repeating: "a", count: 43)))
-    try await backend.testLocalMCPConnection()
+    let localURL = try await backend.configureOnboardingTransport(
+      .local(pathSecret: String(repeating: "a", count: 43))
+    )
+    XCTAssertEqual(localURL.host, "127.0.0.1")
+    try await backend.testOnboardingTransport()
+    try await DesktopMCPRuntime.validate(
+      transport: DesktopBoundedHTTPTransport(
+        endpoint: localURL,
+        authorization: "Bearer bounded-transport-test"
+      )
+    )
 
     await backend.shutdown()
   }

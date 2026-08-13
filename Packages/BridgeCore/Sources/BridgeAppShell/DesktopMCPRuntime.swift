@@ -31,10 +31,8 @@ actor DesktopMCPRuntime {
     self.status = status
   }
 
-  func start(authentication requested: DesktopMCPAuthentication) async throws
-    -> MCPBridgeEndpoint
-  {
-    if requested == authentication, let endpoint { return endpoint }
+  func start(authentication requested: DesktopMCPAuthentication) async throws -> URL {
+    if requested == authentication, let endpoint { return endpoint.localURL }
     if let server { await server.stop() }
     let configuration: MCPHTTPConfiguration
     switch requested {
@@ -54,27 +52,44 @@ actor DesktopMCPRuntime {
     self.endpoint = endpoint
     authentication = requested
     await status.update(Self.statusSnapshot(mcpState: "ready"))
-    return endpoint
+    return endpoint.localURL
   }
 
   func testConnection() async throws {
     guard let endpoint, let authentication else {
       throw DesktopBackendError.connectionNotConfigured
     }
+    let header: (String, String)? =
+      switch authentication {
+      case .path: nil
+      case .header(let secret): (MCPHTTPConfiguration.tunnelAuthenticationHeader, secret)
+      }
+    try await Self.validate(endpoint: endpoint.localURL, header: header)
+  }
+
+  static func validate(
+    endpoint: URL,
+    header: (String, String)? = nil
+  ) async throws {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 5
     configuration.timeoutIntervalForResource = 5
-    if case .header(let secret) = authentication {
-      configuration.httpAdditionalHeaders = [
-        MCPHTTPConfiguration.tunnelAuthenticationHeader: secret
-      ]
-    }
     let transport = HTTPClientTransport(
-      endpoint: endpoint.localURL,
+      endpoint: endpoint,
       configuration: configuration,
       streaming: false,
-      sseInitializationTimeout: 1
+      sseInitializationTimeout: 1,
+      requestModifier: { request in
+        guard let header else { return request }
+        var request = request
+        request.setValue(header.1, forHTTPHeaderField: header.0)
+        return request
+      }
     )
+    try await validate(transport: transport)
+  }
+
+  static func validate(transport: any Transport) async throws {
     let client = Client(
       name: "codex-bridge-onboarding",
       version: "0.1.0",
@@ -118,3 +133,5 @@ actor DesktopMCPRuntime {
     )
   }
 }
+
+extension DesktopMCPRuntime: DesktopMCPServing {}

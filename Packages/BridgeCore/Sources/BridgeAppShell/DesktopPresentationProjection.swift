@@ -3,13 +3,15 @@ import BridgeCoordinator
 import BridgeDomain
 import BridgePresentation
 import BridgeProjects
+import BridgeTunnel
 import Foundation
 
 struct DesktopPresentationProjection {
   static func snapshot(
     projects: [RegisteredProject],
     tasks: [(TaskProjection, [TaskEventEnvelope])],
-    diagnostics: [LogEntryPresentation]
+    diagnostics: [LogEntryPresentation],
+    connection: DesktopTransportHealth = .stopped
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     let taskRows = tasks.map { taskRow($0.0, projects: projectsByID, events: $0.1) }
@@ -20,20 +22,26 @@ struct DesktopPresentationProjection {
       row.status == .running || row.status == .waiting || row.status == .checking
     }
     let recent = taskRows.filter { row in !active.contains(where: { $0.id == row.id }) }
-    let connectionNodes = connectionPath()
+    let connectionNodes = connectionPath(connection)
+    let attentionItems: [AttentionItemPresentation] =
+      connection.acceptsRemoteSubmissions
+      ? []
+      : [
+        AttentionItemPresentation(
+          id: "connection-setup",
+          title: connection.localMCPURL == nil ? "连接尚未配置" : "远程连接尚未就绪",
+          detail: connection.actionRequired
+            ? "连接需要本机处理认证或配置错误。"
+            : "本机能力保持可用；严格远程健康检查通过前不会接收 ChatGPT 任务。",
+          status: connection.actionRequired ? .blocked : .waiting,
+          destination: .connections
+        )
+      ]
     return BridgePresentationSnapshot(
       overview: .ready(
         OverviewPresentation(
           connectionPath: connectionNodes,
-          attentionItems: [
-            AttentionItemPresentation(
-              id: "connection-setup",
-              title: "连接尚未配置",
-              detail: "完成首次引导后，才能启动本地 MCP 与 Secure Tunnel。",
-              status: .waiting,
-              destination: .connections
-            )
-          ],
+          attentionItems: attentionItems,
           activeTasks: active,
           recentTasks: recent,
           registeredProjectCount: projectRows.count,
@@ -46,12 +54,12 @@ struct DesktopPresentationProjection {
       approvals: .ready(ApprovalPagePresentation(pending: approvals)),
       connections: .ready(
         ConnectionPagePresentation(
-          mode: "尚未配置",
-          endpoint: "本地 MCP 尚未启动",
+          mode: connection.endpointDescription,
+          endpoint: connection.localMCPURL.map(Self.publicLocalEndpoint) ?? "本地 MCP 尚未启动",
           nodes: connectionNodes,
           receivingPaused: false,
           canChangeReceiving: false,
-          canTest: false
+          canTest: connection.localMCPURL != nil
         )
       ),
       logs: .ready(
@@ -180,8 +188,12 @@ struct DesktopPresentationProjection {
     }
   }
 
-  private static func connectionPath() -> [ConnectionNodePresentation] {
-    [
+  private static func connectionPath(
+    _ connection: DesktopTransportHealth
+  ) -> [ConnectionNodePresentation] {
+    let mcpReady = connection.localMCPURL != nil
+    let remoteReady = connection.acceptsRemoteSubmissions
+    return [
       ConnectionNodePresentation(
         id: "app",
         title: "Codex Bridge",
@@ -191,22 +203,59 @@ struct DesktopPresentationProjection {
       ConnectionNodePresentation(
         id: "mcp",
         title: "本地 MCP",
-        detail: "等待首次引导配置认证 Secret",
-        status: .disconnected
+        detail: mcpReady ? "回环监听与受限工具目录已启动" : "等待首次引导配置认证 Secret",
+        status: mcpReady ? .ready : .disconnected
       ),
       ConnectionNodePresentation(
         id: "tunnel",
-        title: "Secure Tunnel",
-        detail: "等待 Runtime Key 与 Tunnel ID",
-        status: .disconnected
+        title: connection.endpointDescription,
+        detail: connectionDetail(connection),
+        status: presentationStatus(connection.lifecycle)
       ),
       ConnectionNodePresentation(
         id: "chatgpt",
         title: "ChatGPT",
-        detail: "尚未连接",
-        status: .disconnected
+        detail: remoteReady ? "严格远程健康检查已通过" : "远程提交保持关闭",
+        status: remoteReady ? .ready : .disconnected
       ),
     ]
+  }
+
+  private static func presentationStatus(_ lifecycle: TunnelLifecycle) -> PresentationStatus {
+    switch lifecycle {
+    case .stopped: .disconnected
+    case .starting, .authenticating, .connecting: .checking
+    case .ready: .ready
+    case .degraded: .degraded
+    case .failed: .failed
+    }
+  }
+
+  private static func connectionDetail(_ connection: DesktopTransportHealth) -> String {
+    if connection.actionRequired { return "需要本机处理认证或配置错误" }
+    return switch connection.lifecycle {
+    case .stopped: "尚未启动"
+    case .starting: "正在启动本地连接"
+    case .authenticating: "正在验证传输凭证"
+    case .connecting: "正在完成远程健康检查"
+    case .ready:
+      connection.acceptsRemoteSubmissions ? "远程传输已就绪" : "仅本机连接已就绪"
+    case .degraded: "连接已降级，拒绝新的远程任务"
+    case .failed: "连接失败"
+    }
+  }
+
+  private static func publicLocalEndpoint(_ url: URL) -> String {
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      return "127.0.0.1"
+    }
+    if components.percentEncodedPath.hasPrefix("/mcp/") {
+      let scheme = components.scheme ?? "http"
+      let host = components.host ?? "127.0.0.1"
+      let port = components.port.map { ":\($0)" } ?? ""
+      return "\(scheme)://\(host)\(port)/mcp/<本机认证 Secret>"
+    }
+    return components.string ?? "127.0.0.1"
   }
 
   private static func settings() -> SettingsPagePresentation {

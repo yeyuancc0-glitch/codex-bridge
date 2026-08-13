@@ -3,6 +3,8 @@ import BridgeCoordinator
 import BridgeDomain
 import BridgePresentation
 import BridgeProjects
+import BridgeSecurity
+import BridgeTunnel
 import Foundation
 
 public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
@@ -37,10 +39,13 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
 actor LiveBridgeAppBackend: BridgeAppBackend {
   private let dataDirectoryURL: URL
   private let system: any DesktopSystemServing
+  private let secretStore: any SecretStore
+  private let bundleURL: URL
   private var continuations:
     [UUID: AsyncThrowingStream<BridgeAppStateSnapshot, Error>.Continuation] = [:]
   private var composition: DesktopComposition?
   private var bootstrapTask: Task<Void, Never>?
+  private var connectionObserver: Task<Void, Never>?
   private var currentSnapshot: BridgeAppStateSnapshot
   private var revision: UInt64 = 1
   private var diagnostics: [LogEntryPresentation] = []
@@ -51,9 +56,16 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private var compositionWaiters: [CheckedContinuation<Void, Error>] = []
   private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
 
-  init(dataDirectoryURL: URL, system: any DesktopSystemServing) {
+  init(
+    dataDirectoryURL: URL,
+    system: any DesktopSystemServing,
+    secretStore: any SecretStore = KeychainSecretStore(),
+    bundleURL: URL = Bundle.main.bundleURL
+  ) {
     self.dataDirectoryURL = dataDirectoryURL
     self.system = system
+    self.secretStore = secretStore
+    self.bundleURL = bundleURL
     currentSnapshot = BridgeAppStateSnapshot(
       revision: revision,
       connectionState: .starting,
@@ -125,8 +137,14 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     throw DesktopBackendError.connectionNotConfigured
   }
 
-  func testConnection() throws {
-    throw DesktopBackendError.connectionNotConfigured
+  func testConnection() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    try await composition.connectionRuntime.testConnection()
+    try checkRunning()
+    try await publishCurrentFacts()
   }
 
   func setReceivingPaused(_ paused: Bool) throws {
@@ -244,6 +262,9 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     if activeOperations > 0 {
       await withCheckedContinuation { operationDrainWaiters.append($0) }
     }
+    connectionObserver?.cancel()
+    await connectionObserver?.value
+    connectionObserver = nil
     let composition = composition
     self.composition = nil
     await composition?.shutdown()
@@ -283,22 +304,37 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try await publishCurrentFacts()
   }
 
-  func startLocalMCP(authentication: DesktopMCPAuthentication) async throws {
+  func configureOnboardingTransport(
+    _ configuration: DesktopOnboardingTransportConfiguration
+  ) async throws -> URL {
     try beginOperation()
     defer { endOperation() }
     try await waitUntilReady()
     let composition = try requireComposition()
-    _ = try await composition.mcpRuntime.start(authentication: authentication)
+    let localURL = try await composition.connectionRuntime.configure(configuration)
     try checkRunning()
+    try await publishCurrentFacts()
+    return localURL
   }
 
-  func testLocalMCPConnection() async throws {
+  func testOnboardingTransport() async throws {
     try beginOperation()
     defer { endOperation() }
     try await waitUntilReady()
     let composition = try requireComposition()
-    try await composition.mcpRuntime.testConnection()
+    try await composition.connectionRuntime.testConnection()
     try checkRunning()
+    try await publishCurrentFacts()
+  }
+
+  func stopOnboardingTransport() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    await composition.connectionRuntime.stop()
+    try checkRunning()
+    try await publishCurrentFacts()
   }
 
   private func beginBootstrapIfNeeded() {
@@ -309,7 +345,9 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       do {
         let composition = try await DesktopComposition.make(
           dataDirectoryURL: self.dataDirectoryURL,
-          system: self.system
+          system: self.system,
+          secretStore: self.secretStore,
+          bundleURL: self.bundleURL
         )
         try Task.checkCancellation()
         failed = await !self.finishBootstrap(composition)
@@ -325,6 +363,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private func finishBootstrap(_ composition: DesktopComposition) async -> Bool {
     guard !isShuttingDown else { return false }
     self.composition = composition
+    installConnectionObserver(composition.connectionRuntime)
     resumeCompositionWaiters()
     appendDiagnostic("本机持久化状态已就绪。", status: .ready)
     do {
@@ -347,9 +386,27 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     )
   }
 
+  private func installConnectionObserver(_ runtime: DesktopConnectionRuntime) {
+    connectionObserver?.cancel()
+    connectionObserver = Task { [weak self, runtime] in
+      let updates = await runtime.stateUpdates()
+      var isInitial = true
+      for await _ in updates {
+        guard !Task.isCancelled else { return }
+        if isInitial {
+          isInitial = false
+          continue
+        }
+        try? await self?.publishCurrentFacts()
+      }
+    }
+  }
+
   private func publishCurrentFacts() async throws {
     try checkRunning()
     let composition = try requireComposition()
+    let connection = await composition.connectionRuntime.health()
+    try checkRunning()
     let projects = try await composition.repository.allProjects()
     try checkRunning()
     var tasks: [(TaskProjection, [TaskEventEnvelope])] = []
@@ -371,11 +428,12 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       (lhs.1.last?.createdAt ?? .distantPast) > (rhs.1.last?.createdAt ?? .distantPast)
     }
     publish(
-      connectionState: .stopped,
+      connectionState: Self.connectionState(connection),
       presentation: DesktopPresentationProjection.snapshot(
         projects: projects.sorted { $0.createdAt < $1.createdAt },
         tasks: tasks,
-        diagnostics: diagnostics
+        diagnostics: diagnostics,
+        connection: connection
       )
     )
   }
@@ -492,5 +550,18 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     components.host = "threads"
     components.path = "/\(threadID)"
     return components.url
+  }
+
+  static func connectionState(_ health: DesktopTransportHealth) -> BridgeAppConnectionState {
+    if health.acceptsRemoteSubmissions { return .ready }
+    return switch health.lifecycle {
+    case .stopped: .stopped
+    case .starting: .starting
+    case .authenticating: .authenticating
+    case .connecting: .connecting
+    case .ready: .degraded
+    case .degraded: .degraded
+    case .failed: .failed
+    }
   }
 }

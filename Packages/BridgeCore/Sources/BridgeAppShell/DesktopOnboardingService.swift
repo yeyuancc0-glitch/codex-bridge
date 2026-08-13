@@ -14,7 +14,6 @@ enum DesktopOnboardingError: LocalizedError, Equatable, Sendable {
   case invalidAuthenticationURL
   case invalidRuntimeKey
   case invalidHTTPSEndpoint
-  case connectionModeUnavailable
   case randomGenerationFailed
 
   var errorDescription: String? {
@@ -31,8 +30,6 @@ enum DesktopOnboardingError: LocalizedError, Equatable, Sendable {
       "Runtime Key 格式无效；它不会被保存。"
     case .invalidHTTPSEndpoint:
       "HTTPS Endpoint 或认证配置无效。"
-    case .connectionModeUnavailable:
-      "当前连接模式的完整运行链路尚未就绪。"
     case .randomGenerationFailed:
       "无法生成本机 MCP 认证 Secret。"
     }
@@ -46,8 +43,11 @@ protocol DesktopOnboardingBackend: Sendable {
     projectID: ProjectID,
     policy: ProjectAccessPolicy
   ) async throws
-  func startLocalMCP(authentication: DesktopMCPAuthentication) async throws
-  func testLocalMCPConnection() async throws
+  func configureOnboardingTransport(
+    _ configuration: DesktopOnboardingTransportConfiguration
+  ) async throws -> URL
+  func testOnboardingTransport() async throws
+  func stopOnboardingTransport() async throws
 }
 
 extension LiveBridgeAppBackend: DesktopOnboardingBackend {}
@@ -69,6 +69,7 @@ actor DesktopOnboardingService: OnboardingActionHandling {
   private var isBusy = true
   private var hasStoredRuntimeKey = false
   private var hasStoredManualSecret = false
+  private var localMCPURL: URL?
   private var hasStarted = false
   private var isShuttingDown = false
 
@@ -115,14 +116,16 @@ actor DesktopOnboardingService: OnboardingActionHandling {
     case .cancelCodexLogin:
       try await cancelCodexLogin()
     case .selectConnectionMode(let mode):
-      try selectConnectionMode(mode)
+      try await selectConnectionMode(mode)
     case .saveTunnelConfiguration(let tunnelID, let runtimeKey):
       try await saveTunnelConfiguration(tunnelID: tunnelID, runtimeKey: runtimeKey)
     case .saveManualHTTPSConfiguration(let endpoint, let authenticationSecret):
-      try saveManualHTTPSConfiguration(
+      try await saveManualHTTPSConfiguration(
         endpoint: endpoint,
         authenticationSecret: authenticationSecret
       )
+    case .copyLocalMCPEndpoint:
+      try await copyLocalMCPEndpoint()
     case .addProject:
       try await addProject()
     case .setSecurityDefaults(let write, let network):
@@ -171,17 +174,18 @@ actor DesktopOnboardingService: OnboardingActionHandling {
   private func finishBootstrap(_ loaded: DesktopOnboardingRecord) async {
     guard !isShuttingDown else { return }
     record = loaded
-    hasStoredRuntimeKey = secretExists(.runtimeKey(profileID: record.profileID))
-    hasStoredManualSecret = secretExists(manualSecretReference())
+    hasStoredRuntimeKey = storedRuntimeKey() != nil
+    hasStoredManualSecret = storedManualAuthorization() != nil
     if let project = try? await backend.onboardingProject() {
       record.projectID = project.id.rawValue
       record.projectName = project.name
     }
     guard !isShuttingDown else { return }
-    if record.completed, record.connectionMode == .localDevelopment {
+    if record.completed {
       do {
-        try await ensureLocalMCP(authentication: .path(secret: try mcpSecret()))
-        try await backend.testLocalMCPConnection()
+        localMCPURL = try await backend.configureOnboardingTransport(
+          try transportConfiguration())
+        try await backend.testOnboardingTransport()
       } catch {
         record.completed = false
         record.currentStep = .connectionTest
@@ -341,12 +345,23 @@ actor DesktopOnboardingService: OnboardingActionHandling {
     publish()
   }
 
-  private func selectConnectionMode(_ mode: OnboardingConnectionMode) throws {
+  private func selectConnectionMode(_ mode: OnboardingConnectionMode) async throws {
     if record.connectionMode != mode {
+      try await backend.stopOnboardingTransport()
+      localMCPURL = nil
       record.connectionMode = mode
       record.connectionTestSucceeded = false
     }
     try persist()
+    if mode == .localDevelopment, localMCPURL == nil {
+      do {
+        localMCPURL = try await backend.configureOnboardingTransport(
+          try transportConfiguration())
+      } catch {
+        publish()
+        throw error
+      }
+    }
     publish()
   }
 
@@ -370,14 +385,13 @@ actor DesktopOnboardingService: OnboardingActionHandling {
     record.tunnelID = validatedID.rawValue
     record.connectionTestSucceeded = false
     try persist()
-    try await ensureLocalMCP(authentication: .header(secret: try mcpSecret()))
     publish()
   }
 
   private func saveManualHTTPSConfiguration(
     endpoint: String,
     authenticationSecret: String
-  ) throws {
+  ) async throws {
     guard record.connectionMode == .manualHTTPS,
       let url = Self.validManualHTTPSURL(endpoint)
     else {
@@ -388,7 +402,7 @@ actor DesktopOnboardingService: OnboardingActionHandling {
         throw DesktopOnboardingError.invalidHTTPSEndpoint
       }
     } else {
-      guard authenticationSecret.utf8.count <= KeychainSecretStore.maximumSecretBytes else {
+      guard ManualHTTPSTransport.isValidAuthorization(authenticationSecret) else {
         throw DesktopOnboardingError.invalidHTTPSEndpoint
       }
       try secretStore.store(Data(authenticationSecret.utf8), for: manualSecretReference())
@@ -397,7 +411,24 @@ actor DesktopOnboardingService: OnboardingActionHandling {
     record.manualHTTPSEndpoint = url.absoluteString
     record.connectionTestSucceeded = false
     try persist()
-    publish()
+    do {
+      localMCPURL = try await backend.configureOnboardingTransport(
+        try transportConfiguration())
+      publish()
+    } catch {
+      localMCPURL = nil
+      publish()
+      throw error
+    }
+  }
+
+  private func copyLocalMCPEndpoint() async throws {
+    guard record.connectionMode == .manualHTTPS || record.connectionMode == .localDevelopment,
+      let localMCPURL,
+      await system.copyToPasteboard(localMCPURL.absoluteString)
+    else {
+      throw DesktopBackendError.operationFailed
+    }
   }
 
   private func addProject() async throws {
@@ -445,16 +476,14 @@ actor DesktopOnboardingService: OnboardingActionHandling {
       isBusy = false
       publish()
     }
-    switch record.connectionMode {
-    case .localDevelopment:
-      try await ensureLocalMCP(authentication: .path(secret: try mcpSecret()))
-      try await backend.testLocalMCPConnection()
-    case .secureTunnel:
-      try await ensureLocalMCP(authentication: .header(secret: try mcpSecret()))
-      try await backend.testLocalMCPConnection()
-      throw DesktopOnboardingError.connectionModeUnavailable
-    case .manualHTTPS, nil:
-      throw DesktopOnboardingError.connectionModeUnavailable
+    do {
+      localMCPURL = try await backend.configureOnboardingTransport(
+        try transportConfiguration())
+      try await backend.testOnboardingTransport()
+    } catch {
+      localMCPURL = nil
+      try? await backend.stopOnboardingTransport()
+      throw error
     }
     record.connectionTestSucceeded = true
     try persist()
@@ -469,10 +498,6 @@ actor DesktopOnboardingService: OnboardingActionHandling {
     publish()
   }
 
-  private func ensureLocalMCP(authentication: DesktopMCPAuthentication) async throws {
-    try await backend.startLocalMCP(authentication: authentication)
-  }
-
   private func mcpSecret() throws -> String {
     let reference = SecretReference.mcpPathSecret(profileID: record.profileID)
     if let data = try? secretStore.load(reference),
@@ -484,10 +509,6 @@ actor DesktopOnboardingService: OnboardingActionHandling {
     let value = try Self.generateMCPSecret()
     try secretStore.store(Data(value.utf8), for: reference)
     return value
-  }
-
-  private func secretExists(_ reference: SecretReference) -> Bool {
-    (try? secretStore.load(reference)) != nil
   }
 
   private func manualSecretReference() -> SecretReference {
@@ -515,6 +536,7 @@ actor DesktopOnboardingService: OnboardingActionHandling {
       connectionMode: record.connectionMode,
       tunnelID: record.tunnelID ?? "",
       hasStoredRuntimeKey: hasStoredRuntimeKey,
+      localMCPURLDescription: localMCPURL.map(Self.publicLocalMCPURL),
       projectName: record.projectName,
       writeDefault: record.writeDefault,
       networkDefault: record.networkDefault,
@@ -668,6 +690,72 @@ actor DesktopOnboardingService: OnboardingActionHandling {
         (48...57).contains(byte) || (65...90).contains(byte) || (97...122).contains(byte)
           || byte == 45 || byte == 95
       }
+  }
+
+  private func storedRuntimeKey() -> String? {
+    guard let data = try? secretStore.load(.runtimeKey(profileID: record.profileID)),
+      let value = String(data: data, encoding: .utf8),
+      Self.isValidRuntimeKey(value)
+    else {
+      return nil
+    }
+    return value
+  }
+
+  private func storedManualAuthorization() -> String? {
+    guard let data = try? secretStore.load(manualSecretReference()),
+      let value = String(data: data, encoding: .utf8),
+      ManualHTTPSTransport.isValidAuthorization(value)
+    else {
+      return nil
+    }
+    return value
+  }
+
+  private func transportConfiguration() throws -> DesktopOnboardingTransportConfiguration {
+    switch record.connectionMode {
+    case .localDevelopment:
+      return .local(pathSecret: try mcpSecret())
+    case .manualHTTPS:
+      guard let endpoint = record.manualHTTPSEndpoint.flatMap(URL.init(string:)),
+        let authorization = storedManualAuthorization()
+      else {
+        throw DesktopOnboardingError.invalidHTTPSEndpoint
+      }
+      return .manual(
+        pathSecret: try mcpSecret(),
+        endpoint: endpoint,
+        authorization: authorization
+      )
+    case .secureTunnel:
+      guard let rawTunnelID = record.tunnelID, storedRuntimeKey() != nil else {
+        throw DesktopOnboardingError.invalidRuntimeKey
+      }
+      return .secure(
+        headerSecret: try mcpSecret(),
+        tunnelID: try TunnelID(validating: rawTunnelID),
+        runtimeKeyReference: .runtimeKey(profileID: record.profileID)
+      )
+    case nil:
+      throw DesktopOnboardingError.invalidTransition
+    }
+  }
+
+  private static func publicLocalMCPURL(_ url: URL) -> String {
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      return "127.0.0.1"
+    }
+    if components.percentEncodedPath.hasPrefix("/mcp/") {
+      return publicOrigin(components) + "/mcp/<本机认证 Secret>"
+    }
+    return components.string ?? "127.0.0.1"
+  }
+
+  private static func publicOrigin(_ components: URLComponents) -> String {
+    let scheme = components.scheme ?? "http"
+    let host = components.host ?? "127.0.0.1"
+    let port = components.port.map { ":\($0)" } ?? ""
+    return "\(scheme)://\(host)\(port)"
   }
 
   private static func generateMCPSecret() throws -> String {

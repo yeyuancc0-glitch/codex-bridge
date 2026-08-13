@@ -9,6 +9,84 @@ import XCTest
 @testable import BridgeAppShell
 
 final class DesktopOnboardingServiceTests: XCTestCase {
+  func testManualHTTPSStoresAuthorizationOnlyInSecretStoreAndPublishesRedactedLocalURL()
+    async throws
+  {
+    let root = temporaryDirectory()
+    let dataDirectory = root.appendingPathComponent("Data", isDirectory: true)
+    let projectDirectory = root.appendingPathComponent("Project", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: projectDirectory,
+      withIntermediateDirectories: true
+    )
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let project = RegisteredProject(
+      id: ProjectID(rawValue: "prj_manual"),
+      name: "Project",
+      primaryRoot: try RegisteredRoot(capturing: projectDirectory),
+      repositoryRoot: try RegisteredRoot(capturing: projectDirectory),
+      accessPolicy: .init(),
+      verificationCommands: [],
+      forbiddenPatterns: [],
+      createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    let backend = OnboardingTestBackend(project: ProjectSummaryDTO(project: project))
+    let secrets = OnboardingTestSecretStore()
+    let system = OnboardingTestSystemService()
+    let service = DesktopOnboardingService(
+      dataDirectoryURL: dataDirectory,
+      backend: backend,
+      system: system,
+      capabilities: PassingCapabilityInspector(),
+      secretStore: secrets
+    )
+    _ = await service.stateUpdates()
+    _ = try await waitFor(service) { !$0.isBusy }
+
+    try await service.handle(.advance)
+    try await service.handle(.advance)
+    try await service.handle(.advance)
+    try await service.handle(.selectConnectionMode(.manualHTTPS))
+    try await service.handle(.advance)
+    do {
+      try await service.handle(
+        .saveManualHTTPSConfiguration(
+          endpoint: "https://bridge.example/mcp",
+          authenticationSecret: "Bearer value\r\nInjected: yes"
+        )
+      )
+      XCTFail("Expected header injection rejection")
+    } catch {
+      XCTAssertEqual(error as? DesktopOnboardingError, .invalidHTTPSEndpoint)
+    }
+
+    let authorization = "Bearer strong-manual-authorization"
+    try await service.handle(
+      .saveManualHTTPSConfiguration(
+        endpoint: "https://bridge.example/mcp",
+        authenticationSecret: authorization
+      )
+    )
+
+    let presentation = await service.currentPresentation()
+    let storedState = try String(
+      contentsOf: dataDirectory.appendingPathComponent("onboarding.json"),
+      encoding: .utf8
+    )
+    XCTAssertEqual(presentation.currentStep, .connectionConfiguration)
+    XCTAssertTrue(presentation.localMCPURLDescription?.contains("<本机认证 Secret>") == true)
+    XCTAssertFalse(presentation.localMCPURLDescription?.contains(authorization) == true)
+    XCTAssertFalse(storedState.contains(authorization))
+    XCTAssertTrue(
+      secrets.references.contains { $0.hasPrefix("manual-https-auth.") }
+    )
+    try await service.handle(.copyLocalMCPEndpoint)
+    XCTAssertEqual(system.copiedValues.count, 1)
+    XCTAssertTrue(system.copiedValues[0].contains(String(repeating: "a", count: 43)))
+    XCTAssertFalse(system.copiedValues[0].contains(authorization))
+    await service.shutdown()
+  }
+
   func testLocalDevelopmentFlowPersistsProjectPolicyAndTestsMCPBeforeCompletion() async throws {
     let root = temporaryDirectory()
     let dataDirectory = root.appendingPathComponent("Data", isDirectory: true)
@@ -30,10 +108,11 @@ final class DesktopOnboardingServiceTests: XCTestCase {
     )
     let backend = OnboardingTestBackend(project: ProjectSummaryDTO(project: project))
     let secrets = OnboardingTestSecretStore()
+    let system = OnboardingTestSystemService()
     let service = DesktopOnboardingService(
       dataDirectoryURL: dataDirectory,
       backend: backend,
-      system: OnboardingTestSystemService(),
+      system: system,
       capabilities: PassingCapabilityInspector(),
       secretStore: secrets
     )
@@ -45,6 +124,7 @@ final class DesktopOnboardingServiceTests: XCTestCase {
     try await service.handle(.advance)
     try await service.handle(.selectConnectionMode(.localDevelopment))
     try await service.handle(.advance)
+    try await service.handle(.copyLocalMCPEndpoint)
     try await service.handle(.advance)
     try await service.handle(.addProject)
     try await service.handle(.advance)
@@ -64,6 +144,7 @@ final class DesktopOnboardingServiceTests: XCTestCase {
     let updatedPolicy = await backend.updatedPolicy
     XCTAssertTrue(didStartMCP)
     XCTAssertTrue(didTestMCP)
+    XCTAssertEqual(system.copiedValues.count, 1)
     XCTAssertEqual(
       updatedPolicy,
       ProjectAccessPolicy(
@@ -126,15 +207,32 @@ private actor OnboardingTestBackend: DesktopOnboardingBackend {
     updatedPolicy = policy
   }
 
-  func startLocalMCP(authentication: DesktopMCPAuthentication) {
-    guard case .path(let secret) = authentication, secret.utf8.count == 43 else { return }
+  func configureOnboardingTransport(
+    _ configuration: DesktopOnboardingTransportConfiguration
+  ) throws -> URL {
+    switch configuration {
+    case .local(let secret):
+      guard secret.utf8.count == 43 else { throw OnboardingTestError.mcpNotStarted }
+    case .manual(let secret, let endpoint, let authorization):
+      guard secret.utf8.count == 43,
+        endpoint == URL(string: "https://bridge.example/mcp"),
+        ManualHTTPSTransport.isValidAuthorization(authorization)
+      else {
+        throw OnboardingTestError.mcpNotStarted
+      }
+    case .secure:
+      throw OnboardingTestError.mcpNotStarted
+    }
     didStartMCP = true
+    return URL(string: "http://127.0.0.1:43210/mcp/\(String(repeating: "a", count: 43))")!
   }
 
-  func testLocalMCPConnection() throws {
+  func testOnboardingTransport() throws {
     guard didStartMCP else { throw OnboardingTestError.mcpNotStarted }
     didTestMCP = true
   }
+
+  func stopOnboardingTransport() {}
 }
 
 private struct PassingCapabilityInspector: DesktopSystemCapabilityInspecting {
@@ -169,12 +267,24 @@ private struct PassingCapabilityInspector: DesktopSystemCapabilityInspecting {
   }
 }
 
-@MainActor
-private final class OnboardingTestSystemService: DesktopSystemServing {
+private final class OnboardingTestSystemService: DesktopSystemServing, @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [String] = []
+
+  var copiedValues: [String] { lock.withLock { values } }
+
+  @MainActor
   func selectProjectDirectory() async -> URL? { nil }
+  @MainActor
   func open(_: URL) -> Bool { true }
-  func copyToPasteboard(_: String) -> Bool { true }
+  @MainActor
+  func copyToPasteboard(_ value: String) -> Bool {
+    lock.withLock { values.append(value) }
+    return true
+  }
+  @MainActor
   func showMainWindow() {}
+  @MainActor
   func terminateApplication() {}
 }
 

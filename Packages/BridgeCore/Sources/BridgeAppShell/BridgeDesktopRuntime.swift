@@ -1,5 +1,6 @@
 import BridgeAppModel
 import BridgePresentation
+import BridgeSecurity
 import Foundation
 
 @MainActor
@@ -23,11 +24,17 @@ public final class BridgeDesktopRuntime: ObservableObject {
   }
 
   init(dataDirectoryURL: URL, system: any DesktopSystemServing) {
-    let backend = LiveBridgeAppBackend(dataDirectoryURL: dataDirectoryURL, system: system)
+    let secretStore = KeychainSecretStore()
+    let backend = LiveBridgeAppBackend(
+      dataDirectoryURL: dataDirectoryURL,
+      system: system,
+      secretStore: secretStore
+    )
     let onboardingService = DesktopOnboardingService(
       dataDirectoryURL: dataDirectoryURL,
       backend: backend,
-      system: system
+      system: system,
+      secretStore: secretStore
     )
     self.backend = backend
     self.onboardingService = onboardingService

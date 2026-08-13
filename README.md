@@ -2,7 +2,7 @@
 
 Codex Bridge is a local-first native macOS bridge between ChatGPT on the web and the user's local Codex installation. ChatGPT forms a task contract, the local Codex app-server executes it, a separate read-only Luna session supervises it, and the Mac app owns permissions, approvals, state, evidence and connectivity.
 
-> Development status: pre-release. The repository now builds a runnable native `CodexBridge.app` with a shared window/menu-bar runtime, nine-step first-run setup, Codex account detection, durable project registration and a real local MCP self-test. The complete execution-to-report pipeline, live Secure Tunnel/Manual HTTPS composition, real ChatGPT acceptance and signed release packaging are still in development.
+> Development status: pre-release. The repository now builds a runnable native `CodexBridge.app` with a shared window/menu-bar runtime, nine-step first-run setup, Codex account detection, durable project registration, a real local MCP server and one stateful connection runtime for local development, authenticated Manual HTTPS and OpenAI Secure MCP Tunnel modes. The complete execution-to-report pipeline, credentialed ChatGPT acceptance and signed release packaging are still in development.
 
 ## Product boundary
 
@@ -81,7 +81,7 @@ Scripts/test-tunnel-helper-config.sh
 
 The live fixture owns and removes an empty temporary directory, forces read-only/no-network execution, uses an ephemeral Thread, and never enumerates existing Threads or account data. Available scenarios are `basic`, `steer`, `interrupt`, and `supervisor`.
 
-`BridgeMCP` preserves the original five read-only tools by default. Production composition can opt into seven task tools and four project/file/navigation tools, for 16 total; Codex approval is never exposed remotely. The listener stays on `127.0.0.1`. MCP Inspector keeps an ephemeral test-only secret path. Tunnel production mode instead uses a non-secret `/mcp` URL plus a 256-bit static header secret supplied to the official helper through fd4; the HTTP boundary validates it in constant time and strips it before SDK dispatch. `BridgeTunnel` validates the exact signed helper identity, owns its bounded process lifecycle, and requires strict local readiness plus a fresh control-plane poll before accepting remote submissions. Real Runtime Key and ChatGPT Developer Mode acceptance remain user-driven gates.
+`BridgeMCP` preserves the original five read-only tools by default. Production composition can opt into seven task tools and four project/file/navigation tools, for 16 total; Codex approval is never exposed remotely. The listener stays on `127.0.0.1`. MCP Inspector and local development use an ephemeral secret path. Manual HTTPS uses an explicit Keychain-backed `Authorization` value, rejects redirects, bounds request/response memory and accepts the remote endpoint only after strict MCP negotiation. Tunnel production mode instead uses a non-secret `/mcp` URL plus a 256-bit static header secret supplied to the official helper through fd4; the HTTP boundary validates it in constant time and strips it before SDK dispatch. `BridgeTunnel` validates the exact signed helper identity, owns its bounded process lifecycle, and requires strict local readiness plus a fresh control-plane poll before accepting remote submissions. Real Runtime Key and ChatGPT Developer Mode acceptance remain user-driven gates.
 
 ## Security reporting
 

@@ -148,6 +148,7 @@ public struct OnboardingPresentation: Codable, Equatable, Sendable {
   public let connectionMode: OnboardingConnectionMode?
   public let tunnelID: String
   public let hasStoredRuntimeKey: Bool
+  public let localMCPURLDescription: String?
   public let projectName: String?
   public let writeDefault: OnboardingPermissionDefault
   public let networkDefault: OnboardingPermissionDefault
@@ -166,6 +167,7 @@ public struct OnboardingPresentation: Codable, Equatable, Sendable {
     connectionMode: OnboardingConnectionMode? = nil,
     tunnelID: String = "",
     hasStoredRuntimeKey: Bool = false,
+    localMCPURLDescription: String? = nil,
     projectName: String? = nil,
     writeDefault: OnboardingPermissionDefault = .localApproval,
     networkDefault: OnboardingPermissionDefault = .denied,
@@ -183,6 +185,7 @@ public struct OnboardingPresentation: Codable, Equatable, Sendable {
     self.connectionMode = connectionMode
     self.tunnelID = tunnelID
     self.hasStoredRuntimeKey = hasStoredRuntimeKey
+    self.localMCPURLDescription = localMCPURLDescription
     self.projectName = projectName
     self.writeDefault = writeDefault
     self.networkDefault = networkDefault
@@ -221,6 +224,7 @@ public enum OnboardingAction: Equatable, Sendable {
   case selectConnectionMode(OnboardingConnectionMode)
   case saveTunnelConfiguration(tunnelID: String, runtimeKey: String)
   case saveManualHTTPSConfiguration(endpoint: String, authenticationSecret: String)
+  case copyLocalMCPEndpoint
   case addProject
   case setSecurityDefaults(
     write: OnboardingPermissionDefault,

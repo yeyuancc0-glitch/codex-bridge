@@ -161,6 +161,7 @@ codex app-server generate-json-schema --out DIR
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Git 证据命令只能用固定 `/usr/bin/git`、最小环境和已打开目录 fd 作为 cwd；仓库本地 filter、fsmonitor、include、textconv/command 或任何 `filter` attribute 都必须在执行 status/diff 前 fail-closed，防止证据收集执行项目代码。
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。
+- AppShell 的 `DesktopConnectionRuntime` 是 Local、Manual HTTPS 与 Secure Tunnel 三种传输的唯一生命周期和健康状态源；切换模式必须先停止旧链路，本机 MCP 就绪不能被投影为 ChatGPT 远程就绪。Manual HTTPS 只接受无重定向的强认证 `/mcp` 地址，并使用有界请求、响应和超时。
 - `tunnel-client` 必须使用调用方预建的 0700 私有根、dirfd/inode 绑定的每次运行目录、Unix-domain health/admin socket 与最小化子进程环境。禁止把配置交给可替换的 pathname；非秘密配置使用固定 argv，Runtime Key 经 fd3、MCP 静态认证头经 fd4。官方 v0.0.11 不支持把 MCP URL 写成 `file:`，所以只传非秘密 `http://127.0.0.1:<port>/mcp`。`/readyz` 只证明本地 MCP 就绪，只有 health peer PID 匹配、严格 ready 且 control-plane poll 成功并新鲜时才可显示 Tunnel 已连接。
 - Tunnel helper 必须先按外部可信的签名后 SHA-256 校验打开的同一 fd，再以 suspended 状态 spawn；只有动态 SecCode 通过宿主 Team requirement 且 CDHash 与静态 fd 身份相同时才恢复和写入秘密。签名前 supply manifest 不能充当运行时信任根。
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责秘密路径或 Tunnel 认证头、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。

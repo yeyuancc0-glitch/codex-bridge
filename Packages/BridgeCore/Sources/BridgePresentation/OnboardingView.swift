@@ -187,21 +187,43 @@ public struct OnboardingView: View {
 
   @ViewBuilder
   private var connectionConfigurationContent: some View {
-    switch store.presentation.connectionMode {
-    case .secureTunnel:
-      tunnelConfigurationContent
-    case .manualHTTPS:
-      manualConfigurationContent
-    case .localDevelopment:
-      VStack(alignment: .leading, spacing: 12) {
-        Label("仅绑定 127.0.0.1", systemImage: "network")
-          .font(.headline)
-        Text("该模式不会让 ChatGPT 网页获得连接；只用于本机 Inspector 和开发验证。")
+    VStack(alignment: .leading, spacing: 16) {
+      switch store.presentation.connectionMode {
+      case .secureTunnel:
+        tunnelConfigurationContent
+      case .manualHTTPS:
+        manualConfigurationContent
+      case .localDevelopment:
+        VStack(alignment: .leading, spacing: 12) {
+          Label("仅绑定 127.0.0.1", systemImage: "network")
+            .font(.headline)
+          Text("该模式不会让 ChatGPT 网页获得连接；只用于本机 Inspector 和开发验证。")
+            .foregroundStyle(.secondary)
+        }
+      case nil:
+        Text("返回上一步选择连接模式。")
           .foregroundStyle(.secondary)
       }
-    case nil:
-      Text("返回上一步选择连接模式。")
-        .foregroundStyle(.secondary)
+      if let localURL = store.presentation.localMCPURLDescription {
+        VStack(alignment: .leading, spacing: 6) {
+          Text("本地 MCP Endpoint")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+          Text(localURL)
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+          if store.presentation.connectionMode == .manualHTTPS
+            || store.presentation.connectionMode == .localDevelopment
+          {
+            Button("复制完整本机 Endpoint", systemImage: "doc.on.doc") {
+              Task { await store.perform(.copyLocalMCPEndpoint) }
+            }
+            Text("完整地址包含本机认证 Secret；只在你明确复制时进入剪贴板。")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
     }
   }
 
@@ -239,7 +261,7 @@ public struct OnboardingView: View {
     VStack(alignment: .leading, spacing: 16) {
       TextField("https://bridge.example.com/mcp", text: $manualEndpoint)
         .textFieldStyle(.roundedBorder)
-      SecureField("强认证凭证", text: $manualSecret)
+      SecureField("Authorization 请求头值（例如 Bearer …）", text: $manualSecret)
         .textFieldStyle(.roundedBorder)
       Text("Bridge 会拒绝 HTTP、无认证端点以及未通过 MCP initialize/tools 检查的地址。")
         .font(.caption)
