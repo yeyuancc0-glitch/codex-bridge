@@ -101,13 +101,14 @@ public actor BridgeApplicationService:
       )
       try Self.checkDeadline(deadline)
       return MCPProjectFileSearchPage(
-        matches: result.matches.map {
-          let preview = Self.sourceRedaction($0.preview, maximumBytes: 1_024)
+        matches: result.matches.enumerated().map { index, match in
+          let preview = Self.sourceRedaction(match.preview, maximumBytes: 1_024)
+          let relativePath = Self.outboundRelativePath(match.relativePath, index: index)
           return MCPProjectFileSearchMatch(
-            relativePath: $0.relativePath,
-            lineNumber: $0.lineNumber,
+            relativePath: relativePath,
+            lineNumber: match.lineNumber,
             preview: preview.text,
-            redacted: $0.redacted || preview.changed
+            redacted: match.redacted || preview.changed || relativePath != match.relativePath
           )
         },
         nextCursor: result.nextCursor,
@@ -613,7 +614,9 @@ public actor BridgeApplicationService:
       executionModel: report.execution.model,
       executionEffort: report.execution.effort,
       summary: sanitize(report.summary, maximumBytes: 16 * 1_024),
-      changedFiles: report.changedFiles.map(\.relativePath),
+      changedFiles: report.changedFiles.enumerated().map { index, file in
+        outboundRelativePath(file.relativePath, index: index)
+      },
       diffStat: sanitize(report.diffStat, maximumBytes: 8 * 1_024),
       commands: report.commands.map(commandSummary),
       verification: report.verification.map(verificationSummary),
@@ -702,6 +705,13 @@ public actor BridgeApplicationService:
 
   private static func sanitize(_ value: String, maximumBytes: Int) -> String {
     redaction(value, maximumBytes: maximumBytes).text
+  }
+
+  private static func outboundRelativePath(_ value: String, index: Int = 0) -> String {
+    guard OutboundContentSecurity.isSafeOutboundRelativePath(value) else {
+      return "[redacted-sensitive-path-\(index)]"
+    }
+    return value
   }
 
   private static func redaction(_ value: String, maximumBytes: Int) -> OutboundRedaction {

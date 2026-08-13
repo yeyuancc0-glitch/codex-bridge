@@ -38,6 +38,24 @@ public enum OutboundContentSecurity {
     }
   }
 
+  public static func isSafeRelativePath(
+    _ value: String,
+    maximumUTF8Bytes: Int = 1_024
+  ) -> Bool {
+    guard maximumUTF8Bytes > 0, value.utf8.count <= maximumUTF8Bytes,
+      !value.contains("\\"),
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else { return false }
+    return (try? SecureRelativePath(value)) != nil
+  }
+
+  public static func isSafeOutboundRelativePath(
+    _ value: String,
+    maximumUTF8Bytes: Int = 1_024
+  ) -> Bool {
+    isSafeRelativePath(value, maximumUTF8Bytes: maximumUTF8Bytes) && isSafe(value)
+  }
+
   public static func redacted(_ value: String, maximumUTF8Bytes: Int) -> String {
     redaction(of: value, maximumUTF8Bytes: maximumUTF8Bytes).text
   }

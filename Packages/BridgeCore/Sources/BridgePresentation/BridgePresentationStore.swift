@@ -105,7 +105,15 @@ public final class BridgePresentationStore: ObservableObject {
     guard case .codexApproval(let approval) = presentedSheet else { return }
     guard decision == .deny || approval.canAllow else { return }
     isPerformingSheetAction = true
-    let succeeded = await perform(.decideApproval(approvalID: approval.id, decision: decision))
+    let succeeded = await perform(
+      .decideBoundApproval(
+        approvalID: approval.id,
+        taskID: approval.taskID,
+        threadID: approval.threadID,
+        turnID: approval.turnID,
+        decision: decision
+      )
+    )
     isPerformingSheetAction = false
     if succeeded { presentedSheet = nil }
   }

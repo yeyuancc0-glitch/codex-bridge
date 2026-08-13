@@ -195,6 +195,28 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testRemoteSubmissionCheckReadsTunnelHealthWithoutWaitingForMonitor() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(tunnel: tunnel),
+      monitorInterval: .seconds(60)
+    )
+    let tunnelID = try TunnelID(validating: "tunnel_\(String(repeating: "a", count: 32))")
+    _ = try await runtime.configureSecureTunnel(
+      tunnelID: tunnelID,
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.test"),
+      localMCPHeaderSecret: String(repeating: "i", count: 43)
+    )
+
+    let acceptsWhileReady = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertTrue(acceptsWhileReady)
+    await tunnel.setLifecycle(.degraded)
+    let acceptsWhileDegraded = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertFalse(acceptsWhileDegraded)
+    await runtime.stop()
+  }
+
 }
 
 private actor ConnectionTestMCP: DesktopMCPServing {

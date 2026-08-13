@@ -58,6 +58,23 @@ final class MCPProjectToolContractTests: XCTestCase {
         return XCTFail("Expected invalid params, got \(error)")
       }
     }
+
+    let sensitiveName = try await dispatcher.call(
+      CallTool.Parameters(
+        name: MCPProjectToolName.readProjectFile.rawValue,
+        arguments: [
+          "project_id": "prj_test",
+          "relative_path": "password=actual-secret-value.swift",
+        ]
+      ),
+      sessionID: "project"
+    )
+    XCTAssertFalse(sensitiveName.isError == true)
+    XCTAssertEqual(
+      sensitiveName.structuredContent?.objectValue?["relative_path"],
+      "[redacted-sensitive-path]"
+    )
+    XCTAssertFalse(String(describing: sensitiveName).contains("actual-secret-value"))
   }
 
   func testProjectOutputsWithAbsolutePathsOrSecretsFailClosed() async throws {

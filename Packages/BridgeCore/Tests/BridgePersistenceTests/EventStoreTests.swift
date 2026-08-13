@@ -258,6 +258,25 @@ final class EventStoreTests: XCTestCase {
     XCTAssertEqual(laterEvents, Array(events.dropFirst()))
   }
 
+  func testTaskChangeStreamPublishesOnlyAfterCommittedEvent() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-change-stream")
+    let changes = await store.taskChanges()
+    let observed = expectation(description: "Committed task change was published")
+    let receiver = Task {
+      var iterator = changes.makeAsyncIterator()
+      if await iterator.next() == taskID { observed.fulfill() }
+    }
+
+    try await store.append(
+      makeEvent(taskID: taskID, sequence: 1),
+      expectedLastSequence: 0
+    )
+
+    await fulfillment(of: [observed], timeout: 1)
+    receiver.cancel()
+  }
+
   func testBoundedEventPagePreservesSequenceCursorAndRejectsInvalidLimits() async throws {
     let store = try EventStore.inMemory()
     let taskID = TaskID(rawValue: "task-page")

@@ -25,6 +25,20 @@ final class PathSecurityTests: XCTestCase {
     XCTAssertNoThrow(try SecureRelativePath("%2e%2e/config.txt"))
   }
 
+  func testOutboundRelativePathContractIsSharedAndStrict() {
+    XCTAssertTrue(OutboundContentSecurity.isSafeRelativePath("Sources/App.swift"))
+    XCTAssertTrue(OutboundContentSecurity.isSafeOutboundRelativePath("Sources/App.swift"))
+    XCTAssertTrue(OutboundContentSecurity.isSafeRelativePath("password=actual-secret-value"))
+    XCTAssertFalse(
+      OutboundContentSecurity.isSafeOutboundRelativePath("password=actual-secret-value"))
+    for value in [
+      "", ".", "..", "a//b", "a/./b", "a/../b", "/tmp/x", "~/x",
+      "Sources/back\\slash.swift", "Sources/control\u{1}name.swift",
+    ] {
+      XCTAssertFalse(OutboundContentSecurity.isSafeRelativePath(value), value)
+    }
+  }
+
   func testOutboundContentRedactsAbsolutePathsAcrossURLAndMarkdownBoundaries() {
     let input =
       "Open file:////Users/alice/private.txt, [artifact](/Volumes/work/output.log), /Network/Servers/team/repo, /mnt/team/repo, and /dev/null."

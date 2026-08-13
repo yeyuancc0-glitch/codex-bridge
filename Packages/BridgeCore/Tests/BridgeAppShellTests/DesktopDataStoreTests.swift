@@ -65,8 +65,13 @@ final class DesktopDataStoreTests: XCTestCase {
       var metadata = stat()
       XCTAssertEqual(lstat(artifact.path, &metadata), 0)
       XCTAssertEqual(metadata.st_uid, getuid())
-      XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFREG)
-      XCTAssertEqual(metadata.st_mode & 0o777, 0o600, artifact.lastPathComponent)
+      if artifact.lastPathComponent == "git-patches" {
+        XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFDIR)
+        XCTAssertEqual(metadata.st_mode & 0o777, 0o700)
+      } else {
+        XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFREG)
+        XCTAssertEqual(metadata.st_mode & 0o777, 0o600, artifact.lastPathComponent)
+      }
     }
     await composition.shutdown()
   }

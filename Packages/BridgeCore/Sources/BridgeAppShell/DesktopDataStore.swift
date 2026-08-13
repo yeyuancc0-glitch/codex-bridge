@@ -14,6 +14,7 @@ struct DesktopDataStore: Sendable {
   let applicationRepositoryURL: URL
   let pipelinePreflightURL: URL
   let verificationAuthorizationURL: URL
+  let gitPatchDirectoryURL: URL
 
   static func prepare(at requestedURL: URL) throws -> DesktopDataStore {
     guard requestedURL.isFileURL, requestedURL.path.hasPrefix("/") else {
@@ -38,6 +39,10 @@ struct DesktopDataStore: Sendable {
       verificationAuthorizationURL: directoryURL.appendingPathComponent(
         "verification-authorizations.json",
         isDirectory: false
+      ),
+      gitPatchDirectoryURL: directoryURL.appendingPathComponent(
+        "git-patches",
+        isDirectory: true
       )
     )
   }

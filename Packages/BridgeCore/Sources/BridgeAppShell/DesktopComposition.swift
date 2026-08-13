@@ -21,6 +21,7 @@ struct DesktopComposition: Sendable {
   let registry: ProjectRegistry
   let taskRuntime: IsolatedCodexTaskRuntime
   let coordinator: TaskCoordinator
+  let application: BridgeApplicationService
   let pipelineArtifacts: PipelineArtifactStore
   let pipelineFinalizer: PipelineFinalizer
   let pipelineOrchestrator: TaskPipelineOrchestrator
@@ -80,6 +81,7 @@ struct DesktopComposition: Sendable {
       repository: repository,
       broker: verificationBroker
     )
+    let patchStore = try GitPatchStore(persistentDirectory: paths.gitPatchDirectoryURL)
     let pipelineOrchestrator = TaskPipelineOrchestrator(
       preflight: try PipelinePreflightStore(path: paths.pipelinePreflightURL.path),
       artifacts: pipelineArtifacts,
@@ -90,7 +92,7 @@ struct DesktopComposition: Sendable {
       },
       git: GitEvidenceCollector(
         rootAuthorizer: DesktopGitProjectRootAuthorizer(repository: repository),
-        patchStore: GitPatchStore()
+        patchStore: patchStore
       ),
       verification: DesktopPipelineVerificationRunner(authorizations: verificationBroker),
       supervisor: supervisorRuntime,
@@ -123,7 +125,7 @@ struct DesktopComposition: Sendable {
         tunnelState: "stopped",
         executionState: "idle",
         supervisorState: "idle",
-        degradations: ["Remote task submission tools are not enabled."],
+        degradations: [],
         pendingApprovalCount: 0
       )
     )
@@ -134,6 +136,10 @@ struct DesktopComposition: Sendable {
       reportStore: repository,
       catalog: catalog,
       status: status,
+      artifacts: DesktopTaskArtifactQueries(
+        artifacts: pipelineArtifacts,
+        patches: patchStore
+      ),
       openCodexURL: { url in await system.open(url) }
     )
     let mcpRuntime = DesktopMCPRuntime(application: application, status: status)
@@ -146,12 +152,16 @@ struct DesktopComposition: Sendable {
       ),
       status: status
     )
+    await mcpRuntime.setRemoteTaskAdmissionCheck { [weak connectionRuntime] in
+      await connectionRuntime?.acceptsRemoteSubmissionsNow() ?? false
+    }
     return DesktopComposition(
       eventStore: eventStore,
       repository: repository,
       registry: registry,
       taskRuntime: taskRuntime,
       coordinator: coordinator,
+      application: application,
       pipelineArtifacts: pipelineArtifacts,
       pipelineFinalizer: pipelineFinalizer,
       pipelineOrchestrator: pipelineOrchestrator,

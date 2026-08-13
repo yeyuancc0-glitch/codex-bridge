@@ -18,6 +18,7 @@ struct DesktopPresentationProjection {
     let taskDetails = tasks.map { taskDetail($0.0, projects: projectsByID, events: $0.1) }
     let projectRows = projects.map(project)
     let approvals = tasks.flatMap { approvalRows($0.0, events: $0.1) }
+    let approvalDetails = tasks.flatMap { approvalDetails($0.0) }
     let active = taskRows.filter { row in
       row.status == .running || row.status == .waiting || row.status == .checking
     }
@@ -51,7 +52,12 @@ struct DesktopPresentationProjection {
       tasks: .ready(TaskPagePresentation(tasks: taskRows, details: taskDetails)),
       projects: .ready(ProjectPagePresentation(projects: projectRows)),
       threads: .ready(ThreadPagePresentation(threads: [])),
-      approvals: .ready(ApprovalPagePresentation(pending: approvals)),
+      approvals: .ready(
+        ApprovalPagePresentation(
+          pending: approvals,
+          details: approvalDetails
+        )
+      ),
       connections: .ready(
         ConnectionPagePresentation(
           mode: connection.endpointDescription,
@@ -81,6 +87,24 @@ struct DesktopPresentationProjection {
       logs: .failed(error),
       settings: .failed(error)
     )
+  }
+
+  static func pendingSheet(
+    projects: [RegisteredProject],
+    tasks: [(TaskProjection, [TaskEventEnvelope])]
+  ) -> PresentedBridgeSheet? {
+    let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
+    if let task = tasks.first(where: { $0.0.aggregate.phase == .awaitingLocalApproval }) {
+      return .taskConfirmation(
+        taskConfirmation(task.0, projects: projectsByID)
+      )
+    }
+    for task in tasks {
+      if let approval = approvalDetails(task.0).first {
+        return .codexApproval(approval)
+      }
+    }
+    return nil
   }
 
   private static func project(_ value: RegisteredProject) -> ProjectPresentation {
@@ -162,7 +186,7 @@ struct DesktopPresentationProjection {
       canAuthorizeVerification: canAuthorizeVerification(aggregate),
       diagnosticSummary: aggregate.failureReason,
       canOpenInCodex: aggregate.binding != nil,
-      canInterrupt: false
+      canInterrupt: aggregate.phase == .running || aggregate.phase == .awaitingCodexApproval
     )
   }
 
@@ -194,6 +218,71 @@ struct DesktopPresentationProjection {
         risk: .blocked,
         requestedAt: events.last?.createdAt ?? .distantPast
       )
+    }
+  }
+
+  private static func approvalDetails(
+    _ projection: TaskProjection
+  ) -> [CodexApprovalPresentation] {
+    guard let binding = projection.aggregate.binding else { return [] }
+    return projection.aggregate.pendingApprovalIDs.sorted { $0.rawValue < $1.rawValue }.map {
+      approval in
+      CodexApprovalPresentation(
+        id: approval.rawValue,
+        taskID: projection.aggregate.id.rawValue,
+        source: "Codex Execution",
+        threadID: binding.threadID.rawValue,
+        turnID: binding.turnID.rawValue,
+        operationTitle: "缺少权威操作证据",
+        workingDirectory: "未展示：缺少权威 cwd 证据",
+        reason: "Bridge 尚未收到可持久化的 argv、文件操作与影响范围。",
+        supervisorRisk: "安全阻断：当前只能拒绝此请求。",
+        consequences: ["允许操作保持关闭；拒绝会精确回复这一审批请求。"],
+        canAllow: false
+      )
+    }
+  }
+
+  private static func taskConfirmation(
+    _ projection: TaskProjection,
+    projects: [ProjectID: RegisteredProject]
+  ) -> TaskConfirmationPresentation {
+    let submission = projection.aggregate.submission
+    var risks: [String] = []
+    if submission.execution.permissionMode == "workspace-write" {
+      risks.append("任务请求写入已注册工作区；开始后仍逐项执行策略与 Codex 审批。")
+    }
+    if submission.execution.networkAccess {
+      risks.append("任务请求网络访问；本机策略与高风险硬拒绝仍然生效。")
+    }
+    risks.append("任务契约不可在确认时改写；如需只读模式，请重新提交新契约。")
+    return TaskConfirmationPresentation(
+      id: projection.aggregate.id.rawValue,
+      goal: bounded(submission.contract.goal, maximumCharacters: 4_096),
+      acceptanceCriteria: submission.contract.acceptanceCriteria.map {
+        bounded($0, maximumCharacters: 4_096)
+      },
+      projectName: projects[submission.projectID]?.name ?? "未知项目",
+      threadDescription: threadDescription(submission.thread),
+      executionModel: submission.execution.model,
+      effort: submission.execution.effort,
+      permissionMode: submission.execution.permissionMode,
+      networkAllowed: submission.execution.networkAccess,
+      supervisorModel: "\(submission.supervisor.model) · \(submission.supervisor.effort)",
+      estimatedReadScope: submission.contract.allowedPaths.isEmpty
+        ? ["已注册项目根内；敏感路径与项目外路径仍会拒绝"]
+        : submission.contract.allowedPaths,
+      riskMessages: risks,
+      availableModels: [submission.execution.model],
+      availableEfforts: [submission.execution.effort],
+      canRunReadOnly: false
+    )
+  }
+
+  private static func threadDescription(_ target: ThreadTarget) -> String {
+    switch target {
+    case .new: "新 Thread（开始后创建）"
+    case .existing(let threadID): threadID.rawValue
     }
   }
 

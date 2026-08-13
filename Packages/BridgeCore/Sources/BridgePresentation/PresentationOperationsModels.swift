@@ -154,6 +154,7 @@ public struct TaskConfirmationPresentation: Identifiable, Equatable, Sendable {
   public let riskMessages: [String]
   public let availableModels: [String]
   public let availableEfforts: [String]
+  public let canRunReadOnly: Bool
 
   public init(
     id: String,
@@ -169,7 +170,8 @@ public struct TaskConfirmationPresentation: Identifiable, Equatable, Sendable {
     estimatedReadScope: [String],
     riskMessages: [String],
     availableModels: [String],
-    availableEfforts: [String]
+    availableEfforts: [String],
+    canRunReadOnly: Bool = true
   ) {
     self.id = id
     self.goal = goal
@@ -185,6 +187,7 @@ public struct TaskConfirmationPresentation: Identifiable, Equatable, Sendable {
     self.riskMessages = riskMessages
     self.availableModels = availableModels
     self.availableEfforts = availableEfforts
+    self.canRunReadOnly = canRunReadOnly
   }
 }
 

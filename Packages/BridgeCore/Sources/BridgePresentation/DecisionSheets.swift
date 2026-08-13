@@ -21,7 +21,10 @@ struct TaskConfirmationSheet: View {
           .frame(maxWidth: BridgeTheme.readableTextWidth, alignment: .leading)
         }
         Divider()
-        taskDecisionBar(canStart: canStart(confirmation))
+        taskDecisionBar(
+          canStart: canStart(confirmation),
+          canRunReadOnly: confirmation.canRunReadOnly
+        )
       }
       .padding(BridgeTheme.spacingPage)
       .frame(minWidth: 680, minHeight: 620)
@@ -100,7 +103,7 @@ struct TaskConfirmationSheet: View {
       && confirmation.availableEfforts.contains(confirmation.effort)
   }
 
-  private func taskDecisionBar(canStart: Bool) -> some View {
+  private func taskDecisionBar(canStart: Bool, canRunReadOnly: Bool) -> some View {
     HStack {
       if store.isPerformingSheetAction {
         ProgressView("正在记录决定")
@@ -114,7 +117,8 @@ struct TaskConfirmationSheet: View {
       Button("仅只读运行") {
         Task { await store.decideTask(.runReadOnly) }
       }
-      .disabled(store.isPerformingSheetAction)
+      .disabled(!canRunReadOnly || store.isPerformingSheetAction)
+      .help(canRunReadOnly ? "按只读权限启动" : "需要以新的只读任务契约重新提交")
       Button("开始") {
         Task { await store.decideTask(.start) }
       }

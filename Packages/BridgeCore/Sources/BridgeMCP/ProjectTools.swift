@@ -120,7 +120,10 @@ struct ProjectTools: Sendable {
       requestedStartLine: startLine,
       requestedLines: lineCount
     )
-    return ReadProjectFileOutput(page: page)
+    return ReadProjectFileOutput(
+      page: page,
+      relativePath: isSafeOutboundRelativePath(path) ? path : "[redacted-sensitive-path]"
+    )
   }
 
   func openInCodex(arguments: [String: Value]?) async throws -> OpenInCodexOutput {
@@ -178,7 +181,7 @@ struct ProjectTools: Sendable {
       throw MCPToolAdapterError.invalidQueryOutput
     }
     for match in page.matches {
-      guard isSafeRelativePath(match.relativePath), match.lineNumber > 0,
+      guard isSafeOutboundRelativePath(match.relativePath), match.lineNumber > 0,
         isSafeProjectText(match.preview), match.preview.utf8.count <= 1_024
       else {
         throw MCPToolAdapterError.invalidQueryOutput
@@ -225,16 +228,15 @@ struct ProjectTools: Sendable {
       throw MCPError.invalidParams("Project paths must be safe relative paths.")
     }
   }
+
 }
 
 private func isSafeRelativePath(_ path: String) -> Bool {
-  guard !path.isEmpty, path.utf8.count <= 1_024, !path.hasPrefix("/"), !path.hasPrefix("~"),
-    !path.contains("\\"),
-    path.rangeOfCharacter(from: .controlCharacters) == nil
-  else { return false }
-  return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy {
-    !$0.isEmpty && $0 != "." && $0 != ".."
-  }
+  OutboundContentSecurity.isSafeRelativePath(path)
+}
+
+private func isSafeOutboundRelativePath(_ path: String) -> Bool {
+  OutboundContentSecurity.isSafeOutboundRelativePath(path)
 }
 
 private func logicalLineCount(_ value: String) -> Int {
@@ -292,8 +294,8 @@ struct ReadProjectFileOutput: Codable, Sendable {
   let truncated: Bool
   let nextStartLine: Int?
 
-  init(page: MCPProjectFileReadPage) {
-    relativePath = page.relativePath
+  init(page: MCPProjectFileReadPage, relativePath: String) {
+    self.relativePath = relativePath
     startLine = page.startLine
     endLine = page.endLine
     content = page.content

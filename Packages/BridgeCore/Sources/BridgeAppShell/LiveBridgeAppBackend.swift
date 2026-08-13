@@ -1,6 +1,7 @@
 import BridgeAppModel
 import BridgeCoordinator
 import BridgeDomain
+import BridgePersistence
 import BridgePresentation
 import BridgeProjects
 import BridgeSecurity
@@ -13,6 +14,7 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
   case connectionNotConfigured
   case threadCatalogUnavailable
   case supportBundleUnavailable
+  case approvalEvidenceUnavailable
   case invalidIdentifier
   case operationFailed
 
@@ -21,13 +23,15 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
     case .notReady:
       "本机状态仍在启动，请稍后重试。"
     case .taskPipelineUnavailable:
-      "完整任务编排尚未接通；Bridge 不会启动不完整的任务。"
+      "此入口尚未提供完整任务契约；Bridge 不会启动信息不完整的任务。"
     case .connectionNotConfigured:
       "连接尚未配置，请先完成首次引导。"
     case .threadCatalogUnavailable:
       "Codex 线程读取尚未启用。"
     case .supportBundleUnavailable:
       "脱敏支持包导出尚未启用。"
+    case .approvalEvidenceUnavailable:
+      "审批缺少权威命令、文件与影响证据；当前只能拒绝。"
     case .invalidIdentifier:
       "请求标识无效。"
     case .operationFailed:
@@ -46,8 +50,10 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private var composition: DesktopComposition?
   private var bootstrapTask: Task<Void, Never>?
   private var connectionObserver: Task<Void, Never>?
+  private var taskObserver: Task<Void, Never>?
   private var currentSnapshot: BridgeAppStateSnapshot
   private var revision: UInt64 = 1
+  private var factsRequest: UInt64 = 0
   private var diagnostics: [LogEntryPresentation] = []
   private var isShuttingDown = false
   private var shutdownFinished = false
@@ -104,14 +110,36 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     throw DesktopBackendError.taskPipelineUnavailable
   }
 
-  func steer(_ request: BridgeAppSteerRequest) throws {
-    _ = request
-    throw DesktopBackendError.taskPipelineUnavailable
+  func steer(_ request: BridgeAppSteerRequest) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    let composition = try requireComposition()
+    _ = try await composition.application.steerTask(
+      taskID: request.taskID,
+      expectedTurnID: request.expectedTurnID,
+      input: request.input,
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    try checkRunning()
+    try await publishCurrentFacts()
   }
 
-  func interruptTask(_ taskID: String) throws {
+  func interruptTask(_ taskID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
     try Self.validateIdentifier(taskID)
-    throw DesktopBackendError.taskPipelineUnavailable
+    let composition = try requireComposition()
+    let task = try await composition.coordinator.task(TaskID(rawValue: taskID))
+    guard let turnID = task.aggregate.binding?.turnID.rawValue else {
+      throw DesktopBackendError.operationFailed
+    }
+    _ = try await composition.application.interruptTask(
+      taskID: taskID,
+      expectedTurnID: turnID,
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    try checkRunning()
+    try await publishCurrentFacts()
   }
 
   func authorizeTaskVerification(_ taskID: String) async throws {
@@ -130,14 +158,66 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     decision: PresentationTaskDecision,
     model: String,
     effort: String
-  ) throws {
-    _ = (requestID, decision, model, effort)
-    throw DesktopBackendError.taskPipelineUnavailable
+  ) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(requestID)
+    let composition = try requireComposition()
+    let taskID = TaskID(rawValue: requestID)
+    let task = try await composition.coordinator.task(taskID)
+    guard task.aggregate.phase == .awaitingLocalApproval,
+      task.aggregate.submission.execution.model == model,
+      task.aggregate.submission.execution.effort == effort
+    else {
+      throw DesktopBackendError.operationFailed
+    }
+    switch decision {
+    case .start:
+      _ = try await composition.coordinator.resolveLocalApproval(
+        taskID: taskID,
+        approved: true
+      )
+    case .reject:
+      _ = try await composition.coordinator.resolveLocalApproval(
+        taskID: taskID,
+        approved: false
+      )
+    case .runReadOnly:
+      throw DesktopBackendError.operationFailed
+    }
+    try checkRunning()
+    appendDiagnostic("已持久化本机任务决定。", status: .ready)
+    try await publishCurrentFacts()
   }
 
-  func resolveCodexApproval(_ resolution: BridgeApprovalResolution) throws {
-    _ = resolution
-    throw DesktopBackendError.taskPipelineUnavailable
+  func resolveCodexApproval(_ resolution: BridgeApprovalResolution) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(resolution.approvalID)
+    guard resolution.decision == .deny, resolution.capability == nil else {
+      throw DesktopBackendError.approvalEvidenceUnavailable
+    }
+    let composition = try requireComposition()
+    guard let rawTaskID = resolution.taskID, let rawThreadID = resolution.threadID,
+      let rawTurnID = resolution.turnID
+    else { throw DesktopBackendError.operationFailed }
+    try Self.validateIdentifier(rawTaskID)
+    try Self.validateIdentifier(rawThreadID)
+    try Self.validateIdentifier(rawTurnID)
+    let taskID = TaskID(rawValue: rawTaskID)
+    let task = try await composition.coordinator.task(taskID)
+    guard task.aggregate.binding?.threadID.rawValue == rawThreadID,
+      task.aggregate.binding?.turnID.rawValue == rawTurnID,
+      task.aggregate.pendingApprovalIDs.contains(ApprovalID(rawValue: resolution.approvalID))
+    else { throw DesktopBackendError.operationFailed }
+    _ = try await composition.coordinator.resolveCodexApproval(
+      taskID: taskID,
+      approvalID: ApprovalID(rawValue: resolution.approvalID),
+      approved: false
+    )
+    try checkRunning()
+    appendDiagnostic("已拒绝一项缺少权威证据的 Codex 审批。", status: .blocked)
+    try await publishCurrentFacts()
   }
 
   func connect() throws {
@@ -276,6 +356,9 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     connectionObserver?.cancel()
     await connectionObserver?.value
     connectionObserver = nil
+    taskObserver?.cancel()
+    await taskObserver?.value
+    taskObserver = nil
     let composition = composition
     self.composition = nil
     await composition?.shutdown()
@@ -375,6 +458,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     guard !isShuttingDown else { return false }
     self.composition = composition
     installConnectionObserver(composition.connectionRuntime)
+    await installTaskObserver(composition.eventStore)
     resumeCompositionWaiters()
     appendDiagnostic("本机持久化状态已就绪。", status: .ready)
     do {
@@ -413,8 +497,21 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
   }
 
+  private func installTaskObserver(_ eventStore: EventStore) async {
+    taskObserver?.cancel()
+    let updates = await eventStore.taskChanges()
+    taskObserver = Task { [weak self, updates] in
+      for await _ in updates {
+        guard !Task.isCancelled else { return }
+        try? await self?.publishCurrentFacts()
+      }
+    }
+  }
+
   private func publishCurrentFacts() async throws {
     try checkRunning()
+    factsRequest &+= 1
+    let request = factsRequest
     let composition = try requireComposition()
     let connection = await composition.connectionRuntime.health()
     try checkRunning()
@@ -438,26 +535,34 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     tasks.sort { lhs, rhs in
       (lhs.1.last?.createdAt ?? .distantPast) > (rhs.1.last?.createdAt ?? .distantPast)
     }
+    guard request == factsRequest else { return }
+    let orderedProjects = projects.sorted { $0.createdAt < $1.createdAt }
     publish(
       connectionState: Self.connectionState(connection),
       presentation: DesktopPresentationProjection.snapshot(
-        projects: projects.sorted { $0.createdAt < $1.createdAt },
+        projects: orderedProjects,
         tasks: tasks,
         diagnostics: diagnostics,
         connection: connection
+      ),
+      pendingSheet: DesktopPresentationProjection.pendingSheet(
+        projects: orderedProjects,
+        tasks: tasks
       )
     )
   }
 
   private func publish(
     connectionState: BridgeAppConnectionState,
-    presentation: BridgePresentationSnapshot
+    presentation: BridgePresentationSnapshot,
+    pendingSheet: PresentedBridgeSheet? = nil
   ) {
     revision &+= 1
     currentSnapshot = BridgeAppStateSnapshot(
       revision: revision,
       connectionState: connectionState,
-      presentation: presentation
+      presentation: presentation,
+      pendingSheet: pendingSheet
     )
     for continuation in continuations.values {
       continuation.yield(currentSnapshot)

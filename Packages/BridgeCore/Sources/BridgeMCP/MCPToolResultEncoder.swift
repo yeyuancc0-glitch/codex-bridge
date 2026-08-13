@@ -34,6 +34,10 @@ public struct MCPToolResultEncoder: Sendable {
     return result
   }
 
+  public func encodeTaskDiffPage(_ page: MCPTaskDiffPage) throws -> CallTool.Result {
+    try encode(GetTaskDiffOutput(page: page))
+  }
+
   private static func makeJSONEncoder() -> JSONEncoder {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

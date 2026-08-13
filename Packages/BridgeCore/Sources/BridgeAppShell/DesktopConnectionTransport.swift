@@ -62,6 +62,13 @@ protocol DesktopMCPServing: Sendable {
   func start(authentication: DesktopMCPAuthentication) async throws -> URL
   func testConnection() async throws
   func stop() async
+  func setRemoteTaskAdmissionCheck(
+    _ check: (@Sendable () async -> Bool)?
+  ) async
+}
+
+extension DesktopMCPServing {
+  func setRemoteTaskAdmissionCheck(_: (@Sendable () async -> Bool)?) async {}
 }
 
 protocol DesktopRemoteMCPTesting: Sendable {
@@ -97,6 +104,7 @@ actor DesktopConnectionRuntime {
   private var healthContinuations: [UUID: AsyncStream<DesktopTransportHealth>.Continuation] = [:]
   private var monitorTask: Task<Void, Never>?
   private var lastHealth = DesktopTransportHealth.stopped
+  private var activeGeneration: UInt64 = 0
 
   init(
     mcp: any DesktopMCPServing,
@@ -197,7 +205,16 @@ actor DesktopConnectionRuntime {
     return health
   }
 
+  func acceptsRemoteSubmissionsNow() async -> Bool {
+    let generation = activeGeneration
+    guard let active else { return false }
+    let accepts = await active.health().acceptsRemoteSubmissions
+    guard generation == activeGeneration, self.active != nil else { return false }
+    return accepts
+  }
+
   func stop() async {
+    activeGeneration &+= 1
     monitorTask?.cancel()
     monitorTask = nil
     let active = active
@@ -207,6 +224,8 @@ actor DesktopConnectionRuntime {
   }
 
   private func replace(with transport: any ChatGPTBridgeTransport) async throws -> URL {
+    activeGeneration &+= 1
+    let generation = activeGeneration
     let previous = active
     active = nil
     monitorTask?.cancel()
@@ -216,6 +235,10 @@ actor DesktopConnectionRuntime {
       try await transport.start()
       let health = await transport.health()
       guard let localMCPURL = health.localMCPURL else {
+        await transport.stop()
+        throw DesktopTransportError.connectionFailed
+      }
+      guard generation == activeGeneration else {
         await transport.stop()
         throw DesktopTransportError.connectionFailed
       }
@@ -264,7 +287,7 @@ actor DesktopConnectionRuntime {
 
   private func publishStatus(_ health: DesktopTransportHealth) async {
     guard let status else { return }
-    var degradations = ["Remote task submission tools are not enabled."]
+    var degradations: [String] = []
     if !health.acceptsRemoteSubmissions {
       degradations.append("Remote ChatGPT connectivity is not available.")
     }

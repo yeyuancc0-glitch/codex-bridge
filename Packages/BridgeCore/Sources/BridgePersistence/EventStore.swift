@@ -10,6 +10,7 @@ public actor EventStore {
   }
 
   private let database: DatabaseQueue
+  private var changeContinuations: [UUID: AsyncStream<TaskID>.Continuation] = [:]
 
   public init(path: String) throws {
     guard !path.isEmpty else {
@@ -25,6 +26,19 @@ public actor EventStore {
 
   public static func inMemory() throws -> EventStore {
     try EventStore(path: ":memory:")
+  }
+
+  public func taskChanges() -> AsyncStream<TaskID> {
+    let identifier = UUID()
+    let pair = AsyncStream.makeStream(
+      of: TaskID.self,
+      bufferingPolicy: .bufferingNewest(1)
+    )
+    changeContinuations[identifier] = pair.continuation
+    pair.continuation.onTermination = { @Sendable [weak self] _ in
+      Task { await self?.removeChangeContinuation(identifier) }
+    }
+    return pair.stream
   }
 
   public func append(
@@ -169,6 +183,7 @@ public actor EventStore {
         )
       }
     }
+    publishChange(first.taskID)
   }
 
   private static func insert(_ event: TaskEventEnvelope, in db: Database) throws {
@@ -465,7 +480,7 @@ public actor EventStore {
       try Self.validate(snapshot: initialSnapshot, event: lastEvent)
     }
 
-    return try database.write { db in
+    let claimedTaskID = try database.write { db in
       if let existing = try Self.existingClaim(
         origin: origin,
         key: key,
@@ -499,6 +514,8 @@ public actor EventStore {
       }
       return taskID
     }
+    publishChange(claimedTaskID)
+    return claimedTaskID
   }
 
   public func submissionClaim(
@@ -599,6 +616,16 @@ public actor EventStore {
         arguments: [ownerTaskID.rawValue]
       )
     }
+  }
+
+  private func publishChange(_ taskID: TaskID) {
+    for continuation in changeContinuations.values {
+      continuation.yield(taskID)
+    }
+  }
+
+  private func removeChangeContinuation(_ identifier: UUID) {
+    changeContinuations[identifier] = nil
   }
 
   private static func ensureTask(

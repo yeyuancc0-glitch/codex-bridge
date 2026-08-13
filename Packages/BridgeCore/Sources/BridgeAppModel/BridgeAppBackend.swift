@@ -124,15 +124,24 @@ public struct BridgeAppSteerRequest: Equatable, Sendable {
 
 public struct BridgeApprovalResolution: Equatable, Sendable {
   public let approvalID: String
+  public let taskID: String?
+  public let threadID: String?
+  public let turnID: String?
   public let decision: PresentationApprovalDecision
   public let capability: BridgeApprovalCapability?
 
   public init(
     approvalID: String,
+    taskID: String? = nil,
+    threadID: String? = nil,
+    turnID: String? = nil,
     decision: PresentationApprovalDecision,
     capability: BridgeApprovalCapability?
   ) {
     self.approvalID = approvalID
+    self.taskID = taskID
+    self.threadID = threadID
+    self.turnID = turnID
     self.decision = decision
     self.capability = capability
   }

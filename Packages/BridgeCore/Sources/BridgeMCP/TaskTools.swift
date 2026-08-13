@@ -238,7 +238,7 @@ struct TaskTools: Sendable {
     }
     for file in page.files {
       guard
-        isSafeRelativePath(file.relativePath),
+        isSafeOutboundRelativePath(file.relativePath),
         !file.status.isEmpty,
         file.additions.map({ $0 >= 0 }) ?? true,
         file.deletions.map({ $0 >= 0 }) ?? true
@@ -262,7 +262,7 @@ struct TaskTools: Sendable {
     guard
       report.taskID == requestedTaskID,
       text.allSatisfy(isSafeTaskText),
-      report.changedFiles.allSatisfy(isSafeRelativePath)
+      report.changedFiles.allSatisfy(isSafeOutboundRelativePath)
     else {
       throw MCPToolAdapterError.invalidQueryOutput
     }
@@ -422,16 +422,11 @@ private struct TaskSubmissionParser {
 }
 
 private func isSafeRelativePath(_ path: String) -> Bool {
-  guard
-    !path.isEmpty,
-    path.utf8.count <= 1_024,
-    !path.hasPrefix("/"),
-    !path.hasPrefix("~"),
-    !path.contains("\\"),
-    path.rangeOfCharacter(from: .controlCharacters) == nil
-  else { return false }
-  let components = path.split(separator: "/", omittingEmptySubsequences: false)
-  return components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+  OutboundContentSecurity.isSafeRelativePath(path)
+}
+
+private func isSafeOutboundRelativePath(_ path: String) -> Bool {
+  OutboundContentSecurity.isSafeOutboundRelativePath(path)
 }
 
 private func isSafeTaskText(_ value: String) -> Bool {

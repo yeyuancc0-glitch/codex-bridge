@@ -181,6 +181,9 @@ final class BridgeApplicationServiceTests: XCTestCase {
     ).write(
       to: sourceDirectory.appendingPathComponent("App.swift")
     )
+    try Data("needle\n".utf8).write(
+      to: sourceDirectory.appendingPathComponent("password=actual-secret-value.swift")
+    )
     let service = fixture.service()
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
 
@@ -200,9 +203,16 @@ final class BridgeApplicationServiceTests: XCTestCase {
       limit: 25,
       deadline: deadline
     )
-    XCTAssertEqual(search.matches.map(\.relativePath), ["Sources/App.swift"])
-    XCTAssertFalse(search.matches[0].preview.contains("/Users/"))
-    XCTAssertFalse(search.matches[0].preview.contains("/Volumes/"))
+    XCTAssertEqual(search.matches.count, 2)
+    XCTAssertTrue(search.matches.map(\.relativePath).contains("Sources/App.swift"))
+    let redactedPathMatch = try XCTUnwrap(
+      search.matches.first { $0.relativePath.hasPrefix("[redacted-sensitive-path-") }
+    )
+    XCTAssertTrue(redactedPathMatch.redacted)
+    XCTAssertFalse(try encoded(search).contains("actual-secret-value"))
+    let appMatch = try XCTUnwrap(search.matches.first { $0.relativePath == "Sources/App.swift" })
+    XCTAssertFalse(appMatch.preview.contains("/Users/"))
+    XCTAssertFalse(appMatch.preview.contains("/Volumes/"))
 
     let read = try await service.readProjectFile(
       projectID: project.id.rawValue,

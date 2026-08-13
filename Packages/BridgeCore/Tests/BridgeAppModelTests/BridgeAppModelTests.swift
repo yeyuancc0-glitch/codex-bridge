@@ -168,6 +168,9 @@ final class BridgeAppModelTests: XCTestCase {
       [
         BridgeApprovalResolution(
           approvalID: authorization.approvalID,
+          taskID: authorization.taskID,
+          threadID: authorization.threadID,
+          turnID: authorization.turnID,
           decision: .allowOnce,
           capability: authorization
         )
@@ -190,7 +193,16 @@ final class BridgeAppModelTests: XCTestCase {
     let resolutions = await backend.resolutions()
     XCTAssertEqual(
       resolutions,
-      [BridgeApprovalResolution(approvalID: "approval-1", decision: .deny, capability: nil)]
+      [
+        BridgeApprovalResolution(
+          approvalID: "approval-1",
+          taskID: "task-1",
+          threadID: "thread-1",
+          turnID: "turn-1",
+          decision: .deny,
+          capability: nil
+        )
+      ]
     )
     await model.stop()
   }

@@ -77,7 +77,21 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
         effort: effort
       )
     case .decideApproval(let approvalID, let decision):
-      try await resolveApproval(approvalID: approvalID, decision: decision)
+      try await resolveApproval(
+        approvalID: approvalID,
+        taskID: nil,
+        threadID: nil,
+        turnID: nil,
+        decision: decision
+      )
+    case .decideBoundApproval(let approvalID, let taskID, let threadID, let turnID, let decision):
+      try await resolveApproval(
+        approvalID: approvalID,
+        taskID: taskID,
+        threadID: threadID,
+        turnID: turnID,
+        decision: decision
+      )
     }
   }
 
@@ -99,17 +113,26 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
 
   private func resolveApproval(
     approvalID: String,
+    taskID: String?,
+    threadID: String?,
+    turnID: String?,
     decision: PresentationApprovalDecision
   ) async throws {
     let capability = approvalCapabilities[approvalID]
     if decision == .allowOnce {
-      guard let capability, capability.isComplete, capability.allowOnceEligible else {
+      guard let capability, capability.isComplete, capability.allowOnceEligible,
+        capability.taskID == taskID, capability.threadID == threadID,
+        capability.turnID == turnID
+      else {
         throw BridgeAppModelError.approvalNotAuthorized
       }
     }
     try await backend.resolveCodexApproval(
       BridgeApprovalResolution(
         approvalID: approvalID,
+        taskID: taskID,
+        threadID: threadID,
+        turnID: turnID,
         decision: decision,
         capability: decision == .allowOnce ? capability : nil
       )

@@ -347,7 +347,10 @@ let package = Package(
                 "BridgeAppShell",
                 "BridgeAppModel",
                 "BridgeCodexRPC",
+                "BridgeCoordinator",
                 "BridgeDomain",
+                "BridgeGit",
+                "BridgeMCP",
                 "BridgePipeline",
                 "BridgePresentation",
                 "BridgeProjects",
@@ -355,6 +358,7 @@ let package = Package(
                 "BridgeSecurity",
                 "BridgeTunnel",
                 "BridgeVerification",
+                .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
         .testTarget(

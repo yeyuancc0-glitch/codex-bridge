@@ -160,6 +160,13 @@ public enum PresentationAction: Equatable, Sendable {
     effort: String
   )
   case decideApproval(approvalID: String, decision: PresentationApprovalDecision)
+  case decideBoundApproval(
+    approvalID: String,
+    taskID: String?,
+    threadID: String,
+    turnID: String,
+    decision: PresentationApprovalDecision
+  )
 }
 
 public protocol BridgePresentationActionHandling: Sendable {

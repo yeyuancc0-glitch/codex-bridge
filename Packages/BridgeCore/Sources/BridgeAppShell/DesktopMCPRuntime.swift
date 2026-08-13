@@ -21,6 +21,7 @@ enum DesktopMCPRuntimeError: LocalizedError, Equatable, Sendable {
 
 actor DesktopMCPRuntime {
   private let application: BridgeApplicationService
+  private let taskOperations: DesktopMCPTaskOperations
   private let status: BridgeStatusStore
   private var server: MCPBridgeServer?
   private var endpoint: MCPBridgeEndpoint?
@@ -28,6 +29,7 @@ actor DesktopMCPRuntime {
 
   init(application: BridgeApplicationService, status: BridgeStatusStore) {
     self.application = application
+    taskOperations = DesktopMCPTaskOperations(application: application)
     self.status = status
   }
 
@@ -37,13 +39,16 @@ actor DesktopMCPRuntime {
     let configuration: MCPHTTPConfiguration
     switch requested {
     case .path(let secret):
+      await taskOperations.configure(requiresHealthyRemote: false)
       configuration = try MCPHTTPConfiguration(pathSecret: secret)
     case .header(let secret):
+      await taskOperations.configure(requiresHealthyRemote: true)
       configuration = try MCPHTTPConfiguration(headerSecret: secret)
     }
     let server = MCPBridgeServer(
       appVersion: "0.1.0",
       queries: application,
+      taskOperations: taskOperations,
       projectOperations: application,
       httpConfiguration: configuration
     )
@@ -101,7 +106,10 @@ actor DesktopMCPRuntime {
         throw DesktopMCPRuntimeError.invalidToolCatalog
       }
       let tools = try await client.listTools()
-      let expected = MCPToolCatalog(includeProjectTools: true).definitions.map(\.name)
+      let expected = MCPToolCatalog(
+        includeTaskTools: true,
+        includeProjectTools: true
+      ).definitions.map(\.name)
       guard tools.tools.map(\.name) == expected else {
         throw DesktopMCPRuntimeError.invalidToolCatalog
       }
@@ -121,6 +129,12 @@ actor DesktopMCPRuntime {
     await status.update(Self.statusSnapshot(mcpState: "stopped"))
   }
 
+  func setRemoteTaskAdmissionCheck(
+    _ check: (@Sendable () async -> Bool)?
+  ) async {
+    await taskOperations.setRemoteAdmissionCheck(check)
+  }
+
   private static func statusSnapshot(mcpState: String) -> BridgeStatusSnapshot {
     BridgeStatusSnapshot(
       appVersion: "0.1.0",
@@ -128,7 +142,7 @@ actor DesktopMCPRuntime {
       tunnelState: "stopped",
       executionState: "idle",
       supervisorState: "idle",
-      degradations: ["Remote task submission tools are not enabled."],
+      degradations: [],
       pendingApprovalCount: 0
     )
   }
