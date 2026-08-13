@@ -77,6 +77,8 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.submitReadOnlyTask(draft)
     case .interruptTask(let taskID):
       try await backend.interruptTask(taskID)
+    case .suspendAmbiguousTask(let taskID):
+      try await backend.suspendAmbiguousTask(taskID)
     case .authorizeTaskVerification(let taskID):
       try await backend.authorizeTaskVerification(taskID)
     case .testConnection:

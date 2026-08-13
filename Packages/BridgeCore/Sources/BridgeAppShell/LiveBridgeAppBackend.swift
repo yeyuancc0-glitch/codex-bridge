@@ -165,6 +165,19 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try await publishCurrentFacts()
   }
 
+  func suspendAmbiguousTask(_ taskID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(taskID)
+    let composition = try requireComposition()
+    _ = try await composition.coordinator.suspendAmbiguousRecovery(
+      taskID: TaskID(rawValue: taskID)
+    )
+    try checkRunning()
+    appendDiagnostic("已将恢复状态不确定的任务标记为暂停并释放锁。", status: .paused)
+    try await publishCurrentFacts()
+  }
+
   func authorizeTaskVerification(_ taskID: String) async throws {
     try beginOperation()
     defer { endOperation() }

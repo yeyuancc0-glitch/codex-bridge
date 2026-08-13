@@ -746,14 +746,18 @@ final class TaskCoordinatorTests: XCTestCase {
     let recoveredLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
     XCTAssertEqual(recoveredLocks.count, 2)
 
-    _ = try await restarted.beginRecoveryReconciliation(taskID: submitted.aggregate.id)
-    let suspended = try await restarted.resolveRecovery(
-      taskID: submitted.aggregate.id,
-      to: .suspended
+    let suspended = try await restarted.suspendAmbiguousRecovery(
+      taskID: submitted.aggregate.id
     )
     XCTAssertEqual(suspended.aggregate.phase, .suspended)
     let suspendedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
     XCTAssertEqual(suspendedLocks, [])
+
+    let replayed = try await restarted.suspendAmbiguousRecovery(
+      taskID: submitted.aggregate.id
+    )
+    XCTAssertEqual(replayed.lastSequence, suspended.lastSequence)
+    XCTAssertEqual(replayed.aggregate.phase, .suspended)
   }
 
   func testRecoveryMovesExactCompletedTurnToVerifyingWithoutStartingAnotherTurn() async throws {

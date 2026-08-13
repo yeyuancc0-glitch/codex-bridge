@@ -411,8 +411,15 @@ struct DesktopPresentationProjection {
       canAuthorizeVerification: canAuthorizeVerification(aggregate),
       diagnosticSummary: aggregate.failureReason,
       canOpenInCodex: aggregate.binding != nil,
-      canInterrupt: aggregate.phase == .running || aggregate.phase == .awaitingCodexApproval
+      canInterrupt: aggregate.phase == .running || aggregate.phase == .awaitingCodexApproval,
+      recoveryMessage: recoveryMessage(aggregate.phase),
+      canSuspendAmbiguousRecovery: aggregate.phase == .unknown
     )
+  }
+
+  private static func recoveryMessage(_ phase: TaskPhase) -> String? {
+    guard phase == .unknown else { return nil }
+    return "Bridge 无法证明原 Turn 仍可安全接管。你可以将任务标记为暂停并释放 Thread 与工作区锁；此操作不会启动新的 Turn。"
   }
 
   private static func canAuthorizeVerification(_ aggregate: TaskAggregate) -> Bool {

@@ -279,6 +279,7 @@ private struct TaskDetailView: View {
   let task: TaskDetailPresentation
   @ObservedObject var store: BridgePresentationStore
   @State private var presentsVerificationAuthorization = false
+  @State private var presentsRecoverySuspension = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
@@ -303,6 +304,18 @@ private struct TaskDetailView: View {
       Button("取消", role: .cancel) {}
     } message: {
       Text("授权只绑定当前任务、Turn、项目目录和已登记命令，五分钟后失效；不会授权未来任务。")
+    }
+    .confirmationDialog(
+      "将任务标记为暂停？",
+      isPresented: $presentsRecoverySuspension,
+      titleVisibility: .visible
+    ) {
+      Button("标记为暂停") {
+        Task { await store.perform(.suspendAmbiguousTask(task.id)) }
+      }
+      Button("取消", role: .cancel) {}
+    } message: {
+      Text("这会释放当前 Thread 与工作区锁，但不会恢复旧进程、启动新 Turn 或修改项目文件。")
     }
     .task(id: "\(task.id):\(task.status.rawValue)") {
       _ = await store.perform(.loadTaskEvidence(task.id))
@@ -343,6 +356,19 @@ private struct TaskDetailView: View {
       .font(.caption)
       .foregroundStyle(.secondary)
       .accessibilityElement(children: .combine)
+      if let recoveryMessage = task.recoveryMessage {
+        HStack(alignment: .firstTextBaseline, spacing: BridgeTheme.spacingRegular) {
+          Label(recoveryMessage, systemImage: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+          Spacer(minLength: BridgeTheme.spacingSection)
+          Button("标记为暂停", systemImage: "pause.circle") {
+            presentsRecoverySuspension = true
+          }
+          .disabled(!task.canSuspendAmbiguousRecovery)
+          .help("释放任务占用的 Thread 与工作区锁，不启动新 Turn")
+        }
+        .font(.callout)
+      }
     }
   }
 

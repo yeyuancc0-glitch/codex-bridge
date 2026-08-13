@@ -251,11 +251,13 @@ final class BridgeAppModelTests: XCTestCase {
     let receipt = try await model.submit(submission)
     try await model.steer(steer)
     let interrupted = await model.presentationStore.perform(.interruptTask("task-1"))
+    let suspended = await model.presentationStore.perform(.suspendAmbiguousTask("task-1"))
     let authorized = await model.presentationStore.perform(.authorizeTaskVerification("task-1"))
     let openedTask = await model.presentationStore.perform(.openTaskInCodex("task-1"))
     let loadedEvidence = await model.presentationStore.perform(.loadTaskEvidence("task-1"))
     let openedThread = await model.presentationStore.perform(.openThreadInCodex("thread-1"))
     XCTAssertTrue(interrupted)
+    XCTAssertTrue(suspended)
     XCTAssertTrue(authorized)
     XCTAssertTrue(openedTask)
     XCTAssertTrue(loadedEvidence)
@@ -267,6 +269,7 @@ final class BridgeAppModelTests: XCTestCase {
       events,
       [
         .submit(submission), .steer(steer), .interrupt("task-1"),
+        .suspendAmbiguous("task-1"),
         .authorizeVerification("task-1"), .openTask("task-1"),
         .loadTaskEvidence("task-1"), .openThread("thread-1"),
       ]

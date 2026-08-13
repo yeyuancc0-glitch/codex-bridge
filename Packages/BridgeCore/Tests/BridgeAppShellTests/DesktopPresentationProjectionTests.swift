@@ -110,6 +110,41 @@ final class DesktopPresentationProjectionTests: XCTestCase {
     XCTAssertTrue(detail.commandArguments.isEmpty)
   }
 
+  func testUnknownTaskOffersOnlyExplicitSuspensionRecovery() throws {
+    var aggregate = TaskAggregate(
+      id: TaskID(rawValue: "task-recovery"),
+      submission: submission()
+    )
+    aggregate = try TaskReducer.reduce(aggregate, event: .preparationStarted)
+    aggregate = try TaskReducer.reduce(
+      aggregate,
+      event: .turnStarted(
+        ExecutionBinding(
+          threadID: ThreadID(rawValue: "thread-recovery"),
+          turnID: TurnID(rawValue: "turn-recovery"),
+          turnGeneration: 1
+        )
+      )
+    )
+    aggregate = try TaskReducer.reduce(aggregate, event: .recoveryStarted)
+    aggregate = try TaskReducer.reduce(aggregate, event: .recoveryAmbiguous)
+    let projection = TaskProjection(aggregate: aggregate, lastSequence: 4)
+
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [(projection, [])],
+      diagnostics: []
+    )
+
+    guard case .ready(let page) = snapshot.tasks, let detail = page.details.first else {
+      return XCTFail("Expected unknown task detail")
+    }
+    XCTAssertEqual(detail.status, .degraded)
+    XCTAssertNotNil(detail.recoveryMessage)
+    XCTAssertTrue(detail.canSuspendAmbiguousRecovery)
+    XCTAssertFalse(detail.canInterrupt)
+  }
+
   private func submission() -> TaskSubmission {
     TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: "projection-approval"),

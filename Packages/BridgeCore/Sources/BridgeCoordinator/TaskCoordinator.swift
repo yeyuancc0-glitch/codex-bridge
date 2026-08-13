@@ -636,6 +636,34 @@ public actor TaskCoordinator {
     return projection
   }
 
+  public func suspendAmbiguousRecovery(taskID: TaskID) async throws -> TaskProjection {
+    let current = try await task(taskID)
+    if current.aggregate.phase == .suspended {
+      try await releaseOwnedLocks(taskID)
+      try await pipeline?.discardTaskState(taskID: taskID)
+      return current
+    }
+    guard current.aggregate.phase == .unknown else {
+      throw TaskCoordinatorError.recoveryRequiresReconciliation(current.aggregate.phase)
+    }
+    do {
+      let projection = try await commitRecoveryEvents(
+        [.recoveryStarted, .recoveryResolved(to: .suspended)],
+        current: current,
+        releasesOwnedLocks: true
+      )
+      try await pipeline?.discardTaskState(taskID: taskID)
+      return projection
+    } catch {
+      if let latest = try? await task(taskID), latest.aggregate.phase == .suspended {
+        try await releaseOwnedLocks(taskID)
+        try await pipeline?.discardTaskState(taskID: taskID)
+        return latest
+      }
+      throw error
+    }
+  }
+
   public func failPipelineRecovery(
     taskID: TaskID,
     expectedBinding: ExecutionBinding,

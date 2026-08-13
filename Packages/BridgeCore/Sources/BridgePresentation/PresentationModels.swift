@@ -157,6 +157,7 @@ public enum PresentationAction: Equatable, Sendable {
   case dismissReadOnlyTask
   case submitReadOnlyTask(ReadOnlyTaskDraftPresentation)
   case interruptTask(String)
+  case suspendAmbiguousTask(String)
   case authorizeTaskVerification(String)
   case testConnection
   case setReceivingPaused(Bool)

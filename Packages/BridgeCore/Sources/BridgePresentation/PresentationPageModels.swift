@@ -151,6 +151,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
   public let diagnosticSummary: String?
   public let canOpenInCodex: Bool
   public let canInterrupt: Bool
+  public let recoveryMessage: String?
+  public let canSuspendAmbiguousRecovery: Bool
 
   public init(
     id: String,
@@ -177,7 +179,9 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     canAuthorizeVerification: Bool = false,
     diagnosticSummary: String? = nil,
     canOpenInCodex: Bool = true,
-    canInterrupt: Bool = true
+    canInterrupt: Bool = true,
+    recoveryMessage: String? = nil,
+    canSuspendAmbiguousRecovery: Bool = false
   ) {
     self.id = id
     self.title = title
@@ -204,6 +208,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     self.diagnosticSummary = diagnosticSummary
     self.canOpenInCodex = canOpenInCodex
     self.canInterrupt = canInterrupt
+    self.recoveryMessage = recoveryMessage
+    self.canSuspendAmbiguousRecovery = canSuspendAmbiguousRecovery
   }
 }
 

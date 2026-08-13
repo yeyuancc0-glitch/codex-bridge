@@ -153,6 +153,7 @@ public protocol BridgeAppBackend: Sendable {
   func submit(_ submission: BridgeAppTaskSubmission) async throws -> BridgeAppTaskReceipt
   func steer(_ request: BridgeAppSteerRequest) async throws
   func interruptTask(_ taskID: String) async throws
+  func suspendAmbiguousTask(_ taskID: String) async throws
   func authorizeTaskVerification(_ taskID: String) async throws
   func resolveLocalTask(
     requestID: String,
@@ -192,9 +193,15 @@ public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
   case threadCatalogOperationUnsupported
   case localTaskComposerUnsupported
   case taskEvidenceUnsupported
+  case recoveryResolutionUnsupported
 }
 
 extension BridgeAppBackend {
+  public func suspendAmbiguousTask(_ taskID: String) async throws {
+    _ = taskID
+    throw BridgeAppBackendCompatibilityError.recoveryResolutionUnsupported
+  }
+
   public func loadTaskEvidence(_ taskID: String) async throws {
     _ = taskID
     throw BridgeAppBackendCompatibilityError.taskEvidenceUnsupported

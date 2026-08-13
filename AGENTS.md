@@ -65,7 +65,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 生产验证命令授权使用持久化一次性 capability，绑定 task/project/command/root device+inode/generation/expiry 并在启动进程前原子消费；旧 `.localUserApproved` 仅为直接本机兼容 API，不得接入任务流水线。
 - Codex 审批响应使用持久化 barrier：同一事务先把 ticket 从 pending CAS 预留为 resolving 并记录意图，再发送精确关联响应；终态通知暂存到 Approved/Denied 事实写入完成后才归约。未决 ticket 禁止进入 verifying；运行期协议或持久化失败必须先按精确 generation 终止并等待会话退出，确认停止后才可失败任务并释放锁。
 - 生产任务流水线在持久化 turn 启动意图后、真正启动 app-server turn 前保存 Git baseline；最终化必须绑定精确 task/thread/turn/generation/event sequence。应用重启时按 Finalizer → Pipeline preflight → 通用任务恢复的顺序处理，避免把可继续完成的 verifying 任务降为 unknown。
-- 启动与唤醒恢复只允许用只读 `thread/read(includeTurns: true)` 对账：精确绑定的 completed/interrupted/failed 可归约，仍由当前 Runtime 持有的 session 可继续观察；仅看到 inProgress 但无法重接事件流时必须进入 unknown 并保留锁，严禁用 `thread/resume` 或新 `turn/start` 伪造恢复。
+- 启动与唤醒恢复只允许用只读 `thread/read(includeTurns: true)` 对账：精确绑定的 completed/interrupted/failed 可归约，仍由当前 Runtime 持有的 session 可继续观察；仅看到 inProgress 但无法重接事件流时必须进入 unknown 并保留锁，严禁用 `thread/resume` 或新 `turn/start` 伪造恢复。unknown 只能由本机用户明确标记为 suspended，且恢复事实与两把锁释放必须在同一事务提交；该动作不恢复旧进程、不启动新 Turn。
 - 生产验证命令只能消费绑定 task/project/root/command/generation 的一次性本机授权句柄；缺少句柄时只记录明确的 unavailable 证据，禁止调用兼容用的直接批准接口或伪造 passed。
 - 原生本机任务使用独立 `macos.app` origin，只允许 read-only、无网络、动态目录中精确存在的 execution model/effort，以及精确 `gpt-5.6-luna` Supervisor；existing Thread 在 claim 前必须重新核对项目 cwd。Thread/history/model 目录只作不持久化的有界投影，所有 catalog 操作共享单飞门并受整体 deadline 约束。
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
