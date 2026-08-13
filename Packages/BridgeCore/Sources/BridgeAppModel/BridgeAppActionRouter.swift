@@ -43,6 +43,13 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.addProject()
     case .openProject(let projectID):
       try await backend.openProject(projectID)
+    case .updateProjectAccessPolicy(let projectID, let read, let write, let network):
+      try await backend.updateProjectAccessPolicy(
+        projectID: projectID,
+        read: read,
+        write: write,
+        network: network
+      )
     case .selectThreadProject(let projectID):
       try await backend.selectThreadProject(projectID)
     case .loadMoreThreads:

@@ -129,9 +129,8 @@ private struct ProjectDetail: View {
         MetadataRow(label: "分支", value: project.branchDisplayValue, monospaced: true)
         MetadataRow(label: "工作区", value: project.workingTreeDisplayValue)
         SectionHeading("权限")
-        permissionRow("读取", permission: project.readPermission)
-        permissionRow("写入", permission: project.writePermission)
-        permissionRow("网络", permission: project.networkPermission)
+        ProjectPolicyEditor(project: project, store: store)
+          .id(projectPolicyIdentity)
         SectionHeading("验证命令")
         if project.verificationCommands.isEmpty {
           Text("未配置验证命令")
@@ -152,21 +151,98 @@ private struct ProjectDetail: View {
     }
   }
 
-  private func permissionRow(
-    _ title: String,
-    permission: ProjectPermissionPresentation
-  ) -> some View {
-    let value: (text: String, icon: String, emphasized: Bool) =
-      switch permission {
-      case .allowed: ("允许", "checkmark.circle", true)
-      case .requiresLocalApproval: ("需要本机确认", "exclamationmark.circle", true)
-      case .denied: ("不允许", "minus.circle", false)
+  private var projectPolicyIdentity: String {
+    [
+      project.id,
+      project.readPermission.rawValue,
+      project.writePermission.rawValue,
+      project.networkPermission.rawValue,
+    ].joined(separator: ":")
+  }
+}
+
+private struct ProjectPolicyEditor: View {
+  let project: ProjectPresentation
+  @ObservedObject var store: BridgePresentationStore
+  @State private var readPermission: ProjectPermissionPresentation
+  @State private var writePermission: ProjectPermissionPresentation
+  @State private var networkPermission: ProjectPermissionPresentation
+
+  init(project: ProjectPresentation, store: BridgePresentationStore) {
+    self.project = project
+    self.store = store
+    _readPermission = State(initialValue: project.readPermission)
+    _writePermission = State(initialValue: project.writePermission)
+    _networkPermission = State(initialValue: project.networkPermission)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
+      ProjectPermissionPicker(
+        title: "读取",
+        selection: $readPermission,
+        options: [.allowed, .denied]
+      )
+      ProjectPermissionPicker(
+        title: "写入",
+        selection: $writePermission,
+        options: [.requiresLocalApproval, .allowed, .denied]
+      )
+      ProjectPermissionPicker(
+        title: "网络",
+        selection: $networkPermission,
+        options: [.denied, .requiresLocalApproval, .allowed]
+      )
+      HStack {
+        Text(project.isAvailable ? "策略保存到本机项目注册表。" : "项目离线时不能修改策略。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Button("保存权限", systemImage: "checkmark") {
+          Task {
+            await store.perform(
+              .updateProjectAccessPolicy(
+                projectID: project.id,
+                read: readPermission,
+                write: writePermission,
+                network: networkPermission
+              )
+            )
+          }
+        }
+        .disabled(!project.isAvailable || !hasChanges)
       }
-    return Label(
-      "\(title)：\(value.text)",
-      systemImage: value.icon
-    )
-    .foregroundStyle(value.emphasized ? .primary : .secondary)
-    .accessibilityLabel("\(title)权限：\(value.text)")
+    }
+  }
+
+  private var hasChanges: Bool {
+    readPermission != project.readPermission || writePermission != project.writePermission
+      || networkPermission != project.networkPermission
+  }
+}
+
+private struct ProjectPermissionPicker: View {
+  let title: String
+  @Binding var selection: ProjectPermissionPresentation
+  let options: [ProjectPermissionPresentation]
+
+  var body: some View {
+    Picker(title, selection: $selection) {
+      ForEach(options, id: \.self) { permission in
+        Text(permission.displayName).tag(permission)
+      }
+    }
+    .pickerStyle(.menu)
+    .accessibilityLabel("\(title)权限")
+  }
+}
+
+extension ProjectPermissionPresentation {
+  fileprivate var displayName: String {
+    switch self {
+    case .allowed: "允许"
+    case .requiresLocalApproval: "需要本机确认"
+    case .denied: "不允许"
+    }
   }
 }

@@ -17,6 +17,7 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
   case threadCatalogUnavailable
   case supportBundleUnavailable
   case approvalEvidenceUnavailable
+  case invalidProjectPolicy
   case invalidIdentifier
   case operationFailed
 
@@ -34,6 +35,8 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
       "脱敏支持包未能安全导出。"
     case .approvalEvidenceUnavailable:
       "审批缺少权威命令、文件与影响证据；当前只能拒绝。"
+    case .invalidProjectPolicy:
+      "读取权限只能设为允许或不允许。"
     case .invalidIdentifier:
       "请求标识无效。"
     case .operationFailed:
@@ -300,6 +303,33 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let opened = await system.open(URL(fileURLWithPath: project.primaryRoot.canonicalPath))
     try checkRunning()
     guard opened else { throw DesktopBackendError.operationFailed }
+  }
+
+  func updateProjectAccessPolicy(
+    projectID: String,
+    read: ProjectPermissionPresentation,
+    write: ProjectPermissionPresentation,
+    network: ProjectPermissionPresentation
+  ) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(projectID)
+    guard read != .requiresLocalApproval else {
+      throw DesktopBackendError.invalidProjectPolicy
+    }
+    let composition = try requireComposition()
+    let policy = ProjectAccessPolicy(
+      read: Self.projectPermission(read),
+      write: Self.projectPermission(write),
+      network: Self.projectPermission(network)
+    )
+    try await composition.registry.updateAccessPolicy(
+      policy,
+      for: ProjectID(rawValue: projectID)
+    )
+    try checkRunning()
+    appendDiagnostic("已更新项目访问策略。", status: .ready)
+    try await publishCurrentFacts()
   }
 
   func selectThreadProject(_ projectID: String) async throws {
@@ -1368,6 +1398,16 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       value.rangeOfCharacter(from: .controlCharacters) == nil
     else {
       throw DesktopBackendError.invalidIdentifier
+    }
+  }
+
+  private static func projectPermission(
+    _ permission: ProjectPermissionPresentation
+  ) -> ProjectPermission {
+    switch permission {
+    case .denied: .denied
+    case .requiresLocalApproval: .requiresLocalApproval
+    case .allowed: .allowed
     }
   }
 

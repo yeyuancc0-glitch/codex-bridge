@@ -168,6 +168,12 @@ public protocol BridgeAppBackend: Sendable {
   func setReceivingPaused(_ paused: Bool) async throws
   func addProject() async throws
   func openProject(_ projectID: String) async throws
+  func updateProjectAccessPolicy(
+    projectID: String,
+    read: ProjectPermissionPresentation,
+    write: ProjectPermissionPresentation,
+    network: ProjectPermissionPresentation
+  ) async throws
   func selectThreadProject(_ projectID: String) async throws
   func loadMoreThreads() async throws
   func readThreadHistory(_ threadID: String) async throws
@@ -189,6 +195,7 @@ public protocol BridgeAppBackend: Sendable {
 }
 
 public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
+  case projectConfigurationUnsupported
   case verificationAuthorizationUnsupported
   case threadCatalogOperationUnsupported
   case localTaskComposerUnsupported
@@ -197,6 +204,16 @@ public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
 }
 
 extension BridgeAppBackend {
+  public func updateProjectAccessPolicy(
+    projectID: String,
+    read: ProjectPermissionPresentation,
+    write: ProjectPermissionPresentation,
+    network: ProjectPermissionPresentation
+  ) async throws {
+    _ = (projectID, read, write, network)
+    throw BridgeAppBackendCompatibilityError.projectConfigurationUnsupported
+  }
+
   public func suspendAmbiguousTask(_ taskID: String) async throws {
     _ = taskID
     throw BridgeAppBackendCompatibilityError.recoveryResolutionUnsupported

@@ -78,6 +78,87 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await second.shutdown()
   }
 
+  func testProjectAccessPolicyCanBeEditedAndSurvivesRestart() async throws {
+    let root = temporaryDirectory()
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let project = root.appendingPathComponent("Project", isDirectory: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let firstSystem = await TestDesktopSystemService(selectedDirectory: project)
+    let first = LiveBridgeAppBackend(dataDirectoryURL: directory, system: firstSystem)
+    let firstStream = await first.stateUpdates()
+    var firstIterator = firstStream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&firstIterator)
+    try await first.addProject()
+    let registered = try await nextProjectSnapshot(&firstIterator, count: 1)
+    guard case .ready(let initialPage) = registered.presentation.projects,
+      let projectID = initialPage.projects.first?.id
+    else { return XCTFail("Expected a registered project") }
+
+    try await first.updateProjectAccessPolicy(
+      projectID: projectID,
+      read: .denied,
+      write: .allowed,
+      network: .requiresLocalApproval
+    )
+    let updated = try await nextProjectSnapshot(&firstIterator, count: 1)
+    guard case .ready(let updatedPage) = updated.presentation.projects,
+      let updatedProject = updatedPage.projects.first
+    else { return XCTFail("Expected an updated project") }
+    XCTAssertEqual(updatedProject.readPermission, .denied)
+    XCTAssertEqual(updatedProject.writePermission, .allowed)
+    XCTAssertEqual(updatedProject.networkPermission, .requiresLocalApproval)
+    await first.shutdown()
+
+    let second = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: nil)
+    )
+    let secondStream = await second.stateUpdates()
+    var secondIterator = secondStream.makeAsyncIterator()
+    let restored = try await nextProjectSnapshot(&secondIterator, count: 1)
+    guard case .ready(let restoredPage) = restored.presentation.projects,
+      let restoredProject = restoredPage.projects.first
+    else { return XCTFail("Expected a restored project") }
+    XCTAssertEqual(restoredProject.readPermission, .denied)
+    XCTAssertEqual(restoredProject.writePermission, .allowed)
+    XCTAssertEqual(restoredProject.networkPermission, .requiresLocalApproval)
+    await second.shutdown()
+  }
+
+  func testReadPermissionCannotUseLocalApprovalState() async throws {
+    let root = temporaryDirectory()
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let project = root.appendingPathComponent("Project", isDirectory: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let backend = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: project)
+    )
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&iterator)
+    try await backend.addProject()
+    let registered = try await nextProjectSnapshot(&iterator, count: 1)
+    guard case .ready(let page) = registered.presentation.projects,
+      let projectID = page.projects.first?.id
+    else { return XCTFail("Expected a registered project") }
+
+    do {
+      try await backend.updateProjectAccessPolicy(
+        projectID: projectID,
+        read: .requiresLocalApproval,
+        write: .denied,
+        network: .denied
+      )
+      XCTFail("Expected unsupported read approval state to be rejected")
+    } catch {
+      XCTAssertEqual(error as? DesktopBackendError, .invalidProjectPolicy)
+    }
+    await backend.shutdown()
+  }
+
   func testIncompleteTaskActionsFailClosed() async throws {
     let directory = temporaryDirectory()
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }

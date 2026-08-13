@@ -320,4 +320,32 @@ final class BridgeAppModelTests: XCTestCase {
       ]
     )
   }
+
+  func testProjectPolicyActionPreservesThreeStatePermissions() async {
+    let backend = TestBackend()
+    let model = BridgeAppModel(backend: backend)
+
+    let updated = await model.presentationStore.perform(
+      .updateProjectAccessPolicy(
+        projectID: "project-1",
+        read: .denied,
+        write: .allowed,
+        network: .requiresLocalApproval
+      )
+    )
+
+    XCTAssertTrue(updated)
+    let events = await backend.events()
+    XCTAssertEqual(
+      events,
+      [
+        .updateProjectPolicy(
+          projectID: "project-1",
+          read: .denied,
+          write: .allowed,
+          network: .requiresLocalApproval
+        )
+      ]
+    )
+  }
 }
