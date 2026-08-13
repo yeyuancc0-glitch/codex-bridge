@@ -124,7 +124,13 @@ extension MCPToolCatalog {
     name: MCPTaskToolName.interruptTask.rawValue,
     title: "Interrupt task",
     description: "Persist an interrupt intent and request that the task's active turn stop.",
-    inputSchema: taskIDInputSchema,
+    inputSchema: taskObjectSchema(
+      properties: [
+        "task_id": taskBoundedString(128),
+        "expected_turn_id": taskBoundedString(256),
+      ],
+      required: ["task_id", "expected_turn_id"]
+    ),
     annotations: Tool.Annotations(
       readOnlyHint: false,
       destructiveHint: true,

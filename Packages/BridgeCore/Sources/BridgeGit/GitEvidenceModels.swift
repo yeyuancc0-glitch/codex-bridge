@@ -117,9 +117,20 @@ public enum GitChangeAttribution: String, Codable, Equatable, Sendable {
   case unavailableForNonGitProject
 }
 
+public struct GitRootIdentity: Codable, Equatable, Sendable {
+  public let device: UInt64
+  public let inode: UInt64
+
+  public init(device: UInt64, inode: UInt64) {
+    self.device = device
+    self.inode = inode
+  }
+}
+
 public struct GitBaselineEvidence: Codable, Equatable, Sendable {
   public let projectIdentifier: String
   public let canonicalRootPath: String
+  public let rootIdentity: GitRootIdentity?
   public let capturedAt: Date
   public let status: GitStatusEvidence
   public let changeAttribution: GitChangeAttribution
@@ -127,12 +138,14 @@ public struct GitBaselineEvidence: Codable, Equatable, Sendable {
   public init(
     projectIdentifier: String,
     canonicalRootPath: String,
+    rootIdentity: GitRootIdentity? = nil,
     capturedAt: Date,
     status: GitStatusEvidence,
     changeAttribution: GitChangeAttribution
   ) {
     self.projectIdentifier = projectIdentifier
     self.canonicalRootPath = canonicalRootPath
+    self.rootIdentity = rootIdentity
     self.capturedAt = capturedAt
     self.status = status
     self.changeAttribution = changeAttribution

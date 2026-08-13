@@ -157,14 +157,19 @@ struct TaskTools: Sendable {
   func interruptTask(arguments: [String: Value]?) async throws -> MutateTaskOutput {
     let values = try StrictToolArguments(
       arguments,
-      allowed: ["task_id"],
-      required: ["task_id"]
+      allowed: ["task_id", "expected_turn_id"],
+      required: ["task_id", "expected_turn_id"]
     )
     let taskID = try values.requiredIdentifier("task_id", maximumUTF8Bytes: 128)
+    let turnID = try values.requiredIdentifier("expected_turn_id", maximumUTF8Bytes: 256)
     let operations = try availableOperations()
     let deadline = clock.now.advanced(by: deadlines.mutation)
     let receipt = try await withToolDeadline(until: deadline) {
-      try await operations.interruptTask(taskID: taskID, deadline: deadline)
+      try await operations.interruptTask(
+        taskID: taskID,
+        expectedTurnID: turnID,
+        deadline: deadline
+      )
     }
     try validate(receipt, taskID: taskID)
     return MutateTaskOutput(receipt: receipt)

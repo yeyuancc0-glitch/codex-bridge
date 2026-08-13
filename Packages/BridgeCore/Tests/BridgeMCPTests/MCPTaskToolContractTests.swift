@@ -6,6 +6,24 @@ import XCTest
 @testable import BridgeMCP
 
 final class MCPTaskToolContractTests: XCTestCase {
+  func testLegacyInterruptConformerCannotIgnoreExpectedTurn() async {
+    let operations = LegacyInterruptTaskOperations()
+
+    do {
+      _ = try await operations.interruptTask(
+        taskID: "tsk_1",
+        expectedTurnID: "turn_2",
+        deadline: ContinuousClock().now.advanced(by: .seconds(1))
+      )
+      XCTFail("Expected the compatibility path to fail closed.")
+    } catch {
+      XCTAssertEqual(
+        error as? BridgeMCPTaskOperationsCompatibilityError,
+        .expectedTurnUnsupported
+      )
+    }
+  }
+
   func testTaskToolsAreAdvertisedOnlyWhenOperationsAreInjected() async throws {
     XCTAssertEqual(MCPToolCatalog().definitions.count, 5)
     XCTAssertEqual(MCPToolCatalog(includeTaskTools: true).definitions.count, 12)
@@ -132,9 +150,14 @@ final class MCPTaskToolContractTests: XCTestCase {
     XCTAssertEqual(steerRequest?.input, "Keep one state source.")
 
     let interrupt = try await dispatcher.call(
-      .init(name: "interrupt_task", arguments: ["task_id": "tsk_1"])
+      .init(
+        name: "interrupt_task",
+        arguments: ["task_id": "tsk_1", "expected_turn_id": "turn_1"]
+      )
     )
     XCTAssertEqual(try object(interrupt)["operation_id"], "op_interrupt")
+    let interruptRequest = await operations.lastInterruptRequest
+    XCTAssertEqual(interruptRequest, "turn_1")
 
     await assertInvalidParams {
       _ = try await dispatcher.call(
@@ -237,7 +260,10 @@ final class MCPTaskToolContractTests: XCTestCase {
     XCTAssertTrue(started)
 
     let third = try await dispatcher.call(
-      .init(name: "interrupt_task", arguments: ["task_id": "tsk_1"]),
+      .init(
+        name: "interrupt_task",
+        arguments: ["task_id": "tsk_1", "expected_turn_id": "turn_1"]
+      ),
       sessionID: "same"
     )
     XCTAssertEqual(try object(third)["error"]?.objectValue?["code"], "busy")
@@ -381,6 +407,66 @@ final class MCPTaskToolContractTests: XCTestCase {
   }
 }
 
+private struct LegacyInterruptTaskOperations: BridgeMCPTaskOperations {
+  func getTask(taskID: String, deadline: ContinuousClock.Instant) async throws -> MCPTaskSnapshot {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+
+  func getTaskEvents(
+    taskID: String,
+    afterSequence: Int64?,
+    limit: Int,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskEventPage {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+
+  func getTaskDiff(
+    taskID: String,
+    cursor: String?,
+    limit: Int,
+    includePatch: Bool,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskDiffPage {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+
+  func getFinalReport(
+    taskID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPFinalReport {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+
+  func submitTask(
+    _ submission: TaskSubmission,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskSubmissionReceipt {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+
+  func steerTask(
+    taskID: String,
+    expectedTurnID: String,
+    input: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskMutationReceipt {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+
+  func interruptTask(
+    taskID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskMutationReceipt {
+    MCPTaskMutationReceipt(
+      taskID: taskID,
+      phase: "running",
+      accepted: true,
+      operationID: "legacy_should_not_run"
+    )
+  }
+}
+
 private enum TaskToolTestError: Error {
   case missingText
 }
@@ -408,6 +494,7 @@ private actor RecordingTaskOperations: BridgeMCPTaskOperations {
   private(set) var lastEventRequest: EventRequest?
   private(set) var lastDiffRequest: DiffRequest?
   private(set) var lastSteerRequest: SteerRequest?
+  private(set) var lastInterruptRequest: String?
   private var submitWaiters: [CheckedContinuation<Void, Never>] = []
   private var oversizedPatch: String?
   private var absoluteDiffPath: String?
@@ -543,6 +630,20 @@ private actor RecordingTaskOperations: BridgeMCPTaskOperations {
     deadline: ContinuousClock.Instant
   ) async throws -> MCPTaskMutationReceipt {
     MCPTaskMutationReceipt(
+      taskID: taskID,
+      phase: "running",
+      accepted: true,
+      operationID: "op_interrupt"
+    )
+  }
+
+  func interruptTask(
+    taskID: String,
+    expectedTurnID: String,
+    deadline _: ContinuousClock.Instant
+  ) async throws -> MCPTaskMutationReceipt {
+    lastInterruptRequest = expectedTurnID
+    return MCPTaskMutationReceipt(
       taskID: taskID,
       phase: "running",
       accepted: true,

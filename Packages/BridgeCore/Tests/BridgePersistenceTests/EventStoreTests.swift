@@ -191,6 +191,56 @@ final class EventStoreTests: XCTestCase {
     XCTAssertTrue(locks.isEmpty)
   }
 
+  func testAppendAndOwnedLockRekeyCommitAtomically() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-atomic-rekey")
+    let provisional = ["thread:provisional", "worktree:shared"]
+    let exact = ["thread:exact", "worktree:shared"]
+    try await store.acquireLocks(provisional, ownerTaskID: taskID)
+    let event = makeEvent(taskID: taskID, sequence: 1, kind: "task.executionPrepared")
+
+    try await store.appendRekeyingOwnedLocks(
+      event,
+      expectedLastSequence: 0,
+      from: provisional,
+      to: exact
+    )
+
+    let events = try await store.events(for: taskID)
+    let locks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertEqual(events, [event])
+    XCTAssertEqual(locks, exact.sorted())
+  }
+
+  func testRekeyConflictRollsBackEventAndPreservesOriginalLocks() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-rekey-owner")
+    let competitorID = TaskID(rawValue: "task-rekey-competitor")
+    let provisional = ["thread:provisional", "worktree:owner"]
+    try await store.acquireLocks(provisional, ownerTaskID: taskID)
+    try await store.acquireLocks(
+      ["thread:blocked", "worktree:competitor"],
+      ownerTaskID: competitorID
+    )
+
+    do {
+      try await store.appendRekeyingOwnedLocks(
+        makeEvent(taskID: taskID, sequence: 1, kind: "task.executionPrepared"),
+        expectedLastSequence: 0,
+        from: provisional,
+        to: ["thread:blocked", "worktree:owner"]
+      )
+      XCTFail("Expected the exact Thread lock to be unavailable")
+    } catch {
+      XCTAssertEqual(error as? EventStoreError, .lockUnavailable("thread:blocked"))
+    }
+
+    let events = try await store.events(for: taskID)
+    let locks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertTrue(events.isEmpty)
+    XCTAssertEqual(locks, provisional.sorted())
+  }
+
   func testEventsAreReturnedInSequenceOrder() async throws {
     let store = try EventStore.inMemory()
     let taskID = TaskID(rawValue: "task-order")

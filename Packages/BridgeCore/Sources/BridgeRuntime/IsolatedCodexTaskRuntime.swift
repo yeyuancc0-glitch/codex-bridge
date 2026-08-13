@@ -65,16 +65,23 @@ public enum IsolatedCodexTaskRuntimeError: Error, Equatable, Sendable {
   case runtimeUnavailable
 }
 
-public actor IsolatedCodexTaskRuntime: TaskExecutionRuntime {
+public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
   private struct AuthorizedLocation: Sendable {
     let root: RegisteredRoot
     let repositoryRoot: RegisteredRoot
+  }
+
+  private struct PreparedState: Sendable {
+    let preparation: PreparedTaskExecution
+    let submission: TaskSubmission
+    let root: RegisteredRoot
   }
 
   private let registry: ProjectRegistry
   private let locations: any RuntimeProjectLocationResolving
   private let configuration: IsolatedCodexTaskRuntimeConfiguration
   private var sessions: [TaskID: CodexTaskSession] = [:]
+  private var preparedStates: [TaskID: PreparedState] = [:]
 
   public init(
     registry: ProjectRegistry,
@@ -113,6 +120,29 @@ public actor IsolatedCodexTaskRuntime: TaskExecutionRuntime {
     submission: TaskSubmission,
     previousBinding: ExecutionBinding?
   ) async throws -> TaskExecutionSession {
+    let preparation = try await prepare(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: previousBinding
+    )
+    do {
+      return try await startPrepared(
+        taskID: taskID,
+        submission: submission,
+        preparation: preparation
+      )
+    } catch {
+      await cancelPreparation(taskID: taskID)
+      throw error
+    }
+  }
+
+  public func prepare(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) async throws -> PreparedTaskExecution {
+    try await removeTerminatedSession(taskID: taskID)
     guard sessions[taskID] == nil else { throw IsolatedCodexTaskRuntimeError.activeSession }
     guard sessions.count < configuration.maximumConcurrentSessions else {
       throw IsolatedCodexTaskRuntimeError.sessionLimitReached
@@ -138,12 +168,31 @@ public actor IsolatedCodexTaskRuntime: TaskExecutionRuntime {
     await session.beginConsumingEvents()
 
     do {
-      return try await prepare(
-        session: session,
+      try await session.startAndInitialize(clientInfo: configuration.clientInfo)
+      try await validateModel(submission.execution, client: session.client)
+      let threadID = try await prepareThread(
+        client: session.client,
         submission: submission,
         previousBinding: previousBinding,
-        location: location
+        root: location.root
       )
+      let generation = try generation(
+        threadID: threadID,
+        submission: submission,
+        previousBinding: previousBinding
+      )
+      await session.expectThread(threadID)
+      let preparation = PreparedTaskExecution(
+        threadID: ThreadID(rawValue: threadID),
+        turnGeneration: generation,
+        lockKeys: exactLockKeys(location: location, threadID: threadID)
+      )
+      preparedStates[taskID] = PreparedState(
+        preparation: preparation,
+        submission: submission,
+        root: location.root
+      )
+      return preparation
     } catch let error as IsolatedCodexTaskRuntimeError {
       removeSession(taskID: taskID, matching: session)
       await session.shutdown()
@@ -153,6 +202,52 @@ public actor IsolatedCodexTaskRuntime: TaskExecutionRuntime {
       await session.shutdown()
       throw IsolatedCodexTaskRuntimeError.runtimeUnavailable
     }
+  }
+
+  public func startPrepared(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    preparation: PreparedTaskExecution
+  ) async throws -> TaskExecutionSession {
+    guard let state = preparedStates[taskID], state.preparation == preparation,
+      state.submission == submission, let session = sessions[taskID]
+    else {
+      throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
+    let turn: TurnStartResponse
+    do {
+      turn = try await session.client.startTurn(
+        TurnStartParams(
+          threadId: preparation.threadID.rawValue,
+          text: try Self.taskPrompt(submission.contract),
+          sandboxPolicy: try sandboxPolicy(submission.execution, root: state.root),
+          approvalPolicy: .onRequest,
+          model: submission.execution.model,
+          effort: submission.execution.effort
+        )
+      )
+    } catch let error as IsolatedCodexTaskRuntimeError {
+      throw error
+    } catch {
+      throw IsolatedCodexTaskRuntimeError.turnUnavailable
+    }
+    let binding = ExecutionBinding(
+      threadID: preparation.threadID,
+      turnID: TurnID(rawValue: turn.turn.id),
+      turnGeneration: preparation.turnGeneration
+    )
+    try await session.activate(
+      binding: binding,
+      timeoutNanoseconds: configuration.startEventTimeoutNanoseconds
+    )
+    preparedStates[taskID] = nil
+    return TaskExecutionSession(binding: binding, observations: session.observations)
+  }
+
+  public func cancelPreparation(taskID: TaskID) async {
+    preparedStates[taskID] = nil
+    guard let session = sessions.removeValue(forKey: taskID) else { return }
+    await session.shutdown()
   }
 
   public func start(
@@ -203,58 +298,10 @@ public actor IsolatedCodexTaskRuntime: TaskExecutionRuntime {
   public func shutdown() async {
     let active = Array(sessions.values)
     sessions.removeAll(keepingCapacity: false)
+    preparedStates.removeAll(keepingCapacity: false)
     for session in active {
       await session.shutdown()
     }
-  }
-
-  private func prepare(
-    session: CodexTaskSession,
-    submission: TaskSubmission,
-    previousBinding: ExecutionBinding?,
-    location: AuthorizedLocation
-  ) async throws -> TaskExecutionSession {
-    try await session.startAndInitialize(clientInfo: configuration.clientInfo)
-    try await validateModel(submission.execution, client: session.client)
-    let threadID = try await prepareThread(
-      client: session.client,
-      submission: submission,
-      previousBinding: previousBinding,
-      root: location.root
-    )
-    let generation = try generation(
-      threadID: threadID,
-      submission: submission,
-      previousBinding: previousBinding
-    )
-    await session.expectThread(threadID)
-    let turn: TurnStartResponse
-    do {
-      turn = try await session.client.startTurn(
-        TurnStartParams(
-          threadId: threadID,
-          text: try Self.taskPrompt(submission.contract),
-          sandboxPolicy: try sandboxPolicy(submission.execution, root: location.root),
-          approvalPolicy: .onRequest,
-          model: submission.execution.model,
-          effort: submission.execution.effort
-        )
-      )
-    } catch let error as IsolatedCodexTaskRuntimeError {
-      throw error
-    } catch {
-      throw IsolatedCodexTaskRuntimeError.turnUnavailable
-    }
-    let binding = ExecutionBinding(
-      threadID: ThreadID(rawValue: threadID),
-      turnID: TurnID(rawValue: turn.turn.id),
-      turnGeneration: generation
-    )
-    try await session.activate(
-      binding: binding,
-      timeoutNanoseconds: configuration.startEventTimeoutNanoseconds
-    )
-    return TaskExecutionSession(binding: binding, observations: session.observations)
   }
 
   private func prepareThread(
@@ -487,9 +534,36 @@ public actor IsolatedCodexTaskRuntime: TaskExecutionRuntime {
     }
   }
 
+  private func exactLockKeys(
+    location: AuthorizedLocation,
+    threadID: String
+  ) -> [String] {
+    let worktreeIdentity = [
+      location.repositoryRoot.canonicalPath,
+      location.root.canonicalPath,
+      "\(location.repositoryRoot.identity.device):\(location.repositoryRoot.identity.inode)",
+      "\(location.root.identity.device):\(location.root.identity.inode)",
+    ].joined(separator: "\u{0}")
+    return [
+      "thread:\(Self.digest(threadID))",
+      "worktree:\(Self.digest(worktreeIdentity))",
+    ].sorted()
+  }
+
   private func removeSession(taskID: TaskID, matching session: CodexTaskSession) {
     guard sessions[taskID] === session else { return }
     sessions[taskID] = nil
+    preparedStates[taskID] = nil
+  }
+
+  private func removeTerminatedSession(taskID: TaskID) async throws {
+    guard let existing = sessions[taskID] else { return }
+    guard await existing.hasTerminated() else {
+      throw IsolatedCodexTaskRuntimeError.activeSession
+    }
+    sessions[taskID] = nil
+    preparedStates[taskID] = nil
+    await existing.shutdown()
   }
 
   private static func validateThread(

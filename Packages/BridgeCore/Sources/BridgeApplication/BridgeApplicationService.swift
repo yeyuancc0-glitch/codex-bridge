@@ -414,7 +414,10 @@ public actor BridgeApplicationService:
     deadline: ContinuousClock.Instant
   ) async throws -> MCPFinalReport {
     do {
-      _ = try await projection(taskID, deadline: deadline)
+      let task = try await projection(taskID, deadline: deadline)
+      guard task.aggregate.phase.isTerminal else {
+        throw BridgeMCPQueryError.invalidTaskState
+      }
       guard let stored = try await reportStore.finalReport(for: TaskID(rawValue: taskID)) else {
         throw BridgeMCPQueryError.invalidTaskState
       }
@@ -480,6 +483,27 @@ public actor BridgeApplicationService:
       _ = try await projection(taskID, deadline: deadline)
       let result = try await coordinator.interruptWithResult(
         taskID: TaskID(rawValue: taskID),
+        reason: "Interrupted by an authenticated ChatGPT MCP request."
+      )
+      try Self.checkDeadline(deadline)
+      return Self.mutationReceipt(result)
+    } catch {
+      throw Self.publicError(error)
+    }
+  }
+
+  public func interruptTask(
+    taskID: String,
+    expectedTurnID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskMutationReceipt {
+    do {
+      try Self.validateIdentifier(taskID, maximum: 256)
+      try Self.validateIdentifier(expectedTurnID, maximum: 1_024)
+      try Self.checkDeadline(deadline)
+      let result = try await coordinator.interruptWithResult(
+        taskID: TaskID(rawValue: taskID),
+        expectedTurnID: TurnID(rawValue: expectedTurnID),
         reason: "Interrupted by an authenticated ChatGPT MCP request."
       )
       try Self.checkDeadline(deadline)

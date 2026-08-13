@@ -44,6 +44,26 @@ public protocol BridgeMCPTaskOperations: Sendable {
     taskID: String,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPTaskMutationReceipt
+
+  func interruptTask(
+    taskID: String,
+    expectedTurnID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskMutationReceipt
+}
+
+extension BridgeMCPTaskOperations {
+  public func interruptTask(
+    taskID: String,
+    expectedTurnID _: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskMutationReceipt {
+    throw BridgeMCPTaskOperationsCompatibilityError.expectedTurnUnsupported
+  }
+}
+
+public enum BridgeMCPTaskOperationsCompatibilityError: Error, Equatable, Sendable {
+  case expectedTurnUnsupported
 }
 
 public struct MCPTaskSnapshot: Codable, Equatable, Sendable {

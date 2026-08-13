@@ -234,7 +234,7 @@ final class GitEvidenceCollectorTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
   }
 
-  func testPatchStorageIsBoundedAndPagesCannotBypassPageLimit() async throws {
+  func testOversizedPatchFailsClosedBeforeStorage() async throws {
     let root = try makeScratchDirectory(label: "patch-limit")
     defer { removeScratchDirectory(root) }
     try initializeRepository(at: root)
@@ -248,20 +248,12 @@ final class GitEvidenceCollectorTests: XCTestCase {
       to: root.appending(path: "tracked.txt")
     )
 
-    let final = try await collector.captureFinal(
-      projectIdentifier: "project",
-      baseline: baseline
-    )
-    let handle = try XCTUnwrap(final.patch)
-    XCTAssertEqual(handle.totalBytes, 128)
-    XCTAssertTrue(handle.isTruncated)
-    let page = try await collector.patchStore.page(
-      for: handle,
-      maximumBytes: Int.max
-    )
-    XCTAssertEqual(page.bytes.count, 17)
-    XCTAssertEqual(page.nextOffset, 17)
-    XCTAssertTrue(page.isTruncated)
+    await assertGitEvidenceError(.commandOutputLimitExceeded) {
+      _ = try await collector.captureFinal(
+        projectIdentifier: "project",
+        baseline: baseline
+      )
+    }
   }
 
   func testBaselineCannotBeReusedForAnotherProject() async throws {
@@ -280,6 +272,30 @@ final class GitEvidenceCollectorTests: XCTestCase {
 
     await assertGitEvidenceError(.baselineProjectMismatch) {
       _ = try await collector.captureFinal(projectIdentifier: "second", baseline: baseline)
+    }
+  }
+
+  func testBaselineRootIdentityMustMatchFinalCapture() async throws {
+    let root = try makeScratchDirectory(label: "identity")
+    defer { removeScratchDirectory(root) }
+    try initializeRepository(at: root)
+    let collector = GitEvidenceCollector(
+      rootAuthorizer: FixedGitRootAuthorizer(roots: ["project": root])
+    )
+    let baseline = try await collector.captureBaseline(projectIdentifier: "project")
+    let identity = try XCTUnwrap(baseline.rootIdentity)
+    let differentInode = identity.inode == UInt64.max ? identity.inode - 1 : identity.inode + 1
+    let forged = GitBaselineEvidence(
+      projectIdentifier: baseline.projectIdentifier,
+      canonicalRootPath: baseline.canonicalRootPath,
+      rootIdentity: GitRootIdentity(device: identity.device, inode: differentInode),
+      capturedAt: baseline.capturedAt,
+      status: baseline.status,
+      changeAttribution: baseline.changeAttribution
+    )
+
+    await assertGitEvidenceError(.baselineProjectMismatch) {
+      _ = try await collector.captureFinal(projectIdentifier: "project", baseline: forged)
     }
   }
 

@@ -23,6 +23,26 @@ public struct TaskExecutionSession: Sendable {
   }
 }
 
+/// A thread that has been created or resumed, but whose next turn has not started yet.
+///
+/// The coordinator persists this identity and atomically replaces any provisional
+/// new-thread lock before allowing the runtime to call `turn/start`.
+public struct PreparedTaskExecution: Codable, Equatable, Sendable {
+  public let threadID: ThreadID
+  public let turnGeneration: UInt64
+  public let lockKeys: [String]
+
+  public init(
+    threadID: ThreadID,
+    turnGeneration: UInt64,
+    lockKeys: [String]
+  ) {
+    self.threadID = threadID
+    self.turnGeneration = turnGeneration
+    self.lockKeys = lockKeys
+  }
+}
+
 public enum TaskExecutionObservation: Equatable, Sendable {
   case codexApprovalRequested(ApprovalID)
   case turnCompleted
@@ -50,6 +70,27 @@ public protocol TaskExecutionRuntime: Sendable {
   ) async
   func steer(taskID: TaskID, binding: ExecutionBinding, prompt: String) async throws
   func interrupt(taskID: TaskID, binding: ExecutionBinding) async throws
+}
+
+/// Opt-in durable startup protocol used by production runtimes.
+///
+/// Existing `TaskExecutionRuntime` conformers remain source compatible. A durable
+/// runtime must keep the prepared app-server session private until `startPrepared`
+/// is called, and must make `cancelPreparation` idempotent.
+public protocol DurableTaskExecutionRuntime: TaskExecutionRuntime {
+  func prepare(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) async throws -> PreparedTaskExecution
+
+  func startPrepared(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    preparation: PreparedTaskExecution
+  ) async throws -> TaskExecutionSession
+
+  func cancelPreparation(taskID: TaskID) async
 }
 
 public enum TaskExecutionRuntimeCompatibilityError: Error, Equatable, Sendable {

@@ -23,6 +23,12 @@ public actor TaskCoordinator {
     let detail: String
   }
 
+  private struct PreparedExecutionRecord: Codable {
+    let threadID: String
+    let turnGeneration: UInt64
+    let lockKeys: [String]
+  }
+
   private struct StoredProjection: Codable {
     let aggregate: TaskAggregate
     let lastSequence: Int64
@@ -220,7 +226,25 @@ public actor TaskCoordinator {
     taskID: TaskID,
     reason: String? = nil
   ) async throws -> TaskMutationResult {
-    try await requestStop(taskID: taskID, outcome: .interrupt, reason: reason)
+    try await requestStop(
+      taskID: taskID,
+      expectedTurnID: nil,
+      outcome: .interrupt,
+      reason: reason
+    )
+  }
+
+  public func interruptWithResult(
+    taskID: TaskID,
+    expectedTurnID: TurnID,
+    reason: String? = nil
+  ) async throws -> TaskMutationResult {
+    try await requestStop(
+      taskID: taskID,
+      expectedTurnID: expectedTurnID,
+      outcome: .interrupt,
+      reason: reason
+    )
   }
 
   public func steer(taskID: TaskID, prompt: String) async throws -> TaskProjection {
@@ -290,7 +314,12 @@ public actor TaskCoordinator {
   }
 
   public func suspend(taskID: TaskID, reason: String? = nil) async throws -> TaskProjection {
-    try await requestStop(taskID: taskID, outcome: .suspend, reason: reason).projection
+    try await requestStop(
+      taskID: taskID,
+      expectedTurnID: nil,
+      outcome: .suspend,
+      reason: reason
+    ).projection
   }
 
   public func resume(taskID: TaskID) async throws -> TaskProjection {
@@ -301,6 +330,7 @@ public actor TaskCoordinator {
 
   private func requestStop(
     taskID: TaskID,
+    expectedTurnID: TurnID?,
     outcome: StopIntent.Outcome,
     reason: String?
   ) async throws -> TaskMutationResult {
@@ -308,12 +338,25 @@ public actor TaskCoordinator {
     guard let binding = current.aggregate.binding else {
       throw TaskCoordinatorError.executionUnavailable(taskID)
     }
+    guard expectedTurnID.map({ $0 == binding.turnID }) ?? true else {
+      throw TaskCoordinatorTurnMismatchError()
+    }
     let intent = StopIntent(
       operationID: OperationID(rawValue: "op_\(Self.randomIdentifier())"),
       outcome: outcome,
       reason: reason
     )
-    let projection = try await appendDomain(.stopRequested(intent), taskID: taskID)
+    let aggregate = try TaskReducer.reduce(current.aggregate, event: .stopRequested(intent))
+    let projection = TaskProjection(
+      aggregate: aggregate,
+      lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+    )
+    try await append(
+      .domain(.stopRequested(intent)),
+      taskID: taskID,
+      expectedSequence: current.lastSequence,
+      projection: projection
+    )
     do {
       try await runtime.interrupt(taskID: taskID, binding: binding)
       return TaskMutationResult(projection: projection, operationID: intent.operationID)
@@ -431,10 +474,10 @@ public actor TaskCoordinator {
       try await ensureLocks(lockKeys, taskID: taskID)
       var startedBinding: ExecutionBinding?
       do {
-        let session = try await runtime.start(
+        let session = try await startRuntime(
           taskID: taskID,
-          submission: current.aggregate.submission,
-          previousBinding: current.aggregate.binding
+          current: current,
+          provisionalLockKeys: lockKeys
         )
         startedBinding = session.binding
         _ = try await appendDomain(.turnStarted(session.binding), taskID: taskID)
@@ -457,6 +500,102 @@ public actor TaskCoordinator {
         expectedBinding: failureBinding
       )
     }
+  }
+
+  private func startRuntime(
+    taskID: TaskID,
+    current: TaskProjection,
+    provisionalLockKeys: [String]
+  ) async throws -> TaskExecutionSession {
+    guard let durableRuntime = runtime as? any DurableTaskExecutionRuntime else {
+      return try await runtime.start(
+        taskID: taskID,
+        submission: current.aggregate.submission,
+        previousBinding: current.aggregate.binding
+      )
+    }
+    do {
+      let preparation = try await durableRuntime.prepare(
+        taskID: taskID,
+        submission: current.aggregate.submission,
+        previousBinding: current.aggregate.binding
+      )
+      try Self.validate(
+        preparation,
+        previousBinding: current.aggregate.binding,
+        taskID: taskID
+      )
+      let preparedProjection = try await persist(
+        preparation,
+        taskID: taskID,
+        current: current,
+        replacing: provisionalLockKeys
+      )
+      let intent = TaskRuntimeIntentRecord(
+        kind: "turn_start_requested",
+        identifier: preparation.threadID.rawValue,
+        approved: nil,
+        detail: String(preparation.turnGeneration)
+      )
+      try await append(
+        .runtimeIntent(intent),
+        taskID: taskID,
+        expectedSequence: preparedProjection.lastSequence,
+        projection: try advancedProjection(preparedProjection)
+      )
+      let session = try await durableRuntime.startPrepared(
+        taskID: taskID,
+        submission: current.aggregate.submission,
+        preparation: preparation
+      )
+      guard session.binding.threadID == preparation.threadID,
+        session.binding.turnGeneration == preparation.turnGeneration
+      else {
+        throw TaskCoordinatorError.corruptTask(taskID)
+      }
+      return session
+    } catch {
+      await durableRuntime.cancelPreparation(taskID: taskID)
+      throw error
+    }
+  }
+
+  private func persist(
+    _ preparation: PreparedTaskExecution,
+    taskID: TaskID,
+    current: TaskProjection,
+    replacing provisionalLockKeys: [String]
+  ) async throws -> TaskProjection {
+    let record = PreparedExecutionRecord(
+      threadID: preparation.threadID.rawValue,
+      turnGeneration: preparation.turnGeneration,
+      lockKeys: preparation.lockKeys.sorted()
+    )
+    let detailData = try encoder.encode(record)
+    guard let detail = String(data: detailData, encoding: .utf8) else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
+    let intent = TaskRuntimeIntentRecord(
+      kind: "execution_prepared",
+      identifier: preparation.threadID.rawValue,
+      approved: nil,
+      detail: detail
+    )
+    let projection = try advancedProjection(current)
+    let event = try envelope(
+      .runtimeIntent(intent),
+      taskID: taskID,
+      sequence: projection.lastSequence,
+      createdAt: Date()
+    )
+    try await store.appendRekeyingOwnedLocks(
+      event,
+      expectedLastSequence: current.lastSequence,
+      from: provisionalLockKeys,
+      to: preparation.lockKeys,
+      snapshot: try stateSnapshot(for: projection)
+    )
+    return projection
   }
 
   private func finishWorker(_ taskID: TaskID) {
@@ -780,6 +919,37 @@ public actor TaskCoordinator {
     let (next, overflow) = sequence.addingReportingOverflow(1)
     guard !overflow else { throw TaskCoordinatorError.corruptTask(taskID) }
     return next
+  }
+
+  private static func validate(
+    _ preparation: PreparedTaskExecution,
+    previousBinding: ExecutionBinding?,
+    taskID: TaskID
+  ) throws {
+    guard isValidIdentifier(preparation.threadID.rawValue), preparation.turnGeneration > 0,
+      preparation.lockKeys.count == 2,
+      Set(preparation.lockKeys).count == 2,
+      preparation.lockKeys.allSatisfy({ isValidLockKey($0) })
+    else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
+    if let previousBinding {
+      guard previousBinding.threadID == preparation.threadID,
+        previousBinding.turnGeneration < UInt64.max,
+        preparation.turnGeneration == previousBinding.turnGeneration + 1
+      else {
+        throw TaskCoordinatorError.corruptTask(taskID)
+      }
+      return
+    }
+    guard preparation.turnGeneration == 1 else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
+  }
+
+  private static func isValidLockKey(_ value: String) -> Bool {
+    !value.isEmpty && value.utf8.count <= 1_024 && !value.contains("\0")
+      && value.rangeOfCharacter(from: .controlCharacters) == nil
   }
 
   private static func validateSubmission(

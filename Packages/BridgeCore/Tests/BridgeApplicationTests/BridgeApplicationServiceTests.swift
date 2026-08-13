@@ -297,8 +297,20 @@ final class BridgeApplicationServiceTests: XCTestCase {
     XCTAssertTrue(steer.accepted)
     XCTAssertTrue(steer.operationID.hasPrefix("op_"))
 
+    do {
+      _ = try await service.interruptTask(
+        taskID: receipt.taskID,
+        expectedTurnID: "stale-turn",
+        deadline: deadline
+      )
+      XCTFail("Expected a stale interrupt to be rejected")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .turnMismatch)
+    }
+
     let interrupted = try await service.interruptTask(
       taskID: receipt.taskID,
+      expectedTurnID: "turn-live",
       deadline: deadline
     )
     XCTAssertTrue(interrupted.operationID.hasPrefix("op_"))
@@ -306,7 +318,8 @@ final class BridgeApplicationServiceTests: XCTestCase {
   }
 
   func testFinalReportMappingRemovesAbsoluteCommandPaths() async throws {
-    let fixture = try Fixture(admission: .requireLocalApproval)
+    let runtime = RuntimeFixture()
+    let fixture = try Fixture(admission: .requireLocalApproval, runtime: runtime)
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
     let project = fixture.project(
       root: try RegisteredRoot(capturing: fixture.projectDirectory)
@@ -320,6 +333,25 @@ final class BridgeApplicationServiceTests: XCTestCase {
     )
     let document = try report(taskID: receipt.taskID, project: project.name)
     _ = try await fixture.repository.storeFinalReport(document, storedAt: Date())
+
+    do {
+      _ = try await service.getFinalReport(taskID: receipt.taskID, deadline: deadline)
+      XCTFail("A stored report must not be visible before the task reaches a terminal phase")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .invalidTaskState)
+    }
+    _ = try await fixture.coordinator.resolveLocalApproval(
+      taskID: TaskID(rawValue: receipt.taskID),
+      approved: true
+    )
+    try await waitForPhase(.running, taskID: receipt.taskID, service: service)
+    await runtime.emit(.turnCompleted, taskID: TaskID(rawValue: receipt.taskID))
+    try await waitForPhase(.verifying, taskID: receipt.taskID, service: service)
+    _ = try await fixture.coordinator.complete(
+      taskID: TaskID(rawValue: receipt.taskID),
+      reportReference: "report:\(receipt.taskID)",
+      authorization: .supervisorFinalAccept(decisionID: "decision-report")
+    )
 
     let mapped = try await service.getFinalReport(taskID: receipt.taskID, deadline: deadline)
 
@@ -546,6 +578,10 @@ private actor RuntimeFixture: TaskExecutionRuntime {
   func steer(taskID _: TaskID, binding _: ExecutionBinding, prompt _: String) {}
 
   func interrupt(taskID _: TaskID, binding _: ExecutionBinding) {}
+
+  func emit(_ observation: TaskExecutionObservation, taskID: TaskID) {
+    continuations[taskID]?.yield(observation)
+  }
 }
 
 private actor CatalogFixture: CodexCatalogQuerying {

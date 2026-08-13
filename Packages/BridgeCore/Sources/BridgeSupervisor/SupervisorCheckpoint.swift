@@ -126,6 +126,7 @@ public enum SupervisorCheckpointValidationError: Error, Equatable, Sendable {
   case unsafeControlCharacter(field: String)
   case arrayTooLarge(field: String, maximumCount: Int)
   case invalidRemainingSteers
+  case unsafeOutboundContent(field: String)
   case encodedPayloadTooLarge(maximumBytes: Int)
 }
 
@@ -167,6 +168,7 @@ public struct SupervisorCheckpoint: Codable, Equatable, Sendable {
     self.triggers = triggers.sorted { $0.order < $1.order }
     self.content = content
     try validateFields()
+    try SupervisorCheckpointEgressPolicy.validate(self)
     _ = try encodedData()
   }
 

@@ -13,6 +13,10 @@ final class OpenedWorkingDirectory: @unchecked Sendable {
   private let device: UInt64
   private let inode: UInt64
 
+  var identity: GitRootIdentity {
+    GitRootIdentity(device: device, inode: inode)
+  }
+
   init(canonicalURL: URL) throws {
     var information = stat()
     let opened = Darwin.open(canonicalURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)

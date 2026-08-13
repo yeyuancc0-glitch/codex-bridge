@@ -78,6 +78,11 @@ final class PathSecurityTests: XCTestCase {
     let inputs = [
       "x-codex-bridge-token: topsecret",
       #"{"x-codex-bridge-token":"topsecret"}"#,
+      #"{"api_key":"topsecret"}"#,
+      "x-codex-mcp-auth: topsecret",
+      "{'password':'abcdefghijklmnop'}",
+      #""passwd": "abcdefghijklmnop""#,
+      #""client_secret": 1234567890123456"#,
     ]
 
     for input in inputs {

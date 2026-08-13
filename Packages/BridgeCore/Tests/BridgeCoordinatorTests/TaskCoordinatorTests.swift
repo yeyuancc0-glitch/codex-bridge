@@ -5,6 +5,31 @@ import Foundation
 import XCTest
 
 final class TaskCoordinatorTests: XCTestCase {
+  func testDurableRuntimeRekeysThreadAndPersistsStartIntentBeforeTurnStart() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = DurableFakeRuntime(store: store)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "durable-start", permissionMode: "read-only")
+    )
+
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+
+    let audit = await runtime.startAudit()
+    XCTAssertEqual(audit?.locks, ["thread:thread-exact", "worktree:project"])
+    XCTAssertEqual(audit?.runtimeIntentCount, 2)
+    let binding = try await coordinator.task(submitted.aggregate.id).aggregate.binding
+    XCTAssertEqual(binding?.threadID.rawValue, "thread-exact")
+    XCTAssertEqual(binding?.turnGeneration, 1)
+    let owned = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertEqual(owned, ["thread:thread-exact", "worktree:project"])
+  }
+
   func testIdempotentApprovedTaskRunsThroughCodexApprovalAndFinalReport() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -692,6 +717,96 @@ private enum FakeRuntimeError: Error {
   case approvalResolutionFailed
   case interruptFailed
   case steerFailed
+}
+
+private actor DurableFakeRuntime: DurableTaskExecutionRuntime {
+  struct Audit: Sendable {
+    let locks: [String]
+    let runtimeIntentCount: Int
+  }
+
+  private let store: EventStore
+  private var audit: Audit?
+
+  init(store: EventStore) {
+    self.store = store
+  }
+
+  func lockKeys(
+    for _: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) -> [String] {
+    let thread = previousBinding?.threadID.rawValue ?? "provisional"
+    return ["thread:\(thread)", "worktree:project"]
+  }
+
+  func lockKeys(for submission: TaskSubmission) -> [String] {
+    lockKeys(for: submission, previousBinding: nil)
+  }
+
+  func prepare(
+    taskID _: TaskID,
+    submission _: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) -> PreparedTaskExecution {
+    PreparedTaskExecution(
+      threadID: previousBinding?.threadID ?? ThreadID(rawValue: "thread-exact"),
+      turnGeneration: (previousBinding?.turnGeneration ?? 0) + 1,
+      lockKeys: ["thread:thread-exact", "worktree:project"]
+    )
+  }
+
+  func startPrepared(
+    taskID: TaskID,
+    submission _: TaskSubmission,
+    preparation: PreparedTaskExecution
+  ) async throws -> TaskExecutionSession {
+    let locks = try await store.lockKeysOwned(by: taskID)
+    let runtimeIntentCount = try await store.events(for: taskID).count(where: {
+      $0.kind == "task.runtimeIntent"
+    })
+    audit = Audit(locks: locks, runtimeIntentCount: runtimeIntentCount)
+    return TaskExecutionSession(
+      binding: ExecutionBinding(
+        threadID: preparation.threadID,
+        turnID: TurnID(rawValue: "turn-exact"),
+        turnGeneration: preparation.turnGeneration
+      ),
+      observations: AsyncStream { _ in }
+    )
+  }
+
+  func cancelPreparation(taskID _: TaskID) {}
+
+  func start(taskID: TaskID, submission: TaskSubmission) async throws -> TaskExecutionSession {
+    try await start(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: nil
+    )
+  }
+
+  func start(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    previousBinding: ExecutionBinding?
+  ) async throws -> TaskExecutionSession {
+    let preparation = prepare(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: previousBinding
+    )
+    return try await startPrepared(
+      taskID: taskID,
+      submission: submission,
+      preparation: preparation
+    )
+  }
+
+  func resolveApproval(taskID _: TaskID, approvalID _: ApprovalID, approved _: Bool) {}
+  func steer(taskID _: TaskID, binding _: ExecutionBinding, prompt _: String) {}
+  func interrupt(taskID _: TaskID, binding _: ExecutionBinding) {}
+  func startAudit() -> Audit? { audit }
 }
 
 private actor SteerGate {

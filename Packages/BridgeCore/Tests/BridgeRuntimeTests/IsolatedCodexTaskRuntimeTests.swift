@@ -19,10 +19,19 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     XCTAssertEqual(lockKeys.count, 2)
     XCTAssertEqual(Set(lockKeys).count, 2)
 
-    let session = try await runtime.start(
+    let preparation = try await runtime.prepare(
       taskID: TaskID(rawValue: "task-new"),
       submission: submission,
       previousBinding: nil
+    )
+    XCTAssertEqual(preparation.threadID.rawValue, "thread-new")
+    XCTAssertEqual(preparation.turnGeneration, 1)
+    XCTAssertEqual(preparation.lockKeys.count, 2)
+    XCTAssertNotEqual(preparation.lockKeys, lockKeys)
+    let session = try await runtime.startPrepared(
+      taskID: TaskID(rawValue: "task-new"),
+      submission: submission,
+      preparation: preparation
     )
     XCTAssertEqual(session.binding.threadID.rawValue, "thread-new")
     XCTAssertEqual(session.binding.turnID.rawValue, "turn-new")
@@ -115,6 +124,42 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     let streamEnd = await observations.next()
     XCTAssertEqual(stopped, .turnStopped)
     XCTAssertNil(streamEnd)
+  }
+
+  func testImmediateResumeReplacesTerminatedSessionBeforeProcessCleanupFinishes() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: resumeSteerInterruptScript(root: fixture.root.path)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let taskID = TaskID(rawValue: "task-immediate-resume")
+    let threadID = ThreadID(rawValue: "thread-existing")
+    let submission = makeSubmission(projectID: fixture.projectID, thread: .existing(threadID))
+    let first = try await runtime.start(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: nil
+    )
+    try await runtime.steer(
+      taskID: taskID,
+      binding: first.binding,
+      prompt: "Finish the first generation."
+    )
+    try await runtime.interrupt(taskID: taskID, binding: first.binding)
+    var observations = first.observations.makeAsyncIterator()
+    let stopped = await observations.next()
+    XCTAssertEqual(stopped, .turnStopped)
+
+    let resumed = try await runtime.prepare(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: first.binding
+    )
+
+    XCTAssertEqual(resumed.threadID, threadID)
+    XCTAssertEqual(resumed.turnGeneration, 2)
+    await runtime.cancelPreparation(taskID: taskID)
   }
 
   func testApprovalWithoutStartedItemFailsClosed() async throws {

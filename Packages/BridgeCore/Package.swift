@@ -19,6 +19,7 @@ let package = Package(
         .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
         .library(name: "BridgeRepositories", targets: ["BridgeRepositories"]),
         .library(name: "BridgeRuntime", targets: ["BridgeRuntime"]),
+        .library(name: "BridgePipeline", targets: ["BridgePipeline"]),
         .library(name: "BridgeApplication", targets: ["BridgeApplication"]),
         .library(name: "BridgeVerification", targets: ["BridgeVerification"]),
         .library(name: "BridgeFiles", targets: ["BridgeFiles"]),
@@ -115,6 +116,13 @@ let package = Package(
                 "BridgeDomain",
                 "BridgeProjects",
                 "BridgeSecurity",
+            ]
+        ),
+        .target(
+            name: "BridgePipeline",
+            dependencies: [
+                "BridgeDomain",
+                .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
         .target(
@@ -264,6 +272,14 @@ let package = Package(
                 "BridgeDomain",
                 "BridgeProjects",
                 "BridgeSecurity",
+            ]
+        ),
+        .testTarget(
+            name: "BridgePipelineTests",
+            dependencies: [
+                "BridgePipeline",
+                "BridgeDomain",
+                .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
         .testTarget(

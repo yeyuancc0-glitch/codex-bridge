@@ -3,6 +3,12 @@ import Foundation
 import GRDB
 
 public actor EventStore {
+  private enum LockMutation {
+    case none
+    case releaseOwned
+    case rekeyOwned(from: [String], to: [String])
+  }
+
   private let database: DatabaseQueue
 
   public init(path: String) throws {
@@ -29,7 +35,7 @@ public actor EventStore {
     try persist(
       event,
       expectedLastSequence: expectedLastSequence,
-      releasesOwnedLocks: false,
+      lockMutation: .none,
       snapshot: snapshot
     )
   }
@@ -42,7 +48,30 @@ public actor EventStore {
     try persist(
       event,
       expectedLastSequence: expectedLastSequence,
-      releasesOwnedLocks: true,
+      lockMutation: .releaseOwned,
+      snapshot: snapshot
+    )
+  }
+
+  public func appendRekeyingOwnedLocks(
+    _ event: TaskEventEnvelope,
+    expectedLastSequence: Int64,
+    from currentLockKeys: [String],
+    to replacementLockKeys: [String],
+    snapshot: TaskStateSnapshot? = nil
+  ) throws {
+    let current = try Self.validatedLockKeys(
+      currentLockKeys,
+      ownerTaskID: event.taskID
+    )
+    let replacement = try Self.validatedLockKeys(
+      replacementLockKeys,
+      ownerTaskID: event.taskID
+    )
+    try persist(
+      event,
+      expectedLastSequence: expectedLastSequence,
+      lockMutation: .rekeyOwned(from: current, to: replacement),
       snapshot: snapshot
     )
   }
@@ -50,7 +79,7 @@ public actor EventStore {
   private func persist(
     _ event: TaskEventEnvelope,
     expectedLastSequence: Int64,
-    releasesOwnedLocks: Bool,
+    lockMutation: LockMutation,
     snapshot: TaskStateSnapshot?
   ) throws {
     guard expectedLastSequence >= 0 else {
@@ -118,19 +147,70 @@ public actor EventStore {
         try Self.upsert(snapshot, in: db)
       }
 
-      guard releasesOwnedLocks else { return }
-      let lockCount =
-        try Int.fetchOne(
-          db,
-          sql: "SELECT COUNT(*) FROM locks WHERE owner_task_id = ?",
-          arguments: [event.taskID.rawValue]
-        ) ?? 0
-      guard lockCount == 0 || lockCount == 2 else {
-        throw EventStoreError.invalidLockSet
+      switch lockMutation {
+      case .none:
+        return
+      case .releaseOwned:
+        try Self.releaseOwnedLocks(taskID: event.taskID, in: db)
+      case .rekeyOwned(let current, let replacement):
+        try Self.rekeyOwnedLocks(
+          taskID: event.taskID,
+          from: current,
+          to: replacement,
+          acquiredAt: event.createdAt,
+          in: db
+        )
       }
+    }
+  }
+
+  private static func releaseOwnedLocks(taskID: TaskID, in db: Database) throws {
+    let lockCount =
+      try Int.fetchOne(
+        db,
+        sql: "SELECT COUNT(*) FROM locks WHERE owner_task_id = ?",
+        arguments: [taskID.rawValue]
+      ) ?? 0
+    guard lockCount == 0 || lockCount == 2 else {
+      throw EventStoreError.invalidLockSet
+    }
+    try db.execute(
+      sql: "DELETE FROM locks WHERE owner_task_id = ?",
+      arguments: [taskID.rawValue]
+    )
+  }
+
+  private static func rekeyOwnedLocks(
+    taskID: TaskID,
+    from current: [String],
+    to replacement: [String],
+    acquiredAt: Date,
+    in db: Database
+  ) throws {
+    let owned = try String.fetchAll(
+      db,
+      sql: "SELECT lock_key FROM locks WHERE owner_task_id = ? ORDER BY lock_key",
+      arguments: [taskID.rawValue]
+    )
+    guard owned == current else { throw EventStoreError.invalidLockSet }
+    for key in replacement {
+      let owner = try String.fetchOne(
+        db,
+        sql: "SELECT owner_task_id FROM locks WHERE lock_key = ?",
+        arguments: [key]
+      )
+      guard owner == nil || owner == taskID.rawValue else {
+        throw EventStoreError.lockUnavailable(key)
+      }
+    }
+    try db.execute(
+      sql: "DELETE FROM locks WHERE owner_task_id = ?",
+      arguments: [taskID.rawValue]
+    )
+    for key in replacement {
       try db.execute(
-        sql: "DELETE FROM locks WHERE owner_task_id = ?",
-        arguments: [event.taskID.rawValue]
+        sql: "INSERT INTO locks (lock_key, owner_task_id, acquired_at) VALUES (?, ?, ?)",
+        arguments: [key, taskID.rawValue, acquiredAt.timeIntervalSince1970]
       )
     }
   }

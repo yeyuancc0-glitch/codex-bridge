@@ -108,6 +108,10 @@ actor CodexTaskSession {
     }
   }
 
+  func hasTerminated() -> Bool {
+    terminal
+  }
+
   func startAndInitialize(clientInfo: CodexClientInfo) async throws {
     do {
       try await client.start()

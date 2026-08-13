@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -27,6 +28,7 @@ public struct GitEvidenceCollector: Sendable {
     return GitBaselineEvidence(
       projectIdentifier: projectIdentifier,
       canonicalRootPath: root.url.path,
+      rootIdentity: root.identity,
       capturedAt: Date(),
       status: status,
       changeAttribution: attribution(for: status)
@@ -39,7 +41,8 @@ public struct GitEvidenceCollector: Sendable {
   ) async throws -> GitFinalEvidence {
     let root = try await authorizedRoot(for: projectIdentifier)
     guard baseline.projectIdentifier == projectIdentifier,
-      baseline.canonicalRootPath == root.url.path
+      baseline.canonicalRootPath == root.url.path,
+      baseline.rootIdentity == root.identity
     else {
       throw GitEvidenceError.baselineProjectMismatch
     }
@@ -62,16 +65,30 @@ public struct GitEvidenceCollector: Sendable {
 
     let diffStat = try await captureDiffStat(at: root, hasHead: status.headCommit != nil)
     let patch = try await capturePatch(at: root, hasHead: status.headCommit != nil)
+    var confirmationPatch: GitPatchHandle?
     do {
       let confirmedStatus = try await captureStatus(at: root)
       guard confirmedStatus == status else {
         throw GitEvidenceError.repositoryChangedDuringCapture
       }
+      let confirmedDiffStat = try await captureDiffStat(
+        at: root,
+        hasHead: confirmedStatus.headCommit != nil
+      )
+      guard confirmedDiffStat == diffStat else {
+        throw GitEvidenceError.repositoryChangedDuringCapture
+      }
+      confirmationPatch = try await capturePatch(at: root, hasHead: status.headCommit != nil)
+      guard try await patchesMatch(patch, confirmationPatch) else {
+        throw GitEvidenceError.repositoryChangedDuringCapture
+      }
       try root.validatePathIdentity()
     } catch {
       if let patch { await patchStore.discard(patch) }
+      if let confirmationPatch { await patchStore.discard(confirmationPatch) }
       throw error
     }
+    if let confirmationPatch { await patchStore.discard(confirmationPatch) }
     return GitFinalEvidence(
       projectIdentifier: projectIdentifier,
       canonicalRootPath: root.url.path,
@@ -289,10 +306,40 @@ public struct GitEvidenceCollector: Sendable {
       commands,
       at: root,
       maximumStandardOutputBytes: limits.maximumPatchBytes,
-      allowTruncation: true
+      allowTruncation: false
     )
-    guard !result.bytes.isEmpty || result.isTruncated else { return nil }
-    return try await patchStore.store(result.bytes, isTruncated: result.isTruncated)
+    guard !result.bytes.isEmpty else { return nil }
+    return try await patchStore.store(result.bytes, isTruncated: false)
+  }
+
+  private func patchesMatch(
+    _ first: GitPatchHandle?,
+    _ second: GitPatchHandle?
+  ) async throws -> Bool {
+    switch (first, second) {
+    case (nil, nil):
+      return true
+    case (.some(let first), .some(let second)):
+      guard first.totalBytes == second.totalBytes,
+        first.isTruncated == second.isTruncated
+      else { return false }
+      let firstDigest = try await patchDigest(first)
+      let secondDigest = try await patchDigest(second)
+      return firstDigest == secondDigest
+    case (.none, .some), (.some, .none):
+      return false
+    }
+  }
+
+  private func patchDigest(_ handle: GitPatchHandle) async throws -> SHA256.Digest {
+    var hasher = SHA256()
+    var offset = 0
+    while true {
+      let page = try await patchStore.page(for: handle, offset: offset)
+      hasher.update(data: page.bytes)
+      guard let next = page.nextOffset else { return hasher.finalize() }
+      offset = next
+    }
   }
 
   private func diffCommands(hasHead: Bool, stat: Bool) -> [[String]] {
