@@ -192,6 +192,7 @@ codex app-server generate-json-schema --out DIR
 - MCP HTTP admission 必须用幂等 request lease 转移所有权：未收到 request end 的断连由 channel 释放，进入业务 Task 后只由 Task 释放；App shutdown 关闭 listener 后必须等待全部业务 lease 排空，不能用裸计数布尔或 `responseTask == nil` 推断所有权。
 - 原生 App 生产组合必须注入完整 16 工具；Secure Tunnel 的 `submit_task` 每次调用都直接核对当前 generation 的严格 Tunnel 健康，不能依赖轮询缓存，本机 Path Secret 模式仅用于本机开发与 Inspector。
 - UI 的任务刷新由 `EventStore.taskChanges()` 提供提交后的有界提示，但任务事实仍只从事件存储重新投影；本机任务确认不得改写远端提交的 model/effort，缺少权威操作证据的 Codex 审批只能拒绝。
+- 登录时启动只使用 `SMAppService.mainApp`，系统 `status` 是唯一事实源；`requiresApproval` 必须明确提示用户去系统设置批准，测试通过系统适配器注入状态，禁止修改开发机真实登录项。
 - 原生任务证据必须由用户选中任务后按需读取，不得在全局任务刷新时对历史终态任务批量解码；缓存必须绑定 `task + binding generation + event sequence + report reference` 并保持有界，校验失败明确显示 unavailable，禁止伪装为空证据。
 - 最终 Git patch 使用 0700/0600 私有持久存储、digest 绑定、有界 LRU、跨实例文件锁和提交标记裁剪；首次访问形成受总容量约束的验证快照，MCP 分页必须按真实双形态 200 KiB 编码预算和 UTF-8 边界缩页。
 - 本地验证器不是 OS sandbox。本机明确批准验证命令后，项目程序或工具链插件仍可能自行读取项目外文件或联网；已知网络命令和 Shell wrapper 必须硬拒绝，发布前若要声称强隔离必须另接真正的进程沙箱。

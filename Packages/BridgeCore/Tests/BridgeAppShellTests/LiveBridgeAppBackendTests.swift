@@ -159,6 +159,35 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await backend.shutdown()
   }
 
+  func testLaunchAtLoginUsesSystemStatusAndMutation() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let system = await TestDesktopSystemService(
+      selectedDirectory: nil,
+      launchAtLoginStatus: .disabled
+    )
+    let backend = LiveBridgeAppBackend(dataDirectoryURL: directory, system: system)
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    let initial = try await nextReadySnapshot(&iterator)
+    guard case .ready(let initialSettings) = initial.presentation.settings,
+      let initialToggle = initialSettings.general.first(where: { $0.id == "launch-at-login" })
+    else { return XCTFail("Expected launch-at-login setting") }
+    XCTAssertTrue(initialToggle.isEnabled)
+    XCTAssertFalse(initialToggle.isOn)
+
+    try await backend.updateSetting(key: "launch-at-login", enabled: true)
+    let updated = try await nextReadySnapshot(&iterator)
+    guard case .ready(let updatedSettings) = updated.presentation.settings,
+      let updatedToggle = updatedSettings.general.first(where: { $0.id == "launch-at-login" })
+    else { return XCTFail("Expected updated launch-at-login setting") }
+    XCTAssertTrue(updatedToggle.isOn)
+    XCTAssertEqual(updatedToggle.detail, "已由 macOS 登录项启用")
+    let mutations = await system.launchAtLoginMutations
+    XCTAssertEqual(mutations, [true])
+    await backend.shutdown()
+  }
+
   func testIncompleteTaskActionsFailClosed() async throws {
     let directory = temporaryDirectory()
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
@@ -680,15 +709,28 @@ private enum TestFailure: Error {
 @MainActor
 private final class TestDesktopSystemService: DesktopSystemServing {
   private let selectedDirectory: URL?
+  private var currentLaunchAtLoginStatus: DesktopLaunchAtLoginStatus
   private(set) var openedURLs: [URL] = []
   private(set) var copiedValues: [String] = []
   private(set) var savedSupportBundles: [Data] = []
 
-  init(selectedDirectory: URL?) {
+  private(set) var launchAtLoginMutations: [Bool] = []
+
+  init(
+    selectedDirectory: URL?,
+    launchAtLoginStatus: DesktopLaunchAtLoginStatus = .unavailable
+  ) {
     self.selectedDirectory = selectedDirectory
+    currentLaunchAtLoginStatus = launchAtLoginStatus
   }
 
   var supportsSupportBundleExport: Bool { true }
+  var launchAtLoginStatus: DesktopLaunchAtLoginStatus { currentLaunchAtLoginStatus }
+
+  func setLaunchAtLoginEnabled(_ enabled: Bool) {
+    launchAtLoginMutations.append(enabled)
+    currentLaunchAtLoginStatus = enabled ? .enabled : .disabled
+  }
 
   func selectProjectDirectory() async -> URL? { selectedDirectory }
 

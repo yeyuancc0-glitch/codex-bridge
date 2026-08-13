@@ -19,7 +19,8 @@ struct DesktopPresentationProjection {
     connection: DesktopTransportHealth = .stopped,
     operatorState: DesktopOperatorState = DesktopOperatorState(),
     canExportSupportBundle: Bool = false,
-    lifecyclePreferences: LifecyclePreferences = .defaults
+    lifecyclePreferences: LifecyclePreferences = .defaults,
+    launchAtLoginStatus: DesktopLaunchAtLoginStatus = .unavailable
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     let taskRows = tasks.map { taskRow($0.0, projects: projectsByID, events: $0.1) }
@@ -101,7 +102,7 @@ struct DesktopPresentationProjection {
           canExport: canExportSupportBundle
         )
       ),
-      settings: .ready(settings(lifecyclePreferences))
+      settings: .ready(settings(lifecyclePreferences, launchAtLoginStatus: launchAtLoginStatus))
     )
   }
 
@@ -619,15 +620,18 @@ struct DesktopPresentationProjection {
     return components.string ?? "127.0.0.1"
   }
 
-  private static func settings(_ preferences: LifecyclePreferences) -> SettingsPagePresentation {
+  private static func settings(
+    _ preferences: LifecyclePreferences,
+    launchAtLoginStatus: DesktopLaunchAtLoginStatus
+  ) -> SettingsPagePresentation {
     SettingsPagePresentation(
       general: [
         SettingTogglePresentation(
           id: "launch-at-login",
           title: "登录时启动",
-          detail: "将在系统集成阶段启用",
-          isOn: false,
-          isEnabled: false
+          detail: launchAtLoginDetail(launchAtLoginStatus),
+          isOn: launchAtLoginStatus == .enabled || launchAtLoginStatus == .requiresApproval,
+          isEnabled: launchAtLoginStatus != .unavailable
         )
       ],
       notifications: [
@@ -658,6 +662,15 @@ struct DesktopPresentationProjection {
       ],
       retentionSummary: "任务事件持久保存；支持包仅导出脱敏结构化事实"
     )
+  }
+
+  private static func launchAtLoginDetail(_ status: DesktopLaunchAtLoginStatus) -> String {
+    switch status {
+    case .unavailable: "当前 App 构建无法管理登录项"
+    case .disabled: "登录 macOS 后不会自动启动"
+    case .enabled: "已由 macOS 登录项启用"
+    case .requiresApproval: "已请求启用；需要在系统设置的登录项中批准"
+    }
   }
 
   private static func status(_ phase: TaskPhase) -> PresentationStatus {

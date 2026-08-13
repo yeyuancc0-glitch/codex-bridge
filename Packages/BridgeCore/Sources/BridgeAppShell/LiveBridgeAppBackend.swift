@@ -845,6 +845,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try await waitUntilReady()
     let lifecycle = try requireComposition().lifecycleCoordinator
     switch key {
+    case "launch-at-login":
+      try await system.setLaunchAtLoginEnabled(enabled)
     case "task-notifications":
       try await lifecycle.updateNotificationsEnabled(enabled)
     case "idle-sleep-prevention":
@@ -1195,6 +1197,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let composition = try requireComposition()
     let connection = await composition.connectionRuntime.health()
     let canExportSupportBundle = await system.supportsSupportBundleExport
+    let launchAtLoginStatus = await system.launchAtLoginStatus
     let lifecyclePreferences = try await composition.lifecycleCoordinator.preferences()
     try checkRunning()
     let projects = try await composition.repository.allProjects()
@@ -1245,7 +1248,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         operatorState: operatorState,
         canExportSupportBundle: canExportSupportBundleOverride
           ?? (canExportSupportBundle && !isExportingSupportBundle),
-        lifecyclePreferences: lifecyclePreferences
+        lifecyclePreferences: lifecyclePreferences,
+        launchAtLoginStatus: launchAtLoginStatus
       ),
       pendingSheet: DesktopPresentationProjection.pendingSheet(
         projects: orderedProjects,

@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import ServiceManagement
 import UniformTypeIdentifiers
 
 public enum DesktopSupportBundleSaveResult: Equatable, Sendable {
@@ -10,8 +11,27 @@ public enum DesktopSupportBundleSaveResult: Equatable, Sendable {
   case failed
 }
 
+public enum DesktopLaunchAtLoginStatus: Equatable, Sendable {
+  case unavailable
+  case disabled
+  case enabled
+  case requiresApproval
+}
+
+public enum DesktopSystemServiceError: LocalizedError, Equatable, Sendable {
+  case launchAtLoginUnavailable
+
+  public var errorDescription: String? {
+    switch self {
+    case .launchAtLoginUnavailable:
+      "此 App 构建无法管理登录时启动。"
+    }
+  }
+}
+
 public protocol DesktopSystemServing: Sendable {
   @MainActor var supportsSupportBundleExport: Bool { get }
+  @MainActor var launchAtLoginStatus: DesktopLaunchAtLoginStatus { get }
   @MainActor func selectProjectDirectory() async -> URL?
   @MainActor func open(_ url: URL) -> Bool
   @MainActor func copyToPasteboard(_ value: String) -> Bool
@@ -21,12 +41,32 @@ public protocol DesktopSystemServing: Sendable {
   ) async -> DesktopSupportBundleSaveResult
   @MainActor func showMainWindow()
   @MainActor func terminateApplication()
+  @MainActor func setLaunchAtLoginEnabled(_ enabled: Bool) throws
+}
+
+extension DesktopSystemServing {
+  @MainActor public var launchAtLoginStatus: DesktopLaunchAtLoginStatus { .unavailable }
+
+  @MainActor public func setLaunchAtLoginEnabled(_ enabled: Bool) throws {
+    _ = enabled
+    throw DesktopSystemServiceError.launchAtLoginUnavailable
+  }
 }
 
 public struct AppKitDesktopSystemService: DesktopSystemServing {
   public init() {}
 
   @MainActor public var supportsSupportBundleExport: Bool { true }
+
+  @MainActor public var launchAtLoginStatus: DesktopLaunchAtLoginStatus {
+    switch SMAppService.mainApp.status {
+    case .enabled: .enabled
+    case .requiresApproval: .requiresApproval
+    case .notRegistered: .disabled
+    case .notFound: .unavailable
+    @unknown default: .unavailable
+    }
+  }
 
   @MainActor
   public func selectProjectDirectory() async -> URL? {
@@ -82,6 +122,18 @@ public struct AppKitDesktopSystemService: DesktopSystemServing {
   @MainActor
   public func terminateApplication() {
     NSApplication.shared.terminate(nil)
+  }
+
+  @MainActor
+  public func setLaunchAtLoginEnabled(_ enabled: Bool) throws {
+    let service = SMAppService.mainApp
+    if enabled {
+      guard service.status == .notRegistered else { return }
+      try service.register()
+      return
+    }
+    guard service.status != .notRegistered, service.status != .notFound else { return }
+    try service.unregister()
   }
 
 }
