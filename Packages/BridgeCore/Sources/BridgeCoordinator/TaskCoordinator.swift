@@ -38,6 +38,7 @@ public actor TaskCoordinator {
   private let store: EventStore
   private let admission: any TaskAdmissionPolicy
   private let runtime: any TaskExecutionRuntime
+  private let pipeline: (any TaskPipelineLifecycle)?
   private let encoder: JSONEncoder
   private let decoder = JSONDecoder()
   private var workers: [TaskID: Task<Void, Never>] = [:]
@@ -46,11 +47,13 @@ public actor TaskCoordinator {
   public init(
     store: EventStore,
     admission: any TaskAdmissionPolicy,
-    runtime: any TaskExecutionRuntime
+    runtime: any TaskExecutionRuntime,
+    pipeline: (any TaskPipelineLifecycle)? = nil
   ) {
     self.store = store
     self.admission = admission
     self.runtime = runtime
+    self.pipeline = pipeline
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     self.encoder = encoder
@@ -523,6 +526,7 @@ public actor TaskCoordinator {
         var current = try await task(taskID)
         if current.aggregate.phase.isTerminal || current.aggregate.phase == .suspended {
           try await releaseOwnedLocks(taskID)
+          try await pipeline?.discardTaskState(taskID: taskID)
           continue
         }
         if current.aggregate.phase == .verifying,
@@ -553,7 +557,37 @@ public actor TaskCoordinator {
       taskID: taskID,
       releasesOwnedLocks: releasesLocks
     )
+    try await pipeline?.discardTaskState(taskID: taskID)
     if phase == .preparing { requestStart(taskID) }
+    return projection
+  }
+
+  public func failPipelineRecovery(
+    taskID: TaskID,
+    expectedBinding: ExecutionBinding,
+    expectedSequence: Int64
+  ) async throws -> TaskProjection {
+    let current = try await task(taskID)
+    guard current.aggregate.phase == .verifying,
+      current.aggregate.binding == expectedBinding,
+      current.lastSequence == expectedSequence
+    else {
+      throw TaskCoordinatorError.recoveryRequiresReconciliation(current.aggregate.phase)
+    }
+    let event = TaskEvent.failureRecorded(reason: "Task pipeline recovery failed.")
+    let aggregate = try TaskReducer.reduce(current.aggregate, event: event)
+    let projection = TaskProjection(
+      aggregate: aggregate,
+      lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+    )
+    try await append(
+      .domain(event),
+      taskID: taskID,
+      expectedSequence: current.lastSequence,
+      releasesOwnedLocks: true,
+      projection: projection
+    )
+    try await pipeline?.discardTaskState(taskID: taskID)
     return projection
   }
 
@@ -628,6 +662,10 @@ public actor TaskCoordinator {
     provisionalLockKeys: [String]
   ) async throws -> TaskExecutionSession {
     guard let durableRuntime = runtime as? any DurableTaskExecutionRuntime else {
+      try await pipeline?.prepareForLegacyTurnStart(
+        taskID: taskID,
+        submission: current.aggregate.submission
+      )
       return try await runtime.start(
         taskID: taskID,
         submission: current.aggregate.submission,
@@ -657,12 +695,20 @@ public actor TaskCoordinator {
         approved: nil,
         detail: String(preparation.turnGeneration)
       )
+      let startIntentProjection = try advancedProjection(preparedProjection)
       try await append(
         .runtimeIntent(intent),
         taskID: taskID,
         expectedSequence: preparedProjection.lastSequence,
-        projection: try advancedProjection(preparedProjection)
+        projection: startIntentProjection
       )
+      let preStart = TaskPipelinePreStartContext(
+        taskID: taskID,
+        submission: current.aggregate.submission,
+        preparation: preparation,
+        startIntentSequence: startIntentProjection.lastSequence
+      )
+      try await pipeline?.prepareForTurnStart(preStart)
       let session = try await durableRuntime.startPrepared(
         taskID: taskID,
         submission: current.aggregate.submission,
@@ -673,6 +719,9 @@ public actor TaskCoordinator {
       else {
         throw TaskCoordinatorError.corruptTask(taskID)
       }
+      try await pipeline?.recordStartedTurn(
+        TaskPipelineStartedContext(preStart: preStart, binding: session.binding)
+      )
       return session
     } catch {
       await durableRuntime.cancelPreparation(taskID: taskID)
@@ -731,9 +780,20 @@ public actor TaskCoordinator {
   ) async {
     for await observation in observations {
       do {
-        guard try await applyWithRetry(observation, taskID: taskID, binding: binding) else {
+        guard
+          let projection = try await applyWithRetry(
+            observation,
+            taskID: taskID,
+            binding: binding
+          )
+        else {
           return
         }
+        try await handlePipelineObservation(
+          observation,
+          projection: projection,
+          taskID: taskID
+        )
       } catch {
         try? await recordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
         return
@@ -757,13 +817,33 @@ public actor TaskCoordinator {
     )
   }
 
+  private func handlePipelineObservation(
+    _ observation: TaskExecutionObservation,
+    projection: TaskProjection,
+    taskID: TaskID
+  ) async throws {
+    switch observation {
+    case .turnCompleted:
+      guard projection.aggregate.phase == .verifying else {
+        throw TaskCoordinatorError.corruptTask(taskID)
+      }
+      try await pipeline?.finalizeVerifyingTask(
+        TaskPipelineVerifyingContext(projection: projection)
+      )
+    case .turnStopped, .failed:
+      try await pipeline?.discardTaskState(taskID: taskID)
+    case .codexApprovalRequested:
+      break
+    }
+  }
+
   private func apply(
     _ observation: TaskExecutionObservation,
     taskID: TaskID,
     binding: ExecutionBinding
-  ) async throws -> Bool {
+  ) async throws -> TaskProjection? {
     let current = try await task(taskID)
-    guard current.aggregate.binding == binding else { return false }
+    guard current.aggregate.binding == binding else { return nil }
     let event: TaskEvent
     let releasesLocks: Bool
     switch observation {
@@ -785,24 +865,25 @@ public actor TaskCoordinator {
       releasesLocks = true
     }
     let aggregate = try TaskReducer.reduce(current.aggregate, event: event)
+    let projection = TaskProjection(
+      aggregate: aggregate,
+      lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
+    )
     try await append(
       .domain(event),
       taskID: taskID,
       expectedSequence: current.lastSequence,
       releasesOwnedLocks: releasesLocks,
-      projection: TaskProjection(
-        aggregate: aggregate,
-        lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
-      )
+      projection: projection
     )
-    return true
+    return projection
   }
 
   private func applyWithRetry(
     _ observation: TaskExecutionObservation,
     taskID: TaskID,
     binding: ExecutionBinding
-  ) async throws -> Bool {
+  ) async throws -> TaskProjection? {
     while true {
       do {
         return try await apply(observation, taskID: taskID, binding: binding)
@@ -810,7 +891,7 @@ public actor TaskCoordinator {
         guard conflictedTaskID == taskID else { throw TaskCoordinatorError.corruptTask(taskID) }
         let current = try await task(taskID)
         guard current.aggregate.binding == binding, !current.aggregate.phase.isTerminal else {
-          return false
+          return nil
         }
       }
     }
@@ -840,6 +921,7 @@ public actor TaskCoordinator {
             lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
           )
         )
+        try? await pipeline?.discardTaskState(taskID: taskID)
         return
       } catch EventStoreError.optimisticConcurrencyConflict(let conflictedTaskID, _, _) {
         guard conflictedTaskID == taskID else { throw TaskCoordinatorError.corruptTask(taskID) }
@@ -932,6 +1014,13 @@ public actor TaskCoordinator {
   }
 
   private func projectionIfPresent(_ taskID: TaskID) async throws -> TaskProjection? {
+    try await projectionIfPresent(taskID, retriesRemaining: 8)
+  }
+
+  private func projectionIfPresent(
+    _ taskID: TaskID,
+    retriesRemaining: Int
+  ) async throws -> TaskProjection? {
     let storedSnapshot = try await store.stateSnapshot(for: taskID)
     var aggregate: TaskAggregate?
     var expectedSequence: Int64
@@ -991,7 +1080,8 @@ public actor TaskCoordinator {
     guard let aggregate else { throw TaskCoordinatorError.corruptTask(taskID) }
     let projection = TaskProjection(aggregate: aggregate, lastSequence: expectedSequence - 1)
     guard try await store.lastEventSequence(for: taskID) == projection.lastSequence else {
-      throw TaskCoordinatorError.corruptTask(taskID)
+      guard retriesRemaining > 0 else { throw TaskCoordinatorError.corruptTask(taskID) }
+      return try await projectionIfPresent(taskID, retriesRemaining: retriesRemaining - 1)
     }
     if readEvent {
       do {
@@ -1000,7 +1090,8 @@ public actor TaskCoordinator {
           expectedLastSequence: projection.lastSequence
         )
       } catch EventStoreError.optimisticConcurrencyConflict {
-        return try await projectionIfPresent(taskID)
+        guard retriesRemaining > 0 else { throw TaskCoordinatorError.corruptTask(taskID) }
+        return try await projectionIfPresent(taskID, retriesRemaining: retriesRemaining - 1)
       }
     }
     return projection

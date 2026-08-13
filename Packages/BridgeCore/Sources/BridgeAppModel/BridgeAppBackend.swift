@@ -144,6 +144,7 @@ public protocol BridgeAppBackend: Sendable {
   func submit(_ submission: BridgeAppTaskSubmission) async throws -> BridgeAppTaskReceipt
   func steer(_ request: BridgeAppSteerRequest) async throws
   func interruptTask(_ taskID: String) async throws
+  func authorizeTaskVerification(_ taskID: String) async throws
   func resolveLocalTask(
     requestID: String,
     decision: PresentationTaskDecision,
@@ -166,4 +167,15 @@ public protocol BridgeAppBackend: Sendable {
   func openTaskInCodex(_ taskID: String) async throws
   func exportSupportBundle() async throws
   func updateSetting(key: String, enabled: Bool) async throws
+}
+
+public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
+  case verificationAuthorizationUnsupported
+}
+
+extension BridgeAppBackend {
+  public func authorizeTaskVerification(_ taskID: String) async throws {
+    _ = taskID
+    throw BridgeAppBackendCompatibilityError.verificationAuthorizationUnsupported
+  }
 }

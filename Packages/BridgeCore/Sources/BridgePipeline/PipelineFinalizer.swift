@@ -141,7 +141,7 @@ public actor PipelineFinalizer {
   private struct LoadedEvidence {
     let baseline: GitBaselineEvidence
     let final: GitFinalEvidence
-    let verification: [VerificationRunResult]
+    let verification: [PipelineVerificationEvidence]
     let supervisor: PipelineSupervisorFinalEvidence
   }
 
@@ -173,16 +173,16 @@ public actor PipelineFinalizer {
       )
     else { throw PipelineFinalizerError.missingEvidence(.supervisorFinalDecision) }
     let summaries = try await artifacts.artifacts(for: scope)
-    var verification: [VerificationRunResult] = []
+    var verification: [PipelineVerificationEvidence] = []
     for summary in summaries {
       guard case .verification(let identifier) = summary.kind else { continue }
       guard
-        let result: VerificationRunResult = try await artifacts.trustedPayload(
+        let result: PipelineVerificationEvidence = try await artifacts.trustedPayload(
           for: scope,
           kind: summary.kind
         )
       else { throw PipelineFinalizerError.missingEvidence(summary.kind) }
-      guard result.commandID.rawValue == identifier else {
+      guard result.id.rawValue == identifier else {
         throw PipelineFinalizerError.invalidVerificationEvidence(identifier)
       }
       verification.append(result)
@@ -190,7 +190,7 @@ public actor PipelineFinalizer {
     guard !verification.isEmpty else {
       throw PipelineFinalizerError.missingEvidence(.verification("required"))
     }
-    verification.sort { $0.commandID.rawValue < $1.commandID.rawValue }
+    verification.sort { $0.id.rawValue < $1.id.rawValue }
     return LoadedEvidence(
       baseline: baseline,
       final: final,
@@ -234,7 +234,7 @@ public actor PipelineFinalizer {
   }
 
   private func validateVerification(
-    _ results: [VerificationRunResult],
+    _ results: [PipelineVerificationEvidence],
     report: FinalReport
   ) throws {
     var reported: [String: VerificationEvidence] = [:]
@@ -247,11 +247,10 @@ public actor PipelineFinalizer {
       throw PipelineFinalizerError.invalidReport("verification")
     }
     for result in results {
-      guard let item = reported[result.commandID.rawValue], item.required == result.required,
-        item.exitCode == result.exitCode,
-        item.status == Self.reportingStatus(result.status)
+      let expected = result.reportingEvidence
+      guard let item = reported[result.id.rawValue], item == expected
       else {
-        throw PipelineFinalizerError.invalidVerificationEvidence(result.commandID.rawValue)
+        throw PipelineFinalizerError.invalidVerificationEvidence(result.id.rawValue)
       }
     }
   }
@@ -322,15 +321,6 @@ public actor PipelineFinalizer {
       stored.metadata.threadID == expected.scope.threadID.rawValue,
       stored.metadata.byteCount == expected.byteCount
     else { throw PipelineFinalizerError.storedReportMismatch }
-  }
-
-  private static func reportingStatus(_ status: VerificationRunStatus) -> VerificationStatus {
-    switch status {
-    case .passed: .passed
-    case .failed, .timedOut, .outputLimitExceeded: .failed
-    case .cancelled, .policyDenied, .localApprovalRequired, .rootUnavailable, .launchFailed:
-      .unavailable
-    }
   }
 
   private static func digest(_ data: Data) -> String {

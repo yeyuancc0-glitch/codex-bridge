@@ -264,20 +264,17 @@ actor DesktopConnectionRuntime {
 
   private func publishStatus(_ health: DesktopTransportHealth) async {
     guard let status else { return }
-    let degradations =
-      health.acceptsRemoteSubmissions
-      ? ["Task execution pipeline is not connected."]
-      : [
-        "Task execution pipeline is not connected.",
-        "Remote ChatGPT submissions are not available.",
-      ]
+    var degradations = ["Remote task submission tools are not enabled."]
+    if !health.acceptsRemoteSubmissions {
+      degradations.append("Remote ChatGPT connectivity is not available.")
+    }
     await status.update(
       BridgeStatusSnapshot(
         appVersion: "0.1.0",
         mcpState: health.localMCPURL == nil ? "stopped" : "ready",
         tunnelState: health.lifecycle.rawValue,
-        executionState: "unavailable",
-        supervisorState: "unavailable",
+        executionState: "idle",
+        supervisorState: "idle",
         degradations: degradations,
         pendingApprovalCount: 0
       )

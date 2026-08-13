@@ -75,6 +75,7 @@ private struct TaskWorkspace: View {
 private struct TaskDetailView: View {
   let task: TaskDetailPresentation
   @ObservedObject var store: BridgePresentationStore
+  @State private var presentsVerificationAuthorization = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
@@ -88,6 +89,18 @@ private struct TaskDetailView: View {
       }
     }
     .padding(.leading, BridgeTheme.spacingSection)
+    .confirmationDialog(
+      "为当前 Turn 授权本机验证？",
+      isPresented: $presentsVerificationAuthorization,
+      titleVisibility: .visible
+    ) {
+      Button("仅授权这一次") {
+        Task { await store.perform(.authorizeTaskVerification(task.id)) }
+      }
+      Button("取消", role: .cancel) {}
+    } message: {
+      Text("授权只绑定当前任务、Turn、项目目录和已登记命令，五分钟后失效；不会授权未来任务。")
+    }
   }
 
   private var controlBar: some View {
@@ -167,10 +180,9 @@ private struct TaskDetailView: View {
         emptyMessage: "尚未产生监督结论"
       )
     case .verification:
-      EvidenceSummary(
-        title: "验证",
-        summary: task.verificationSummary,
-        emptyMessage: "尚未产生测试或构建证据"
+      TaskVerificationEvidence(
+        task: task,
+        requestAuthorization: { presentsVerificationAuthorization = true }
       )
     case .logs:
       EvidenceSummary(
@@ -183,5 +195,41 @@ private struct TaskDetailView: View {
 
   private var canInterrupt: Bool {
     task.canRequestInterrupt
+  }
+}
+
+private struct TaskVerificationEvidence: View {
+  let task: TaskDetailPresentation
+  let requestAuthorization: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
+      HStack(alignment: .firstTextBaseline) {
+        SectionHeading("验证", detail: "只运行项目已登记的命令")
+        Spacer()
+        Button("一次授权", systemImage: "checkmark.shield", action: requestAuthorization)
+          .disabled(!task.canAuthorizeVerification || task.verificationCommands.isEmpty)
+          .help(authorizationHelp)
+      }
+      if let summary = task.verificationSummary {
+        Text(summary)
+          .textSelection(.enabled)
+      } else {
+        Text("尚未产生测试或构建证据")
+          .foregroundStyle(.secondary)
+      }
+      Divider()
+      EvidenceCollection(
+        title: "已登记命令",
+        items: task.verificationCommands,
+        emptyMessage: "项目没有登记验证命令"
+      )
+    }
+  }
+
+  private var authorizationHelp: String {
+    if task.verificationCommands.isEmpty { return "项目没有可授权的验证命令" }
+    if !task.canAuthorizeVerification { return "只可为当前运行中的 Turn 签发一次授权" }
+    return "为当前任务和 Turn 的已登记验证命令签发五分钟一次性授权"
   }
 }

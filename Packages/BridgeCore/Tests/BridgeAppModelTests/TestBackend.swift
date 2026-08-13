@@ -7,6 +7,7 @@ enum BackendEvent: Equatable, Sendable {
   case submit(BridgeAppTaskSubmission)
   case steer(BridgeAppSteerRequest)
   case interrupt(String)
+  case authorizeVerification(String)
   case connect
   case disconnect
   case testConnection
@@ -44,6 +45,9 @@ actor TestBackend: BridgeAppBackend {
 
   func steer(_ request: BridgeAppSteerRequest) { recordedEvents.append(.steer(request)) }
   func interruptTask(_ taskID: String) { recordedEvents.append(.interrupt(taskID)) }
+  func authorizeTaskVerification(_ taskID: String) {
+    recordedEvents.append(.authorizeVerification(taskID))
+  }
 
   func resolveLocalTask(
     requestID _: String,

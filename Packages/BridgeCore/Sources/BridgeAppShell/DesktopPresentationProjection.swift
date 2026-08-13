@@ -156,10 +156,19 @@ struct DesktopPresentationProjection {
       currentStep: aggregate.phase.label,
       finalSummary: aggregate.reportReference == nil ? nil : "最终报告已存储",
       timeline: events.suffix(200).map(event),
+      verificationCommands: projects[aggregate.submission.projectID]?.verificationCommands.map(
+        command
+      ) ?? [],
+      canAuthorizeVerification: canAuthorizeVerification(aggregate),
       diagnosticSummary: aggregate.failureReason,
       canOpenInCodex: aggregate.binding != nil,
       canInterrupt: false
     )
+  }
+
+  private static func canAuthorizeVerification(_ aggregate: TaskAggregate) -> Bool {
+    aggregate.binding != nil
+      && (aggregate.phase == .running || aggregate.phase == .awaitingCodexApproval)
   }
 
   private static func event(_ value: TaskEventEnvelope) -> TaskEvidenceEventPresentation {

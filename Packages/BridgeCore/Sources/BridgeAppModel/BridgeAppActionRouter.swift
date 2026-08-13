@@ -59,6 +59,8 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.openTaskInCodex(taskID)
     case .interruptTask(let taskID):
       try await backend.interruptTask(taskID)
+    case .authorizeTaskVerification(let taskID):
+      try await backend.authorizeTaskVerification(taskID)
     case .testConnection:
       try await backend.testConnection()
     case .setReceivingPaused(let paused):

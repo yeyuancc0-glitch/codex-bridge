@@ -145,6 +145,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
   public let diffSummary: String?
   public let supervisionSummary: String?
   public let verificationSummary: String?
+  public let verificationCommands: [String]
+  public let canAuthorizeVerification: Bool
   public let diagnosticSummary: String?
   public let canOpenInCodex: Bool
   public let canInterrupt: Bool
@@ -169,6 +171,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     diffSummary: String? = nil,
     supervisionSummary: String? = nil,
     verificationSummary: String? = nil,
+    verificationCommands: [String] = [],
+    canAuthorizeVerification: Bool = false,
     diagnosticSummary: String? = nil,
     canOpenInCodex: Bool = true,
     canInterrupt: Bool = true
@@ -192,6 +196,8 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     self.diffSummary = diffSummary
     self.supervisionSummary = supervisionSummary
     self.verificationSummary = verificationSummary
+    self.verificationCommands = verificationCommands
+    self.canAuthorizeVerification = canAuthorizeVerification
     self.diagnosticSummary = diagnosticSummary
     self.canOpenInCodex = canOpenInCodex
     self.canInterrupt = canInterrupt

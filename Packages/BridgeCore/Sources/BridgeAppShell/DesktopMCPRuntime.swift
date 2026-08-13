@@ -126,9 +126,9 @@ actor DesktopMCPRuntime {
       appVersion: "0.1.0",
       mcpState: mcpState,
       tunnelState: "stopped",
-      executionState: "unavailable",
-      supervisorState: "unavailable",
-      degradations: ["Task execution pipeline is not connected."],
+      executionState: "idle",
+      supervisorState: "idle",
+      degradations: ["Remote task submission tools are not enabled."],
       pendingApprovalCount: 0
     )
   }

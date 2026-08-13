@@ -2,13 +2,17 @@ import BridgeApplication
 import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
+import BridgeGit
 import BridgeMCP
 import BridgePersistence
 import BridgePipeline
 import BridgeProjects
+import BridgeReporting
 import BridgeRepositories
 import BridgeRuntime
 import BridgeSecurity
+import BridgeSupervisor
+import BridgeVerification
 import Foundation
 
 struct DesktopComposition: Sendable {
@@ -19,6 +23,9 @@ struct DesktopComposition: Sendable {
   let coordinator: TaskCoordinator
   let pipelineArtifacts: PipelineArtifactStore
   let pipelineFinalizer: PipelineFinalizer
+  let pipelineOrchestrator: TaskPipelineOrchestrator
+  let supervisorRuntime: CodexSupervisorRuntime
+  let verificationAuthorization: DesktopVerificationAuthorizationService
   let connectionRuntime: DesktopConnectionRuntime
 
   static func make(
@@ -46,10 +53,12 @@ struct DesktopComposition: Sendable {
         clientInfo: .bridge(version: "0.1.0")
       )
     )
+    let pipelineRelay = DeferredTaskPipelineLifecycle()
     let coordinator = TaskCoordinator(
       store: eventStore,
       admission: DefaultTaskAdmissionPolicy(registry: registry),
-      runtime: taskRuntime
+      runtime: taskRuntime,
+      pipeline: pipelineRelay
     )
     let pipelineArtifacts = try PipelineArtifactStore(path: paths.eventStoreURL.path)
     let pipelineFinalizer = PipelineFinalizer(
@@ -57,7 +66,50 @@ struct DesktopComposition: Sendable {
       coordinator: coordinator,
       reports: repository
     )
+    let supervisorRuntime = CodexSupervisorRuntime(
+      configuration: CodexSupervisorRuntimeConfiguration(
+        clientInfo: .bridge(version: "0.1.0")
+      )
+    )
+    let verificationStore = try VerificationAuthorizationStore(
+      path: paths.verificationAuthorizationURL.path
+    )
+    let verificationBroker = DesktopVerificationAuthorizationBroker(store: verificationStore)
+    let verificationAuthorization = DesktopVerificationAuthorizationService(
+      coordinator: coordinator,
+      repository: repository,
+      broker: verificationBroker
+    )
+    let pipelineOrchestrator = TaskPipelineOrchestrator(
+      preflight: try PipelinePreflightStore(path: paths.pipelinePreflightURL.path),
+      artifacts: pipelineArtifacts,
+      finalizer: pipelineFinalizer,
+      coordinator: coordinator,
+      projects: ClosureTaskPipelineProjectProvider { id in
+        try await repository.project(id: id)
+      },
+      git: GitEvidenceCollector(
+        rootAuthorizer: DesktopGitProjectRootAuthorizer(repository: repository),
+        patchStore: GitPatchStore()
+      ),
+      verification: DesktopPipelineVerificationRunner(authorizations: verificationBroker),
+      supervisor: supervisorRuntime,
+      policy: ClosureTaskPipelinePolicyEvaluator { context in
+        let verification = context.verification.map(\.reportingEvidence)
+        let blockers = verification.filter { $0.required && $0.status == .failed }
+          .map { "Required verification failed: \($0.name)" }
+        let warnings = verification.filter { $0.status == .unavailable }
+          .map { "Verification unavailable: \($0.name)" }
+        return PolicyEvidence(
+          evaluationCompleted: true,
+          unresolvedBlockers: blockers,
+          warnings: warnings
+        )
+      }
+    )
+    try await pipelineRelay.install(pipelineOrchestrator)
     _ = try await pipelineFinalizer.recoverPendingFinalizations()
+    _ = try await pipelineOrchestrator.recoverPendingPreflights()
     _ = try await coordinator.recoverIncompleteTasks()
     let catalog = IsolatedCodexCatalogService(
       configuration: IsolatedCodexCatalogConfiguration(
@@ -69,9 +121,9 @@ struct DesktopComposition: Sendable {
         appVersion: "0.1.0",
         mcpState: "stopped",
         tunnelState: "stopped",
-        executionState: "unavailable",
-        supervisorState: "unavailable",
-        degradations: ["Task execution pipeline is not connected."],
+        executionState: "idle",
+        supervisorState: "idle",
+        degradations: ["Remote task submission tools are not enabled."],
         pendingApprovalCount: 0
       )
     )
@@ -102,12 +154,16 @@ struct DesktopComposition: Sendable {
       coordinator: coordinator,
       pipelineArtifacts: pipelineArtifacts,
       pipelineFinalizer: pipelineFinalizer,
+      pipelineOrchestrator: pipelineOrchestrator,
+      supervisorRuntime: supervisorRuntime,
+      verificationAuthorization: verificationAuthorization,
       connectionRuntime: connectionRuntime
     )
   }
 
   func shutdown() async {
     await connectionRuntime.stop()
+    await supervisorRuntime.shutdown()
     await taskRuntime.shutdown()
   }
 }

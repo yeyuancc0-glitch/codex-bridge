@@ -30,6 +30,49 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(owned, ["thread:thread-exact", "worktree:project"])
   }
 
+  func testPipelinePreflightCompletesBeforeDurableTurnStarts() async throws {
+    let store = try EventStore.inMemory()
+    let order = PipelineLifecycleOrder()
+    let runtime = DurableFakeRuntime(store: store, order: order)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime,
+      pipeline: RecordingPipelineLifecycle(order: order)
+    )
+
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "pipeline-order", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+
+    let events = await order.events()
+    XCTAssertEqual(events, ["pipeline.preflight", "runtime.start", "pipeline.started"])
+  }
+
+  func testPipelinePreflightFailurePreventsDurableTurnStart() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = DurableFakeRuntime(store: store)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime,
+      pipeline: RecordingPipelineLifecycle(order: PipelineLifecycleOrder(), failPreflight: true)
+    )
+
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "pipeline-preflight-failure", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.failed, taskID: taskID, coordinator: coordinator)
+
+    let audit = await runtime.startAudit()
+    XCTAssertNil(audit)
+    let ownedLocks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertTrue(ownedLocks.isEmpty)
+  }
+
   func testIdempotentApprovedTaskRunsThroughCodexApprovalAndFinalReport() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -719,6 +762,36 @@ private enum FakeRuntimeError: Error {
   case steerFailed
 }
 
+private enum PipelineLifecycleTestError: Error {
+  case preflightFailed
+}
+
+private actor PipelineLifecycleOrder {
+  private var values: [String] = []
+
+  func append(_ value: String) {
+    values.append(value)
+  }
+
+  func events() -> [String] {
+    values
+  }
+}
+
+private struct RecordingPipelineLifecycle: TaskPipelineLifecycle {
+  let order: PipelineLifecycleOrder
+  var failPreflight = false
+
+  func prepareForTurnStart(_: TaskPipelinePreStartContext) async throws {
+    await order.append("pipeline.preflight")
+    if failPreflight { throw PipelineLifecycleTestError.preflightFailed }
+  }
+
+  func recordStartedTurn(_: TaskPipelineStartedContext) async {
+    await order.append("pipeline.started")
+  }
+}
+
 private actor DurableFakeRuntime: DurableTaskExecutionRuntime {
   struct Audit: Sendable {
     let locks: [String]
@@ -726,10 +799,12 @@ private actor DurableFakeRuntime: DurableTaskExecutionRuntime {
   }
 
   private let store: EventStore
+  private let order: PipelineLifecycleOrder?
   private var audit: Audit?
 
-  init(store: EventStore) {
+  init(store: EventStore, order: PipelineLifecycleOrder? = nil) {
     self.store = store
+    self.order = order
   }
 
   func lockKeys(
@@ -761,6 +836,7 @@ private actor DurableFakeRuntime: DurableTaskExecutionRuntime {
     submission _: TaskSubmission,
     preparation: PreparedTaskExecution
   ) async throws -> TaskExecutionSession {
+    await order?.append("runtime.start")
     let locks = try await store.lockKeysOwned(by: taskID)
     let runtimeIntentCount = try await store.events(for: taskID).count(where: {
       $0.kind == "task.runtimeIntent"

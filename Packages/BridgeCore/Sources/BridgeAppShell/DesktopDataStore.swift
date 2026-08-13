@@ -12,6 +12,8 @@ struct DesktopDataStore: Sendable {
   let directoryURL: URL
   let eventStoreURL: URL
   let applicationRepositoryURL: URL
+  let pipelinePreflightURL: URL
+  let verificationAuthorizationURL: URL
 
   static func prepare(at requestedURL: URL) throws -> DesktopDataStore {
     guard requestedURL.isFileURL, requestedURL.path.hasPrefix("/") else {
@@ -28,7 +30,15 @@ struct DesktopDataStore: Sendable {
     return DesktopDataStore(
       directoryURL: directoryURL,
       eventStoreURL: eventStoreURL,
-      applicationRepositoryURL: repositoryURL
+      applicationRepositoryURL: repositoryURL,
+      pipelinePreflightURL: directoryURL.appendingPathComponent(
+        "pipeline-preflight.json",
+        isDirectory: false
+      ),
+      verificationAuthorizationURL: directoryURL.appendingPathComponent(
+        "verification-authorizations.json",
+        isDirectory: false
+      )
     )
   }
 

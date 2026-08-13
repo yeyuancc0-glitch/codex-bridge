@@ -114,6 +114,17 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     throw DesktopBackendError.taskPipelineUnavailable
   }
 
+  func authorizeTaskVerification(_ taskID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(taskID)
+    let composition = try requireComposition()
+    try await composition.verificationAuthorization.authorize(taskID: TaskID(rawValue: taskID))
+    try checkRunning()
+    appendDiagnostic("已签发一次性本机验证授权。", status: .ready)
+    try await publishCurrentFacts()
+  }
+
   func resolveLocalTask(
     requestID: String,
     decision: PresentationTaskDecision,

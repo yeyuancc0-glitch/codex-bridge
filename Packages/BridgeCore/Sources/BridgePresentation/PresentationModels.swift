@@ -148,6 +148,7 @@ public enum PresentationAction: Equatable, Sendable {
   case openThreadInCodex(String)
   case openTaskInCodex(String)
   case interruptTask(String)
+  case authorizeTaskVerification(String)
   case testConnection
   case setReceivingPaused(Bool)
   case exportSupportBundle
