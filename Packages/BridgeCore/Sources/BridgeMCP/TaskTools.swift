@@ -1,4 +1,5 @@
 import BridgeDomain
+import BridgeSecurity
 import Foundation
 import MCP
 
@@ -429,25 +430,7 @@ private func isSafeRelativePath(_ path: String) -> Bool {
 }
 
 private func isSafeTaskText(_ value: String) -> Bool {
-  let lowercase = value.lowercased()
-  let secretMarkers = [
-    "-----begin private key-----",
-    "-----begin rsa private key-----",
-    "authorization: bearer ",
-    "x-codex-bridge-token",
-    "runtime_key=",
-    "api_key=",
-  ]
-  guard !secretMarkers.contains(where: lowercase.contains) else { return false }
-  let restrictedPatterns = [
-    #"(?:^|[\s\"'=])/(?:Users|Volumes|Applications|Library|System|private|var|etc|opt|tmp|usr|bin|sbin|home)/"#,
-    #"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b"#,
-    #"(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*[^\s,;]{8,}"#,
-    #"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"#,
-  ]
-  return !restrictedPatterns.contains {
-    value.range(of: $0, options: .regularExpression) != nil
-  }
+  OutboundContentSecurity.isSafe(value)
 }
 
 struct GetTaskOutput: Codable, Sendable {

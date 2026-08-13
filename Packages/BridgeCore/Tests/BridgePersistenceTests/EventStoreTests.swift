@@ -174,6 +174,23 @@ final class EventStoreTests: XCTestCase {
     XCTAssertEqual(storedEvents, [first])
   }
 
+  func testAppendAndOwnedLockReleaseCommitAtomically() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-atomic-release")
+    try await store.acquireLocks(
+      ["thread:atomic", "worktree:atomic"],
+      ownerTaskID: taskID
+    )
+    let event = makeEvent(taskID: taskID, sequence: 1, kind: "task.turnStopped")
+
+    try await store.appendReleasingOwnedLocks(event, expectedLastSequence: 0)
+
+    let events = try await store.events(for: taskID)
+    let locks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertEqual(events, [event])
+    XCTAssertTrue(locks.isEmpty)
+  }
+
   func testEventsAreReturnedInSequenceOrder() async throws {
     let store = try EventStore.inMemory()
     let taskID = TaskID(rawValue: "task-order")
@@ -189,6 +206,29 @@ final class EventStoreTests: XCTestCase {
     let laterEvents = try await store.events(for: taskID, afterSequence: 1)
     XCTAssertEqual(allEvents, events)
     XCTAssertEqual(laterEvents, Array(events.dropFirst()))
+  }
+
+  func testBoundedEventPagePreservesSequenceCursorAndRejectsInvalidLimits() async throws {
+    let store = try EventStore.inMemory()
+    let taskID = TaskID(rawValue: "task-page")
+    for sequence in 1...4 {
+      try await store.append(
+        makeEvent(taskID: taskID, sequence: Int64(sequence)),
+        expectedLastSequence: Int64(sequence - 1)
+      )
+    }
+
+    let page = try await store.events(for: taskID, afterSequence: 1, limit: 2)
+    XCTAssertEqual(page.map(\.sequence), [2, 3])
+
+    for limit in [0, 1_001] {
+      do {
+        _ = try await store.events(for: taskID, limit: limit)
+        XCTFail("Expected limit \(limit) to be rejected")
+      } catch {
+        XCTAssertEqual(error as? EventStoreError, .invalidArgument("limit"))
+      }
+    }
   }
 
   func testSecondLockFailureLeavesNoFirstLock() async throws {

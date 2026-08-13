@@ -25,6 +25,29 @@ public actor EventStore {
     _ event: TaskEventEnvelope,
     expectedLastSequence: Int64
   ) throws {
+    try persist(
+      event,
+      expectedLastSequence: expectedLastSequence,
+      releasesOwnedLocks: false
+    )
+  }
+
+  public func appendReleasingOwnedLocks(
+    _ event: TaskEventEnvelope,
+    expectedLastSequence: Int64
+  ) throws {
+    try persist(
+      event,
+      expectedLastSequence: expectedLastSequence,
+      releasesOwnedLocks: true
+    )
+  }
+
+  private func persist(
+    _ event: TaskEventEnvelope,
+    expectedLastSequence: Int64,
+    releasesOwnedLocks: Bool
+  ) throws {
     guard expectedLastSequence >= 0 else {
       throw EventStoreError.invalidArgument("expectedLastSequence")
     }
@@ -84,6 +107,21 @@ public actor EventStore {
           event.createdAt.timeIntervalSince1970,
         ]
       )
+
+      guard releasesOwnedLocks else { return }
+      let lockCount =
+        try Int.fetchOne(
+          db,
+          sql: "SELECT COUNT(*) FROM locks WHERE owner_task_id = ?",
+          arguments: [event.taskID.rawValue]
+        ) ?? 0
+      guard lockCount == 0 || lockCount == 2 else {
+        throw EventStoreError.invalidLockSet
+      }
+      try db.execute(
+        sql: "DELETE FROM locks WHERE owner_task_id = ?",
+        arguments: [event.taskID.rawValue]
+      )
     }
   }
 
@@ -91,7 +129,29 @@ public actor EventStore {
     for taskID: TaskID,
     afterSequence: Int64 = 0
   ) throws -> [TaskEventEnvelope] {
+    try fetchEvents(for: taskID, afterSequence: afterSequence, limit: nil)
+  }
+
+  public func events(
+    for taskID: TaskID,
+    afterSequence: Int64 = 0,
+    limit: Int
+  ) throws -> [TaskEventEnvelope] {
+    guard (1...1_000).contains(limit) else {
+      throw EventStoreError.invalidArgument("limit")
+    }
+    return try fetchEvents(for: taskID, afterSequence: afterSequence, limit: limit)
+  }
+
+  private func fetchEvents(
+    for taskID: TaskID,
+    afterSequence: Int64,
+    limit: Int?
+  ) throws -> [TaskEventEnvelope] {
     try database.read { db in
+      let limitClause = limit == nil ? "" : "LIMIT ?"
+      var arguments: StatementArguments = [taskID.rawValue, afterSequence]
+      if let limit { arguments += [limit] }
       let rows = try Row.fetchAll(
         db,
         sql: """
@@ -99,8 +159,9 @@ public actor EventStore {
           FROM task_events
           WHERE task_id = ? AND seq > ?
           ORDER BY seq ASC
+          \(limitClause)
           """,
-        arguments: [taskID.rawValue, afterSequence]
+        arguments: arguments
       )
       return try rows.map(Self.decodeEvent)
     }

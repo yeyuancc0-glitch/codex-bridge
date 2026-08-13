@@ -236,6 +236,99 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(kinds.last, "task.runtimeIntent")
   }
 
+  func testObservationAfterConcurrentSteerIntentRemainsAuthoritative() async throws {
+    let store = try EventStore.inMemory()
+    let gate = SteerGate(failsOnRelease: false)
+    let runtime = FakeRuntime(steerGate: gate)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "steer-observation", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let running = try await coordinator.task(submitted.aggregate.id)
+    let binding = try XCTUnwrap(running.aggregate.binding)
+    let steer = Task {
+      try await coordinator.steerWithResult(
+        taskID: submitted.aggregate.id,
+        expectedTurnID: binding.turnID,
+        prompt: "Keep the current evidence boundary."
+      )
+    }
+    await gate.waitUntilStarted()
+
+    await runtime.emit(
+      .codexApprovalRequested(ApprovalID(rawValue: "approval-concurrent")),
+      taskID: submitted.aggregate.id
+    )
+    try await waitForPhase(
+      .awaitingCodexApproval,
+      taskID: submitted.aggregate.id,
+      coordinator: coordinator
+    )
+    await gate.release()
+    _ = try await steer.value
+
+    let projection = try await coordinator.task(submitted.aggregate.id)
+    XCTAssertEqual(projection.aggregate.phase, .awaitingCodexApproval)
+    XCTAssertEqual(
+      projection.aggregate.pendingApprovalIDs,
+      Set([ApprovalID(rawValue: "approval-concurrent")])
+    )
+    let locks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertEqual(locks.count, 2)
+  }
+
+  func testLateSteerFailureCannotFailOrUnlockResumedGeneration() async throws {
+    let store = try EventStore.inMemory()
+    let gate = SteerGate(failsOnRelease: true)
+    let runtime = FakeRuntime(steerGate: gate)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "stale-steer-failure", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let firstRunning = try await coordinator.task(submitted.aggregate.id)
+    let firstBinding = try XCTUnwrap(firstRunning.aggregate.binding)
+    let steer = Task {
+      try await coordinator.steerWithResult(
+        taskID: submitted.aggregate.id,
+        expectedTurnID: firstBinding.turnID,
+        prompt: "This steer belongs only to generation one."
+      )
+    }
+    await gate.waitUntilStarted()
+
+    _ = try await coordinator.suspend(taskID: submitted.aggregate.id)
+    await runtime.emit(.turnStopped, taskID: submitted.aggregate.id)
+    try await waitForPhase(.suspended, taskID: submitted.aggregate.id, coordinator: coordinator)
+    _ = try await coordinator.resume(taskID: submitted.aggregate.id)
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let resumedBeforeFailure = try await coordinator.task(submitted.aggregate.id)
+    XCTAssertEqual(resumedBeforeFailure.aggregate.binding?.turnGeneration, 2)
+
+    await gate.release()
+    do {
+      _ = try await steer.value
+      XCTFail("Expected the delayed Runtime steer to fail")
+    } catch FakeRuntimeError.steerFailed {}
+
+    let resumedAfterFailure = try await coordinator.task(submitted.aggregate.id)
+    XCTAssertEqual(resumedAfterFailure.aggregate.phase, .running)
+    XCTAssertEqual(resumedAfterFailure.aggregate.binding, resumedBeforeFailure.aggregate.binding)
+    let locks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertEqual(locks.count, 2)
+  }
+
   func testSuspendedTaskReleasesLocksAndResumeStartsANewTurnGeneration() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -269,6 +362,60 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(resumedBinding.turnGeneration, 2)
     let resumedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
     XCTAssertEqual(resumedLocks.count, 2)
+
+    do {
+      _ = try await coordinator.steerWithResult(
+        taskID: submitted.aggregate.id,
+        expectedTurnID: firstBinding.turnID,
+        prompt: "This instruction was authorized only for the prior turn."
+      )
+      XCTFail("Expected a stale expected turn to be rejected")
+    } catch {
+      XCTAssertEqual(error as? TaskCoordinatorTurnMismatchError, .init())
+    }
+    let staleSteers = await runtime.steerCalls()
+    XCTAssertTrue(staleSteers.isEmpty)
+  }
+
+  func testResumeAtFirstVisibleSuspendedStateQueuesNextGeneration() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "immediate-resume", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    _ = try await coordinator.suspend(taskID: submitted.aggregate.id)
+    let resume = Task<TaskProjection?, Never> {
+      let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+      while ContinuousClock.now < deadline {
+        let phase = try? await coordinator.task(submitted.aggregate.id).aggregate.phase
+        if phase == .suspended,
+          let projection = try? await coordinator.resume(taskID: submitted.aggregate.id)
+        {
+          return projection
+        }
+        await Task.yield()
+      }
+      return nil
+    }
+
+    await runtime.emit(.turnStopped, taskID: submitted.aggregate.id)
+
+    let preparing = await resume.value
+    XCTAssertEqual(preparing?.aggregate.phase, .preparing)
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let resumed = try await coordinator.task(submitted.aggregate.id)
+    XCTAssertEqual(resumed.aggregate.binding?.turnGeneration, 2)
+    let locks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertEqual(locks.count, 2)
+    let starts = await runtime.startCount()
+    XCTAssertEqual(starts, 2)
   }
 
   func testRecoveryMarksAmbiguousActiveTaskUnknownWithoutReleasingLocks() async throws {
@@ -412,6 +559,7 @@ private enum OneShotAdmissionError: Error {
 private actor FakeRuntime: TaskExecutionRuntime {
   private let failApprovalResolution: Bool
   private let failInterrupt: Bool
+  private let steerGate: SteerGate?
   private var starts = 0
   private var taskStarts: [TaskID: UInt64] = [:]
   private var interrupts = 0
@@ -419,9 +567,14 @@ private actor FakeRuntime: TaskExecutionRuntime {
   private var responses: [ApprovalID: Bool] = [:]
   private var steers: [(binding: ExecutionBinding, prompt: String)] = []
 
-  init(failApprovalResolution: Bool = false, failInterrupt: Bool = false) {
+  init(
+    failApprovalResolution: Bool = false,
+    failInterrupt: Bool = false,
+    steerGate: SteerGate? = nil
+  ) {
     self.failApprovalResolution = failApprovalResolution
     self.failInterrupt = failInterrupt
+    self.steerGate = steerGate
   }
 
   func lockKeys(
@@ -473,8 +626,9 @@ private actor FakeRuntime: TaskExecutionRuntime {
     committed _: Bool
   ) {}
 
-  func steer(taskID _: TaskID, binding: ExecutionBinding, prompt: String) {
+  func steer(taskID _: TaskID, binding: ExecutionBinding, prompt: String) async throws {
     steers.append((binding, prompt))
+    if let steerGate, await steerGate.block() { throw FakeRuntimeError.steerFailed }
   }
 
   func interrupt(taskID _: TaskID, binding _: ExecutionBinding) throws {
@@ -499,4 +653,36 @@ private actor FakeRuntime: TaskExecutionRuntime {
 private enum FakeRuntimeError: Error {
   case approvalResolutionFailed
   case interruptFailed
+  case steerFailed
+}
+
+private actor SteerGate {
+  private let failsOnRelease: Bool
+  private var started = false
+  private var startWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+  init(failsOnRelease: Bool) {
+    self.failsOnRelease = failsOnRelease
+  }
+
+  func block() async -> Bool {
+    started = true
+    for waiter in startWaiters {
+      waiter.resume()
+    }
+    startWaiters.removeAll()
+    await withCheckedContinuation { releaseContinuation = $0 }
+    return failsOnRelease
+  }
+
+  func waitUntilStarted() async {
+    guard !started else { return }
+    await withCheckedContinuation { startWaiters.append($0) }
+  }
+
+  func release() {
+    releaseContinuation?.resume()
+    releaseContinuation = nil
+  }
 }

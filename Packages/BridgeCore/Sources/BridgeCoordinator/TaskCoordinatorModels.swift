@@ -102,6 +102,30 @@ public struct TaskProjection: Equatable, Sendable {
   }
 }
 
+public struct TaskSubmissionResult: Equatable, Sendable {
+  public let projection: TaskProjection
+  public let reusedExistingTask: Bool
+
+  public init(projection: TaskProjection, reusedExistingTask: Bool) {
+    self.projection = projection
+    self.reusedExistingTask = reusedExistingTask
+  }
+}
+
+public struct TaskMutationResult: Equatable, Sendable {
+  public let projection: TaskProjection
+  public let operationID: OperationID
+
+  public init(projection: TaskProjection, operationID: OperationID) {
+    self.projection = projection
+    self.operationID = operationID
+  }
+}
+
+public struct TaskCoordinatorTurnMismatchError: Error, Equatable, Sendable {
+  public init() {}
+}
+
 public enum TaskCoordinatorError: Error, Equatable, Sendable {
   case invalidOrigin
   case submissionTooLarge

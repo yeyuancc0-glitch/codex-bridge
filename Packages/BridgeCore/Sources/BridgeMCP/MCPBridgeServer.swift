@@ -35,6 +35,7 @@ public actor MCPBridgeServer {
   private let appVersion: String
   private let queries: any BridgeMCPQueries
   private let taskOperations: (any BridgeMCPTaskOperations)?
+  private let projectOperations: (any BridgeMCPProjectOperations)?
   private let httpConfiguration: MCPHTTPConfiguration
   private let sessionLimits: MCPSessionRegistry.Limits
   private var lifecycle = Lifecycle.stopped
@@ -45,6 +46,7 @@ public actor MCPBridgeServer {
     appVersion: String,
     queries: any BridgeMCPQueries,
     taskOperations: (any BridgeMCPTaskOperations)? = nil,
+    projectOperations: (any BridgeMCPProjectOperations)? = nil,
     httpConfiguration: MCPHTTPConfiguration,
     sessionLimits: MCPSessionRegistry.Limits = .init()
   ) {
@@ -52,6 +54,7 @@ public actor MCPBridgeServer {
     self.appVersion = appVersion
     self.queries = queries
     self.taskOperations = taskOperations
+    self.projectOperations = projectOperations
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
   }
@@ -88,7 +91,8 @@ public actor MCPBridgeServer {
       let factory = MCPServerFactory(
         appVersion: appVersion,
         queries: queries,
-        taskOperations: taskOperations
+        taskOperations: taskOperations,
+        projectOperations: projectOperations
       )
       let registry = MCPSessionRegistry(
         boundPort: bound.port,

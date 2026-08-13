@@ -19,6 +19,11 @@ let package = Package(
         .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
         .library(name: "BridgeRepositories", targets: ["BridgeRepositories"]),
         .library(name: "BridgeRuntime", targets: ["BridgeRuntime"]),
+        .library(name: "BridgeApplication", targets: ["BridgeApplication"]),
+        .library(name: "BridgeVerification", targets: ["BridgeVerification"]),
+        .library(name: "BridgeFiles", targets: ["BridgeFiles"]),
+        .library(name: "BridgePresentation", targets: ["BridgePresentation"]),
+        .library(name: "BridgeAppModel", targets: ["BridgeAppModel"]),
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
@@ -112,9 +117,38 @@ let package = Package(
             ]
         ),
         .target(
+            name: "BridgeApplication",
+            dependencies: [
+                "BridgeCodexRPC",
+                "BridgeCoordinator",
+                "BridgeDomain",
+                "BridgeFiles",
+                "BridgeMCP",
+                "BridgePersistence",
+                "BridgeProjects",
+                "BridgeReporting",
+                "BridgeRepositories",
+                "BridgeSecurity",
+            ]
+        ),
+        .target(
+            name: "BridgeVerification",
+            dependencies: ["BridgeProjects", "BridgeSecurity", "BridgePolicy"]
+        ),
+        .target(
+            name: "BridgeFiles",
+            dependencies: ["BridgeDomain", "BridgeSecurity", "BridgeProjects"]
+        ),
+        .target(name: "BridgePresentation"),
+        .target(
+            name: "BridgeAppModel",
+            dependencies: ["BridgePresentation"]
+        ),
+        .target(
             name: "BridgeMCP",
             dependencies: [
                 "BridgeDomain",
+                "BridgeSecurity",
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "NIOCore", package: "swift-nio"),
@@ -211,6 +245,42 @@ let package = Package(
                 "BridgeProjects",
                 "BridgeSecurity",
             ]
+        ),
+        .testTarget(
+            name: "BridgeApplicationTests",
+            dependencies: [
+                "BridgeApplication",
+                "BridgeCoordinator",
+                "BridgeDomain",
+                "BridgeFiles",
+                "BridgeMCP",
+                "BridgePersistence",
+                "BridgeProjects",
+                "BridgeReporting",
+                "BridgeRepositories",
+                "BridgeSecurity",
+            ]
+        ),
+        .testTarget(
+            name: "BridgeVerificationTests",
+            dependencies: [
+                "BridgeVerification",
+                "BridgeDomain",
+                "BridgeProjects",
+                "BridgeSecurity",
+            ]
+        ),
+        .testTarget(
+            name: "BridgeFilesTests",
+            dependencies: ["BridgeFiles", "BridgeDomain", "BridgeProjects", "BridgeSecurity"]
+        ),
+        .testTarget(
+            name: "BridgePresentationTests",
+            dependencies: ["BridgePresentation"]
+        ),
+        .testTarget(
+            name: "BridgeAppModelTests",
+            dependencies: ["BridgeAppModel", "BridgePresentation"]
         ),
         .testTarget(
             name: "BridgeMCPTests",

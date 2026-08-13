@@ -18,6 +18,13 @@ public enum MCPTaskToolName: String, CaseIterable, Sendable {
   case interruptTask = "interrupt_task"
 }
 
+public enum MCPProjectToolName: String, CaseIterable, Sendable {
+  case getProject = "get_project"
+  case searchProjectFiles = "search_project_files"
+  case readProjectFile = "read_project_file"
+  case openInCodex = "open_in_codex"
+}
+
 enum MCPDispatchedToolName: String, Sendable {
   case bridgeStatus = "bridge_status"
   case listProjects = "list_projects"
@@ -31,12 +38,16 @@ enum MCPDispatchedToolName: String, Sendable {
   case submitTask = "submit_task"
   case steerTask = "steer_task"
   case interruptTask = "interrupt_task"
+  case getProject = "get_project"
+  case searchProjectFiles = "search_project_files"
+  case readProjectFile = "read_project_file"
+  case openInCodex = "open_in_codex"
 }
 
 public struct MCPToolCatalog: Sendable {
   public let definitions: [Tool]
 
-  public init(includeTaskTools: Bool = false) {
+  public init(includeTaskTools: Bool = false, includeProjectTools: Bool = false) {
     let readOnlyDefinitions = [
       Self.bridgeStatus,
       Self.listProjects,
@@ -53,7 +64,16 @@ public struct MCPToolCatalog: Sendable {
       Self.steerTask,
       Self.interruptTask,
     ]
-    definitions = readOnlyDefinitions + (includeTaskTools ? taskDefinitions : [])
+    let projectDefinitions = [
+      Self.getProject,
+      Self.searchProjectFiles,
+      Self.readProjectFile,
+      Self.openInCodex,
+    ]
+    definitions =
+      readOnlyDefinitions
+      + (includeProjectTools ? projectDefinitions : [])
+      + (includeTaskTools ? taskDefinitions : [])
   }
 
   private static let annotations = Tool.Annotations(

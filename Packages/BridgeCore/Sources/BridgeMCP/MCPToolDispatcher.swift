@@ -38,6 +38,7 @@ public actor MCPToolAdmission {
 public struct MCPToolDispatcher: Sendable {
   private let tools: ReadOnlyTools
   private let taskTools: TaskTools
+  private let projectTools: ProjectTools
   private let resultEncoder: MCPToolResultEncoder
   private let admission: MCPToolAdmission
   private let logger: Logger
@@ -45,6 +46,7 @@ public struct MCPToolDispatcher: Sendable {
   public init(
     queries: any BridgeMCPQueries,
     taskOperations: (any BridgeMCPTaskOperations)? = nil,
+    projectOperations: (any BridgeMCPProjectOperations)? = nil,
     resultEncoder: MCPToolResultEncoder = .init(),
     admission: MCPToolAdmission = .init(),
     deadlines: MCPToolDeadlines = .production,
@@ -53,6 +55,7 @@ public struct MCPToolDispatcher: Sendable {
   ) {
     tools = ReadOnlyTools(queries: queries, deadlines: deadlines)
     taskTools = TaskTools(operations: taskOperations, deadlines: taskDeadlines)
+    projectTools = ProjectTools(operations: projectOperations)
     self.resultEncoder = resultEncoder
     self.admission = admission
     self.logger = logger
@@ -139,6 +142,14 @@ public struct MCPToolDispatcher: Sendable {
       return try resultEncoder.encode(await taskTools.steerTask(arguments: arguments))
     case .interruptTask:
       return try resultEncoder.encode(await taskTools.interruptTask(arguments: arguments))
+    case .getProject:
+      return try resultEncoder.encode(await projectTools.getProject(arguments: arguments))
+    case .searchProjectFiles:
+      return try resultEncoder.encode(await projectTools.searchProjectFiles(arguments: arguments))
+    case .readProjectFile:
+      return try resultEncoder.encode(await projectTools.readProjectFile(arguments: arguments))
+    case .openInCodex:
+      return try resultEncoder.encode(await projectTools.openInCodex(arguments: arguments))
     }
   }
 

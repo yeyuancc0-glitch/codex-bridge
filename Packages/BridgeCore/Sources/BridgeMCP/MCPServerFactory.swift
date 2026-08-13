@@ -10,14 +10,19 @@ public struct MCPServerFactory: Sendable {
     appVersion: String,
     queries: any BridgeMCPQueries,
     taskOperations: (any BridgeMCPTaskOperations)? = nil,
+    projectOperations: (any BridgeMCPProjectOperations)? = nil,
     logger: Logger = Logger(label: "CodexBridge.BridgeMCP.Server")
   ) {
     precondition(!appVersion.isEmpty)
     self.appVersion = appVersion
-    catalog = MCPToolCatalog(includeTaskTools: taskOperations != nil)
+    catalog = MCPToolCatalog(
+      includeTaskTools: taskOperations != nil,
+      includeProjectTools: projectOperations != nil
+    )
     dispatcher = MCPToolDispatcher(
       queries: queries,
       taskOperations: taskOperations,
+      projectOperations: projectOperations,
       admission: MCPToolAdmission(),
       logger: logger
     )

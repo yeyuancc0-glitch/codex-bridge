@@ -141,6 +141,21 @@ final class MCPTaskToolContractTests: XCTestCase {
         .init(name: "steer_task", arguments: ["task_id": "tsk_1", "input": "wrong turn"])
       )
     }
+    for unsafeInput in [
+      "Read file:///Users/alice/.ssh/id_rsa", "](/Volumes/private/x)",
+      "Read /Network/Servers/team/repo", "x-codex-bridge-token", "eyJabcdefgh.abcdefgh.abcdefgh",
+    ] {
+      await assertInvalidParams {
+        _ = try await dispatcher.call(
+          .init(
+            name: "steer_task",
+            arguments: [
+              "task_id": "tsk_1", "expected_turn_id": "turn_9", "input": .string(unsafeInput),
+            ]
+          )
+        )
+      }
+    }
     await assertInvalidParams {
       _ = try await dispatcher.call(
         .init(name: "respond_to_codex_approval", arguments: [:])

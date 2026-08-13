@@ -290,6 +290,14 @@ struct StrictToolArguments {
     return Int64(result)
   }
 
+  func optionalPositiveInteger(_ key: String, maximum: Int) throws -> Int? {
+    guard let value = values[key], value != .null else { return nil }
+    guard case .int(let result) = value, result > 0, result <= maximum else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a positive bounded integer.")
+    }
+    return result
+  }
+
   func requiredObject(_ key: String) throws -> [String: Value] {
     guard case .object(let value)? = values[key] else {
       throw MCPError.invalidParams("Argument '\(key)' must be an object.")
@@ -327,9 +335,15 @@ struct StrictToolArguments {
   }
 
   func limit() throws -> Int {
+    try limit(maximum: 100)
+  }
+
+  func limit(maximum: Int) throws -> Int {
     guard let value = values["limit"], value != .null else { return 25 }
-    guard case .int(let limit) = value, (1...100).contains(limit) else {
-      throw MCPError.invalidParams("Argument 'limit' must be an integer from 1 through 100.")
+    guard case .int(let limit) = value, (1...maximum).contains(limit) else {
+      throw MCPError.invalidParams(
+        "Argument 'limit' must be an integer from 1 through \(maximum)."
+      )
     }
     return limit
   }
