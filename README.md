@@ -2,7 +2,7 @@
 
 Codex Bridge is a local-first native macOS bridge between ChatGPT on the web and the user's local Codex installation. ChatGPT forms a task contract, the local Codex app-server executes it, a separate read-only Luna session supervises it, and the Mac app owns permissions, approvals, state, evidence and connectivity.
 
-> Development status: pre-release. The repository now builds a runnable native `CodexBridge.app` with a shared window/menu-bar runtime, nine-step first-run setup, Codex account detection, durable project registration, project-scoped Thread/history browsing, a dynamic-model local read-only task composer, a real local MCP server, stateful local/Manual HTTPS/Secure Tunnel transports, isolated Codex execution, bounded durable semantic evidence, Git/verification/report infrastructure, on-demand generation-bound native terminal evidence, typed redacted support-bundle export, durable terminal notifications, active-task idle-sleep prevention and fail-closed sleep/wake remote admission. Luna protocol fixtures and a dormant durable supervision ledger are implemented, but production Supervisor review and Supervisor-dependent task submission remain unavailable until evidence-only process isolation is proven. Credentialed ChatGPT acceptance, exact app-server/Git wake reconciliation, continuous live checkpoints and signed release packaging are still in development. Codex approvals remain intentionally deny-only until upstream exposes authoritative command operations and atomically enforceable file mutations.
+> Development status: pre-release. The repository builds a runnable native `CodexBridge.app` with a shared window/menu-bar runtime, nine-step first-run setup, Codex account detection, durable project registration, project-scoped Thread/history browsing, a dynamic-model local read-only task composer, a real local MCP server, stateful local/Manual HTTPS/Secure Tunnel transports, isolated Codex execution, bounded durable semantic evidence, Git/verification/report infrastructure, generation-bound native terminal evidence, typed redacted support-bundle export, durable terminal notifications, active-task idle-sleep prevention and exact read-only Thread/Turn restart and wake reconciliation. Luna protocol fixtures and a dormant durable supervision ledger are implemented, but production Supervisor review and Supervisor-dependent task submission remain unavailable until evidence-only process isolation is proven. Credentialed ChatGPT acceptance, continuous live checkpoints, Developer ID signing, notarization and clean-machine release acceptance are still in development. Codex approvals remain intentionally deny-only until upstream exposes authoritative command operations and atomically enforceable file mutations.
 
 ## Product boundary
 
@@ -30,7 +30,7 @@ docs/PHASE_LEDGER.md        Evidence-backed implementation status
 ## Development requirements
 
 - macOS 14 or later
-- Xcode 27 Beta 5 at `/Volumes/fanch/Applications/Xcode-beta.app`, or update `Scripts/with-xcode.sh` for another verified Xcode location
+- Xcode 27 Beta 5 at `/Volumes/fanch/Applications/Xcode-beta.app`, an Xcode installation under `/Applications`, or an explicit `CODEX_BRIDGE_XCODE_DEVELOPER_DIR`
 - Codex CLI with `app-server` support
 - Node.js 22.19 or later for the pinned official MCP Inspector acceptance gate
 - Git
@@ -41,6 +41,13 @@ The system-wide `xcode-select` may still point to Command Line Tools. Repository
 Scripts/with-xcode.sh xcodebuild -version
 Scripts/verify-stage0.sh
 Scripts/with-xcode.sh xcodebuild -project CodexBridge.xcodeproj -scheme CodexBridge -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/Xcode build CODE_SIGNING_ALLOWED=NO
+```
+
+For another verified installation, keep the machine-wide selection unchanged and set the repository-scoped override:
+
+```bash
+CODEX_BRIDGE_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  Scripts/with-xcode.sh xcodebuild -version
 ```
 
 To change the machine-wide selection, the user can run once in their own terminal:
@@ -79,6 +86,8 @@ Scripts/build-tunnel-helper.sh OUTPUT_DIRECTORY
 Scripts/test-tunnel-helper-config.sh
 ```
 
+The reproducible unsigned Universal 2 ZIP/DMG/SBOM path and the separate credentialed signing/notarization gates are documented in [docs/RELEASE.md](./docs/RELEASE.md). Platform and protocol support is summarized in [docs/COMPATIBILITY.md](./docs/COMPATIBILITY.md).
+
 The live fixture owns and removes an empty temporary directory, forces read-only/no-network execution, uses an ephemeral Thread, and never enumerates existing Threads or account data. Available scenarios are `basic`, `steer`, `interrupt`, and `supervisor`.
 
 `BridgeMCP` preserves the original five read-only tools by default. Production composition can opt into seven task tools and four project/file/navigation tools, for 16 total; Codex approval is never exposed remotely. The listener stays on `127.0.0.1`. MCP Inspector and local development use an ephemeral secret path. Manual HTTPS uses an explicit Keychain-backed `Authorization` value, rejects redirects, bounds request/response memory and accepts the remote endpoint only after strict MCP negotiation. Tunnel production mode instead uses a non-secret `/mcp` URL plus a 256-bit static header secret supplied to the official helper through fd4; the HTTP boundary validates it in constant time and strips it before SDK dispatch. `BridgeTunnel` validates the exact signed helper identity, owns its bounded process lifecycle, and requires strict local readiness plus a fresh control-plane poll before accepting remote submissions. Real Runtime Key and ChatGPT Developer Mode acceptance remain user-driven gates.
@@ -89,4 +98,4 @@ Do not include Runtime Keys, Codex credentials, project source, cookies or priva
 
 ## License
 
-The project is intended for Apache-2.0 release. Third-party dependency licenses and notices are tracked in [docs/DEPENDENCIES.md](./docs/DEPENDENCIES.md); the final release LICENSE/NOTICE bundle will be completed before public distribution.
+Codex Bridge is licensed under [Apache License 2.0](./LICENSE). See [NOTICE](./NOTICE) and [third-party dependency notices](./docs/DEPENDENCIES.md) for attribution, [PRIVACY.md](./PRIVACY.md) for the local-data boundary, and [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution checks.

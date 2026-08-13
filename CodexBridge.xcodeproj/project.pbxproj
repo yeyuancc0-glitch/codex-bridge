@@ -91,6 +91,7 @@
 				01C000000000000000000002 /* Sources */,
 				01C000000000000000000001 /* Frameworks */,
 				01C000000000000000000003 /* Resources */,
+				01C000000000000000000004 /* Stage Tunnel Helper */,
 			);
 			buildRules = (
 			);
@@ -151,6 +152,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		01C000000000000000000004 /* Stage Tunnel Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stage Tunnel Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"${SRCROOT}/Scripts/stage-tunnel-helper.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		01C000000000000000000002 /* Sources */ = {

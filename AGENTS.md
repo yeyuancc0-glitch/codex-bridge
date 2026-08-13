@@ -23,7 +23,7 @@
 - SQLite 持久化使用 GRDB；日志使用 swift-log；密钥只进入 Keychain。
 - Git 与验证命令使用 `Process` 和 argv 数组，不拼接 Shell 字符串。
 - 2026-08-12 本机事实：外置完整 Xcode 27.0 Beta 5（build `27A5237l`）位于 `/Volumes/fanch/Applications/Xcode-beta.app`，签名、License、First Launch 与全部 27.0 SDK 检查通过；Codex CLI 为 `0.147.0-alpha.6.5`，Git 2.54.0。
-- 系统级 `xcode-select` 仍指向 Command Line Tools，因为切换需要用户管理员密码。项目命令必须通过 `Scripts/with-xcode.sh` 或显式 `DEVELOPER_DIR=/Volumes/fanch/Applications/Xcode-beta.app/Contents/Developer` 运行。
+- 系统级 `xcode-select` 仍指向 Command Line Tools，因为切换需要用户管理员密码。项目命令必须通过 `Scripts/with-xcode.sh` 运行；非默认 Xcode 位置使用 `CODEX_BRIDGE_XCODE_DEVELOPER_DIR` 指向已验证的 Developer 目录。
 
 ## 开发协作规则
 
@@ -154,10 +154,11 @@ Scripts/verify-mcp-inspector.sh
 Scripts/build-tunnel-helper.sh OUTPUT_DIRECTORY
 Scripts/verify-tunnel-helper.sh HELPER_DIRECTORY TRUSTED_UNSIGNED_SHA256
 Scripts/test-tunnel-helper-config.sh
+Scripts/build-release-candidate.sh OUTPUT_DIRECTORY HELPER_DIRECTORY TRUSTED_UNSIGNED_SHA256
 codex app-server generate-json-schema --out DIR
 ```
 
-- UI Test、Release 签名和公证命令在对应 target 与发布流水线建立后补充。
+- `build-release-candidate.sh` 只生成明确标记为 unsigned 的 Universal 2 ZIP/DMG/SBOM/checksum 候选；Developer ID、notarytool、staple 与干净 Mac 验收仍是独立凭证门禁，流程见 `docs/RELEASE.md`。
 
 ## 常见坑与注意事项
 
@@ -182,6 +183,7 @@ codex app-server generate-json-schema --out DIR
 - AppShell 的 `DesktopConnectionRuntime` 是 Local、Manual HTTPS 与 Secure Tunnel 三种传输的唯一生命周期和健康状态源；切换模式必须先停止旧链路，本机 MCP 就绪不能被投影为 ChatGPT 远程就绪。Manual HTTPS 只接受无重定向的强认证 `/mcp` 地址，并使用有界请求、响应和超时。
 - `tunnel-client` 必须使用调用方预建的 0700 私有根、dirfd/inode 绑定的每次运行目录、Unix-domain health/admin socket 与最小化子进程环境。禁止把配置交给可替换的 pathname；非秘密配置使用固定 argv，Runtime Key 经 fd3、MCP 静态认证头经 fd4。官方 v0.0.11 不支持把 MCP URL 写成 `file:`，所以只传非秘密 `http://127.0.0.1:<port>/mcp`。`/readyz` 只证明本地 MCP 就绪，只有 health peer PID 匹配、严格 ready 且 control-plane poll 成功并新鲜时才可显示 Tunnel 已连接。
 - Tunnel helper 必须先按外部可信的签名后 SHA-256 校验打开的同一 fd，再以 suspended 状态 spawn；只有动态 SecCode 通过宿主 Team requirement 且 CDHash 与静态 fd 身份相同时才恢复和写入秘密。签名前 supply manifest 不能充当运行时信任根。
+- Xcode 的 `Stage Tunnel Helper` phase 对普通开发构建是可选的；Release 候选必须显式提供独立可信的 unsigned helper SHA-256。Helper 先签名/暂存，再计算 App 内 post-stage 摘要，最后才签外层 App。
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责秘密路径或 Tunnel 认证头、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
 - `BridgeMCP` 无任务后端时保持五个只读工具兼容；注入任务后端后追加七个任务查询/提交/steer/interrupt 工具，但不远程公开 Codex 审批。每个 HTTP session 独占一个 strict SDK Server，全局/单 session 工具并发上限为 8/2，完整双形态结果上限 200 KiB，响应最迟 25 秒关闭并回收 session。新增工具不能绕过这些统一边界。
 - `BridgeMCP` 注入项目操作后再追加 `get_project`、受限文件 search/read 与 `open_in_codex`；任务和项目后端同时启用时共 16 个工具。项目工具仍只接受 `project_id` 与相对路径，打开 Codex 前必须重新核对 Thread cwd 属于该项目。

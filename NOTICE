@@ -1,0 +1,19 @@
+Codex Bridge
+Copyright 2026 Codex Bridge contributors
+
+This product includes software developed by the SwiftLog Project.
+Copyright 2018, 2019 The SwiftLog Project.
+SwiftLog contains a derivation of the lock implementation and scripts from SwiftNIO.
+
+This product includes software developed by the SwiftNIO Project.
+Copyright 2017, 2018 The SwiftNIO Project.
+SwiftNIO contains or derives components from Netty, NodeJS llhttp, uSHET,
+FreeBSD, swift-base64-kit and AsyncHTTPClient. Their license details are
+retained in the SwiftNIO distribution and summarized in docs/DEPENDENCIES.md.
+
+Release builds may bundle OpenAI tunnel-client. Its pinned upstream LICENSE,
+NOTICE and supply manifest are copied into the application bundle under
+Contents/Resources/TunnelClient and are verified before packaging.
+
+Complete dependency versions, source locations and license evidence are in
+docs/DEPENDENCIES.md and the generated SPDX SBOM shipped with release artifacts.
