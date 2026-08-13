@@ -188,6 +188,34 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await backend.shutdown()
   }
 
+  func testOverviewRefreshReadsBoundedAccountRateLimits() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let catalog = TestCodexCatalog(projectURL: directory)
+    let backend = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: nil),
+      catalog: catalog
+    )
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    let initial = try await nextReadySnapshot(&iterator)
+    guard case .ready(let initialOverview) = initial.presentation.overview else {
+      return XCTFail("Expected initial overview")
+    }
+    XCTAssertEqual(initialOverview.rateLimitSummary, "刷新概览以读取 Codex 账号限额")
+
+    try await backend.refresh(.overview)
+    let refreshed = try await nextReadySnapshot(&iterator)
+    guard case .ready(let overview) = refreshed.presentation.overview else {
+      return XCTFail("Expected refreshed overview")
+    }
+    XCTAssertEqual(overview.rateLimitSummary, "主要窗口已使用 12%；次要窗口已使用 34%")
+    let readCount = await catalog.rateLimitReadCount
+    XCTAssertEqual(readCount, 1)
+    await backend.shutdown()
+  }
+
   func testIncompleteTaskActionsFailClosed() async throws {
     let directory = temporaryDirectory()
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
@@ -536,6 +564,7 @@ final class LiveBridgeAppBackendTests: XCTestCase {
 private actor TestCodexCatalog: CodexCatalogQuerying {
   private let projectURL: URL
   private(set) var requestedRoots: [[String]] = []
+  private(set) var rateLimitReadCount = 0
 
   init(projectURL: URL) {
     self.projectURL = projectURL
@@ -582,6 +611,18 @@ private actor TestCodexCatalog: CodexCatalogQuerying {
         reasoningEfforts: ["medium"]
       ),
     ]
+  }
+
+  func readAccountRateLimits(
+    deadline: ContinuousClock.Instant
+  ) throws -> CatalogRateLimitSummary {
+    guard ContinuousClock.now < deadline else { throw BridgeApplicationError.deadlineExceeded }
+    rateLimitReadCount += 1
+    return CatalogRateLimitSummary(
+      primary: CatalogRateLimitWindow(usedPercent: 12),
+      secondary: CatalogRateLimitWindow(usedPercent: 34),
+      isReached: false
+    )
   }
 
   private func thread(includeTurns: Bool) -> CatalogThread {

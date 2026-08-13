@@ -128,6 +128,10 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       try await refreshThreads(projectID: operatorState.selectedProjectID)
       return
     }
+    if destination == .overview {
+      try await refreshAccountRateLimits()
+      return
+    }
     try await publishCurrentFacts()
   }
 
@@ -856,6 +860,26 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
     try checkRunning()
     try await publishCurrentFacts()
+  }
+
+  private func refreshAccountRateLimits() async throws {
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    let composition = try requireComposition()
+    operatorState.rateLimits = .loading
+    try await publishCurrentFacts()
+    do {
+      let summary = try await composition.application.accountRateLimits(
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      )
+      try checkRunning()
+      operatorState.rateLimits = .ready(summary)
+      try await publishCurrentFacts()
+    } catch {
+      operatorState.rateLimits = .failed("Codex 账号限额暂不可用")
+      try? await publishCurrentFacts()
+      throw error
+    }
   }
 
   func shutdown() async {

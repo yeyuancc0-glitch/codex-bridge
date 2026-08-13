@@ -1,3 +1,4 @@
+import BridgeApplication
 import BridgeMCP
 import BridgePresentation
 import Foundation
@@ -41,6 +42,7 @@ struct DesktopOperatorState: Equatable, Sendable {
   var threads: DesktopOperatorLoad<DesktopThreadCatalogPage> = .notLoaded
   var history: DesktopOperatorLoad<DesktopThreadHistoryPage>?
   var composer: DesktopOperatorLoad<DesktopLocalTaskComposer>?
+  var rateLimits: DesktopOperatorLoad<CatalogRateLimitSummary> = .notLoaded
   var threadGeneration: UInt64 = 0
   var historyGeneration: UInt64 = 0
 

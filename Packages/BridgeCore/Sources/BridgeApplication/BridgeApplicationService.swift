@@ -88,6 +88,13 @@ public actor BridgeApplicationService:
     }
   }
 
+  public func accountRateLimits(
+    deadline: ContinuousClock.Instant
+  ) async throws -> CatalogRateLimitSummary {
+    try Self.checkDeadline(deadline)
+    return try await catalog.readAccountRateLimits(deadline: deadline)
+  }
+
   public func searchProjectFiles(
     projectID: String,
     query: String,

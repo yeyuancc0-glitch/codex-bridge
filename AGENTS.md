@@ -68,6 +68,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 启动与唤醒恢复只允许用只读 `thread/read(includeTurns: true)` 对账：精确绑定的 completed/interrupted/failed 可归约，仍由当前 Runtime 持有的 session 可继续观察；仅看到 inProgress 但无法重接事件流时必须进入 unknown 并保留锁，严禁用 `thread/resume` 或新 `turn/start` 伪造恢复。unknown 只能由本机用户明确标记为 suspended，且恢复事实与两把锁释放必须在同一事务提交；该动作不恢复旧进程、不启动新 Turn。
 - 生产验证命令只能消费绑定 task/project/root/command/generation 的一次性本机授权句柄；缺少句柄时只记录明确的 unavailable 证据，禁止调用兼容用的直接批准接口或伪造 passed。
 - 原生本机任务使用独立 `macos.app` origin，只允许 read-only、无网络、动态目录中精确存在的 execution model/effort，以及精确 `gpt-5.6-luna` Supervisor；existing Thread 在 claim 前必须重新核对项目 cwd。Thread/history/model 目录只作不持久化的有界投影，所有 catalog 操作共享单飞门并受整体 deadline 约束。
+- Codex 账号限额只在用户刷新概览时通过隔离 catalog 读取，不在启动或任务事件上轮询；应用层仅投影校验后的百分比、重置时间与触达状态，禁止把服务端自由文本带入 UI。
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
 - `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；`didWake` 只能在任务事实刷新和当前 Transport 严格复核后重新开放，不能把该复核冒充完整的 app-server/Thread/Git 恢复。
 

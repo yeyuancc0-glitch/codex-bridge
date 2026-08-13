@@ -1,4 +1,3 @@
-import BridgeApplication
 import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
@@ -13,7 +12,23 @@ import CryptoKit
 import Foundation
 import XCTest
 
+@testable import BridgeApplication
+
 final class BridgeApplicationServiceTests: XCTestCase {
+  func testCatalogRateLimitMappingRejectsOutOfRangeUsage() {
+    let source = CodexRateLimitSnapshot(
+      primary: CodexRateLimitWindow(
+        usedPercent: 101,
+        windowDurationMins: 300,
+        resetsAt: 1_700_000_000
+      )
+    )
+
+    XCTAssertThrowsError(try IsolatedCodexCatalogService.rateLimits(source)) { error in
+      XCTAssertEqual(error as? BridgeApplicationError, .invalidCatalogResponse)
+    }
+  }
+
   func testProjectAndThreadQueriesNeverExposeCanonicalPathsOrSecrets() async throws {
     let fixture = try Fixture()
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }

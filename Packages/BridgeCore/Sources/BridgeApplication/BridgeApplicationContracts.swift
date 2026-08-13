@@ -72,6 +72,32 @@ public struct CatalogModel: Equatable, Sendable {
   }
 }
 
+public struct CatalogRateLimitWindow: Equatable, Sendable {
+  public let usedPercent: Int
+  public let resetsAt: Date?
+
+  public init(usedPercent: Int, resetsAt: Date? = nil) {
+    self.usedPercent = usedPercent
+    self.resetsAt = resetsAt
+  }
+}
+
+public struct CatalogRateLimitSummary: Equatable, Sendable {
+  public let primary: CatalogRateLimitWindow?
+  public let secondary: CatalogRateLimitWindow?
+  public let isReached: Bool
+
+  public init(
+    primary: CatalogRateLimitWindow?,
+    secondary: CatalogRateLimitWindow?,
+    isReached: Bool
+  ) {
+    self.primary = primary
+    self.secondary = secondary
+    self.isReached = isReached
+  }
+}
+
 public protocol CodexCatalogQuerying: Sendable {
   func listThreads(
     canonicalWorkingDirectories: [String],
@@ -88,6 +114,18 @@ public protocol CodexCatalogQuerying: Sendable {
   ) async throws -> CatalogThread
 
   func listModels(deadline: ContinuousClock.Instant) async throws -> [CatalogModel]
+  func readAccountRateLimits(
+    deadline: ContinuousClock.Instant
+  ) async throws -> CatalogRateLimitSummary
+}
+
+extension CodexCatalogQuerying {
+  public func readAccountRateLimits(
+    deadline: ContinuousClock.Instant
+  ) async throws -> CatalogRateLimitSummary {
+    _ = deadline
+    throw BridgeApplicationError.catalogUnavailable
+  }
 }
 
 public protocol BridgeStatusProviding: Sendable {

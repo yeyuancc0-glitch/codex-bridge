@@ -90,6 +90,15 @@ public actor IsolatedCodexCatalogService: CodexCatalogQuerying {
     }
   }
 
+  public func readAccountRateLimits(
+    deadline: ContinuousClock.Instant
+  ) async throws -> CatalogRateLimitSummary {
+    try await withClient(deadline: deadline) { client in
+      let response = try await client.readAccountRateLimits()
+      return try Self.rateLimits(response.rateLimits)
+    }
+  }
+
   private func withClient<Output: Sendable>(
     deadline: ContinuousClock.Instant,
     operation: @escaping @Sendable (CodexAppServerClient) async throws -> Output
@@ -185,6 +194,37 @@ public actor IsolatedCodexCatalogService: CodexCatalogQuerying {
       isDefault: source.isDefault,
       reasoningEfforts: source.supportedReasoningEfforts.map(\.reasoningEffort)
     )
+  }
+
+  static func rateLimits(
+    _ source: CodexRateLimitSnapshot
+  ) throws -> CatalogRateLimitSummary {
+    CatalogRateLimitSummary(
+      primary: try rateLimitWindow(source.primary),
+      secondary: try rateLimitWindow(source.secondary),
+      isReached: source.rateLimitReachedType != nil || source.spendControlReached == true
+    )
+  }
+
+  private static func rateLimitWindow(
+    _ source: CodexRateLimitWindow?
+  ) throws -> CatalogRateLimitWindow? {
+    guard let source else { return nil }
+    guard (0...100).contains(source.usedPercent) else {
+      throw BridgeApplicationError.invalidCatalogResponse
+    }
+    let resetsAt: Date?
+    if let rawReset = source.resetsAt {
+      guard rawReset >= 0 else { throw BridgeApplicationError.invalidCatalogResponse }
+      let date = Date(timeIntervalSince1970: TimeInterval(rawReset))
+      guard date.timeIntervalSince1970.isFinite else {
+        throw BridgeApplicationError.invalidCatalogResponse
+      }
+      resetsAt = date
+    } else {
+      resetsAt = nil
+    }
+    return CatalogRateLimitWindow(usedPercent: source.usedPercent, resetsAt: resetsAt)
   }
 
   private static func status(_ value: JSONValue) -> String {

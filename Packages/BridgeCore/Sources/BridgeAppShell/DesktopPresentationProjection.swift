@@ -63,7 +63,7 @@ struct DesktopPresentationProjection {
           activeTasks: active,
           recentTasks: recent,
           registeredProjectCount: projectRows.count,
-          rateLimitSummary: "尚未读取 Codex 账号限额"
+          rateLimitSummary: rateLimitSummary(operatorState.rateLimits)
         )
       ),
       tasks: .ready(
@@ -670,6 +670,23 @@ struct DesktopPresentationProjection {
     case .disabled: "登录 macOS 后不会自动启动"
     case .enabled: "已由 macOS 登录项启用"
     case .requiresApproval: "已请求启用；需要在系统设置的登录项中批准"
+    }
+  }
+
+  private static func rateLimitSummary(
+    _ state: DesktopOperatorLoad<CatalogRateLimitSummary>
+  ) -> String {
+    switch state {
+    case .notLoaded: return "刷新概览以读取 Codex 账号限额"
+    case .loading: return "正在读取 Codex 账号限额"
+    case .failed: return "Codex 账号限额暂不可用"
+    case .ready(let summary):
+      let windows = [
+        summary.primary.map { "主要窗口已使用 \($0.usedPercent)%" },
+        summary.secondary.map { "次要窗口已使用 \($0.usedPercent)%" },
+      ].compactMap { $0 }
+      let usage = windows.isEmpty ? "Codex 未返回窗口用量" : windows.joined(separator: "；")
+      return summary.isReached ? "\(usage)；已触达限额" : usage
     }
   }
 
