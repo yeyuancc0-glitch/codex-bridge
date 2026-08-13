@@ -119,10 +119,15 @@ private struct ProjectDetail: View {
             StatusLabel(status: project.isAvailable ? .ready : .disconnected)
           }
           Spacer()
-          Button("打开项目", systemImage: "arrow.up.forward.app") {
-            Task { await store.perform(.openProject(project.id)) }
+          if project.isAvailable {
+            Button("打开项目", systemImage: "arrow.up.forward.app") {
+              Task { await store.perform(.openProject(project.id)) }
+            }
+          } else {
+            Button("重新连接项目", systemImage: "externaldrive.badge.plus") {
+              Task { await store.perform(.reconnectProject(project.id)) }
+            }
           }
-          .disabled(!project.isAvailable)
         }
         Divider()
         SectionHeading("路径与 Git")

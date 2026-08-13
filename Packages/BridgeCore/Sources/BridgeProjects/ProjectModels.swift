@@ -196,6 +196,19 @@ public struct RegisteredProject: Codable, Equatable, Sendable {
     )
   }
 
+  public func replacingSingleRoot(_ root: RegisteredRoot) -> RegisteredProject {
+    RegisteredProject(
+      id: id,
+      name: name,
+      primaryRoot: root,
+      repositoryRoot: root,
+      accessPolicy: accessPolicy,
+      verificationCommands: verificationCommands,
+      forbiddenPatterns: forbiddenPatterns,
+      createdAt: createdAt
+    )
+  }
+
   public func validateCurrentRoots() throws {
     try primaryRoot.validateCurrentIdentity()
     try repositoryRoot.validateCurrentIdentity()
@@ -237,6 +250,8 @@ public enum ProjectRegistryError: Error, LocalizedError, Equatable, Sendable {
   case duplicateProjectID
   case unknownProject
   case removalUnsupported
+  case rootRebindingUnsupported
+  case rootSelectionMismatch
   case repositoryDoesNotContainProject
   case workingDirectoryOutsideProject
 
@@ -256,6 +271,10 @@ public enum ProjectRegistryError: Error, LocalizedError, Equatable, Sendable {
       "The project identifier is not registered."
     case .removalUnsupported:
       "The project repository does not support safe removal."
+    case .rootRebindingUnsupported:
+      "Only projects with one shared project and repository root can be safely reconnected."
+    case .rootSelectionMismatch:
+      "The selected directory does not match the project's registered path."
     case .repositoryDoesNotContainProject:
       "The repository root does not contain the project root."
     case .workingDirectoryOutsideProject:

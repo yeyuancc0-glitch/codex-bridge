@@ -14,6 +14,7 @@ enum BackendEvent: Equatable, Sendable {
   case testConnection
   case receivingPaused(Bool)
   case openTask(String)
+  case reconnectProject(String)
   case removeProject(String)
   case updateProjectPolicy(
     projectID: String,
@@ -83,6 +84,9 @@ actor TestBackend: BridgeAppBackend {
   func setReceivingPaused(_ paused: Bool) { recordedEvents.append(.receivingPaused(paused)) }
   func addProject() {}
   func openProject(_ projectID: String) {}
+  func reconnectProject(_ projectID: String) {
+    recordedEvents.append(.reconnectProject(projectID))
+  }
   func removeProject(_ projectID: String) {
     recordedEvents.append(.removeProject(projectID))
   }

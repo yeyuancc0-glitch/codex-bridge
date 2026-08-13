@@ -70,4 +70,13 @@ struct DesktopOperatorState: Equatable, Sendable {
     threadGeneration &+= 1
     historyGeneration &+= 1
   }
+
+  mutating func rebindProjectSelection(_ projectID: String) {
+    guard selectedProjectID == projectID else { return }
+    threads = .notLoaded
+    history = nil
+    composer = nil
+    threadGeneration &+= 1
+    historyGeneration &+= 1
+  }
 }

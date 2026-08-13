@@ -140,6 +140,7 @@ public enum PresentationAction: Equatable, Sendable {
   case refresh(BridgeNavigationDestination)
   case addProject
   case openProject(String)
+  case reconnectProject(String)
   case removeProject(String)
   case updateProjectAccessPolicy(
     projectID: String,

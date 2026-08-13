@@ -168,6 +168,7 @@ public protocol BridgeAppBackend: Sendable {
   func setReceivingPaused(_ paused: Bool) async throws
   func addProject() async throws
   func openProject(_ projectID: String) async throws
+  func reconnectProject(_ projectID: String) async throws
   func removeProject(_ projectID: String) async throws
   func updateProjectAccessPolicy(
     projectID: String,
@@ -205,6 +206,11 @@ public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
 }
 
 extension BridgeAppBackend {
+  public func reconnectProject(_ projectID: String) async throws {
+    _ = projectID
+    throw BridgeAppBackendCompatibilityError.projectConfigurationUnsupported
+  }
+
   public func removeProject(_ projectID: String) async throws {
     _ = projectID
     throw BridgeAppBackendCompatibilityError.projectConfigurationUnsupported

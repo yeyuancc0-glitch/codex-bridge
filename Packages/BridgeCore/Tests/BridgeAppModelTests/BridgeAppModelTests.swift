@@ -359,4 +359,15 @@ final class BridgeAppModelTests: XCTestCase {
     let events = await backend.events()
     XCTAssertEqual(events, [.removeProject("project-1")])
   }
+
+  func testProjectReconnectRoutesSelectedProjectIdentity() async {
+    let backend = TestBackend()
+    let model = BridgeAppModel(backend: backend)
+
+    let reconnected = await model.presentationStore.perform(.reconnectProject("project-1"))
+
+    XCTAssertTrue(reconnected)
+    let events = await backend.events()
+    XCTAssertEqual(events, [.reconnectProject("project-1")])
+  }
 }

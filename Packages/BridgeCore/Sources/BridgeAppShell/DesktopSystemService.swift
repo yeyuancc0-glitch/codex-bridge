@@ -33,6 +33,7 @@ public protocol DesktopSystemServing: Sendable {
   @MainActor var supportsSupportBundleExport: Bool { get }
   @MainActor var launchAtLoginStatus: DesktopLaunchAtLoginStatus { get }
   @MainActor func selectProjectDirectory() async -> URL?
+  @MainActor func selectReplacementProjectDirectory(projectName: String) async -> URL?
   @MainActor func open(_ url: URL) -> Bool
   @MainActor func copyToPasteboard(_ value: String) -> Bool
   @MainActor func saveSupportBundle(
@@ -50,6 +51,11 @@ extension DesktopSystemServing {
   @MainActor public func setLaunchAtLoginEnabled(_ enabled: Bool) throws {
     _ = enabled
     throw DesktopSystemServiceError.launchAtLoginUnavailable
+  }
+
+  @MainActor public func selectReplacementProjectDirectory(projectName: String) async -> URL? {
+    _ = projectName
+    return await selectProjectDirectory()
   }
 }
 
@@ -70,10 +76,28 @@ public struct AppKitDesktopSystemService: DesktopSystemServing {
 
   @MainActor
   public func selectProjectDirectory() async -> URL? {
+    await selectDirectory(
+      title: "添加 Codex Bridge 项目",
+      message: "选择 Bridge 可以读取的项目根目录。",
+      prompt: "添加项目"
+    )
+  }
+
+  @MainActor
+  public func selectReplacementProjectDirectory(projectName: String) async -> URL? {
+    await selectDirectory(
+      title: "重新连接“\(projectName)”",
+      message: "选择原项目路径以更新卷身份。Bridge 不会移动或删除文件。",
+      prompt: "重新连接"
+    )
+  }
+
+  @MainActor
+  private func selectDirectory(title: String, message: String, prompt: String) async -> URL? {
     let panel = NSOpenPanel()
-    panel.title = "添加 Codex Bridge 项目"
-    panel.message = "选择 Bridge 可以读取的项目根目录。"
-    panel.prompt = "添加项目"
+    panel.title = title
+    panel.message = message
+    panel.prompt = prompt
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
     panel.allowsMultipleSelection = false

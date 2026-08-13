@@ -58,6 +58,24 @@ public actor ProjectRegistry {
     try await repository.removeProject(id: projectID)
   }
 
+  public func rebindSingleRoot(
+    for projectID: ProjectID,
+    confirmedRootURL: URL
+  ) async throws {
+    guard let repository = repository as? any ProjectRootRebindingRepository else {
+      throw ProjectRegistryError.rootRebindingUnsupported
+    }
+    let project = try await requireProject(projectID)
+    guard project.primaryRoot.canonicalPath == project.repositoryRoot.canonicalPath,
+      project.worktreeRoots.isEmpty
+    else { throw ProjectRegistryError.rootRebindingUnsupported }
+    let root = try RegisteredRoot(capturing: confirmedRootURL)
+    guard root.canonicalPath == project.primaryRoot.canonicalPath else {
+      throw ProjectRegistryError.rootSelectionMismatch
+    }
+    try await repository.rebindSingleRoot(root, for: projectID)
+  }
+
   public func summaries() async throws -> [ProjectSummaryDTO] {
     let projects = try await repository.allProjects()
     for project in projects {

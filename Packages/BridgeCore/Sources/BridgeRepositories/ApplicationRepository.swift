@@ -8,7 +8,8 @@ import Foundation
 import GRDB
 
 public actor ApplicationRepository:
-  MutableProjectRepository, ThreadBindingRepository, DurableThreadBindingStore, FinalReportStore
+  MutableProjectRepository, ProjectRootRebindingRepository, ThreadBindingRepository,
+  DurableThreadBindingStore, FinalReportStore
 {
   static let maximumProjectJSONBytes = 256 * 1_024
   static let maximumReportJSONBytes = 256 * 1_024

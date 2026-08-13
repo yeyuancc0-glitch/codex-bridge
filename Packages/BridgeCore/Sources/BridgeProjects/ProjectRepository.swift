@@ -14,7 +14,13 @@ public protocol MutableProjectRepository: ProjectRepository {
   func removeProject(id: ProjectID) async throws
 }
 
-public actor InMemoryProjectRepository: MutableProjectRepository {
+public protocol ProjectRootRebindingRepository: ProjectRepository {
+  func rebindSingleRoot(_ root: RegisteredRoot, for projectID: ProjectID) async throws
+}
+
+public actor InMemoryProjectRepository: MutableProjectRepository,
+  ProjectRootRebindingRepository
+{
   private var projectsByID: [ProjectID: RegisteredProject] = [:]
 
   public init() {}
@@ -63,9 +69,34 @@ public actor InMemoryProjectRepository: MutableProjectRepository {
     }
   }
 
+  public func rebindSingleRoot(_ root: RegisteredRoot, for projectID: ProjectID) throws {
+    guard let project = projectsByID[projectID] else {
+      throw ProjectRegistryError.unknownProject
+    }
+    guard project.primaryRoot.canonicalPath == project.repositoryRoot.canonicalPath,
+      project.worktreeRoots.isEmpty
+    else { throw ProjectRegistryError.rootRebindingUnsupported }
+    guard root.canonicalPath == project.primaryRoot.canonicalPath else {
+      throw ProjectRegistryError.rootSelectionMismatch
+    }
+    guard project.primaryRoot != root else { return }
+    guard !containsRegisteredRoot(root, excluding: projectID) else {
+      throw ProjectRegistryError.duplicateRoot
+    }
+    projectsByID[projectID] = project.replacingSingleRoot(root)
+  }
+
   private func containsRegisteredRoot(_ candidate: RegisteredRoot) -> Bool {
+    containsRegisteredRoot(candidate, excluding: nil)
+  }
+
+  private func containsRegisteredRoot(
+    _ candidate: RegisteredRoot,
+    excluding projectID: ProjectID?
+  ) -> Bool {
     projectsByID.values.contains { project in
-      project.primaryRoot.canonicalPath == candidate.canonicalPath
+      guard project.id != projectID else { return false }
+      return project.primaryRoot.canonicalPath == candidate.canonicalPath
         || project.primaryRoot.identity == candidate.identity
         || project.worktreeRoots.contains(where: {
           $0.canonicalPath == candidate.canonicalPath || $0.identity == candidate.identity

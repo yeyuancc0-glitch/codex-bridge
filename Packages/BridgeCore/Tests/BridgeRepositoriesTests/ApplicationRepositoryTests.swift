@@ -194,6 +194,84 @@ final class ApplicationRepositoryTests: XCTestCase {
     XCTAssertEqual(storedReplacement, replacement)
   }
 
+  func testSingleRootRebindReplacesIdentityAndClearsStaleThreadBindings() async throws {
+    let fixture = try makeFixture()
+    let repository = try ApplicationRepository(path: fixture.databasePath)
+    let originalRoot = try RegisteredRoot(capturing: fixture.repositoryURL)
+    let project = RegisteredProject(
+      id: ProjectID(rawValue: "prj-rebind"),
+      name: "Reconnect",
+      primaryRoot: originalRoot,
+      repositoryRoot: originalRoot,
+      accessPolicy: .init(),
+      verificationCommands: [],
+      forbiddenPatterns: [],
+      createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    try await repository.insert(project)
+    try await repository.storeBinding(
+      ThreadProjectBindingRecord(
+        threadID: "thr-stale-root",
+        projectID: project.id,
+        root: originalRoot,
+        boundAt: Date(timeIntervalSince1970: 1_700_000_100)
+      )
+    )
+    let originalLocation = fixture.repositoryURL.deletingLastPathComponent()
+      .appending(path: "repository-before-remount", directoryHint: .isDirectory)
+    try FileManager.default.moveItem(at: fixture.repositoryURL, to: originalLocation)
+    try FileManager.default.createDirectory(
+      at: fixture.repositoryURL,
+      withIntermediateDirectories: true
+    )
+    let replacementRoot = try RegisteredRoot(capturing: fixture.repositoryURL)
+    XCTAssertNotEqual(replacementRoot.identity, originalRoot.identity)
+
+    try await repository.rebindSingleRoot(replacementRoot, for: project.id)
+
+    let rebound = try await repository.project(id: project.id)
+    let staleBinding = try await repository.storedBinding(for: "thr-stale-root")
+    XCTAssertEqual(rebound?.primaryRoot, replacementRoot)
+    XCTAssertEqual(rebound?.repositoryRoot, replacementRoot)
+    XCTAssertEqual(rebound?.accessPolicy, project.accessPolicy)
+    XCTAssertNil(staleBinding)
+    try rebound?.validateCurrentRoots()
+    let reopened = try ApplicationRepository(path: fixture.databasePath)
+    let persisted = try await reopened.project(id: project.id)
+    XCTAssertEqual(persisted?.primaryRoot, replacementRoot)
+  }
+
+  func testSingleRootRebindRejectsAReplacementAtAnotherPath() async throws {
+    let fixture = try makeFixture()
+    let repository = try ApplicationRepository(path: fixture.databasePath)
+    let originalRoot = try RegisteredRoot(capturing: fixture.repositoryURL)
+    let project = RegisteredProject(
+      id: ProjectID(rawValue: "prj-rebind-mismatch"),
+      name: "Reconnect",
+      primaryRoot: originalRoot,
+      repositoryRoot: originalRoot,
+      accessPolicy: .init(),
+      verificationCommands: [],
+      forbiddenPatterns: [],
+      createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+    try await repository.insert(project)
+    let otherURL = fixture.repositoryURL.deletingLastPathComponent()
+      .appending(path: "unapproved-replacement", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: otherURL, withIntermediateDirectories: true)
+    let otherRoot = try RegisteredRoot(capturing: otherURL)
+
+    do {
+      try await repository.rebindSingleRoot(otherRoot, for: project.id)
+      XCTFail("Expected a replacement at another path to be rejected")
+    } catch {
+      XCTAssertEqual(error as? ProjectRegistryError, .rootSelectionMismatch)
+    }
+
+    let stored = try await repository.project(id: project.id)
+    XCTAssertEqual(stored, project)
+  }
+
   func testConcurrentDatabaseInstancesEnforceOneRootOwner() async throws {
     let fixture = try makeFixture()
     let firstRepository = try ApplicationRepository(path: fixture.databasePath)

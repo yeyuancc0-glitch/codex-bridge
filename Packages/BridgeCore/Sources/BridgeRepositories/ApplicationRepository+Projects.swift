@@ -153,6 +153,46 @@ extension ApplicationRepository {
     }
   }
 
+  public func rebindSingleRoot(_ root: RegisteredRoot, for projectID: ProjectID) throws {
+    try Self.validateIdentifier(projectID.rawValue, field: "project_id", maximum: 256)
+    try Self.validate(root, field: "primary_root")
+    try database.write { db in
+      guard let project = try Self.fetchProject(id: projectID, in: db) else {
+        throw ProjectRegistryError.unknownProject
+      }
+      guard project.primaryRoot.canonicalPath == project.repositoryRoot.canonicalPath,
+        project.worktreeRoots.isEmpty
+      else { throw ProjectRegistryError.rootRebindingUnsupported }
+      guard root.canonicalPath == project.primaryRoot.canonicalPath else {
+        throw ProjectRegistryError.rootSelectionMismatch
+      }
+      guard project.primaryRoot != root else { return }
+      guard try !Self.containsRoot(root, excluding: projectID, in: db) else {
+        throw ProjectRegistryError.duplicateRoot
+      }
+      let updated = project.replacingSingleRoot(root)
+      try Self.validate(updated)
+      let encoded = try Self.encodeProject(updated)
+      try db.execute(
+        sql: "DELETE FROM bridge_repository_thread_bindings WHERE project_id = ?",
+        arguments: [projectID.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_repository_project_roots WHERE project_id = ?",
+        arguments: [projectID.rawValue]
+      )
+      try db.execute(
+        sql: """
+          UPDATE bridge_repository_projects
+          SET configuration_json = ?, configuration_sha256 = ?
+          WHERE project_id = ?
+          """,
+        arguments: [encoded, Self.digest(encoded), projectID.rawValue]
+      )
+      try Self.insertRoot(root, projectID: projectID, role: "primary", ordinal: 0, in: db)
+    }
+  }
+
   static func fetchProject(id: ProjectID, in db: Database) throws -> RegisteredProject? {
     guard
       let row = try Row.fetchOne(
@@ -183,6 +223,29 @@ extension ApplicationRepository {
         )
         """,
       arguments: [
+        root.canonicalPath,
+        String(root.identity.device),
+        String(root.identity.inode),
+      ]
+    ) ?? false
+  }
+
+  static func containsRoot(
+    _ root: RegisteredRoot,
+    excluding projectID: ProjectID,
+    in db: Database
+  ) throws -> Bool {
+    try Bool.fetchOne(
+      db,
+      sql: """
+        SELECT EXISTS(
+          SELECT 1 FROM bridge_repository_project_roots
+          WHERE project_id != ?
+            AND (canonical_path = ? OR (device = ? AND inode = ?))
+        )
+        """,
+      arguments: [
+        projectID.rawValue,
         root.canonicalPath,
         String(root.identity.device),
         String(root.identity.inode),

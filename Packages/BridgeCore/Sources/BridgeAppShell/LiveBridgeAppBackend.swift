@@ -340,6 +340,47 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try await publishCurrentFacts()
   }
 
+  func reconnectProject(_ projectID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(projectID)
+    let composition = try requireComposition()
+    let id = ProjectID(rawValue: projectID)
+    guard let project = try await composition.repository.project(id: id) else {
+      throw ProjectRegistryError.unknownProject
+    }
+    guard (try? project.validateCurrentRoots()) == nil else {
+      throw DesktopBackendError.operationFailed
+    }
+    guard
+      let directory = await system.selectReplacementProjectDirectory(projectName: project.name)
+    else { return }
+    try checkRunning()
+    let lease: TaskProjectRemovalLease
+    do {
+      lease = try await composition.projectMutationGate.acquireRemoval(for: id)
+    } catch TaskProjectMutationGateError.submissionsInProgress {
+      throw DesktopBackendError.projectHasActiveTasks
+    } catch {
+      throw DesktopBackendError.operationFailed
+    }
+    do {
+      try await requireNoActiveTasks(for: id, composition: composition)
+      try await composition.registry.rebindSingleRoot(
+        for: id,
+        confirmedRootURL: directory
+      )
+      await composition.projectMutationGate.releaseRemoval(lease)
+    } catch {
+      await composition.projectMutationGate.releaseRemoval(lease)
+      throw error
+    }
+    try checkRunning()
+    operatorState.rebindProjectSelection(projectID)
+    appendDiagnostic("已重新验证项目卷身份；本机文件未被修改。", status: .ready)
+    try await publishCurrentFacts()
+  }
+
   func removeProject(_ projectID: String) async throws {
     try beginOperation()
     defer { endOperation() }
