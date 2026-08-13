@@ -2,7 +2,7 @@ import XCTest
 
 final class CodexBridgeUITests: XCTestCase {
   @MainActor
-  func testFirstRunRendersAccessibleNineStepOnboarding() throws {
+  func testFirstRunAndMenuBarRenderAccessibleNativeShell() throws {
     continueAfterFailure = false
     let isolatedHome = FileManager.default.temporaryDirectory.appendingPathComponent(
       "CodexBridgeUITests-\(UUID().uuidString)",
@@ -54,5 +54,12 @@ final class CodexBridgeUITests: XCTestCase {
         && element.elementType == .touchBar
       return isWindowHost || isSystemTouchBar
     }
+
+    let statusItem = app.statusItems["Codex Bridge"]
+    XCTAssertTrue(statusItem.waitForExistence(timeout: 5))
+    statusItem.click()
+    XCTAssertTrue(app.menuItems["连接尚未配置"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.menuItems["打开 Codex Bridge"].exists)
+    XCTAssertTrue(app.menuItems["退出"].exists)
   }
 }

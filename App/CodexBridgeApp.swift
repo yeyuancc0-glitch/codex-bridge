@@ -19,8 +19,11 @@ struct CodexBridgeApp: App {
     }
     .defaultSize(width: 1180, height: 760)
 
-    MenuBarExtra("Codex Bridge", systemImage: "link") {
+    MenuBarExtra {
       BridgeMenuBarView(runtime: runtime)
+    } label: {
+      Label("Codex Bridge", systemImage: "link")
+        .accessibilityLabel("Codex Bridge")
     }
   }
 }
