@@ -167,24 +167,71 @@ public protocol BridgeAppBackend: Sendable {
   func setReceivingPaused(_ paused: Bool) async throws
   func addProject() async throws
   func openProject(_ projectID: String) async throws
+  func selectThreadProject(_ projectID: String) async throws
+  func loadMoreThreads() async throws
   func readThreadHistory(_ threadID: String) async throws
+  func readThreadHistory(projectID: String, threadID: String) async throws
+  func loadMoreThreadHistory() async throws
   func continueThread(_ threadID: String) async throws
   func createTaskFromThread(_ threadID: String) async throws
   func copyThreadID(_ threadID: String) async throws
   func archiveSupervisorThread(_ threadID: String) async throws
   func openThreadInCodex(_ threadID: String) async throws
+  func openThreadInCodex(projectID: String, threadID: String) async throws
   func openTaskInCodex(_ taskID: String) async throws
+  func prepareReadOnlyTask(projectID: String?, threadID: String?) async throws
+  func dismissReadOnlyTask() async throws
+  func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws
   func exportSupportBundle() async throws
   func updateSetting(key: String, enabled: Bool) async throws
 }
 
 public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
   case verificationAuthorizationUnsupported
+  case threadCatalogOperationUnsupported
+  case localTaskComposerUnsupported
 }
 
 extension BridgeAppBackend {
   public func authorizeTaskVerification(_ taskID: String) async throws {
     _ = taskID
     throw BridgeAppBackendCompatibilityError.verificationAuthorizationUnsupported
+  }
+
+  public func selectThreadProject(_ projectID: String) async throws {
+    _ = projectID
+    throw BridgeAppBackendCompatibilityError.threadCatalogOperationUnsupported
+  }
+
+  public func loadMoreThreads() async throws {
+    throw BridgeAppBackendCompatibilityError.threadCatalogOperationUnsupported
+  }
+
+  public func readThreadHistory(projectID: String, threadID: String) async throws {
+    _ = (projectID, threadID)
+    throw BridgeAppBackendCompatibilityError.threadCatalogOperationUnsupported
+  }
+
+  public func loadMoreThreadHistory() async throws {
+    throw BridgeAppBackendCompatibilityError.threadCatalogOperationUnsupported
+  }
+
+  public func openThreadInCodex(projectID: String, threadID: String) async throws {
+    _ = (projectID, threadID)
+    throw BridgeAppBackendCompatibilityError.threadCatalogOperationUnsupported
+  }
+
+  public func prepareReadOnlyTask(projectID: String?, threadID: String?) async throws {
+    _ = (projectID, threadID)
+    throw BridgeAppBackendCompatibilityError.localTaskComposerUnsupported
+  }
+
+  public func dismissReadOnlyTask() async throws {
+    throw BridgeAppBackendCompatibilityError.localTaskComposerUnsupported
+  }
+
+  public func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws {
+    _ = draft
+    throw BridgeAppBackendCompatibilityError.localTaskComposerUnsupported
   }
 }

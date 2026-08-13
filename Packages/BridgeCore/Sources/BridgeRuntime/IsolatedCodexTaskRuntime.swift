@@ -286,6 +286,9 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     } catch {
       throw IsolatedCodexTaskRuntimeError.turnUnavailable
     }
+    guard Self.isSafeWireIdentifier(turn.turn.id) else {
+      throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
     let binding = ExecutionBinding(
       threadID: preparation.threadID,
       turnID: TurnID(rawValue: turn.turn.id),
@@ -718,7 +721,7 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     sandbox: CodexSandboxPolicy,
     ephemeral: Bool?
   ) throws {
-    guard !response.thread.id.isEmpty,
+    guard Self.isSafeWireIdentifier(response.thread.id),
       response.thread.cwd == root.canonicalPath,
       response.cwd == root.canonicalPath,
       response.model == model,
@@ -729,6 +732,12 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     else {
       throw IsolatedCodexTaskRuntimeError.threadMismatch
     }
+  }
+
+  private static func isSafeWireIdentifier(_ value: String) -> Bool {
+    !value.isEmpty && value.utf8.count <= 1_024 && !value.contains("\0")
+      && value.rangeOfCharacter(from: .controlCharacters) == nil
+      && OutboundContentSecurity.isSafe(value)
   }
 
   private static func taskPrompt(_ contract: TaskContract) throws -> String {

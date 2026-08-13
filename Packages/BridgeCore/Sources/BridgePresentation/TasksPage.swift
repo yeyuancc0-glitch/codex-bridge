@@ -5,19 +5,222 @@ struct TasksPage: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
-      PageHeader(
-        title: "任务",
-        subtitle: "按事实状态检查任务，进入详情读取控制与证据",
-        refreshAction: { await store.perform(.refresh(.tasks)) }
-      )
+      HStack(alignment: .firstTextBaseline) {
+        PageHeader(
+          title: "任务",
+          subtitle: "按事实状态检查任务，进入详情读取控制与证据",
+          refreshAction: { await store.perform(.refresh(.tasks)) }
+        )
+        Button("新建只读任务", systemImage: "plus") {
+          Task {
+            await store.perform(.prepareReadOnlyTask(projectID: nil, threadID: nil))
+          }
+        }
+        .help("从当前 Codex 模型目录准备一个禁网、只读的本机任务")
+      }
       LoadStateView(
         state: store.snapshot.tasks,
         retry: { await store.perform(.refresh(.tasks)) }
       ) { page in
-        TaskWorkspace(page: page, store: store)
+        TaskPageContent(page: page, store: store)
       }
     }
     .padding(BridgeTheme.spacingPage)
+  }
+}
+
+private struct TaskPageContent: View {
+  let page: TaskPagePresentation
+  @ObservedObject var store: BridgePresentationStore
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
+      if let composer = page.readOnlyComposer {
+        LoadStateView(
+          state: composer,
+          retry: {
+            await store.perform(.prepareReadOnlyTask(projectID: nil, threadID: nil))
+          }
+        ) { value in
+          ReadOnlyTaskComposer(composer: value, store: store)
+        }
+        Divider()
+      }
+      TaskWorkspace(page: page, store: store)
+    }
+  }
+}
+
+private struct ReadOnlyTaskComposer: View {
+  let composer: ReadOnlyTaskComposerPresentation
+  @ObservedObject var store: BridgePresentationStore
+  @State private var projectID: String
+  @State private var goal = ""
+  @State private var criteria = ""
+  @State private var executionModel: String
+  @State private var executionEffort: String
+  @State private var supervisorModel: String
+  @State private var supervisorEffort: String
+
+  init(composer: ReadOnlyTaskComposerPresentation, store: BridgePresentationStore) {
+    self.composer = composer
+    self.store = store
+    let execution =
+      composer.executionModels.first(where: \.isDefault)
+      ?? composer.executionModels.first
+    let supervisor = composer.supervisorModels.first
+    _projectID = State(initialValue: composer.initialProjectID)
+    _executionModel = State(initialValue: execution?.id ?? "")
+    _executionEffort = State(initialValue: execution?.efforts.first ?? "")
+    _supervisorModel = State(initialValue: supervisor?.id ?? "")
+    _supervisorEffort = State(initialValue: supervisor?.efforts.first ?? "")
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
+      HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: BridgeTheme.spacingTight) {
+          Text("本机只读任务")
+            .font(.headline)
+          Text("只读 · 禁止网络 · Luna 监督；提交后进入现有持久化任务流水线")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        Spacer()
+        Button("取消") {
+          Task { await store.perform(.dismissReadOnlyTask) }
+        }
+        .disabled(composer.isSubmitting)
+        Button("提交") {
+          Task { await submit() }
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(!canSubmit)
+      }
+      if let blocker = composer.blocker {
+        Label(blocker, systemImage: "hand.raised.fill")
+          .foregroundStyle(.orange)
+          .accessibilityLabel("安全阻断：\(blocker)")
+      }
+      HStack(alignment: .top, spacing: BridgeTheme.spacingSection) {
+        VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
+          Picker("项目", selection: $projectID) {
+            ForEach(composer.projects) { project in
+              Text(project.name).tag(project.id)
+            }
+          }
+          .disabled(composer.threadID != nil)
+          if let threadID = composer.threadID {
+            MetadataRow(label: "Thread", value: threadID, monospaced: true)
+          } else {
+            MetadataRow(label: "Thread", value: "创建新 Thread")
+          }
+          Text("任务目标")
+            .font(.subheadline.weight(.semibold))
+          TextEditor(text: $goal)
+            .frame(minHeight: 72)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.tertiary))
+          Text("验收标准（每行一项）")
+            .font(.subheadline.weight(.semibold))
+          TextEditor(text: $criteria)
+            .frame(minHeight: 72)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.tertiary))
+        }
+        VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
+          Picker("Execution 模型", selection: executionModelBinding) {
+            ForEach(composer.executionModels) { model in
+              Text(model.displayName).tag(model.id)
+            }
+          }
+          Picker("Execution effort", selection: $executionEffort) {
+            ForEach(executionEfforts, id: \.self) { effort in
+              Text(effort).tag(effort)
+            }
+          }
+          Picker("Luna Supervisor", selection: supervisorModelBinding) {
+            ForEach(composer.supervisorModels) { model in
+              Text(model.displayName).tag(model.id)
+            }
+          }
+          Picker("Supervisor effort", selection: $supervisorEffort) {
+            ForEach(supervisorEfforts, id: \.self) { effort in
+              Text(effort).tag(effort)
+            }
+          }
+          MetadataRow(label: "权限", value: "read-only（固定）")
+          MetadataRow(label: "网络", value: "关闭（固定）")
+        }
+        .frame(minWidth: 260, maxWidth: 340)
+      }
+      if composer.isSubmitting {
+        ProgressView("正在持久化任务契约")
+          .controlSize(.small)
+      }
+    }
+    .padding(BridgeTheme.spacingSection)
+    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var executionEfforts: [String] {
+    composer.executionModels.first(where: { $0.id == executionModel })?.efforts ?? []
+  }
+
+  private var supervisorEfforts: [String] {
+    composer.supervisorModels.first(where: { $0.id == supervisorModel })?.efforts ?? []
+  }
+
+  private var executionModelBinding: Binding<String> {
+    Binding(
+      get: { executionModel },
+      set: { value in
+        executionModel = value
+        executionEffort =
+          composer.executionModels.first(where: { $0.id == value })?.efforts.first ?? ""
+      }
+    )
+  }
+
+  private var supervisorModelBinding: Binding<String> {
+    Binding(
+      get: { supervisorModel },
+      set: { value in
+        supervisorModel = value
+        supervisorEffort =
+          composer.supervisorModels.first(where: { $0.id == value })?.efforts.first ?? ""
+      }
+    )
+  }
+
+  private var acceptanceCriteria: [String] {
+    criteria.split(whereSeparator: \.isNewline).map(String.init)
+  }
+
+  private var canSubmit: Bool {
+    composer.blocker == nil && !composer.isSubmitting
+      && !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !acceptanceCriteria.isEmpty
+      && composer.projects.contains(where: { $0.id == projectID })
+      && (composer.threadID == nil || projectID == composer.initialProjectID)
+      && executionEfforts.contains(executionEffort)
+      && supervisorEfforts.contains(supervisorEffort)
+  }
+
+  private func submit() async {
+    await store.perform(
+      .submitReadOnlyTask(
+        ReadOnlyTaskDraftPresentation(
+          requestID: composer.requestID,
+          projectID: projectID,
+          threadID: composer.threadID,
+          goal: goal,
+          acceptanceCriteria: acceptanceCriteria,
+          executionModel: executionModel,
+          executionEffort: executionEffort,
+          supervisorModel: supervisorModel,
+          supervisorEffort: supervisorEffort
+        )
+      )
+    )
   }
 }
 

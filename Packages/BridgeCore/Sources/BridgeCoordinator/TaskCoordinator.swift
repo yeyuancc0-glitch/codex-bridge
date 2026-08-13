@@ -67,12 +67,9 @@ public actor TaskCoordinator {
     origin: String,
     submission: TaskSubmission
   ) async throws -> TaskSubmissionResult {
-    let normalizedOrigin = try Self.validatedOrigin(origin)
-    let encodedSubmission = try encoder.encode(submission)
-    guard encodedSubmission.count <= 128 * 1024 else {
-      throw TaskCoordinatorError.submissionTooLarge
-    }
-    let fingerprint = SHA256.hash(data: encodedSubmission).hexString
+    let identity = try submissionIdentity(origin: origin, submission: submission)
+    let normalizedOrigin = identity.origin
+    let fingerprint = identity.fingerprint
     if let claimedTaskID = try await store.submissionClaim(
       origin: normalizedOrigin,
       key: submission.idempotencyKey,
@@ -122,6 +119,24 @@ public actor TaskCoordinator {
       projection: projection,
       reusedExistingTask: taskID != candidate
     )
+  }
+
+  public func existingSubmissionResult(
+    origin: String,
+    submission: TaskSubmission
+  ) async throws -> TaskSubmissionResult? {
+    let identity = try submissionIdentity(origin: origin, submission: submission)
+    guard
+      let taskID = try await store.submissionClaim(
+        origin: identity.origin,
+        key: submission.idempotencyKey,
+        requestFingerprint: identity.fingerprint
+      )
+    else { return nil }
+    guard let projection = try await projectionIfPresent(taskID) else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
+    return TaskSubmissionResult(projection: projection, reusedExistingTask: true)
   }
 
   public func task(_ taskID: TaskID) async throws -> TaskProjection {
@@ -1317,6 +1332,21 @@ public actor TaskCoordinator {
     let event: TaskEvent =
       decision == .requireLocalApproval ? .localApprovalRequested : .preparationStarted
     _ = try TaskReducer.reduce(aggregate, event: event)
+  }
+
+  private func submissionIdentity(
+    origin: String,
+    submission: TaskSubmission
+  ) throws -> (origin: String, fingerprint: String) {
+    let normalizedOrigin = try Self.validatedOrigin(origin)
+    let encodedSubmission = try encoder.encode(submission)
+    guard encodedSubmission.count <= 128 * 1024 else {
+      throw TaskCoordinatorError.submissionTooLarge
+    }
+    return (
+      normalizedOrigin,
+      SHA256.hash(data: encodedSubmission).hexString
+    )
   }
 
   private static func validatedOrigin(_ value: String) throws -> String {

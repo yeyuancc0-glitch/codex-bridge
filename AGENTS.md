@@ -65,12 +65,14 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - Codex 审批响应使用持久化 barrier：同一事务先把 ticket 从 pending CAS 预留为 resolving 并记录意图，再发送精确关联响应；终态通知暂存到 Approved/Denied 事实写入完成后才归约。未决 ticket 禁止进入 verifying；运行期协议或持久化失败必须先按精确 generation 终止并等待会话退出，确认停止后才可失败任务并释放锁。
 - 生产任务流水线在持久化 turn 启动意图后、真正启动 app-server turn 前保存 Git baseline；最终化必须绑定精确 task/thread/turn/generation/event sequence。应用重启时按 Finalizer → Pipeline preflight → 通用任务恢复的顺序处理，避免把可继续完成的 verifying 任务降为 unknown。
 - 生产验证命令只能消费绑定 task/project/root/command/generation 的一次性本机授权句柄；缺少句柄时只记录明确的 unavailable 证据，禁止调用兼容用的直接批准接口或伪造 passed。
+- 原生本机任务使用独立 `macos.app` origin，只允许 read-only、无网络、动态目录中精确存在的 execution model/effort，以及精确 `gpt-5.6-luna` Supervisor；existing Thread 在 claim 前必须重新核对项目 cwd。Thread/history/model 目录只作不持久化的有界投影，所有 catalog 操作共享单飞门并受整体 deadline 约束。
 
 ## 安全不变量
 
 - 本地 MCP 仅回环监听，并使用 Keychain 中的 256-bit 随机认证 Secret；Inspector/本机开发可用秘密路径，Tunnel 生产链路必须用固定 `/mcp` 路径与 fd-backed 静态请求头。
 - MCP 不接受任意绝对路径，不提供万能 Shell 工具。
 - MCP 的所有自由文本出站前统一经过 `OutboundContentSecurity`；绝对路径检测不能依赖空白前缀，必须覆盖 `file:///Users/...`、Markdown `](/Volumes/...)` 等嵌入边界。
+- app-server 返回并将持久化的 Thread/Turn ID 也必须执行长度、控制字符和 `OutboundContentSecurity` 校验；Application 出站再次 fail-closed，不能把标识符当成天然安全文本。
 - 相对路径必须标准化、解析符号链接后再次验证仍在注册根目录内；读取时从根目录描述符逐级 `openat + O_NOFOLLOW`，并复核根与目标文件的 device/inode，防止校验后替换竞态。
 - 默认拒绝 `.env*`、私钥、Keychain、浏览器 Cookie、Codex auth 等敏感路径。
 - Runtime Key 只用于 Tunnel，永不传给 Codex/Luna，永不写日志或支持包。

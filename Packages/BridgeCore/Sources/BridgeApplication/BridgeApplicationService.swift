@@ -18,10 +18,20 @@ public enum BridgeApplicationError: Error, Equatable, Sendable {
   case invalidStoredReport
 }
 
+public enum LocalReadOnlyTaskPolicy {
+  public static let supervisorModelID = "gpt-5.6-luna"
+
+  public static func isLunaModel(id: String, displayName: String) -> Bool {
+    _ = displayName
+    return id == supervisorModelID
+  }
+}
+
 public actor BridgeApplicationService:
   BridgeMCPQueries, BridgeMCPTaskOperations, BridgeMCPProjectOperations
 {
-  private static let taskOrigin = "chatgpt.mcp"
+  private static let localTaskOrigin = "macos.app"
+  private static let remoteTaskOrigin = "chatgpt.mcp"
 
   private let coordinator: TaskCoordinator
   private let eventStore: EventStore
@@ -247,6 +257,10 @@ public actor BridgeApplicationService:
       else {
         throw BridgeApplicationError.invalidCatalogResponse
       }
+      for thread in page.threads {
+        try Self.validateOutboundIdentifier(thread.threadID, maximum: 1_024)
+      }
+      try Self.validateOutboundOptional(page.nextCursor, maximum: 2_048)
       return MCPThreadPage(
         threads: page.threads.map(threadSummary),
         nextCursor: page.nextCursor
@@ -277,9 +291,16 @@ public actor BridgeApplicationService:
       guard thread.threadID == threadID, allowedRoots.contains(thread.cwd) else {
         throw BridgeMCPQueryError.threadNotFound
       }
+      try Self.validateOutboundIdentifier(thread.threadID, maximum: 1_024)
       let entries = detail == .full ? thread.entries : []
       let start = try Self.entryStartIndex(cursor, count: entries.count)
       let end = min(entries.count, start + limit)
+      for entry in entries[start..<end] {
+        try Self.validateOutboundIdentifier(entry.turnID, maximum: 1_024)
+        guard entry.role == "assistant" || entry.role == "user" else {
+          throw BridgeApplicationError.invalidCatalogResponse
+        }
+      }
       let page = entries[start..<end].map(Self.threadEntry)
       let next = end < entries.count ? Self.entryCursor(end) : nil
       try Self.checkDeadline(deadline)
@@ -296,16 +317,7 @@ public actor BridgeApplicationService:
 
   public func listModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList {
     do {
-      try Self.checkDeadline(deadline)
-      let models = try await catalog.listModels(deadline: deadline)
-      guard models.count <= 800, Set(models.map(\.id)).count == models.count else {
-        throw BridgeApplicationError.invalidCatalogResponse
-      }
-      let values = try models.map { model in
-        try Self.validateIdentifier(model.id, maximum: 256)
-        guard !model.reasoningEfforts.isEmpty else {
-          throw BridgeApplicationError.invalidCatalogResponse
-        }
+      let values = try await validatedCatalogModels(deadline: deadline).map { model in
         return MCPModelSummary(
           modelID: model.id,
           displayName: Self.sanitize(model.displayName, maximumBytes: 1_024),
@@ -332,6 +344,8 @@ public actor BridgeApplicationService:
         ) != nil
       try Self.checkDeadline(deadline)
       let aggregate = projection.aggregate
+      try Self.validateOutboundOptional(aggregate.binding?.threadID.rawValue, maximum: 1_024)
+      try Self.validateOutboundOptional(aggregate.binding?.turnID.rawValue, maximum: 1_024)
       return MCPTaskSnapshot(
         taskID: taskID,
         phase: aggregate.phase.rawValue,
@@ -425,7 +439,7 @@ public actor BridgeApplicationService:
       let report = try Self.decodeReport(stored.json)
       guard report.taskID == taskID else { throw BridgeApplicationError.invalidStoredReport }
       try Self.checkDeadline(deadline)
-      return Self.mcpReport(report)
+      return try Self.mcpReport(report)
     } catch {
       throw Self.publicError(error)
     }
@@ -435,23 +449,125 @@ public actor BridgeApplicationService:
     _ submission: TaskSubmission,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPTaskSubmissionReceipt {
+    try await submit(
+      submission,
+      origin: Self.remoteTaskOrigin,
+      deadline: deadline
+    )
+  }
+
+  public func submitLocalTask(
+    _ submission: TaskSubmission,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskSubmissionReceipt {
     do {
       try Self.checkDeadline(deadline)
-      _ = try await requireReadableProject(submission.projectID.rawValue)
-      let result = try await coordinator.submitWithResult(
-        origin: Self.taskOrigin,
+      if let existing = try await coordinator.existingSubmissionResult(
+        origin: Self.localTaskOrigin,
         submission: submission
-      )
-      try Self.checkDeadline(deadline)
-      return MCPTaskSubmissionReceipt(
-        taskID: result.projection.aggregate.id.rawValue,
-        phase: result.projection.aggregate.phase.rawValue,
-        reusedExistingTask: result.reusedExistingTask,
-        localApprovalRequired: result.projection.aggregate.phase == .awaitingLocalApproval
+      ) {
+        try Self.checkDeadline(deadline)
+        return Self.submissionReceipt(existing)
+      }
+      try await validateLocalSubmission(submission, deadline: deadline)
+      return try await submit(
+        submission,
+        origin: Self.localTaskOrigin,
+        deadline: deadline
       )
     } catch {
       throw Self.publicError(error)
     }
+  }
+
+  private func submit(
+    _ submission: TaskSubmission,
+    origin: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPTaskSubmissionReceipt {
+    do {
+      try Self.checkDeadline(deadline)
+      _ = try await requireReadableProject(submission.projectID.rawValue)
+      let result = try await coordinator.submitWithResult(
+        origin: origin,
+        submission: submission
+      )
+      try Self.checkDeadline(deadline)
+      return Self.submissionReceipt(result)
+    } catch {
+      throw Self.publicError(error)
+    }
+  }
+
+  private func validateLocalSubmission(
+    _ submission: TaskSubmission,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    guard submission.execution.permissionMode == "read-only",
+      !submission.execution.networkAccess,
+      submission.supervisor.enabled
+    else { throw BridgeMCPQueryError.contractRejected }
+    let project = try await requireReadableProject(submission.projectID.rawValue)
+    if case .existing(let threadID) = submission.thread {
+      try Self.validateOutboundIdentifier(threadID.rawValue, maximum: 1_024)
+      let thread = try await catalog.readThread(
+        threadID: threadID.rawValue,
+        includeTurns: false,
+        deadline: deadline
+      )
+      guard thread.threadID == threadID.rawValue,
+        Self.executionRoots(project).contains(thread.cwd)
+      else { throw BridgeMCPQueryError.threadNotFound }
+    }
+    let models = try await validatedCatalogModels(deadline: deadline)
+    guard
+      let execution = models.first(where: { $0.id == submission.execution.model }),
+      execution.reasoningEfforts.contains(submission.execution.effort),
+      let supervisor = models.first(where: { $0.id == submission.supervisor.model }),
+      LocalReadOnlyTaskPolicy.isLunaModel(
+        id: supervisor.id,
+        displayName: supervisor.displayName
+      ),
+      supervisor.reasoningEfforts.contains(submission.supervisor.effort)
+    else { throw BridgeMCPQueryError.contractRejected }
+  }
+
+  private func validatedCatalogModels(
+    deadline: ContinuousClock.Instant
+  ) async throws -> [CatalogModel] {
+    try Self.checkDeadline(deadline)
+    let models = try await catalog.listModels(deadline: deadline)
+    try Self.checkDeadline(deadline)
+    guard models.count <= 800, Set(models.map(\.id)).count == models.count else {
+      throw BridgeApplicationError.invalidCatalogResponse
+    }
+    for model in models {
+      try Self.validateIdentifier(model.id, maximum: 256)
+      guard OutboundContentSecurity.isSafe(model.id) else {
+        throw BridgeApplicationError.invalidCatalogResponse
+      }
+      guard !model.reasoningEfforts.isEmpty,
+        Set(model.reasoningEfforts).count == model.reasoningEfforts.count
+      else { throw BridgeApplicationError.invalidCatalogResponse }
+      for effort in model.reasoningEfforts {
+        try Self.validateIdentifier(effort, maximum: 64)
+        guard OutboundContentSecurity.isSafe(effort) else {
+          throw BridgeApplicationError.invalidCatalogResponse
+        }
+      }
+    }
+    return models
+  }
+
+  private static func submissionReceipt(
+    _ result: TaskSubmissionResult
+  ) -> MCPTaskSubmissionReceipt {
+    MCPTaskSubmissionReceipt(
+      taskID: result.projection.aggregate.id.rawValue,
+      phase: result.projection.aggregate.phase.rawValue,
+      reusedExistingTask: result.reusedExistingTask,
+      localApprovalRequired: result.projection.aggregate.phase == .awaitingLocalApproval
+    )
   }
 
   public func steerTask(
@@ -605,8 +721,11 @@ public actor BridgeApplicationService:
     }
   }
 
-  private static func mcpReport(_ report: FinalReport) -> MCPFinalReport {
-    MCPFinalReport(
+  private static func mcpReport(_ report: FinalReport) throws -> MCPFinalReport {
+    try validateOutboundIdentifier(report.threadID, maximum: 1_024)
+    try validateOutboundIdentifier(report.execution.model, maximum: 256)
+    try validateOutboundIdentifier(report.execution.effort, maximum: 64)
+    return MCPFinalReport(
       taskID: report.taskID,
       status: report.status.rawValue,
       projectName: sanitize(report.project, maximumBytes: 4_096),
@@ -697,6 +816,18 @@ public actor BridgeApplicationService:
     else {
       throw BridgeApplicationError.invalidArgument
     }
+  }
+
+  private static func validateOutboundIdentifier(_ value: String, maximum: Int) throws {
+    try validateIdentifier(value, maximum: maximum)
+    guard OutboundContentSecurity.isSafe(value) else {
+      throw BridgeApplicationError.invalidCatalogResponse
+    }
+  }
+
+  private static func validateOutboundOptional(_ value: String?, maximum: Int) throws {
+    guard let value else { return }
+    try validateOutboundIdentifier(value, maximum: maximum)
   }
 
   private static func checkDeadline(_ deadline: ContinuousClock.Instant) throws {

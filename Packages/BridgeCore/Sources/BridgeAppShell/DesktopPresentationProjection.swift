@@ -1,6 +1,8 @@
 import BridgeAppModel
+import BridgeApplication
 import BridgeCoordinator
 import BridgeDomain
+import BridgeMCP
 import BridgePresentation
 import BridgeProjects
 import BridgeTunnel
@@ -12,6 +14,7 @@ struct DesktopPresentationProjection {
     tasks: [(TaskProjection, [TaskEventEnvelope])],
     diagnostics: [LogEntryPresentation],
     connection: DesktopTransportHealth = .stopped,
+    operatorState: DesktopOperatorState = DesktopOperatorState(),
     canExportSupportBundle: Bool = false
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
@@ -50,9 +53,19 @@ struct DesktopPresentationProjection {
           rateLimitSummary: "尚未读取 Codex 账号限额"
         )
       ),
-      tasks: .ready(TaskPagePresentation(tasks: taskRows, details: taskDetails)),
+      tasks: .ready(
+        TaskPagePresentation(
+          tasks: taskRows,
+          details: taskDetails,
+          readOnlyComposer: composer(projects: projects, state: operatorState.composer)
+        )
+      ),
       projects: .ready(ProjectPagePresentation(projects: projectRows)),
-      threads: .ready(ThreadPagePresentation(threads: [])),
+      threads: threads(
+        projects: projects,
+        tasks: tasks,
+        operatorState: operatorState
+      ),
       approvals: .ready(
         ApprovalPagePresentation(
           pending: approvals,
@@ -77,6 +90,190 @@ struct DesktopPresentationProjection {
         )
       ),
       settings: .ready(settings())
+    )
+  }
+
+  private static func threads(
+    projects: [RegisteredProject],
+    tasks: [(TaskProjection, [TaskEventEnvelope])],
+    operatorState: DesktopOperatorState
+  ) -> PresentationLoadState<ThreadPagePresentation> {
+    let readableProjects = projects.filter { $0.accessPolicy.read != .denied }
+    let options = readableProjects.prefix(500).map {
+      ThreadProjectOptionPresentation(id: $0.id.rawValue, name: $0.name)
+    }
+    let selectedProjectID = operatorState.selectedProjectID ?? options.first?.id
+    switch operatorState.threads {
+    case .notLoaded:
+      return .ready(
+        ThreadPagePresentation(
+          threads: [],
+          projectFilterName: options.first(where: { $0.id == selectedProjectID })?.name,
+          projectOptions: Array(options),
+          selectedProjectID: selectedProjectID,
+          isCatalogLoaded: false
+        )
+      )
+    case .loading:
+      return .loading(message: "正在从 Codex 读取项目线程")
+    case .failed(let message):
+      return .failed(PresentationErrorState(title: "线程目录不可用", message: message))
+    case .ready(let page):
+      guard options.contains(where: { $0.id == page.projectID }) else {
+        return .failed(
+          PresentationErrorState(
+            title: "线程目录不可用",
+            message: "线程所属项目已不在可读白名单中。"
+          )
+        )
+      }
+      let occupied = Set(
+        tasks.compactMap { task -> String? in
+          guard task.0.aggregate.submission.projectID.rawValue == page.projectID else { return nil }
+          return task.0.aggregate.phase.isTerminal
+            ? nil : task.0.aggregate.binding?.threadID.rawValue
+        }
+      )
+      return .ready(
+        ThreadPagePresentation(
+          threads: page.threads.map {
+            thread($0, projectID: page.projectID, projectName: page.projectName, occupied: occupied)
+          },
+          projectFilterName: page.projectName,
+          projectOptions: Array(options),
+          selectedProjectID: page.projectID,
+          canLoadMoreThreads: page.nextCursor != nil,
+          isLoadingMoreThreads: page.isLoadingMore,
+          history: history(operatorState.history),
+          isCatalogLoaded: true
+        )
+      )
+    }
+  }
+
+  private static func thread(
+    _ value: MCPThreadSummary,
+    projectID: String,
+    projectName: String,
+    occupied: Set<String>
+  ) -> ThreadPresentation {
+    ThreadPresentation(
+      id: value.threadID,
+      projectID: projectID,
+      preview: value.preview ?? value.title ?? "无可显示预览",
+      projectName: projectName,
+      source: "Codex",
+      model: "",
+      status: threadStatus(value.status),
+      updatedAt: value.updatedAt.flatMap { ISO8601DateFormatter().date(from: $0) } ?? .distantPast,
+      isOccupied: occupied.contains(value.threadID),
+      canArchive: false,
+      canOpenInCodex: true,
+      canReadHistory: true,
+      canContinue: !occupied.contains(value.threadID),
+      canCreateTask: !occupied.contains(value.threadID),
+      modelIsKnown: false
+    )
+  }
+
+  private static func history(
+    _ state: DesktopOperatorLoad<DesktopThreadHistoryPage>?
+  ) -> PresentationLoadState<ThreadHistoryPresentation>? {
+    guard let state else { return nil }
+    switch state {
+    case .notLoaded:
+      return nil
+    case .loading:
+      return .loading(message: "正在读取 Thread 历史")
+    case .failed(let message):
+      return .failed(PresentationErrorState(title: "历史不可用", message: message))
+    case .ready(let page):
+      return .ready(
+        ThreadHistoryPresentation(
+          projectID: page.projectID,
+          threadID: page.thread.threadID,
+          title: page.thread.title ?? page.thread.preview ?? "Thread 历史",
+          entries: page.entries.enumerated().map { index, entry in
+            ThreadHistoryEntryPresentation(
+              id: "\(entry.turnID):\(index)",
+              turnID: entry.turnID,
+              role: entry.role,
+              text: entry.text,
+              status: entry.status
+            )
+          },
+          canLoadMore: page.nextCursor != nil,
+          isLoadingMore: page.isLoadingMore,
+          isTruncated: page.isTruncated
+        )
+      )
+    }
+  }
+
+  private static func threadStatus(_ value: String) -> PresentationStatus {
+    switch value.lowercased() {
+    case "active", "running", "inprogress", "in_progress": .running
+    case "failed", "error": .failed
+    case "interrupted", "cancelled", "canceled": .paused
+    case "idle", "completed": .ready
+    default: .waiting
+    }
+  }
+
+  private static func composer(
+    projects: [RegisteredProject],
+    state: DesktopOperatorLoad<DesktopLocalTaskComposer>?
+  ) -> PresentationLoadState<ReadOnlyTaskComposerPresentation>? {
+    guard let state else { return nil }
+    switch state {
+    case .notLoaded:
+      return nil
+    case .loading:
+      return .loading(message: "正在读取当前 Codex 模型与推理选项")
+    case .failed(let message):
+      return .failed(PresentationErrorState(title: "无法准备本机任务", message: message))
+    case .ready(let value):
+      let projectOptions = projects.filter { $0.accessPolicy.read != .denied }.map {
+        LocalTaskProjectOptionPresentation(id: $0.id.rawValue, name: $0.name)
+      }
+      let modelOptions = value.models.map(model)
+      let supervisors = modelOptions.filter {
+        LocalReadOnlyTaskPolicy.isLunaModel(id: $0.id, displayName: $0.displayName)
+      }
+      let executions = modelOptions.filter { candidate in
+        !supervisors.contains(where: { $0.id == candidate.id })
+      }
+      let blocker: String?
+      if projectOptions.isEmpty {
+        blocker = "没有可读项目。"
+      } else if executions.isEmpty {
+        blocker = "当前 Codex 目录没有可用的 Execution 模型。"
+      } else if supervisors.isEmpty {
+        blocker = "当前 Codex 目录没有明确标识的 Luna 模型；Bridge 不会静默替换 Supervisor。"
+      } else {
+        blocker = nil
+      }
+      return .ready(
+        ReadOnlyTaskComposerPresentation(
+          requestID: value.requestID,
+          projects: projectOptions,
+          initialProjectID: value.projectID,
+          threadID: value.threadID,
+          executionModels: executions,
+          supervisorModels: supervisors,
+          blocker: blocker,
+          isSubmitting: value.isSubmitting
+        )
+      )
+    }
+  }
+
+  private static func model(_ value: MCPModelSummary) -> LocalTaskModelOptionPresentation {
+    LocalTaskModelOptionPresentation(
+      id: value.modelID,
+      displayName: value.displayName,
+      efforts: value.reasoningEfforts,
+      isDefault: value.isDefault
     )
   }
 

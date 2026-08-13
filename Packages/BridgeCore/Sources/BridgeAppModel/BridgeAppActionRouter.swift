@@ -43,8 +43,16 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.addProject()
     case .openProject(let projectID):
       try await backend.openProject(projectID)
+    case .selectThreadProject(let projectID):
+      try await backend.selectThreadProject(projectID)
+    case .loadMoreThreads:
+      try await backend.loadMoreThreads()
     case .readThreadHistory(let threadID):
       try await backend.readThreadHistory(threadID)
+    case .readBoundThreadHistory(let projectID, let threadID):
+      try await backend.readThreadHistory(projectID: projectID, threadID: threadID)
+    case .loadMoreThreadHistory:
+      try await backend.loadMoreThreadHistory()
     case .continueThread(let threadID):
       try await backend.continueThread(threadID)
     case .createTaskFromThread(let threadID):
@@ -55,8 +63,16 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.archiveSupervisorThread(threadID)
     case .openThreadInCodex(let threadID):
       try await backend.openThreadInCodex(threadID)
+    case .openBoundThreadInCodex(let projectID, let threadID):
+      try await backend.openThreadInCodex(projectID: projectID, threadID: threadID)
     case .openTaskInCodex(let taskID):
       try await backend.openTaskInCodex(taskID)
+    case .prepareReadOnlyTask(let projectID, let threadID):
+      try await backend.prepareReadOnlyTask(projectID: projectID, threadID: threadID)
+    case .dismissReadOnlyTask:
+      try await backend.dismissReadOnlyTask()
+    case .submitReadOnlyTask(let draft):
+      try await backend.submitReadOnlyTask(draft)
     case .interruptTask(let taskID):
       try await backend.interruptTask(taskID)
     case .authorizeTaskVerification(let taskID):

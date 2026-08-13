@@ -1,4 +1,5 @@
 import BridgeApplication
+import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
 import BridgeFiles
@@ -8,6 +9,7 @@ import BridgeProjects
 import BridgeReporting
 import BridgeRepositories
 import BridgeSecurity
+import CryptoKit
 import Foundation
 import XCTest
 
@@ -73,6 +75,110 @@ final class BridgeApplicationServiceTests: XCTestCase {
     XCTAssertEqual(read.entries.count, 1)
     XCTAssertFalse(read.entries[0].text.contains("/Volumes/"))
     XCTAssertFalse(read.entries[0].text.contains("abcdefghijklmnop"))
+  }
+
+  func testUnsafeCatalogIdentifiersRolesModelsAndCursorsFailClosed() async throws {
+    let fixture = try Fixture()
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let root = try RegisteredRoot(capturing: fixture.projectDirectory)
+    let project = fixture.project(root: root)
+    try await fixture.repository.insert(project)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let safeThread = CatalogThread(
+      threadID: "thr-safe",
+      cwd: root.canonicalPath,
+      status: "idle"
+    )
+
+    do {
+      _ = try await fixture.service(
+        catalog: CatalogFixture(
+          threads: [
+            CatalogThread(
+              threadID: "password=actual-secret-value",
+              cwd: root.canonicalPath,
+              status: "idle"
+            )
+          ]
+        )
+      ).listThreads(
+        projectID: project.id.rawValue,
+        cursor: nil,
+        limit: 25,
+        search: nil,
+        deadline: deadline
+      )
+      XCTFail("Expected an unsafe Thread identifier to fail closed")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
+
+    do {
+      _ = try await fixture.service(
+        catalog: CatalogFixture(
+          threads: [safeThread],
+          nextCursor: "file:///Users/example/private"
+        )
+      ).listThreads(
+        projectID: project.id.rawValue,
+        cursor: nil,
+        limit: 25,
+        search: nil,
+        deadline: deadline
+      )
+      XCTFail("Expected an unsafe catalog cursor to fail closed")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
+
+    do {
+      _ = try await fixture.service(
+        catalog: CatalogFixture(
+          threads: [
+            CatalogThread(
+              threadID: "thr-role",
+              cwd: root.canonicalPath,
+              status: "idle",
+              entries: [
+                CatalogThreadEntry(
+                  turnID: "turn-role",
+                  role: "system",
+                  text: "Must not be projected"
+                )
+              ]
+            )
+          ]
+        )
+      ).readThread(
+        projectID: project.id.rawValue,
+        threadID: "thr-role",
+        detail: .full,
+        cursor: nil,
+        limit: 25,
+        deadline: deadline
+      )
+      XCTFail("Expected an unknown history role to fail closed")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
+
+    do {
+      _ = try await fixture.service(
+        catalog: CatalogFixture(
+          models: [
+            CatalogModel(
+              id: "password=actual-secret-value",
+              displayName: "Unsafe",
+              isDefault: true,
+              reasoningEfforts: ["high"]
+            )
+          ]
+        )
+      ).listModels(deadline: deadline)
+      XCTFail("Expected an unsafe model identifier to fail closed")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
   }
 
   func testOpenInCodexRequiresThreadBoundToRequestedProject() async throws {
@@ -158,6 +264,284 @@ final class BridgeApplicationServiceTests: XCTestCase {
     XCTAssertEqual(events.events[0].kind, "task.submission")
     XCTAssertEqual(events.nextAfterSequence, 1)
     XCTAssertNil(events.events[0].summary)
+  }
+
+  func testLocalAndRemoteSubmissionOriginsAreIsolated() async throws {
+    let fixture = try Fixture(admission: .requireLocalApproval)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let project = fixture.project(
+      root: try RegisteredRoot(capturing: fixture.projectDirectory)
+    )
+    try await fixture.repository.insert(project)
+    let service = fixture.service()
+    let submission = fixture.submission(projectID: project.id)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+
+    let remote = try await service.submitTask(submission, deadline: deadline)
+    let local = try await service.submitLocalTask(submission, deadline: deadline)
+
+    XCTAssertNotEqual(remote.taskID, local.taskID)
+    XCTAssertFalse(remote.reusedExistingTask)
+    XCTAssertFalse(local.reusedExistingTask)
+    let storedTaskIDs = try await fixture.eventStore.recentlyUpdatedTaskIDs(limit: 10)
+    XCTAssertEqual(Set(storedTaskIDs.map(\.rawValue)), [remote.taskID, local.taskID])
+    let fingerprint = try submissionFingerprint(submission)
+    let remoteClaim = try await fixture.eventStore.submissionClaim(
+      origin: "chatgpt.mcp",
+      key: submission.idempotencyKey,
+      requestFingerprint: fingerprint
+    )
+    let localClaim = try await fixture.eventStore.submissionClaim(
+      origin: "macos.app",
+      key: submission.idempotencyKey,
+      requestFingerprint: fingerprint
+    )
+    XCTAssertEqual(remoteClaim?.rawValue, remote.taskID)
+    XCTAssertEqual(localClaim?.rawValue, local.taskID)
+  }
+
+  func testLocalSubmissionIsIdempotentWithinItsOrigin() async throws {
+    let fixture = try Fixture(admission: .requireLocalApproval)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let project = fixture.project(
+      root: try RegisteredRoot(capturing: fixture.projectDirectory)
+    )
+    try await fixture.repository.insert(project)
+    let service = fixture.service()
+    let submission = fixture.submission(projectID: project.id)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+
+    let first = try await service.submitLocalTask(submission, deadline: deadline)
+    let replay = try await service.submitLocalTask(submission, deadline: deadline)
+
+    XCTAssertEqual(first.taskID, replay.taskID)
+    XCTAssertFalse(first.reusedExistingTask)
+    XCTAssertTrue(replay.reusedExistingTask)
+    let storedTaskIDs = try await fixture.eventStore.recentlyUpdatedTaskIDs(limit: 10)
+    XCTAssertEqual(storedTaskIDs.map(\.rawValue), [first.taskID])
+  }
+
+  func testLocalSubmissionReplaySurvivesCatalogBecomingUnavailable() async throws {
+    let fixture = try Fixture(admission: .requireLocalApproval)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let project = fixture.project(
+      root: try RegisteredRoot(capturing: fixture.projectDirectory)
+    )
+    try await fixture.repository.insert(project)
+    let catalog = CatalogFixture()
+    let service = fixture.service(catalog: catalog)
+    let submission = fixture.submission(projectID: project.id)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let first = try await service.submitLocalTask(submission, deadline: deadline)
+    await catalog.disableModels()
+
+    let replay = try await service.submitLocalTask(submission, deadline: deadline)
+
+    XCTAssertEqual(replay.taskID, first.taskID)
+    XCTAssertTrue(replay.reusedExistingTask)
+  }
+
+  func testLocalSubmissionRejectsChangedPayloadForSameIdempotencyKey() async throws {
+    let fixture = try Fixture(admission: .requireLocalApproval)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let project = fixture.project(
+      root: try RegisteredRoot(capturing: fixture.projectDirectory)
+    )
+    try await fixture.repository.insert(project)
+    let service = fixture.service()
+    let first = fixture.submission(projectID: project.id)
+    let changed = TaskSubmission(
+      idempotencyKey: first.idempotencyKey,
+      projectID: first.projectID,
+      thread: first.thread,
+      execution: first.execution,
+      supervisor: first.supervisor,
+      contract: TaskContract(
+        goal: "Build a different feature.",
+        acceptanceCriteria: ["Different tests pass."]
+      )
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    _ = try await service.submitLocalTask(first, deadline: deadline)
+
+    do {
+      _ = try await service.submitLocalTask(changed, deadline: deadline)
+      XCTFail("Expected a local idempotency conflict")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .idempotencyConflict)
+    }
+    let storedTaskIDs = try await fixture.eventStore.recentlyUpdatedTaskIDs(limit: 10)
+    XCTAssertEqual(storedTaskIDs.count, 1)
+  }
+
+  func testLocalSubmissionEnforcesReadOnlyDynamicExecutionAndLunaModels() async throws {
+    let fixture = try Fixture(admission: .start)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let project = fixture.project(
+      root: try RegisteredRoot(capturing: fixture.projectDirectory)
+    )
+    try await fixture.repository.insert(project)
+    let service = fixture.service()
+    let valid = fixture.submission(projectID: project.id)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let invalid: [TaskSubmission] = [
+      localSubmission(valid, permissionMode: "workspace-write"),
+      localSubmission(valid, networkAccess: true),
+      localSubmission(valid, supervisorEnabled: false),
+      localSubmission(valid, executionModel: "missing-model"),
+      localSubmission(valid, executionEffort: "missing-effort"),
+      localSubmission(valid, supervisorModel: "gpt-test"),
+      localSubmission(valid, supervisorEffort: "missing-effort"),
+    ]
+
+    for submission in invalid {
+      do {
+        _ = try await service.submitLocalTask(submission, deadline: deadline)
+        XCTFail("Expected the local read-only boundary to reject \(submission)")
+      } catch {
+        XCTAssertEqual(error as? BridgeMCPQueryError, .contractRejected)
+      }
+    }
+    let storedTaskIDs = try await fixture.eventStore.recentlyUpdatedTaskIDs(limit: 10)
+    XCTAssertTrue(storedTaskIDs.isEmpty)
+
+    let misleadingCatalog = CatalogFixture(
+      models: [
+        CatalogModel(
+          id: "gpt-test",
+          displayName: "GPT Test",
+          isDefault: true,
+          reasoningEfforts: ["high"]
+        ),
+        CatalogModel(
+          id: "not-supervisor",
+          displayName: "Not Luna",
+          isDefault: false,
+          reasoningEfforts: ["medium"]
+        ),
+      ]
+    )
+    do {
+      _ = try await fixture.service(catalog: misleadingCatalog).submitLocalTask(
+        localSubmission(valid, supervisorModel: "not-supervisor"),
+        deadline: deadline
+      )
+      XCTFail("A display name must not grant the trusted Supervisor role")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .contractRejected)
+    }
+  }
+
+  func testLocalExistingThreadMustBelongToSubmissionProjectBeforeClaim() async throws {
+    let fixture = try Fixture(admission: .start)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let root = try RegisteredRoot(capturing: fixture.projectDirectory)
+    let project = fixture.project(root: root)
+    try await fixture.repository.insert(project)
+    let foreign = fixture.directory.appendingPathComponent("foreign", isDirectory: true)
+    try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: false)
+    let service = fixture.service(
+      catalog: CatalogFixture(
+        threads: [
+          CatalogThread(
+            threadID: "thr-foreign-local",
+            cwd: foreign.path,
+            status: "idle"
+          )
+        ]
+      )
+    )
+    let source = fixture.submission(projectID: project.id)
+    let submission = TaskSubmission(
+      idempotencyKey: IdempotencyKey(rawValue: "idem-foreign-local"),
+      projectID: project.id,
+      thread: .existing(ThreadID(rawValue: "thr-foreign-local")),
+      execution: source.execution,
+      supervisor: source.supervisor,
+      contract: source.contract
+    )
+
+    do {
+      _ = try await service.submitLocalTask(
+        submission,
+        deadline: ContinuousClock.now.advanced(by: .seconds(5))
+      )
+      XCTFail("Expected a foreign existing Thread to be rejected")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .threadNotFound)
+    }
+    let tasks = try await fixture.eventStore.recentlyUpdatedTaskIDs(limit: 10)
+    XCTAssertTrue(tasks.isEmpty)
+  }
+
+  func testLocalExistingThreadIdentifierIsBoundedBeforeClaim() async throws {
+    let fixture = try Fixture(admission: .start)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let root = try RegisteredRoot(capturing: fixture.projectDirectory)
+    let project = fixture.project(root: root)
+    try await fixture.repository.insert(project)
+    let source = fixture.submission(projectID: project.id)
+    for (index, threadID) in [String(repeating: "a", count: 1_025), "thread\u{0007}id"]
+      .enumerated()
+    {
+      let service = fixture.service(
+        catalog: CatalogFixture(
+          threads: [CatalogThread(threadID: threadID, cwd: root.canonicalPath, status: "idle")]
+        )
+      )
+      let submission = TaskSubmission(
+        idempotencyKey: IdempotencyKey(rawValue: "idem-invalid-thread-\(index)"),
+        projectID: project.id,
+        thread: .existing(ThreadID(rawValue: threadID)),
+        execution: source.execution,
+        supervisor: source.supervisor,
+        contract: source.contract
+      )
+      do {
+        _ = try await service.submitLocalTask(
+          submission,
+          deadline: ContinuousClock.now.advanced(by: .seconds(5))
+        )
+        XCTFail("Expected an invalid existing Thread identifier to fail before claim")
+      } catch {
+        XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+      }
+    }
+    let tasks = try await fixture.eventStore.recentlyUpdatedTaskIDs(limit: 10)
+    XCTAssertTrue(tasks.isEmpty)
+  }
+
+  func testIsolatedCatalogHonorsOverallDeadlineAndStopsProcess() async throws {
+    let catalog = IsolatedCodexCatalogService(
+      configuration: IsolatedCodexCatalogConfiguration(
+        appServer: AppServerConfiguration(
+          executableURL: URL(fileURLWithPath: "/bin/sh"),
+          arguments: [
+            "-c",
+            #"""
+            IFS= read -r initialize
+            printf '%s\n' '{"id":1,"result":{"userAgent":"fixture","codexHome":"/private/fixture","platformFamily":"unix","platformOs":"macos"}}'
+            IFS= read -r initialized
+            IFS= read -r models
+            sleep 5
+            """#,
+          ],
+          environment: ["PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"]
+        ),
+        clientInfo: .bridge(version: "test"),
+        requestTimeoutNanoseconds: 5_000_000_000
+      )
+    )
+    let clock = ContinuousClock()
+    let startedAt = clock.now
+
+    do {
+      _ = try await catalog.listModels(deadline: clock.now.advanced(by: .milliseconds(100)))
+      XCTFail("Expected the catalog deadline to terminate the isolated process")
+    } catch {
+      XCTAssertEqual(error as? BridgeApplicationError, .deadlineExceeded)
+    }
+    XCTAssertLessThan(startedAt.duration(to: clock.now), .seconds(2))
   }
 
   func testProjectFileToolsUseRelativePathsAndRedactSecrets() async throws {
@@ -392,6 +776,43 @@ final class BridgeApplicationServiceTests: XCTestCase {
     String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
   }
 
+  private func submissionFingerprint(_ submission: TaskSubmission) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return SHA256.hash(data: try encoder.encode(submission))
+      .map { String(format: "%02x", $0) }
+      .joined()
+  }
+
+  private func localSubmission(
+    _ source: TaskSubmission,
+    permissionMode: String? = nil,
+    networkAccess: Bool? = nil,
+    supervisorEnabled: Bool? = nil,
+    executionModel: String? = nil,
+    executionEffort: String? = nil,
+    supervisorModel: String? = nil,
+    supervisorEffort: String? = nil
+  ) -> TaskSubmission {
+    TaskSubmission(
+      idempotencyKey: source.idempotencyKey,
+      projectID: source.projectID,
+      thread: source.thread,
+      execution: ExecutionOptions(
+        model: executionModel ?? source.execution.model,
+        effort: executionEffort ?? source.execution.effort,
+        permissionMode: permissionMode ?? source.execution.permissionMode,
+        networkAccess: networkAccess ?? source.execution.networkAccess
+      ),
+      supervisor: SupervisorOptions(
+        enabled: supervisorEnabled ?? source.supervisor.enabled,
+        model: supervisorModel ?? source.supervisor.model,
+        effort: supervisorEffort ?? source.supervisor.effort
+      ),
+      contract: source.contract
+    )
+  }
+
   private func report(taskID: String, project: String) throws -> FinalReportDocument {
     let started = Date(timeIntervalSince1970: 1_700_000_000)
     return try ReportBuilder().build(
@@ -596,9 +1017,32 @@ private actor RuntimeFixture: TaskExecutionRuntime {
 
 private actor CatalogFixture: CodexCatalogQuerying {
   let threads: [CatalogThread]
+  let nextCursor: String?
+  let models: [CatalogModel]
+  private var modelsAvailable = true
 
-  init(threads: [CatalogThread] = []) {
+  init(
+    threads: [CatalogThread] = [],
+    nextCursor: String? = nil,
+    models: [CatalogModel]? = nil
+  ) {
     self.threads = threads
+    self.nextCursor = nextCursor
+    self.models =
+      models ?? [
+        CatalogModel(
+          id: "gpt-test",
+          displayName: "GPT Test",
+          isDefault: true,
+          reasoningEfforts: ["high"]
+        ),
+        CatalogModel(
+          id: "gpt-5.6-luna",
+          displayName: "Luna",
+          isDefault: false,
+          reasoningEfforts: ["medium"]
+        ),
+      ]
   }
 
   func listThreads(
@@ -608,7 +1052,7 @@ private actor CatalogFixture: CodexCatalogQuerying {
     search _: String?,
     deadline _: ContinuousClock.Instant
   ) -> CatalogThreadPage {
-    CatalogThreadPage(threads: Array(threads.prefix(limit)))
+    CatalogThreadPage(threads: Array(threads.prefix(limit)), nextCursor: nextCursor)
   }
 
   func readThread(
@@ -622,10 +1066,12 @@ private actor CatalogFixture: CodexCatalogQuerying {
     return thread
   }
 
-  func listModels(deadline _: ContinuousClock.Instant) -> [CatalogModel] {
-    [
-      CatalogModel(
-        id: "gpt-test", displayName: "GPT Test", isDefault: true, reasoningEfforts: ["high"])
-    ]
+  func listModels(deadline _: ContinuousClock.Instant) throws -> [CatalogModel] {
+    guard modelsAvailable else { throw BridgeApplicationError.catalogUnavailable }
+    return models
+  }
+
+  func disableModels() {
+    modelsAvailable = false
   }
 }

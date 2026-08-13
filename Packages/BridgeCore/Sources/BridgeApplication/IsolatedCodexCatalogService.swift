@@ -78,6 +78,7 @@ public actor IsolatedCodexCatalogService: CodexCatalogQuerying {
       var cursor: String?
       var result: [CatalogModel] = []
       for _ in 0..<8 {
+        try Self.checkDeadline(deadline)
         let page = try await client.listModels(
           ModelListParams(cursor: cursor, limit: 100, includeHidden: false)
         )
@@ -109,11 +110,14 @@ public actor IsolatedCodexCatalogService: CodexCatalogQuerying {
         )
       }
     }
+    let race = CatalogDeadlineRace<Output>()
     do {
-      try await client.start()
-      _ = try await client.initialize(clientInfo: configuration.clientInfo)
-      let output = try await operation(client)
-      try Self.checkDeadline(deadline)
+      let output = try await race.run(until: deadline) {
+        try await client.start()
+        _ = try await client.initialize(clientInfo: self.configuration.clientInfo)
+        try Self.checkDeadline(deadline)
+        return try await operation(client)
+      }
       drain.cancel()
       await client.stop()
       return output
@@ -199,5 +203,68 @@ public actor IsolatedCodexCatalogService: CodexCatalogQuerying {
 
   private static func checkDeadline(_ deadline: ContinuousClock.Instant) throws {
     guard ContinuousClock.now < deadline else { throw BridgeApplicationError.deadlineExceeded }
+  }
+}
+
+private actor CatalogDeadlineRace<Output: Sendable> {
+  private struct Pending {
+    let continuation: CheckedContinuation<Output, any Error>
+    let operationTask: Task<Void, Never>
+    let timeoutTask: Task<Void, Never>
+  }
+
+  private var pending: Pending?
+
+  func run(
+    until deadline: ContinuousClock.Instant,
+    operation: @escaping @Sendable () async throws -> Output
+  ) async throws -> Output {
+    try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await withCheckedThrowingContinuation { continuation in
+        begin(until: deadline, continuation: continuation, operation: operation)
+      }
+    } onCancel: {
+      Task { await self.cancel() }
+    }
+  }
+
+  private func begin(
+    until deadline: ContinuousClock.Instant,
+    continuation: CheckedContinuation<Output, any Error>,
+    operation: @escaping @Sendable () async throws -> Output
+  ) {
+    let operationTask = Task {
+      do {
+        finish(.success(try await operation()))
+      } catch {
+        finish(.failure(error))
+      }
+    }
+    let timeoutTask = Task {
+      do {
+        try await ContinuousClock().sleep(until: deadline)
+      } catch {
+        return
+      }
+      finish(.failure(BridgeApplicationError.deadlineExceeded))
+    }
+    pending = Pending(
+      continuation: continuation,
+      operationTask: operationTask,
+      timeoutTask: timeoutTask
+    )
+  }
+
+  private func finish(_ result: Result<Output, any Error>) {
+    guard let pending else { return }
+    self.pending = nil
+    pending.operationTask.cancel()
+    pending.timeoutTask.cancel()
+    pending.continuation.resume(with: result)
+  }
+
+  private func cancel() {
+    finish(.failure(CancellationError()))
   }
 }

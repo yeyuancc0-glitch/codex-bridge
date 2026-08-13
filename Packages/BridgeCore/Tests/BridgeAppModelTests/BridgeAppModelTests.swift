@@ -269,4 +269,49 @@ final class BridgeAppModelTests: XCTestCase {
       ]
     )
   }
+
+  func testScopedThreadAndReadOnlyComposerActionsPreserveProjectIdentity() async {
+    let backend = TestBackend()
+    let model = BridgeAppModel(backend: backend)
+    let draft = ReadOnlyTaskDraftPresentation(
+      requestID: "local-1",
+      projectID: "project-1",
+      threadID: "thread-1",
+      goal: "Inspect the project",
+      acceptanceCriteria: ["Report findings"],
+      executionModel: "execution",
+      executionEffort: "high",
+      supervisorModel: "luna",
+      supervisorEffort: "medium"
+    )
+
+    let selected = await model.presentationStore.perform(.selectThreadProject("project-1"))
+    let read = await model.presentationStore.perform(
+      .readBoundThreadHistory(projectID: "project-1", threadID: "thread-1")
+    )
+    let opened = await model.presentationStore.perform(
+      .openBoundThreadInCodex(projectID: "project-1", threadID: "thread-1")
+    )
+    let prepared = await model.presentationStore.perform(
+      .prepareReadOnlyTask(projectID: "project-1", threadID: "thread-1")
+    )
+    let submitted = await model.presentationStore.perform(.submitReadOnlyTask(draft))
+    XCTAssertTrue(selected)
+    XCTAssertTrue(read)
+    XCTAssertTrue(opened)
+    XCTAssertTrue(prepared)
+    XCTAssertTrue(submitted)
+
+    let events = await backend.events()
+    XCTAssertEqual(
+      events,
+      [
+        .selectThreadProject("project-1"),
+        .readBoundHistory(projectID: "project-1", threadID: "thread-1"),
+        .openBoundThread(projectID: "project-1", threadID: "thread-1"),
+        .prepareReadOnly(projectID: "project-1", threadID: "thread-1"),
+        .submitReadOnly(draft),
+      ]
+    )
+  }
 }

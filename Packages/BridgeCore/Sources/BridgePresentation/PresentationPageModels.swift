@@ -207,10 +207,105 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
 public struct TaskPagePresentation: Equatable, Sendable {
   public let tasks: [TaskRowPresentation]
   public let details: [TaskDetailPresentation]
+  public let readOnlyComposer: PresentationLoadState<ReadOnlyTaskComposerPresentation>?
 
-  public init(tasks: [TaskRowPresentation], details: [TaskDetailPresentation]) {
+  public init(
+    tasks: [TaskRowPresentation],
+    details: [TaskDetailPresentation],
+    readOnlyComposer: PresentationLoadState<ReadOnlyTaskComposerPresentation>? = nil
+  ) {
     self.tasks = tasks
     self.details = details
+    self.readOnlyComposer = readOnlyComposer
+  }
+}
+
+public struct LocalTaskProjectOptionPresentation: Identifiable, Equatable, Sendable {
+  public let id: String
+  public let name: String
+
+  public init(id: String, name: String) {
+    self.id = id
+    self.name = name
+  }
+}
+
+public struct LocalTaskModelOptionPresentation: Identifiable, Equatable, Sendable {
+  public let id: String
+  public let displayName: String
+  public let efforts: [String]
+  public let isDefault: Bool
+
+  public init(id: String, displayName: String, efforts: [String], isDefault: Bool) {
+    self.id = id
+    self.displayName = displayName
+    self.efforts = efforts
+    self.isDefault = isDefault
+  }
+}
+
+public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
+  public let requestID: String
+  public let projects: [LocalTaskProjectOptionPresentation]
+  public let initialProjectID: String
+  public let threadID: String?
+  public let executionModels: [LocalTaskModelOptionPresentation]
+  public let supervisorModels: [LocalTaskModelOptionPresentation]
+  public let blocker: String?
+  public let isSubmitting: Bool
+
+  public init(
+    requestID: String,
+    projects: [LocalTaskProjectOptionPresentation],
+    initialProjectID: String,
+    threadID: String? = nil,
+    executionModels: [LocalTaskModelOptionPresentation],
+    supervisorModels: [LocalTaskModelOptionPresentation],
+    blocker: String? = nil,
+    isSubmitting: Bool = false
+  ) {
+    self.requestID = requestID
+    self.projects = projects
+    self.initialProjectID = initialProjectID
+    self.threadID = threadID
+    self.executionModels = executionModels
+    self.supervisorModels = supervisorModels
+    self.blocker = blocker
+    self.isSubmitting = isSubmitting
+  }
+}
+
+public struct ReadOnlyTaskDraftPresentation: Equatable, Sendable {
+  public let requestID: String
+  public let projectID: String
+  public let threadID: String?
+  public let goal: String
+  public let acceptanceCriteria: [String]
+  public let executionModel: String
+  public let executionEffort: String
+  public let supervisorModel: String
+  public let supervisorEffort: String
+
+  public init(
+    requestID: String,
+    projectID: String,
+    threadID: String? = nil,
+    goal: String,
+    acceptanceCriteria: [String],
+    executionModel: String,
+    executionEffort: String,
+    supervisorModel: String,
+    supervisorEffort: String
+  ) {
+    self.requestID = requestID
+    self.projectID = projectID
+    self.threadID = threadID
+    self.goal = goal
+    self.acceptanceCriteria = acceptanceCriteria
+    self.executionModel = executionModel
+    self.executionEffort = executionEffort
+    self.supervisorModel = supervisorModel
+    self.supervisorEffort = supervisorEffort
   }
 }
 

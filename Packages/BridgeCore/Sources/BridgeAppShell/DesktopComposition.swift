@@ -33,7 +33,8 @@ struct DesktopComposition: Sendable {
     dataDirectoryURL: URL,
     system: any DesktopSystemServing,
     secretStore: any SecretStore = KeychainSecretStore(),
-    bundleURL: URL = Bundle.main.bundleURL
+    bundleURL: URL = Bundle.main.bundleURL,
+    catalog suppliedCatalog: (any CodexCatalogQuerying)? = nil
   ) async throws -> DesktopComposition {
     let paths = try DesktopDataStore.prepare(at: dataDirectoryURL)
     let eventStore = try EventStore(path: paths.eventStoreURL.path)
@@ -113,11 +114,13 @@ struct DesktopComposition: Sendable {
     _ = try await pipelineFinalizer.recoverPendingFinalizations()
     _ = try await pipelineOrchestrator.recoverPendingPreflights()
     _ = try await coordinator.recoverIncompleteTasks()
-    let catalog = IsolatedCodexCatalogService(
-      configuration: IsolatedCodexCatalogConfiguration(
-        clientInfo: .bridge(version: "0.1.0")
+    let catalog: any CodexCatalogQuerying =
+      suppliedCatalog
+      ?? IsolatedCodexCatalogService(
+        configuration: IsolatedCodexCatalogConfiguration(
+          clientInfo: .bridge(version: "0.1.0")
+        )
       )
-    )
     let status = BridgeStatusStore(
       initial: BridgeStatusSnapshot(
         appVersion: "0.1.0",

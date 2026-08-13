@@ -79,6 +79,41 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     try await recorder.waitForEnd()
   }
 
+  func testUnsafeThreadAndTurnIdentifiersFailBeforeBinding() async throws {
+    let fixture = try await makeFixture()
+    let unsafeThreadRuntime = makeRuntime(
+      fixture: fixture,
+      script: invalidBindingIdentifierScript(root: fixture.root.path, unsafeThread: true)
+    )
+    addTeardownBlock { await unsafeThreadRuntime.shutdown() }
+    do {
+      _ = try await unsafeThreadRuntime.start(
+        taskID: TaskID(rawValue: "task-unsafe-thread"),
+        submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+        previousBinding: nil
+      )
+      XCTFail("Expected the unsafe Thread identifier to fail closed")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .threadMismatch)
+    }
+
+    let unsafeTurnRuntime = makeRuntime(
+      fixture: fixture,
+      script: invalidBindingIdentifierScript(root: fixture.root.path, unsafeThread: false)
+    )
+    addTeardownBlock { await unsafeTurnRuntime.shutdown() }
+    do {
+      _ = try await unsafeTurnRuntime.start(
+        taskID: TaskID(rawValue: "task-unsafe-turn"),
+        submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+        previousBinding: nil
+      )
+      XCTFail("Expected the unsafe Turn identifier to fail closed")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .protocolViolation)
+    }
+  }
+
   func testFileApprovalPersistsCorrelatedChangedPathsWithoutRawDiff() async throws {
     let fixture = try await makeFixture()
     let runtime = makeRuntime(fixture: fixture, script: fileApprovalScript(root: fixture.root.path))
@@ -611,6 +646,25 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
       .replacingOccurrences(of: "__THREAD__", with: thread)
       .replacingOccurrences(of: "__TURN__", with: turn)
       .replacingOccurrences(of: "__COMPLETED__", with: completed)
+  }
+
+  private func invalidBindingIdentifierScript(root: String, unsafeThread: Bool) -> String {
+    let threadID = unsafeThread ? "/Users/alice/private-thread" : "thread-safe"
+    let turnID = unsafeThread ? "turn-safe" : "password=private-turn-value"
+    let thread = threadJSON(id: threadID, root: root)
+    let turn = turnJSON(id: turnID, status: "inProgress")
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        IFS= read -r turn_start
+        printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+        sleep 2
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+      .replacingOccurrences(of: "__TURN__", with: turn)
   }
 
   private func resumeSteerInterruptScript(root: String) -> String {

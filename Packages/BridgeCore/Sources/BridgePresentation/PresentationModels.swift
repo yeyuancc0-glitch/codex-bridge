@@ -140,13 +140,21 @@ public enum PresentationAction: Equatable, Sendable {
   case refresh(BridgeNavigationDestination)
   case addProject
   case openProject(String)
+  case selectThreadProject(String)
+  case loadMoreThreads
   case readThreadHistory(String)
+  case readBoundThreadHistory(projectID: String, threadID: String)
+  case loadMoreThreadHistory
   case continueThread(String)
   case createTaskFromThread(String)
   case copyThreadID(String)
   case archiveSupervisorThread(String)
   case openThreadInCodex(String)
+  case openBoundThreadInCodex(projectID: String, threadID: String)
   case openTaskInCodex(String)
+  case prepareReadOnlyTask(projectID: String?, threadID: String?)
+  case dismissReadOnlyTask
+  case submitReadOnlyTask(ReadOnlyTaskDraftPresentation)
   case interruptTask(String)
   case authorizeTaskVerification(String)
   case testConnection

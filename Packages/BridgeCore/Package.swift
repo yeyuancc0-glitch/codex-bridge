@@ -309,6 +309,7 @@ let package = Package(
             name: "BridgeApplicationTests",
             dependencies: [
                 "BridgeApplication",
+                "BridgeCodexRPC",
                 "BridgeCoordinator",
                 "BridgeDomain",
                 "BridgeFiles",
@@ -345,6 +346,7 @@ let package = Package(
             name: "BridgeAppShellTests",
             dependencies: [
                 "BridgeAppShell",
+                "BridgeApplication",
                 "BridgeAppModel",
                 "BridgeCodexRPC",
                 "BridgeCoordinator",

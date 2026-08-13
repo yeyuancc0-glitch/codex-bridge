@@ -1,6 +1,8 @@
 import BridgeAppModel
+import BridgeApplication
 import BridgeCoordinator
 import BridgeDomain
+import BridgeMCP
 import BridgePersistence
 import BridgePresentation
 import BridgeProjects
@@ -41,10 +43,14 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
 }
 
 actor LiveBridgeAppBackend: BridgeAppBackend {
+  private static let maximumVisibleHistoryEntries = 500
+  private static let maximumVisibleThreads = 500
+  private static let threadPageLimit = 100
   private let dataDirectoryURL: URL
   private let system: any DesktopSystemServing
   private let secretStore: any SecretStore
   private let bundleURL: URL
+  private let catalog: (any CodexCatalogQuerying)?
   private var continuations:
     [UUID: AsyncThrowingStream<BridgeAppStateSnapshot, Error>.Continuation] = [:]
   private var composition: DesktopComposition?
@@ -55,9 +61,11 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private var revision: UInt64 = 1
   private var factsRequest: UInt64 = 0
   private var diagnostics: [LogEntryPresentation] = []
+  private var operatorState = DesktopOperatorState()
   private var isShuttingDown = false
   private var shutdownFinished = false
   private var activeOperations = 0
+  private var isRunningCatalogOperation = false
   private var isExportingSupportBundle = false
   private var operationDrainWaiters: [CheckedContinuation<Void, Never>] = []
   private var compositionWaiters: [CheckedContinuation<Void, Error>] = []
@@ -67,12 +75,14 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     dataDirectoryURL: URL,
     system: any DesktopSystemServing,
     secretStore: any SecretStore = KeychainSecretStore(),
-    bundleURL: URL = Bundle.main.bundleURL
+    bundleURL: URL = Bundle.main.bundleURL,
+    catalog: (any CodexCatalogQuerying)? = nil
   ) {
     self.dataDirectoryURL = dataDirectoryURL
     self.system = system
     self.secretStore = secretStore
     self.bundleURL = bundleURL
+    self.catalog = catalog
     currentSnapshot = BridgeAppStateSnapshot(
       revision: revision,
       connectionState: .starting,
@@ -95,12 +105,15 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   }
 
   func refresh(_ destination: BridgeNavigationDestination) async throws {
-    _ = destination
     try beginOperation()
     defer { endOperation() }
     if composition == nil {
       publish(connectionState: .starting, presentation: .loading)
       beginBootstrapIfNeeded()
+      return
+    }
+    if destination == .threads {
+      try await refreshThreads(projectID: operatorState.selectedProjectID)
       return
     }
     try await publishCurrentFacts()
@@ -267,9 +280,192 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     guard opened else { throw DesktopBackendError.operationFailed }
   }
 
+  func selectThreadProject(_ projectID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(projectID)
+    try await refreshThreads(projectID: projectID)
+  }
+
+  func loadMoreThreads() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    guard case .ready(let current) = operatorState.threads,
+      !current.isLoadingMore,
+      let cursor = current.nextCursor,
+      !cursor.isEmpty,
+      current.threads.count < Self.maximumVisibleThreads
+    else { throw DesktopBackendError.operationFailed }
+    operatorState.threadGeneration &+= 1
+    let generation = operatorState.threadGeneration
+    operatorState.threads = .ready(
+      DesktopThreadCatalogPage(
+        projectID: current.projectID,
+        projectName: current.projectName,
+        threads: current.threads,
+        nextCursor: current.nextCursor,
+        isLoadingMore: true,
+        isTruncated: current.isTruncated
+      )
+    )
+    try await publishCurrentFacts()
+    do {
+      let composition = try requireComposition()
+      let page = try await composition.application.listThreads(
+        projectID: current.projectID,
+        cursor: cursor,
+        limit: Self.threadPageLimit,
+        search: nil,
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      )
+      try checkRunning()
+      guard generation == operatorState.threadGeneration,
+        operatorState.selectedProjectID == current.projectID,
+        page.nextCursor != cursor
+      else { throw DesktopBackendError.operationFailed }
+      let merged = try Self.mergedThreads(current.threads, page.threads)
+      let visible = Array(merged.prefix(Self.maximumVisibleThreads))
+      let truncated =
+        merged.count > visible.count
+        || (page.nextCursor != nil && visible.count >= Self.maximumVisibleThreads)
+      operatorState.threads = .ready(
+        DesktopThreadCatalogPage(
+          projectID: current.projectID,
+          projectName: current.projectName,
+          threads: visible,
+          nextCursor: truncated ? nil : page.nextCursor,
+          isLoadingMore: false,
+          isTruncated: truncated
+        )
+      )
+      try await publishCurrentFacts()
+    } catch {
+      if generation == operatorState.threadGeneration {
+        operatorState.threads = .ready(current)
+        try? await publishCurrentFacts()
+      }
+      throw error
+    }
+  }
+
   func readThreadHistory(_ threadID: String) throws {
     try Self.validateIdentifier(threadID)
     throw DesktopBackendError.threadCatalogUnavailable
+  }
+
+  func readThreadHistory(projectID: String, threadID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    try Self.validateIdentifier(projectID)
+    try Self.validateIdentifier(threadID)
+    guard case .ready(let catalog) = operatorState.threads,
+      catalog.projectID == projectID,
+      catalog.threads.contains(where: { $0.threadID == threadID })
+    else { throw DesktopBackendError.operationFailed }
+    let generation = operatorState.beginHistory()
+    try await publishCurrentFacts()
+    do {
+      let composition = try requireComposition()
+      let page = try await composition.application.readThread(
+        projectID: projectID,
+        threadID: threadID,
+        detail: .full,
+        cursor: nil,
+        limit: Self.threadPageLimit,
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      )
+      try checkRunning()
+      guard generation == operatorState.historyGeneration,
+        page.thread.threadID == threadID,
+        operatorState.selectedProjectID == projectID
+      else { return }
+      operatorState.history = .ready(
+        DesktopThreadHistoryPage(
+          projectID: projectID,
+          thread: page.thread,
+          entries: page.entries,
+          nextCursor: page.nextCursor,
+          isLoadingMore: false,
+          isTruncated: false
+        )
+      )
+      try await publishCurrentFacts()
+    } catch {
+      if generation == operatorState.historyGeneration {
+        operatorState.history = .failed("Codex Thread 历史读取失败；未显示未经核验的内容。")
+        try? await publishCurrentFacts()
+      }
+      throw error
+    }
+  }
+
+  func loadMoreThreadHistory() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    guard case .ready(let current)? = operatorState.history,
+      !current.isLoadingMore,
+      let cursor = current.nextCursor,
+      !cursor.isEmpty,
+      current.entries.count < Self.maximumVisibleHistoryEntries
+    else { throw DesktopBackendError.operationFailed }
+    operatorState.historyGeneration &+= 1
+    let generation = operatorState.historyGeneration
+    operatorState.history = .ready(
+      DesktopThreadHistoryPage(
+        projectID: current.projectID,
+        thread: current.thread,
+        entries: current.entries,
+        nextCursor: current.nextCursor,
+        isLoadingMore: true,
+        isTruncated: current.isTruncated
+      )
+    )
+    try await publishCurrentFacts()
+    do {
+      let composition = try requireComposition()
+      let page = try await composition.application.readThread(
+        projectID: current.projectID,
+        threadID: current.thread.threadID,
+        detail: .full,
+        cursor: cursor,
+        limit: Self.threadPageLimit,
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      )
+      try checkRunning()
+      guard generation == operatorState.historyGeneration,
+        page.thread.threadID == current.thread.threadID,
+        page.nextCursor != cursor,
+        operatorState.selectedProjectID == current.projectID
+      else { throw DesktopBackendError.operationFailed }
+      let merged = current.entries + page.entries
+      let visible = Array(merged.prefix(Self.maximumVisibleHistoryEntries))
+      let truncated =
+        merged.count > visible.count
+        || (page.nextCursor != nil && visible.count >= Self.maximumVisibleHistoryEntries)
+      operatorState.history = .ready(
+        DesktopThreadHistoryPage(
+          projectID: current.projectID,
+          thread: page.thread,
+          entries: visible,
+          nextCursor: truncated ? nil : page.nextCursor,
+          isLoadingMore: false,
+          isTruncated: truncated
+        )
+      )
+      try await publishCurrentFacts()
+    } catch {
+      if generation == operatorState.historyGeneration {
+        operatorState.history = .ready(current)
+        try? await publishCurrentFacts()
+      }
+      throw error
+    }
   }
 
   func continueThread(_ threadID: String) throws {
@@ -312,6 +508,25 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
   }
 
+  func openThreadInCodex(projectID: String, threadID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    try Self.validateIdentifier(projectID)
+    try Self.validateIdentifier(threadID)
+    let composition = try requireComposition()
+    let receipt = try await composition.application.openInCodex(
+      projectID: projectID,
+      threadID: threadID,
+      deadline: ContinuousClock.now.advanced(by: .seconds(20))
+    )
+    try checkRunning()
+    guard receipt.opened, receipt.projectID == projectID, receipt.threadID == threadID else {
+      throw DesktopBackendError.operationFailed
+    }
+  }
+
   func openTaskInCodex(_ taskID: String) async throws {
     try beginOperation()
     defer { endOperation() }
@@ -328,6 +543,132 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let opened = await system.open(url)
     try checkRunning()
     guard opened else { throw DesktopBackendError.operationFailed }
+  }
+
+  func prepareReadOnlyTask(projectID requestedProjectID: String?, threadID: String?) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    if let requestedProjectID { try Self.validateIdentifier(requestedProjectID) }
+    if let threadID { try Self.validateIdentifier(threadID) }
+    switch operatorState.composer {
+    case .loading?, .ready?: throw DesktopBackendError.operationFailed
+    case .none, .notLoaded?, .failed?: break
+    }
+    operatorState.composer = .loading
+    try await publishCurrentFacts()
+    do {
+      let composition = try requireComposition()
+      let projects = try await composition.repository.allProjects()
+        .filter { $0.accessPolicy.read != .denied }
+        .sorted { $0.createdAt < $1.createdAt }
+      try checkRunning()
+      guard let projectID = requestedProjectID ?? projects.first?.id.rawValue,
+        projects.contains(where: { $0.id.rawValue == projectID })
+      else { throw DesktopBackendError.operationFailed }
+      if let threadID {
+        _ = try await composition.application.readThread(
+          projectID: projectID,
+          threadID: threadID,
+          detail: .summary,
+          cursor: nil,
+          limit: 1,
+          deadline: ContinuousClock.now.advanced(by: .seconds(20))
+        )
+      }
+      let models = try await composition.application.listModels(
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      ).models
+      try checkRunning()
+      guard !models.isEmpty else { throw DesktopBackendError.operationFailed }
+      operatorState.composer = .ready(
+        DesktopLocalTaskComposer(
+          requestID: Self.localRequestID(),
+          projectID: projectID,
+          threadID: threadID,
+          models: models,
+          isSubmitting: false,
+          submittedDraft: nil
+        )
+      )
+      try await publishCurrentFacts()
+    } catch {
+      operatorState.composer = .failed("无法读取当前 Codex 模型目录；未创建本机任务。")
+      try? await publishCurrentFacts()
+      throw error
+    }
+  }
+
+  func dismissReadOnlyTask() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    guard case .ready(let composer)? = operatorState.composer,
+      !composer.isSubmitting
+    else { throw DesktopBackendError.operationFailed }
+    operatorState.composer = nil
+    try await publishCurrentFacts()
+  }
+
+  func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    guard case .ready(let composer)? = operatorState.composer,
+      !composer.isSubmitting,
+      composer.requestID == draft.requestID
+    else { throw DesktopBackendError.operationFailed }
+    let requestID =
+      composer.submittedDraft == nil || composer.submittedDraft == draft
+      ? composer.requestID : Self.localRequestID()
+    let attemptDraft = Self.draft(draft, requestID: requestID)
+    let submission = try Self.readOnlySubmission(draft, requestID: requestID, composer: composer)
+    operatorState.composer = .ready(
+      DesktopLocalTaskComposer(
+        requestID: requestID,
+        projectID: draft.projectID,
+        threadID: draft.threadID,
+        models: composer.models,
+        isSubmitting: true,
+        submittedDraft: attemptDraft
+      )
+    )
+    try await publishCurrentFacts()
+    do {
+      let composition = try requireComposition()
+      if let threadID = draft.threadID {
+        _ = try await composition.application.readThread(
+          projectID: draft.projectID,
+          threadID: threadID,
+          detail: .summary,
+          cursor: nil,
+          limit: 1,
+          deadline: ContinuousClock.now.advanced(by: .seconds(20))
+        )
+      }
+      _ = try await composition.application.submitLocalTask(
+        submission,
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      )
+      try checkRunning()
+      operatorState.composer = nil
+      appendDiagnostic("已持久化一个本机只读任务。", status: .ready)
+      try await publishCurrentFacts()
+    } catch {
+      operatorState.composer = .ready(
+        DesktopLocalTaskComposer(
+          requestID: requestID,
+          projectID: draft.projectID,
+          threadID: draft.threadID,
+          models: composer.models,
+          isSubmitting: false,
+          submittedDraft: attemptDraft
+        )
+      )
+      try? await publishCurrentFacts()
+      throw error
+    }
   }
 
   func exportSupportBundle() async throws {
@@ -491,7 +832,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
           dataDirectoryURL: self.dataDirectoryURL,
           system: self.system,
           secretStore: self.secretStore,
-          bundleURL: self.bundleURL
+          bundleURL: self.bundleURL,
+          catalog: self.catalog
         )
         try Task.checkCancellation()
         failed = await !self.finishBootstrap(composition)
@@ -558,6 +900,153 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
   }
 
+  private func refreshThreads(projectID requestedProjectID: String?) async throws {
+    try beginCatalogOperation()
+    defer { endCatalogOperation() }
+    let composition = try requireComposition()
+    let projects = try await composition.repository.allProjects()
+      .filter { $0.accessPolicy.read != .denied }
+      .sorted { $0.createdAt < $1.createdAt }
+    try checkRunning()
+    let selectedProjectID =
+      requestedProjectID ?? operatorState.selectedProjectID
+      ?? projects.first?.id.rawValue
+    guard let selectedProjectID else {
+      operatorState.selectedProjectID = nil
+      operatorState.threads = .notLoaded
+      operatorState.history = nil
+      try await publishCurrentFacts()
+      return
+    }
+    guard let project = projects.first(where: { $0.id.rawValue == selectedProjectID }) else {
+      throw DesktopBackendError.operationFailed
+    }
+    let generation = operatorState.selectProject(selectedProjectID)
+    try await publishCurrentFacts()
+    do {
+      let page = try await composition.application.listThreads(
+        projectID: selectedProjectID,
+        cursor: nil,
+        limit: Self.threadPageLimit,
+        search: nil,
+        deadline: ContinuousClock.now.advanced(by: .seconds(20))
+      )
+      try checkRunning()
+      guard generation == operatorState.threadGeneration,
+        operatorState.selectedProjectID == selectedProjectID
+      else { return }
+      let threads = try Self.mergedThreads([], page.threads)
+      operatorState.threads = .ready(
+        DesktopThreadCatalogPage(
+          projectID: selectedProjectID,
+          projectName: project.name,
+          threads: threads,
+          nextCursor: page.nextCursor,
+          isLoadingMore: false,
+          isTruncated: false
+        )
+      )
+      try await publishCurrentFacts()
+    } catch {
+      if generation == operatorState.threadGeneration {
+        operatorState.threads = .failed("Codex Thread 目录读取失败；请检查登录状态后重试。")
+        try? await publishCurrentFacts()
+      }
+      throw error
+    }
+  }
+
+  private static func mergedThreads(
+    _ existing: [MCPThreadSummary],
+    _ additional: [MCPThreadSummary]
+  ) throws -> [MCPThreadSummary] {
+    var seen = Set(existing.map(\.threadID))
+    var result = existing
+    for thread in additional {
+      guard seen.insert(thread.threadID).inserted else {
+        throw DesktopBackendError.operationFailed
+      }
+      result.append(thread)
+    }
+    return result
+  }
+
+  static func readOnlySubmission(
+    _ draft: ReadOnlyTaskDraftPresentation,
+    requestID: String,
+    composer: DesktopLocalTaskComposer
+  ) throws -> TaskSubmission {
+    try validateIdentifier(requestID)
+    try validateIdentifier(draft.projectID)
+    try validateIdentifier(draft.executionModel)
+    try validateIdentifier(draft.executionEffort)
+    try validateIdentifier(draft.supervisorModel)
+    try validateIdentifier(draft.supervisorEffort)
+    if let threadID = draft.threadID {
+      try validateIdentifier(threadID)
+    }
+    guard draft.threadID == composer.threadID else {
+      throw DesktopBackendError.operationFailed
+    }
+    if composer.threadID != nil, draft.projectID != composer.projectID {
+      throw DesktopBackendError.operationFailed
+    }
+    let goal = draft.goal.trimmingCharacters(in: .whitespacesAndNewlines)
+    let criteria = draft.acceptanceCriteria.map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }.filter { !$0.isEmpty }
+    guard !goal.isEmpty, goal.utf8.count <= 32 * 1_024,
+      (1...100).contains(criteria.count),
+      criteria.allSatisfy({ $0.utf8.count <= 4 * 1_024 }),
+      let execution = composer.models.first(where: { $0.modelID == draft.executionModel }),
+      execution.reasoningEfforts.contains(draft.executionEffort),
+      let supervisor = composer.models.first(where: { $0.modelID == draft.supervisorModel }),
+      LocalReadOnlyTaskPolicy.isLunaModel(
+        id: supervisor.modelID,
+        displayName: supervisor.displayName
+      ),
+      supervisor.reasoningEfforts.contains(draft.supervisorEffort)
+    else { throw DesktopBackendError.operationFailed }
+    return TaskSubmission(
+      idempotencyKey: IdempotencyKey(rawValue: requestID),
+      projectID: ProjectID(rawValue: draft.projectID),
+      thread: draft.threadID.map { .existing(ThreadID(rawValue: $0)) } ?? .new,
+      execution: ExecutionOptions(
+        model: draft.executionModel,
+        effort: draft.executionEffort,
+        permissionMode: "read-only",
+        networkAccess: false
+      ),
+      supervisor: SupervisorOptions(
+        enabled: true,
+        model: draft.supervisorModel,
+        effort: draft.supervisorEffort
+      ),
+      contract: TaskContract(goal: goal, acceptanceCriteria: criteria)
+    )
+  }
+
+  private static func draft(
+    _ source: ReadOnlyTaskDraftPresentation,
+    requestID: String
+  ) -> ReadOnlyTaskDraftPresentation {
+    ReadOnlyTaskDraftPresentation(
+      requestID: requestID,
+      projectID: source.projectID,
+      threadID: source.threadID,
+      goal: source.goal,
+      acceptanceCriteria: source.acceptanceCriteria,
+      executionModel: source.executionModel,
+      executionEffort: source.executionEffort,
+      supervisorModel: source.supervisorModel,
+      supervisorEffort: source.supervisorEffort
+    )
+  }
+
+  private static func localRequestID() -> String {
+    "local_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
+  }
+
   private func publishCurrentFacts(
     canExportSupportBundleOverride: Bool? = nil
   ) async throws {
@@ -597,6 +1086,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         tasks: tasks,
         diagnostics: diagnostics,
         connection: connection,
+        operatorState: operatorState,
         canExportSupportBundle: canExportSupportBundleOverride
           ?? (canExportSupportBundle && !isExportingSupportBundle)
       ),
@@ -701,6 +1191,15 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
 
   private func checkRunning() throws {
     if isShuttingDown { throw CancellationError() }
+  }
+
+  private func beginCatalogOperation() throws {
+    guard !isRunningCatalogOperation else { throw DesktopBackendError.operationFailed }
+    isRunningCatalogOperation = true
+  }
+
+  private func endCatalogOperation() {
+    isRunningCatalogOperation = false
   }
 
   private func removeContinuation(_ identifier: UUID) {

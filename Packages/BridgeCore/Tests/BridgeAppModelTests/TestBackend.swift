@@ -14,6 +14,11 @@ enum BackendEvent: Equatable, Sendable {
   case receivingPaused(Bool)
   case openTask(String)
   case openThread(String)
+  case openBoundThread(projectID: String, threadID: String)
+  case selectThreadProject(String)
+  case readBoundHistory(projectID: String, threadID: String)
+  case prepareReadOnly(projectID: String?, threadID: String?)
+  case submitReadOnly(ReadOnlyTaskDraftPresentation)
 }
 
 actor TestBackend: BridgeAppBackend {
@@ -66,13 +71,31 @@ actor TestBackend: BridgeAppBackend {
   func setReceivingPaused(_ paused: Bool) { recordedEvents.append(.receivingPaused(paused)) }
   func addProject() {}
   func openProject(_ projectID: String) {}
+  func selectThreadProject(_ projectID: String) {
+    recordedEvents.append(.selectThreadProject(projectID))
+  }
+  func loadMoreThreads() {}
   func readThreadHistory(_ threadID: String) {}
+  func readThreadHistory(projectID: String, threadID: String) {
+    recordedEvents.append(.readBoundHistory(projectID: projectID, threadID: threadID))
+  }
+  func loadMoreThreadHistory() {}
   func continueThread(_ threadID: String) {}
   func createTaskFromThread(_ threadID: String) {}
   func copyThreadID(_ threadID: String) {}
   func archiveSupervisorThread(_ threadID: String) {}
   func openThreadInCodex(_ threadID: String) { recordedEvents.append(.openThread(threadID)) }
+  func openThreadInCodex(projectID: String, threadID: String) {
+    recordedEvents.append(.openBoundThread(projectID: projectID, threadID: threadID))
+  }
   func openTaskInCodex(_ taskID: String) { recordedEvents.append(.openTask(taskID)) }
+  func prepareReadOnlyTask(projectID: String?, threadID: String?) {
+    recordedEvents.append(.prepareReadOnly(projectID: projectID, threadID: threadID))
+  }
+  func dismissReadOnlyTask() {}
+  func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) {
+    recordedEvents.append(.submitReadOnly(draft))
+  }
   func exportSupportBundle() {}
   func updateSetting(key: String, enabled: Bool) {}
 }

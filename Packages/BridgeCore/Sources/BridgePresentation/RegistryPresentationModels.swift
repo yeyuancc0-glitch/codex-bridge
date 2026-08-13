@@ -92,6 +92,7 @@ public struct ProjectPagePresentation: Equatable, Sendable {
 
 public struct ThreadPresentation: Identifiable, Equatable, Sendable {
   public let id: String
+  public let projectID: String?
   public let preview: String
   public let projectName: String
   public let source: String
@@ -108,6 +109,7 @@ public struct ThreadPresentation: Identifiable, Equatable, Sendable {
 
   public init(
     id: String,
+    projectID: String? = nil,
     preview: String,
     projectName: String,
     source: String,
@@ -123,6 +125,7 @@ public struct ThreadPresentation: Identifiable, Equatable, Sendable {
     modelIsKnown: Bool = true
   ) {
     self.id = id
+    self.projectID = projectID
     self.preview = preview
     self.projectName = projectName
     self.source = source
@@ -139,13 +142,88 @@ public struct ThreadPresentation: Identifiable, Equatable, Sendable {
   }
 }
 
+public struct ThreadProjectOptionPresentation: Identifiable, Equatable, Sendable {
+  public let id: String
+  public let name: String
+
+  public init(id: String, name: String) {
+    self.id = id
+    self.name = name
+  }
+}
+
+public struct ThreadHistoryEntryPresentation: Identifiable, Equatable, Sendable {
+  public let id: String
+  public let turnID: String
+  public let role: String
+  public let text: String
+  public let status: String?
+
+  public init(id: String, turnID: String, role: String, text: String, status: String? = nil) {
+    self.id = id
+    self.turnID = turnID
+    self.role = role
+    self.text = text
+    self.status = status
+  }
+}
+
+public struct ThreadHistoryPresentation: Equatable, Sendable {
+  public let projectID: String
+  public let threadID: String
+  public let title: String
+  public let entries: [ThreadHistoryEntryPresentation]
+  public let canLoadMore: Bool
+  public let isLoadingMore: Bool
+  public let isTruncated: Bool
+
+  public init(
+    projectID: String,
+    threadID: String,
+    title: String,
+    entries: [ThreadHistoryEntryPresentation],
+    canLoadMore: Bool,
+    isLoadingMore: Bool = false,
+    isTruncated: Bool = false
+  ) {
+    self.projectID = projectID
+    self.threadID = threadID
+    self.title = title
+    self.entries = entries
+    self.canLoadMore = canLoadMore
+    self.isLoadingMore = isLoadingMore
+    self.isTruncated = isTruncated
+  }
+}
+
 public struct ThreadPagePresentation: Equatable, Sendable {
   public let threads: [ThreadPresentation]
   public let projectFilterName: String?
+  public let projectOptions: [ThreadProjectOptionPresentation]
+  public let selectedProjectID: String?
+  public let canLoadMoreThreads: Bool
+  public let isLoadingMoreThreads: Bool
+  public let history: PresentationLoadState<ThreadHistoryPresentation>?
+  public let isCatalogLoaded: Bool
 
-  public init(threads: [ThreadPresentation], projectFilterName: String? = nil) {
+  public init(
+    threads: [ThreadPresentation],
+    projectFilterName: String? = nil,
+    projectOptions: [ThreadProjectOptionPresentation] = [],
+    selectedProjectID: String? = nil,
+    canLoadMoreThreads: Bool = false,
+    isLoadingMoreThreads: Bool = false,
+    history: PresentationLoadState<ThreadHistoryPresentation>? = nil,
+    isCatalogLoaded: Bool = true
+  ) {
     self.threads = threads
     self.projectFilterName = projectFilterName
+    self.projectOptions = projectOptions
+    self.selectedProjectID = selectedProjectID
+    self.canLoadMoreThreads = canLoadMoreThreads
+    self.isLoadingMoreThreads = isLoadingMoreThreads
+    self.history = history
+    self.isCatalogLoaded = isCatalogLoaded
   }
 }
 
