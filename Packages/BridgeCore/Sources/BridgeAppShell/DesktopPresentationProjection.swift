@@ -11,7 +11,8 @@ struct DesktopPresentationProjection {
     projects: [RegisteredProject],
     tasks: [(TaskProjection, [TaskEventEnvelope])],
     diagnostics: [LogEntryPresentation],
-    connection: DesktopTransportHealth = .stopped
+    connection: DesktopTransportHealth = .stopped,
+    canExportSupportBundle: Bool = false
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     let taskRows = tasks.map { taskRow($0.0, projects: projectsByID, events: $0.1) }
@@ -69,7 +70,11 @@ struct DesktopPresentationProjection {
         )
       ),
       logs: .ready(
-        LogPagePresentation(entries: diagnostics, isStreaming: true, canExport: false)
+        LogPagePresentation(
+          entries: diagnostics,
+          isStreaming: true,
+          canExport: canExportSupportBundle
+        )
       ),
       settings: .ready(settings())
     )
@@ -416,7 +421,7 @@ struct DesktopPresentationProjection {
           isEnabled: false
         )
       ],
-      retentionSummary: "任务事件持久保存；支持包导出尚未启用"
+      retentionSummary: "任务事件持久保存；支持包仅导出脱敏结构化事实"
     )
   }
 

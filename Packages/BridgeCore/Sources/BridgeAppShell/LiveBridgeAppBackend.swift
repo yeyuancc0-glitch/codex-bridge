@@ -29,7 +29,7 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
     case .threadCatalogUnavailable:
       "Codex 线程读取尚未启用。"
     case .supportBundleUnavailable:
-      "脱敏支持包导出尚未启用。"
+      "脱敏支持包未能安全导出。"
     case .approvalEvidenceUnavailable:
       "审批缺少权威命令、文件与影响证据；当前只能拒绝。"
     case .invalidIdentifier:
@@ -58,6 +58,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private var isShuttingDown = false
   private var shutdownFinished = false
   private var activeOperations = 0
+  private var isExportingSupportBundle = false
   private var operationDrainWaiters: [CheckedContinuation<Void, Never>] = []
   private var compositionWaiters: [CheckedContinuation<Void, Error>] = []
   private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
@@ -329,8 +330,57 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     guard opened else { throw DesktopBackendError.operationFailed }
   }
 
-  func exportSupportBundle() throws {
-    throw DesktopBackendError.supportBundleUnavailable
+  func exportSupportBundle() async throws {
+    try beginOperation()
+    guard !isExportingSupportBundle else {
+      endOperation()
+      throw DesktopBackendError.operationFailed
+    }
+    isExportingSupportBundle = true
+    defer {
+      isExportingSupportBundle = false
+      endOperation()
+    }
+    let result: DesktopSupportBundleSaveResult
+    do {
+      try await publishCurrentFacts()
+      result = try await saveSupportBundle()
+    } catch {
+      try? await publishCurrentFacts(canExportSupportBundleOverride: true)
+      throw error
+    }
+    if result == .saved {
+      appendDiagnostic("已导出脱敏支持包。", status: .ready)
+    }
+    try await publishCurrentFacts(canExportSupportBundleOverride: true)
+    guard result == .saved || result == .cancelled else {
+      throw DesktopBackendError.supportBundleUnavailable
+    }
+  }
+
+  private func saveSupportBundle() async throws -> DesktopSupportBundleSaveResult {
+    let composition = try requireComposition()
+    let connection = await composition.connectionRuntime.health()
+    guard await system.supportsSupportBundleExport else {
+      throw DesktopBackendError.supportBundleUnavailable
+    }
+    try checkRunning()
+    let projects = try await composition.repository.allProjects()
+    try checkRunning()
+    let recentTasks = try await composition.eventStore.recentlyUpdatedTaskIDs(limit: 500)
+    try checkRunning()
+    let data = try DesktopSupportBundle.build(
+      diagnostics: diagnostics,
+      connection: connection,
+      projectCount: projects.count,
+      recentTaskCount: recentTasks.count
+    )
+    let result = await system.saveSupportBundle(
+      data,
+      suggestedFileName: "CodexBridge-Support.json"
+    )
+    try checkRunning()
+    return result
   }
 
   func updateSetting(key: String, enabled: Bool) throws {
@@ -508,12 +558,15 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
   }
 
-  private func publishCurrentFacts() async throws {
+  private func publishCurrentFacts(
+    canExportSupportBundleOverride: Bool? = nil
+  ) async throws {
     try checkRunning()
     factsRequest &+= 1
     let request = factsRequest
     let composition = try requireComposition()
     let connection = await composition.connectionRuntime.health()
+    let canExportSupportBundle = await system.supportsSupportBundleExport
     try checkRunning()
     let projects = try await composition.repository.allProjects()
     try checkRunning()
@@ -543,7 +596,9 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         projects: orderedProjects,
         tasks: tasks,
         diagnostics: diagnostics,
-        connection: connection
+        connection: connection,
+        canExportSupportBundle: canExportSupportBundleOverride
+          ?? (canExportSupportBundle && !isExportingSupportBundle)
       ),
       pendingSheet: DesktopPresentationProjection.pendingSheet(
         projects: orderedProjects,

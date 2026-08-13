@@ -74,6 +74,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 相对路径必须标准化、解析符号链接后再次验证仍在注册根目录内；读取时从根目录描述符逐级 `openat + O_NOFOLLOW`，并复核根与目标文件的 device/inode，防止校验后替换竞态。
 - 默认拒绝 `.env*`、私钥、Keychain、浏览器 Cookie、Codex auth 等敏感路径。
 - Runtime Key 只用于 Tunnel，永不传给 Codex/Luna，永不写日志或支持包。
+- 支持包只能从明确允许的有界结构化事实生成；不导出 Endpoint、项目/任务标识、原始输出、源文件或凭证。导出 JSON 上限 1 MiB，以规范化目录描述符逐级无跟随打开，再用 `0600` 临时文件原子替换。
 - 网络默认关闭；包安装、网络、Git 写和项目外访问要求本机确认。
 - 高风险删除、系统写、凭证读取、生产迁移直接拒绝。
 - 同一 Thread 同时最多一个 Bridge active turn；写任务持有项目工作树锁。

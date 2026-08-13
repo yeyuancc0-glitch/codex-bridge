@@ -25,7 +25,7 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     XCTAssertEqual(snapshot.connectionState, .stopped)
     XCTAssertFalse(connection.canTest)
     XCTAssertFalse(connection.canChangeReceiving)
-    XCTAssertFalse(logs.canExport)
+    XCTAssertTrue(logs.canExport)
     XCTAssertTrue(threads.threads.isEmpty)
     await backend.shutdown()
   }
@@ -101,6 +101,70 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await backend.shutdown()
   }
 
+  func testSupportBundleExportsOnlyTypedRedactedFacts() async throws {
+    let root = temporaryDirectory()
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let project = root.appendingPathComponent("Project", isDirectory: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let system = await TestDesktopSystemService(selectedDirectory: project)
+    let backend = LiveBridgeAppBackend(dataDirectoryURL: directory, system: system)
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&iterator)
+    try await backend.addProject()
+
+    try await backend.exportSupportBundle()
+
+    let bundles = await system.savedSupportBundles
+    let data = try XCTUnwrap(bundles.first)
+    XCTAssertEqual(bundles.count, 1)
+    XCTAssertLessThan(data.count, 1_024 * 1_024)
+    let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+    XCTAssertFalse(text.contains(root.path))
+    XCTAssertFalse(text.lowercased().contains("token"))
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    XCTAssertEqual(object["schema_version"] as? Int, 1)
+    let records = try XCTUnwrap(object["records"] as? [[String: Any]])
+    let connection = try XCTUnwrap(
+      records.first { $0["source"] as? String == "connection_status" }
+    )
+    let fields = try XCTUnwrap(connection["fields"] as? [[String: Any]])
+    XCTAssertTrue(
+      fields.contains {
+        $0["key"] as? String == "registered_project_count" && $0["value"] as? String == "1"
+      }
+    )
+    await backend.shutdown()
+  }
+
+  func testSupportBundleExportIsSingleFlight() async throws {
+    let root = temporaryDirectory()
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let system = BlockingDesktopSystemService()
+    let backend = LiveBridgeAppBackend(dataDirectoryURL: directory, system: system)
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&iterator)
+
+    let first = Task { try await backend.exportSupportBundle() }
+    await system.waitUntilSaveBegins()
+    do {
+      try await backend.exportSupportBundle()
+      XCTFail("Expected a concurrent export to be rejected")
+    } catch {
+      XCTAssertEqual(error as? DesktopBackendError, .operationFailed)
+    }
+    await system.finishSave()
+    try await first.value
+    let saveCount = await system.saveCount
+    XCTAssertEqual(saveCount, 1)
+    await backend.shutdown()
+  }
+
   private func nextReadySnapshot(
     _ iterator: inout AsyncThrowingStream<BridgeAppStateSnapshot, Error>.Iterator
   ) async throws -> BridgeAppStateSnapshot {
@@ -148,10 +212,13 @@ private final class TestDesktopSystemService: DesktopSystemServing {
   private let selectedDirectory: URL?
   private(set) var openedURLs: [URL] = []
   private(set) var copiedValues: [String] = []
+  private(set) var savedSupportBundles: [Data] = []
 
   init(selectedDirectory: URL?) {
     self.selectedDirectory = selectedDirectory
   }
+
+  var supportsSupportBundleExport: Bool { true }
 
   func selectProjectDirectory() async -> URL? { selectedDirectory }
 
@@ -163,6 +230,53 @@ private final class TestDesktopSystemService: DesktopSystemServing {
   func copyToPasteboard(_ value: String) -> Bool {
     copiedValues.append(value)
     return true
+  }
+
+  func saveSupportBundle(
+    _ data: Data,
+    suggestedFileName _: String
+  ) async -> DesktopSupportBundleSaveResult {
+    savedSupportBundles.append(data)
+    return .saved
+  }
+
+  func showMainWindow() {}
+  func terminateApplication() {}
+}
+
+@MainActor
+private final class BlockingDesktopSystemService: DesktopSystemServing {
+  private var saveStarted = false
+  private var saveStartWaiters: [CheckedContinuation<Void, Never>] = []
+  private var saveWaiter: CheckedContinuation<DesktopSupportBundleSaveResult, Never>?
+  private(set) var saveCount = 0
+
+  var supportsSupportBundleExport: Bool { true }
+
+  func selectProjectDirectory() async -> URL? { nil }
+  func open(_: URL) -> Bool { false }
+  func copyToPasteboard(_: String) -> Bool { false }
+
+  func saveSupportBundle(
+    _: Data,
+    suggestedFileName _: String
+  ) async -> DesktopSupportBundleSaveResult {
+    saveCount += 1
+    saveStarted = true
+    let waiters = saveStartWaiters
+    saveStartWaiters.removeAll()
+    for waiter in waiters { waiter.resume() }
+    return await withCheckedContinuation { saveWaiter = $0 }
+  }
+
+  func waitUntilSaveBegins() async {
+    if saveStarted { return }
+    await withCheckedContinuation { saveStartWaiters.append($0) }
+  }
+
+  func finishSave() {
+    saveWaiter?.resume(returning: .saved)
+    saveWaiter = nil
   }
 
   func showMainWindow() {}

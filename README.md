@@ -2,7 +2,7 @@
 
 Codex Bridge is a local-first native macOS bridge between ChatGPT on the web and the user's local Codex installation. ChatGPT forms a task contract, the local Codex app-server executes it, a separate read-only Luna session supervises it, and the Mac app owns permissions, approvals, state, evidence and connectivity.
 
-> Development status: pre-release. The repository now builds a runnable native `CodexBridge.app` with a shared window/menu-bar runtime, nine-step first-run setup, Codex account detection, durable project registration, a real local MCP server and one stateful connection runtime for local development, authenticated Manual HTTPS and OpenAI Secure MCP Tunnel modes. The complete execution-to-report pipeline, credentialed ChatGPT acceptance and signed release packaging are still in development.
+> Development status: pre-release. The repository now builds a runnable native `CodexBridge.app` with a shared window/menu-bar runtime, nine-step first-run setup, Codex account detection, durable project registration, a real local MCP server, stateful local/Manual HTTPS/Secure Tunnel transports, isolated Codex execution, durable Git/verification/Luna final-review/report orchestration and typed redacted support-bundle export. Credentialed ChatGPT acceptance, continuous Luna supervision, allow-once Codex approval, native operator workflows and signed release packaging are still in development.
 
 ## Product boundary
 
@@ -85,7 +85,7 @@ The live fixture owns and removes an empty temporary directory, forces read-only
 
 ## Security reporting
 
-Do not include Runtime Keys, Codex credentials, project source, cookies or private logs in a report. See [SECURITY.md](./SECURITY.md) for the reporting boundary.
+Do not include Runtime Keys, Codex credentials, project source, cookies or private logs in a report. The App exports only bounded typed diagnostic facts through the Logs page; it omits endpoint URLs, project/task identifiers and raw process output, redacts recognized secrets and absolute paths, and writes the selected JSON file atomically with `0600` permissions. See [SECURITY.md](./SECURITY.md) for the reporting boundary.
 
 ## License
 

@@ -1,16 +1,32 @@
 import AppKit
+import Darwin
 import Foundation
+import UniformTypeIdentifiers
+
+public enum DesktopSupportBundleSaveResult: Equatable, Sendable {
+  case saved
+  case cancelled
+  case unavailable
+  case failed
+}
 
 public protocol DesktopSystemServing: Sendable {
+  @MainActor var supportsSupportBundleExport: Bool { get }
   @MainActor func selectProjectDirectory() async -> URL?
   @MainActor func open(_ url: URL) -> Bool
   @MainActor func copyToPasteboard(_ value: String) -> Bool
+  @MainActor func saveSupportBundle(
+    _ data: Data,
+    suggestedFileName: String
+  ) async -> DesktopSupportBundleSaveResult
   @MainActor func showMainWindow()
   @MainActor func terminateApplication()
 }
 
 public struct AppKitDesktopSystemService: DesktopSystemServing {
   public init() {}
+
+  @MainActor public var supportsSupportBundleExport: Bool { true }
 
   @MainActor
   public func selectProjectDirectory() async -> URL? {
@@ -39,6 +55,22 @@ public struct AppKitDesktopSystemService: DesktopSystemServing {
   }
 
   @MainActor
+  public func saveSupportBundle(
+    _ data: Data,
+    suggestedFileName: String
+  ) async -> DesktopSupportBundleSaveResult {
+    let panel = NSSavePanel()
+    panel.title = "导出 Codex Bridge 脱敏支持包"
+    panel.message = "支持包只包含脱敏后的结构化诊断事实。"
+    panel.nameFieldStringValue = suggestedFileName
+    panel.allowedContentTypes = [.json]
+    panel.canCreateDirectories = true
+    guard await panel.begin() == .OK, let url = panel.url else { return .cancelled }
+    return await Task.detached { DesktopSupportBundleWriter.persist(data, at: url) }.value
+      ? .saved : .failed
+  }
+
+  @MainActor
   public func showMainWindow() {
     NSApplication.shared.activate(ignoringOtherApps: true)
     guard let window = NSApplication.shared.windows.first(where: { $0.canBecomeMain }) else {
@@ -50,5 +82,104 @@ public struct AppKitDesktopSystemService: DesktopSystemServing {
   @MainActor
   public func terminateApplication() {
     NSApplication.shared.terminate(nil)
+  }
+
+}
+
+enum DesktopSupportBundleWriter {
+  nonisolated static func persist(
+    _ data: Data,
+    at destination: URL,
+    beforeDirectoryOpen: @Sendable () -> Void = {}
+  ) -> Bool {
+    let fileName = destination.lastPathComponent
+    guard destination.isFileURL, !fileName.isEmpty, fileName != ".", fileName != "..",
+      !fileName.contains("\0")
+    else {
+      return false
+    }
+    guard let parentPath = canonicalDirectory(destination.deletingLastPathComponent()) else {
+      return false
+    }
+    beforeDirectoryOpen()
+    let directory = openDirectory(parentPath)
+    guard directory >= 0 else { return false }
+    defer { Darwin.close(directory) }
+
+    let temporaryName = ".codex-bridge-support-\(UUID().uuidString).tmp"
+    let descriptor = openat(
+      directory,
+      temporaryName,
+      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+      S_IRUSR | S_IWUSR
+    )
+    guard descriptor >= 0 else { return false }
+    var temporaryExists = true
+    defer {
+      Darwin.close(descriptor)
+      if temporaryExists { unlinkat(directory, temporaryName, 0) }
+    }
+    guard writeAll(data, to: descriptor), fsync(descriptor) == 0 else { return false }
+    guard renameat(directory, temporaryName, directory, fileName) == 0 else { return false }
+    temporaryExists = false
+    return fsync(directory) == 0
+  }
+
+  nonisolated private static func writeAll(_ data: Data, to descriptor: Int32) -> Bool {
+    data.withUnsafeBytes { bytes in
+      guard let base = bytes.baseAddress else { return data.isEmpty }
+      var offset = 0
+      while offset < bytes.count {
+        let count = Darwin.write(descriptor, base.advanced(by: offset), bytes.count - offset)
+        if count > 0 {
+          offset += count
+        } else if count < 0, errno == EINTR {
+          continue
+        } else {
+          return false
+        }
+      }
+      return true
+    }
+  }
+
+  nonisolated private static func openDirectory(_ path: String) -> Int32 {
+    guard path.hasPrefix("/") else { return -1 }
+    var current = Darwin.open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+    guard current >= 0 else { return -1 }
+    for component in path.split(separator: "/", omittingEmptySubsequences: true) {
+      let name = String(component)
+      guard name != ".", name != "..", !name.contains("\0") else {
+        Darwin.close(current)
+        return -1
+      }
+      let next = openat(
+        current,
+        name,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+      )
+      Darwin.close(current)
+      guard next >= 0 else { return -1 }
+      current = next
+    }
+    return current
+  }
+
+  nonisolated private static func canonicalDirectory(_ url: URL) -> String? {
+    guard url.isFileURL, let path = Darwin.realpath(url.path, nil) else { return nil }
+    defer { Darwin.free(path) }
+    return String(cString: path)
+  }
+}
+
+extension DesktopSystemServing {
+  @MainActor public var supportsSupportBundleExport: Bool { false }
+
+  @MainActor
+  public func saveSupportBundle(
+    _: Data,
+    suggestedFileName _: String
+  ) async -> DesktopSupportBundleSaveResult {
+    .unavailable
   }
 }
