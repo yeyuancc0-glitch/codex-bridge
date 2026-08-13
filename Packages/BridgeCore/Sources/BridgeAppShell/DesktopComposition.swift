@@ -7,6 +7,7 @@ import BridgePersistence
 import BridgePipeline
 import BridgeProjects
 import BridgeRepositories
+import BridgeRuntime
 import BridgeSecurity
 import Foundation
 
@@ -14,6 +15,7 @@ struct DesktopComposition: Sendable {
   let eventStore: EventStore
   let repository: ApplicationRepository
   let registry: ProjectRegistry
+  let taskRuntime: IsolatedCodexTaskRuntime
   let coordinator: TaskCoordinator
   let pipelineArtifacts: PipelineArtifactStore
   let pipelineFinalizer: PipelineFinalizer
@@ -29,10 +31,25 @@ struct DesktopComposition: Sendable {
     let eventStore = try EventStore(path: paths.eventStoreURL.path)
     let repository = try ApplicationRepository(path: paths.applicationRepositoryURL.path)
     let registry = ProjectRegistry(repository: repository)
+    let taskRuntime = IsolatedCodexTaskRuntime(
+      registry: registry,
+      locations: ClosureRuntimeProjectLocationResolver { submission in
+        guard let project = try await repository.project(id: submission.projectID) else {
+          throw ProjectRegistryError.unknownProject
+        }
+        return RuntimeProjectLocation(
+          workingDirectoryURL: URL(fileURLWithPath: project.primaryRoot.canonicalPath),
+          repositoryRootURL: URL(fileURLWithPath: project.repositoryRoot.canonicalPath)
+        )
+      },
+      configuration: IsolatedCodexTaskRuntimeConfiguration(
+        clientInfo: .bridge(version: "0.1.0")
+      )
+    )
     let coordinator = TaskCoordinator(
       store: eventStore,
       admission: DefaultTaskAdmissionPolicy(registry: registry),
-      runtime: UnavailableDesktopTaskRuntime()
+      runtime: taskRuntime
     )
     let pipelineArtifacts = try PipelineArtifactStore(path: paths.eventStoreURL.path)
     let pipelineFinalizer = PipelineFinalizer(
@@ -81,6 +98,7 @@ struct DesktopComposition: Sendable {
       eventStore: eventStore,
       repository: repository,
       registry: registry,
+      taskRuntime: taskRuntime,
       coordinator: coordinator,
       pipelineArtifacts: pipelineArtifacts,
       pipelineFinalizer: pipelineFinalizer,
@@ -90,27 +108,6 @@ struct DesktopComposition: Sendable {
 
   func shutdown() async {
     await connectionRuntime.stop()
-  }
-}
-
-private struct UnavailableDesktopTaskRuntime: TaskExecutionRuntime {
-  func lockKeys(for _: TaskSubmission) throws -> [String] {
-    throw DesktopBackendError.taskPipelineUnavailable
-  }
-
-  func start(taskID _: TaskID, submission _: TaskSubmission) throws -> TaskExecutionSession {
-    throw DesktopBackendError.taskPipelineUnavailable
-  }
-
-  func resolveApproval(taskID _: TaskID, approvalID _: ApprovalID, approved _: Bool) throws {
-    throw DesktopBackendError.taskPipelineUnavailable
-  }
-
-  func steer(taskID _: TaskID, binding _: ExecutionBinding, prompt _: String) throws {
-    throw DesktopBackendError.taskPipelineUnavailable
-  }
-
-  func interrupt(taskID _: TaskID, binding _: ExecutionBinding) throws {
-    throw DesktopBackendError.taskPipelineUnavailable
+    await taskRuntime.shutdown()
   }
 }

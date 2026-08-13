@@ -173,6 +173,7 @@ let package = Package(
                 "BridgePresentation",
                 "BridgeProjects",
                 "BridgeRepositories",
+                "BridgeRuntime",
                 "BridgeSecurity",
                 "BridgeTunnel",
                 .product(name: "Logging", package: "swift-log"),
@@ -341,6 +342,7 @@ let package = Package(
                 "BridgeDomain",
                 "BridgePresentation",
                 "BridgeProjects",
+                "BridgeRuntime",
                 "BridgeSecurity",
                 "BridgeTunnel",
             ]

@@ -1,3 +1,5 @@
+import BridgeDomain
+import BridgeProjects
 import Darwin
 import Foundation
 import XCTest
@@ -49,7 +51,7 @@ final class DesktopDataStoreTests: XCTestCase {
     let directory = temporaryDirectory()
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
 
-    _ = try await DesktopComposition.make(
+    let composition = try await DesktopComposition.make(
       dataDirectoryURL: directory,
       system: DataStoreTestSystemService()
     )
@@ -66,6 +68,48 @@ final class DesktopDataStoreTests: XCTestCase {
       XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFREG)
       XCTAssertEqual(metadata.st_mode & 0o777, 0o600, artifact.lastPathComponent)
     }
+    await composition.shutdown()
+  }
+
+  func testCompositionRuntimeResolvesRegisteredProjectWithoutStartingCodex() async throws {
+    let directory = temporaryDirectory()
+    let projectDirectory = directory.appendingPathComponent("Project", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: projectDirectory,
+      withIntermediateDirectories: true
+    )
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let composition = try await DesktopComposition.make(
+      dataDirectoryURL: directory.appendingPathComponent("Data", isDirectory: true),
+      system: DataStoreTestSystemService()
+    )
+    let project = try await composition.registry.register(
+      local: LocalProjectRegistration(name: "Project", rootURL: projectDirectory)
+    )
+    let submission = TaskSubmission(
+      idempotencyKey: IdempotencyKey(rawValue: "runtime-location-test"),
+      projectID: project.id,
+      thread: .new,
+      execution: ExecutionOptions(
+        model: "test-model",
+        effort: "medium",
+        permissionMode: "read-only",
+        networkAccess: false
+      ),
+      supervisor: SupervisorOptions(
+        enabled: true,
+        model: "test-supervisor",
+        effort: "medium"
+      ),
+      contract: TaskContract(goal: "Inspect the project", acceptanceCriteria: ["Done"])
+    )
+
+    let keys = try await composition.taskRuntime.lockKeys(for: submission)
+
+    XCTAssertEqual(keys.count, 2)
+    XCTAssertTrue(keys.contains(where: { $0.hasPrefix("thread:") }))
+    XCTAssertTrue(keys.contains(where: { $0.hasPrefix("worktree:") }))
+    await composition.shutdown()
   }
 
   private func temporaryDirectory() -> URL {
