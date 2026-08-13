@@ -28,6 +28,30 @@ final class BridgePresentationStoreTests: XCTestCase {
     XCTAssertNil(store.selectedProjectID)
   }
 
+  func testTaskRouteWaitsForSnapshotThenSelectsExactTask() {
+    let recorder = ActionRecorder()
+    let store = BridgePresentationStore(actionHandler: recorder)
+
+    store.openTaskRoute("task-2")
+
+    XCTAssertEqual(store.destination, .tasks)
+    XCTAssertNil(store.selectedTaskID)
+    store.render(snapshot(tasks: [task(id: "task-1"), task(id: "task-2")], projects: []))
+    XCTAssertEqual(store.selectedTaskID, "task-2")
+  }
+
+  func testManualTaskSelectionCancelsPendingTaskRoute() {
+    let recorder = ActionRecorder()
+    let initial = snapshot(tasks: [task(id: "task-1")], projects: [])
+    let store = BridgePresentationStore(snapshot: initial, actionHandler: recorder)
+
+    store.openTaskRoute("task-2")
+    store.selectTask("task-1")
+    store.render(snapshot(tasks: [task(id: "task-1"), task(id: "task-2")], projects: []))
+
+    XCTAssertEqual(store.selectedTaskID, "task-1")
+  }
+
   func testTaskDecisionUsesEditedModelAndEffort() async {
     let recorder = ActionRecorder()
     let store = BridgePresentationStore(actionHandler: recorder)

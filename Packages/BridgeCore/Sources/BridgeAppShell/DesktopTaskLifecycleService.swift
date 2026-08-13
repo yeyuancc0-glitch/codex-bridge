@@ -34,6 +34,57 @@ public struct DesktopTaskTerminalNotification: Equatable, Hashable, Sendable {
   }
 }
 
+public struct DesktopTaskNotificationRoute: Equatable, Sendable {
+  private static let versionKey = "codex_bridge_route_version"
+  private static let taskIDKey = "codex_bridge_task_id"
+  private static let eventSequenceKey = "codex_bridge_terminal_event_sequence"
+  private static let kindKey = "codex_bridge_terminal_kind"
+  private static let currentVersion = "1"
+
+  public let taskID: String
+  public let terminalEventSequence: Int64
+  public let kind: DesktopTaskTerminalNotificationKind
+
+  public init?(identity: DesktopTaskTerminalNotification) {
+    guard Self.validTaskIdentifier(identity.taskID), identity.terminalEventSequence > 0 else {
+      return nil
+    }
+    taskID = identity.taskID
+    terminalEventSequence = identity.terminalEventSequence
+    kind = identity.kind
+  }
+
+  public init?(userInfo: [AnyHashable: Any]) {
+    guard userInfo[Self.versionKey] as? String == Self.currentVersion,
+      let taskID = userInfo[Self.taskIDKey] as? String,
+      let sequenceValue = userInfo[Self.eventSequenceKey] as? String,
+      let sequence = Int64(sequenceValue),
+      String(sequence) == sequenceValue,
+      let kindValue = userInfo[Self.kindKey] as? String,
+      let kind = DesktopTaskTerminalNotificationKind(rawValue: kindValue),
+      Self.validTaskIdentifier(taskID), sequence > 0
+    else { return nil }
+    self.taskID = taskID
+    terminalEventSequence = sequence
+    self.kind = kind
+  }
+
+  public var userInfo: [AnyHashable: Any] {
+    [
+      Self.versionKey: Self.currentVersion,
+      Self.taskIDKey: taskID,
+      Self.eventSequenceKey: String(terminalEventSequence),
+      Self.kindKey: kind.rawValue,
+    ]
+  }
+
+  fileprivate static func validTaskIdentifier(_ value: String) -> Bool {
+    !value.isEmpty && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+      && value.utf8.count <= 256 && value.rangeOfCharacter(from: .controlCharacters) == nil
+      && OutboundContentSecurity.isSafe(value)
+  }
+}
+
 public struct DesktopTaskNotificationRequest: Equatable, Sendable {
   public let identity: DesktopTaskTerminalNotification
   public let requestIdentifier: String
@@ -568,6 +619,9 @@ public struct UserNotificationDesktopTaskNotifier: DesktopTaskNotificationDelive
     content.title = request.title
     content.body = request.body
     content.sound = .default
+    if let route = DesktopTaskNotificationRoute(identity: request.identity) {
+      content.userInfo = route.userInfo
+    }
     let notification = UNNotificationRequest(
       identifier: request.requestIdentifier,
       content: content,

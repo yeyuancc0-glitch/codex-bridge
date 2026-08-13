@@ -71,6 +71,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 项目移除与新任务提交/暂停任务恢复必须共享 project mutation gate；移除期间禁止新的 admission，存在活动任务时拒绝移除。成功移除只在同一仓库事务删除 Thread 绑定、注册根和项目配置，绝不删除本机项目文件。
 - Codex 账号限额只在用户刷新概览时通过隔离 catalog 读取，不在启动或任务事件上轮询；应用层仅投影校验后的百分比、重置时间与触达状态，禁止把服务端自由文本带入 UI。
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
+- 终态通知的点击路由只携带版本化、有界且通过出站安全检查的 task identity；App 未启动或任务快照未就绪时由 Presentation 保留单个待选任务，加载后只选择精确匹配项，用户手动选择会取消旧路由。
 - `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；`didWake` 只能在任务事实刷新和当前 Transport 严格复核后重新开放，不能把该复核冒充完整的 app-server/Thread/Git 恢复。
 
 ## 安全不变量

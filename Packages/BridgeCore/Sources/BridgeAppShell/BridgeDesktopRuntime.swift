@@ -71,6 +71,11 @@ public final class BridgeDesktopRuntime: ObservableObject {
     system.showMainWindow()
   }
 
+  public func openTaskFromNotification(_ taskID: String) {
+    presentationStore.openTaskRoute(taskID)
+    showMainWindow()
+  }
+
   public func terminateApplication() {
     system.terminateApplication()
   }

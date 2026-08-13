@@ -5,6 +5,25 @@ import XCTest
 @testable import BridgeAppShell
 
 final class DesktopTaskLifecycleServiceTests: XCTestCase {
+  func testNotificationRouteRoundTripsOnlyBoundedSafeTaskIdentity() throws {
+    let identity = Self.identity(taskID: "tsk_safe-notification", sequence: 42, kind: .completed)
+    let route = try XCTUnwrap(DesktopTaskNotificationRoute(identity: identity))
+
+    XCTAssertEqual(DesktopTaskNotificationRoute(userInfo: route.userInfo), route)
+    XCTAssertNil(
+      DesktopTaskNotificationRoute(
+        identity: Self.identity(
+          taskID: "/Users/alice/private-task",
+          sequence: 43,
+          kind: .failed
+        )
+      )
+    )
+    var malformed = route.userInfo
+    malformed["codex_bridge_terminal_event_sequence"] = "042"
+    XCTAssertNil(DesktopTaskNotificationRoute(userInfo: malformed))
+  }
+
   func testNotificationUsesFixedSanitizedContentAndStableIdentifier() async throws {
     let fixture = await Self.fixture(notificationDeliveryEnabled: true)
     let unsafeTaskID = "Bearer secret-value-at-least-sixteen /Volumes/private/project"

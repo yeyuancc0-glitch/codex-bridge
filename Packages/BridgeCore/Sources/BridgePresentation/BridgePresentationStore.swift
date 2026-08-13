@@ -13,6 +13,7 @@ public final class BridgePresentationStore: ObservableObject {
   @Published public var actionError: PresentationErrorState?
 
   private let actionHandler: any BridgePresentationActionHandling
+  private var pendingTaskRouteID: String?
 
   public init(
     snapshot: BridgePresentationSnapshot = .loading,
@@ -46,8 +47,16 @@ public final class BridgePresentationStore: ObservableObject {
   }
 
   public func selectTask(_ id: String?) {
+    pendingTaskRouteID = nil
     selectedTaskID = id
     selectedTaskEvidenceTab = .summary
+  }
+
+  public func openTaskRoute(_ id: String) {
+    destination = .tasks
+    pendingTaskRouteID = id
+    selectedTaskEvidenceTab = .summary
+    selectedTaskID = reconciledTaskID(in: snapshot.tasks)
   }
 
   public func selectProject(_ id: String?) {
@@ -126,6 +135,13 @@ public final class BridgePresentationStore: ObservableObject {
   private func reconciledTaskID(
     in state: PresentationLoadState<TaskPagePresentation>
   ) -> String? {
+    if let pendingTaskRouteID {
+      guard case .ready(let page) = state,
+        page.tasks.contains(where: { $0.id == pendingTaskRouteID })
+      else { return nil }
+      self.pendingTaskRouteID = nil
+      return pendingTaskRouteID
+    }
     guard case .ready(let page) = state else { return nil }
     if let selectedTaskID, page.tasks.contains(where: { $0.id == selectedTaskID }) {
       return selectedTaskID

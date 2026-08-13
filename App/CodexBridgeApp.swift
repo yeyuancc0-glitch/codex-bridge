@@ -1,6 +1,7 @@
 import AppKit
 import BridgeAppShell
 import SwiftUI
+@preconcurrency import UserNotifications
 
 @main
 struct CodexBridgeApp: App {
@@ -34,6 +35,11 @@ private final class CodexBridgeAppDelegate: NSObject, NSApplicationDelegate {
   private var isShuttingDown = false
   private var canTerminate = false
 
+  override init() {
+    super.init()
+    UNUserNotificationCenter.current().delegate = self
+  }
+
   func install(_ runtime: BridgeDesktopRuntime) {
     self.runtime = runtime
   }
@@ -48,5 +54,33 @@ private final class CodexBridgeAppDelegate: NSObject, NSApplicationDelegate {
       sender.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
+  }
+}
+
+extension CodexBridgeAppDelegate: UNUserNotificationCenterDelegate {
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    _ = center
+    _ = notification
+    completionHandler([.banner, .sound])
+  }
+
+  nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    _ = center
+    let route = DesktopTaskNotificationRoute(
+      userInfo: response.notification.request.content.userInfo
+    )
+    completionHandler()
+    guard let route else { return }
+    Task { @MainActor [weak self] in
+      self?.runtime?.openTaskFromNotification(route.taskID)
+    }
   }
 }
