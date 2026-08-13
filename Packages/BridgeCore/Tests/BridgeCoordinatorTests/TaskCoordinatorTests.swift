@@ -1052,6 +1052,38 @@ final class TaskCoordinatorTests: XCTestCase {
     }
   }
 
+  func testProjectRemovalGateBlocksNewTaskBeforeAdmissionOrPersistence() async throws {
+    let store = try EventStore.inMemory()
+    let admission = OneShotAdmission()
+    let gate = TaskProjectMutationGate()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: admission,
+      runtime: FakeRuntime(),
+      projectMutationGate: gate
+    )
+    let projectID = ProjectID(rawValue: "project-one")
+    let removal = try await gate.acquireRemoval(for: projectID)
+    let submission = makeSubmission(key: "project-removal-gate", permissionMode: "read-only")
+
+    do {
+      _ = try await coordinator.submit(origin: "chatgpt", submission: submission)
+      XCTFail("Expected project removal to reject a new task")
+    } catch {
+      XCTAssertEqual(
+        error as? TaskProjectMutationGateError,
+        .removalInProgress(projectID)
+      )
+    }
+    let callsWhileRemoving = await admission.callCount()
+    XCTAssertEqual(callsWhileRemoving, 0)
+
+    await gate.releaseRemoval(removal)
+    _ = try await coordinator.submit(origin: "chatgpt", submission: submission)
+    let callsAfterRemoval = await admission.callCount()
+    XCTAssertEqual(callsAfterRemoval, 1)
+  }
+
   private func makeSubmission(key: String, permissionMode: String) -> TaskSubmission {
     TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: key),

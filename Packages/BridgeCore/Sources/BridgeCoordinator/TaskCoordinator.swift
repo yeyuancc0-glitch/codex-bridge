@@ -40,6 +40,7 @@ public actor TaskCoordinator {
   private let admission: any TaskAdmissionPolicy
   let runtime: any TaskExecutionRuntime
   let pipeline: (any TaskPipelineLifecycle)?
+  private let projectMutationGate: TaskProjectMutationGate?
   private let encoder: JSONEncoder
   private let decoder = JSONDecoder()
   private var workers: [TaskID: Task<Void, Never>] = [:]
@@ -49,12 +50,14 @@ public actor TaskCoordinator {
     store: EventStore,
     admission: any TaskAdmissionPolicy,
     runtime: any TaskExecutionRuntime,
-    pipeline: (any TaskPipelineLifecycle)? = nil
+    pipeline: (any TaskPipelineLifecycle)? = nil,
+    projectMutationGate: TaskProjectMutationGate? = nil
   ) {
     self.store = store
     self.admission = admission
     self.runtime = runtime
     self.pipeline = pipeline
+    self.projectMutationGate = projectMutationGate
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     self.encoder = encoder
@@ -78,6 +81,26 @@ public actor TaskCoordinator {
     ), let existing = try await projectionIfPresent(claimedTaskID) {
       return TaskSubmissionResult(projection: existing, reusedExistingTask: true)
     }
+    let lease = try await projectMutationGate?.acquireSubmission(for: submission.projectID)
+    do {
+      let result = try await createSubmission(
+        origin: normalizedOrigin,
+        fingerprint: fingerprint,
+        submission: submission
+      )
+      if let lease { await projectMutationGate?.releaseSubmission(lease) }
+      return result
+    } catch {
+      if let lease { await projectMutationGate?.releaseSubmission(lease) }
+      throw error
+    }
+  }
+
+  private func createSubmission(
+    origin: String,
+    fingerprint: String,
+    submission: TaskSubmission
+  ) async throws -> TaskSubmissionResult {
     let admissionDecision = try await admission.decision(for: submission)
     try Self.validateSubmission(submission, decision: admissionDecision)
     let candidate = TaskID(rawValue: "tsk_\(Self.randomIdentifier())")
@@ -104,7 +127,7 @@ public actor TaskCoordinator {
       lastSequence: Int64(initialEvents.count)
     )
     let taskID = try await store.claimSubmission(
-      origin: normalizedOrigin,
+      origin: origin,
       key: submission.idempotencyKey,
       requestFingerprint: fingerprint,
       taskID: candidate,
@@ -389,9 +412,19 @@ public actor TaskCoordinator {
   }
 
   public func resume(taskID: TaskID) async throws -> TaskProjection {
-    let projection = try await appendDomain(.resumeRequested, taskID: taskID)
-    requestStart(taskID)
-    return projection
+    let current = try await task(taskID)
+    let lease = try await projectMutationGate?.acquireSubmission(
+      for: current.aggregate.submission.projectID
+    )
+    do {
+      let projection = try await appendDomain(.resumeRequested, taskID: taskID)
+      requestStart(taskID)
+      if let lease { await projectMutationGate?.releaseSubmission(lease) }
+      return projection
+    } catch {
+      if let lease { await projectMutationGate?.releaseSubmission(lease) }
+      throw error
+    }
   }
 
   private func requestStop(

@@ -43,6 +43,8 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.addProject()
     case .openProject(let projectID):
       try await backend.openProject(projectID)
+    case .removeProject(let projectID):
+      try await backend.removeProject(projectID)
     case .updateProjectAccessPolicy(let projectID, let read, let write, let network):
       try await backend.updateProjectAccessPolicy(
         projectID: projectID,

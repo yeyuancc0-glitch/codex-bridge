@@ -107,6 +107,7 @@ private struct ProjectRow: View {
 private struct ProjectDetail: View {
   let project: ProjectPresentation
   @ObservedObject var store: BridgePresentationStore
+  @State private var showsRemovalConfirmation = false
 
   var body: some View {
     ScrollView {
@@ -146,6 +147,22 @@ private struct ProjectDetail: View {
           value: project.threadCountDisplayValue
         )
         MetadataRow(label: "最近任务", value: project.lastTaskTitle ?? "无")
+        Divider()
+        Button("移除项目", systemImage: "trash", role: .destructive) {
+          showsRemovalConfirmation = true
+        }
+        .confirmationDialog(
+          "从 Bridge 移除“\(project.name)”？",
+          isPresented: $showsRemovalConfirmation,
+          titleVisibility: .visible
+        ) {
+          Button("移除项目", role: .destructive) {
+            Task { await store.perform(.removeProject(project.id)) }
+          }
+          Button("取消", role: .cancel) {}
+        } message: {
+          Text("只会删除 Bridge 的注册信息，不会删除本机项目文件。存在活动任务时操作会被拒绝。")
+        }
       }
       .frame(maxWidth: BridgeTheme.readableTextWidth, alignment: .leading)
     }

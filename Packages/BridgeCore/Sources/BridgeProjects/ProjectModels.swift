@@ -236,6 +236,7 @@ public enum ProjectRegistryError: Error, LocalizedError, Equatable, Sendable {
   case duplicateRoot
   case duplicateProjectID
   case unknownProject
+  case removalUnsupported
   case repositoryDoesNotContainProject
   case workingDirectoryOutsideProject
 
@@ -253,6 +254,8 @@ public enum ProjectRegistryError: Error, LocalizedError, Equatable, Sendable {
       "The project identifier is already registered."
     case .unknownProject:
       "The project identifier is not registered."
+    case .removalUnsupported:
+      "The project repository does not support safe removal."
     case .repositoryDoesNotContainProject:
       "The repository root does not contain the project root."
     case .workingDirectoryOutsideProject:

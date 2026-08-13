@@ -60,4 +60,14 @@ struct DesktopOperatorState: Equatable, Sendable {
     historyGeneration &+= 1
     return historyGeneration
   }
+
+  mutating func removeProjectSelection(_ projectID: String) {
+    guard selectedProjectID == projectID else { return }
+    selectedProjectID = nil
+    threads = .notLoaded
+    history = nil
+    composer = nil
+    threadGeneration &+= 1
+    historyGeneration &+= 1
+  }
 }

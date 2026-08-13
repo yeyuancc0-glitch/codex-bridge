@@ -132,6 +132,27 @@ extension ApplicationRepository {
     }
   }
 
+  public func removeProject(id: ProjectID) throws {
+    try Self.validateIdentifier(id.rawValue, field: "project_id", maximum: 256)
+    try database.write { db in
+      guard try Self.fetchProject(id: id, in: db) != nil else {
+        throw ProjectRegistryError.unknownProject
+      }
+      try db.execute(
+        sql: "DELETE FROM bridge_repository_thread_bindings WHERE project_id = ?",
+        arguments: [id.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_repository_project_roots WHERE project_id = ?",
+        arguments: [id.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_repository_projects WHERE project_id = ?",
+        arguments: [id.rawValue]
+      )
+    }
+  }
+
   static func fetchProject(id: ProjectID, in db: Database) throws -> RegisteredProject? {
     guard
       let row = try Row.fetchOne(

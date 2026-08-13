@@ -51,6 +51,13 @@ public actor ProjectRegistry {
     try await repository.updateAccessPolicy(policy, for: projectID)
   }
 
+  public func unregister(_ projectID: ProjectID) async throws {
+    guard let repository = repository as? any MutableProjectRepository else {
+      throw ProjectRegistryError.removalUnsupported
+    }
+    try await repository.removeProject(id: projectID)
+  }
+
   public func summaries() async throws -> [ProjectSummaryDTO] {
     let projects = try await repository.allProjects()
     for project in projects {

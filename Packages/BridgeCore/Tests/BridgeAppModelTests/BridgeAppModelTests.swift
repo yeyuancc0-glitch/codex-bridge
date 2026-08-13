@@ -348,4 +348,15 @@ final class BridgeAppModelTests: XCTestCase {
       ]
     )
   }
+
+  func testProjectRemovalRoutesSelectedProjectIdentity() async {
+    let backend = TestBackend()
+    let model = BridgeAppModel(backend: backend)
+
+    let removed = await model.presentationStore.perform(.removeProject("project-1"))
+
+    XCTAssertTrue(removed)
+    let events = await backend.events()
+    XCTAssertEqual(events, [.removeProject("project-1")])
+  }
 }

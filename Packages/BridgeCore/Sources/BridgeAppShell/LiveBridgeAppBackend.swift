@@ -18,6 +18,7 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
   case supportBundleUnavailable
   case approvalEvidenceUnavailable
   case invalidProjectPolicy
+  case projectHasActiveTasks
   case invalidIdentifier
   case operationFailed
 
@@ -37,6 +38,8 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
       "审批缺少权威命令、文件与影响证据；当前只能拒绝。"
     case .invalidProjectPolicy:
       "读取权限只能设为允许或不允许。"
+    case .projectHasActiveTasks:
+      "项目仍有关联的活动任务；请先完成、中断或暂停这些任务。"
     case .invalidIdentifier:
       "请求标识无效。"
     case .operationFailed:
@@ -54,6 +57,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
 
   private static let maximumVisibleHistoryEntries = 500
   private static let maximumVisibleThreads = 500
+  private static let maximumActiveTasks = 2_048
   private static let threadPageLimit = 100
   private let dataDirectoryURL: URL
   private let system: any DesktopSystemServing
@@ -333,6 +337,34 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     )
     try checkRunning()
     appendDiagnostic("已更新项目访问策略。", status: .ready)
+    try await publishCurrentFacts()
+  }
+
+  func removeProject(_ projectID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(projectID)
+    let composition = try requireComposition()
+    let id = ProjectID(rawValue: projectID)
+    let lease: TaskProjectRemovalLease
+    do {
+      lease = try await composition.projectMutationGate.acquireRemoval(for: id)
+    } catch TaskProjectMutationGateError.submissionsInProgress {
+      throw DesktopBackendError.projectHasActiveTasks
+    } catch {
+      throw DesktopBackendError.operationFailed
+    }
+    do {
+      try await requireNoActiveTasks(for: id, composition: composition)
+      try await composition.registry.unregister(id)
+      await composition.projectMutationGate.releaseRemoval(lease)
+    } catch {
+      await composition.projectMutationGate.releaseRemoval(lease)
+      throw error
+    }
+    try checkRunning()
+    operatorState.removeProjectSelection(projectID)
+    appendDiagnostic("已从 Bridge 注册表移除项目；本机文件未被删除。", status: .ready)
     try await publishCurrentFacts()
   }
 
@@ -880,6 +912,35 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       try? await publishCurrentFacts()
       throw error
     }
+  }
+
+  private func requireNoActiveTasks(
+    for projectID: ProjectID,
+    composition: DesktopComposition
+  ) async throws {
+    var cursor: TaskID?
+    var inspected = 0
+    while inspected < Self.maximumActiveTasks {
+      let remaining = Self.maximumActiveTasks - inspected
+      let page = try await composition.eventStore.taskIDsWithActiveSnapshots(
+        afterTaskID: cursor,
+        limit: min(500, remaining)
+      )
+      for taskID in page {
+        let task = try await composition.coordinator.task(taskID)
+        if task.aggregate.submission.projectID == projectID {
+          throw DesktopBackendError.projectHasActiveTasks
+        }
+      }
+      inspected += page.count
+      guard page.count == min(500, remaining) else { return }
+      cursor = page.last
+    }
+    let overflow = try await composition.eventStore.taskIDsWithActiveSnapshots(
+      afterTaskID: cursor,
+      limit: 1
+    )
+    guard overflow.isEmpty else { throw DesktopBackendError.projectHasActiveTasks }
   }
 
   func shutdown() async {

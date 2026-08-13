@@ -78,6 +78,46 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await second.shutdown()
   }
 
+  func testProjectRemovalPersistsWithoutDeletingLocalFiles() async throws {
+    let root = temporaryDirectory()
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let project = root.appendingPathComponent("Project", isDirectory: true)
+    let marker = project.appendingPathComponent("keep.txt", isDirectory: false)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    try Data("keep".utf8).write(to: marker)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let first = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: project)
+    )
+    let firstStream = await first.stateUpdates()
+    var firstIterator = firstStream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&firstIterator)
+    try await first.addProject()
+    let registered = try await nextProjectSnapshot(&firstIterator, count: 1)
+    guard case .ready(let page) = registered.presentation.projects,
+      let projectID = page.projects.first?.id
+    else { return XCTFail("Expected a registered project") }
+
+    try await first.removeProject(projectID)
+    _ = try await nextProjectSnapshot(&firstIterator, count: 0)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+    await first.shutdown()
+
+    let second = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: nil)
+    )
+    let secondStream = await second.stateUpdates()
+    var secondIterator = secondStream.makeAsyncIterator()
+    let restored = try await nextProjectSnapshot(&secondIterator, count: 0)
+    guard case .ready(let restoredPage) = restored.presentation.projects else {
+      return XCTFail("Expected ready projects")
+    }
+    XCTAssertTrue(restoredPage.projects.isEmpty)
+    await second.shutdown()
+  }
+
   func testProjectAccessPolicyCanBeEditedAndSurvivesRestart() async throws {
     let root = temporaryDirectory()
     let directory = root.appendingPathComponent("Data", isDirectory: true)

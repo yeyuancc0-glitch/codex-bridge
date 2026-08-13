@@ -10,7 +10,11 @@ public protocol ProjectRepository: Sendable {
   func updateAccessPolicy(_ policy: ProjectAccessPolicy, for projectID: ProjectID) async throws
 }
 
-public actor InMemoryProjectRepository: ProjectRepository {
+public protocol MutableProjectRepository: ProjectRepository {
+  func removeProject(id: ProjectID) async throws
+}
+
+public actor InMemoryProjectRepository: MutableProjectRepository {
   private var projectsByID: [ProjectID: RegisteredProject] = [:]
 
   public init() {}
@@ -51,6 +55,12 @@ public actor InMemoryProjectRepository: ProjectRepository {
       throw ProjectRegistryError.unknownProject
     }
     projectsByID[projectID] = project.updatingAccessPolicy(policy)
+  }
+
+  public func removeProject(id: ProjectID) throws {
+    guard projectsByID.removeValue(forKey: id) != nil else {
+      throw ProjectRegistryError.unknownProject
+    }
   }
 
   private func containsRegisteredRoot(_ candidate: RegisteredRoot) -> Bool {

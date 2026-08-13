@@ -20,6 +20,7 @@ struct DesktopComposition: Sendable {
   let eventStore: EventStore
   let repository: ApplicationRepository
   let registry: ProjectRegistry
+  let projectMutationGate: TaskProjectMutationGate
   let taskRuntime: IsolatedCodexTaskRuntime
   let coordinator: TaskCoordinator
   let application: BridgeApplicationService
@@ -46,6 +47,7 @@ struct DesktopComposition: Sendable {
     let eventStore = try EventStore(path: paths.eventStoreURL.path)
     let repository = try ApplicationRepository(path: paths.applicationRepositoryURL.path)
     let registry = ProjectRegistry(repository: repository)
+    let projectMutationGate = TaskProjectMutationGate()
     let taskRuntime = IsolatedCodexTaskRuntime(
       registry: registry,
       locations: ClosureRuntimeProjectLocationResolver { submission in
@@ -66,7 +68,8 @@ struct DesktopComposition: Sendable {
       store: eventStore,
       admission: DefaultTaskAdmissionPolicy(registry: registry),
       runtime: taskRuntime,
-      pipeline: pipelineRelay
+      pipeline: pipelineRelay,
+      projectMutationGate: projectMutationGate
     )
     let pipelineArtifacts = try PipelineArtifactStore(path: paths.eventStoreURL.path)
     let pipelineFinalizer = PipelineFinalizer(
@@ -213,6 +216,7 @@ struct DesktopComposition: Sendable {
       eventStore: eventStore,
       repository: repository,
       registry: registry,
+      projectMutationGate: projectMutationGate,
       taskRuntime: taskRuntime,
       coordinator: coordinator,
       application: application,

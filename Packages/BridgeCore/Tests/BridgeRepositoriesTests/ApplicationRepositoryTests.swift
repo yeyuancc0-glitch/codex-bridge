@@ -157,6 +157,43 @@ final class ApplicationRepositoryTests: XCTestCase {
     XCTAssertEqual(stored?.createdAt, project.createdAt)
   }
 
+  func testProjectRemovalDeletesBindingsAndReleasesRootsAtomically() async throws {
+    let fixture = try makeFixture()
+    let repository = try ApplicationRepository(path: fixture.databasePath)
+    let project = try makeProject(fixture: fixture, id: "prj-remove")
+    try await repository.insert(project)
+    try await repository.storeBinding(
+      ThreadProjectBindingRecord(
+        threadID: "thr-remove",
+        projectID: project.id,
+        root: project.primaryRoot,
+        boundAt: Date(timeIntervalSince1970: 1_700_000_100)
+      )
+    )
+
+    try await repository.removeProject(id: project.id)
+
+    let removedProject = try await repository.project(id: project.id)
+    let removedBinding = try await repository.storedBinding(for: "thr-remove")
+    XCTAssertNil(removedProject)
+    XCTAssertNil(removedBinding)
+    let replacement = RegisteredProject(
+      id: ProjectID(rawValue: "prj-replacement"),
+      name: project.name,
+      primaryRoot: project.primaryRoot,
+      repositoryRoot: project.repositoryRoot,
+      worktreeRoots: project.worktreeRoots,
+      accessPolicy: project.accessPolicy,
+      verificationCommands: project.verificationCommands,
+      forbiddenPatterns: project.forbiddenPatterns,
+      createdAt: project.createdAt.addingTimeInterval(1)
+    )
+    try await repository.insert(replacement)
+    let reopened = try ApplicationRepository(path: fixture.databasePath)
+    let storedReplacement = try await reopened.project(id: replacement.id)
+    XCTAssertEqual(storedReplacement, replacement)
+  }
+
   func testConcurrentDatabaseInstancesEnforceOneRootOwner() async throws {
     let fixture = try makeFixture()
     let firstRepository = try ApplicationRepository(path: fixture.databasePath)
