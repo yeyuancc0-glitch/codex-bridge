@@ -456,6 +456,10 @@ actor CodexTaskSession {
       deferredTerminalNotifications.append(completed)
       return
     }
+    guard pendingApprovals.isEmpty else {
+      await fail(reason: "Codex completed a turn with unresolved approval requests.")
+      return
+    }
     switch completed.turn.status {
     case "completed":
       finish(with: .turnCompleted)

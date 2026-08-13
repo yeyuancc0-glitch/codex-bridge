@@ -145,24 +145,13 @@ public actor TaskCoordinator {
     approvalID: ApprovalID,
     approved: Bool
   ) async throws -> TaskProjection {
-    let current = try await task(taskID)
-    guard current.aggregate.pendingApprovalIDs.contains(approvalID) else {
-      throw TaskTransitionError.approvalNotPending(approvalID)
-    }
     guard Self.isValidIdentifier(approvalID.rawValue) else {
       throw TaskCoordinatorError.invalidApprovalIdentifier
     }
-    let intent = TaskRuntimeIntentRecord(
-      kind: "resolve_codex_approval",
-      identifier: approvalID.rawValue,
-      approved: approved,
-      detail: nil
-    )
-    try await append(
-      .runtimeIntent(intent),
+    let reserved = try await reserveApprovalResolution(
       taskID: taskID,
-      expectedSequence: current.lastSequence,
-      projection: try advancedProjection(current)
+      approvalID: approvalID,
+      approved: approved
     )
     var responseSent = false
     var resolutionCommitted = false
@@ -213,12 +202,68 @@ public actor TaskCoordinator {
           committed: false
         )
       }
-      try? await recordRuntimeFailure(
+      await abortAndRecordRuntimeFailure(
         error,
         taskID: taskID,
-        expectedBinding: current.aggregate.binding
+        expectedBinding: reserved.aggregate.binding
       )
       throw error
+    }
+  }
+
+  private func reserveApprovalResolution(
+    taskID: TaskID,
+    approvalID: ApprovalID,
+    approved: Bool
+  ) async throws -> TaskProjection {
+    while true {
+      let current = try await task(taskID)
+      guard current.aggregate.pendingApprovalIDs.contains(approvalID) else {
+        throw TaskTransitionError.approvalNotPending(approvalID)
+      }
+      let domainEvent = TaskEvent.codexApprovalResolutionRequested(
+        approvalID,
+        approved: approved
+      )
+      let aggregate = try TaskReducer.reduce(current.aggregate, event: domainEvent)
+      let intent = TaskRuntimeIntentRecord(
+        kind: "resolve_codex_approval",
+        identifier: approvalID.rawValue,
+        approved: approved,
+        detail: nil
+      )
+      let intentSequence = try Self.nextSequence(
+        after: current.lastSequence,
+        taskID: taskID
+      )
+      let domainSequence = try Self.nextSequence(after: intentSequence, taskID: taskID)
+      let projection = TaskProjection(aggregate: aggregate, lastSequence: domainSequence)
+      let createdAt = Date()
+      do {
+        try await store.appendBatch(
+          [
+            try envelope(
+              .runtimeIntent(intent),
+              taskID: taskID,
+              sequence: intentSequence,
+              createdAt: createdAt
+            ),
+            try envelope(
+              .domain(domainEvent),
+              taskID: taskID,
+              sequence: domainSequence,
+              createdAt: createdAt
+            ),
+          ],
+          expectedLastSequence: current.lastSequence,
+          snapshot: try stateSnapshot(for: projection)
+        )
+        return projection
+      } catch EventStoreError.optimisticConcurrencyConflict(let conflictedTaskID, _, _) {
+        guard conflictedTaskID == taskID else {
+          throw TaskCoordinatorError.corruptTask(taskID)
+        }
+      }
     }
   }
 
@@ -312,7 +357,7 @@ public actor TaskCoordinator {
         operationID: operationID
       )
     } catch {
-      try? await recordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
+      await abortAndRecordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
       throw error
     }
   }
@@ -365,7 +410,7 @@ public actor TaskCoordinator {
       try await runtime.interrupt(taskID: taskID, binding: binding)
       return TaskMutationResult(projection: projection, operationID: intent.operationID)
     } catch {
-      try? await recordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
+      await abortAndRecordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
       throw error
     }
   }
@@ -529,6 +574,16 @@ public actor TaskCoordinator {
           try await pipeline?.discardTaskState(taskID: taskID)
           continue
         }
+        if !current.aggregate.resolvingApprovalIDs.isEmpty {
+          current = try await appendDomain(
+            .failureRecorded(reason: "Approval resolution was ambiguous after restart."),
+            taskID: taskID,
+            releasesOwnedLocks: true
+          )
+          try await pipeline?.discardTaskState(taskID: taskID)
+          recovered.append(current)
+          continue
+        }
         if current.aggregate.phase == .verifying,
           current.lastSequence > 0,
           try await storedPipelineReservation(after: current.lastSequence - 1, taskID: taskID)
@@ -639,13 +694,18 @@ public actor TaskCoordinator {
         await consume(session.observations, taskID: taskID, binding: session.binding)
       } catch {
         if let startedBinding {
-          try? await runtime.interrupt(taskID: taskID, binding: startedBinding)
+          await abortAndRecordRuntimeFailure(
+            error,
+            taskID: taskID,
+            expectedBinding: startedBinding
+          )
+        } else {
+          try? await recordRuntimeFailure(
+            error,
+            taskID: taskID,
+            expectedBinding: failureBinding
+          )
         }
-        try? await recordRuntimeFailure(
-          error,
-          taskID: taskID,
-          expectedBinding: failureBinding
-        )
       }
     } catch {
       try? await recordRuntimeFailure(
@@ -779,9 +839,10 @@ public actor TaskCoordinator {
     binding: ExecutionBinding
   ) async {
     for await observation in observations {
+      let projection: TaskProjection
       do {
         guard
-          let projection = try await applyWithRetry(
+          let applied = try await applyWithRetry(
             observation,
             taskID: taskID,
             binding: binding
@@ -789,13 +850,19 @@ public actor TaskCoordinator {
         else {
           return
         }
+        projection = applied
+      } catch {
+        await abortAndRecordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
+        return
+      }
+      do {
         try await handlePipelineObservation(
           observation,
           projection: projection,
           taskID: taskID
         )
       } catch {
-        try? await recordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
+        await abortAndRecordRuntimeFailure(error, taskID: taskID, expectedBinding: binding)
         return
       }
       switch observation {
@@ -810,11 +877,28 @@ public actor TaskCoordinator {
     guard let projection = try? await task(taskID) else { return }
     let phase = projection.aggregate.phase
     guard !phase.isTerminal, phase != .suspended, phase != .verifying else { return }
-    try? await recordRuntimeFailure(
+    await abortAndRecordRuntimeFailure(
       TaskCoordinatorError.executionUnavailable(taskID),
       taskID: taskID,
       expectedBinding: binding
     )
+  }
+
+  private func abortAndRecordRuntimeFailure(
+    _ error: any Error,
+    taskID: TaskID,
+    expectedBinding: ExecutionBinding?
+  ) async {
+    guard let expectedBinding else {
+      try? await recordRuntimeFailure(error, taskID: taskID, expectedBinding: nil)
+      return
+    }
+    do {
+      try await runtime.abortSession(taskID: taskID, binding: expectedBinding)
+    } catch {
+      return
+    }
+    try? await recordRuntimeFailure(error, taskID: taskID, expectedBinding: expectedBinding)
   }
 
   private func handlePipelineObservation(

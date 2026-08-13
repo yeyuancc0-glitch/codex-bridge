@@ -444,6 +444,7 @@ private struct FixedSupervisorReviewer: TaskPipelineSupervisorReviewing {
 
 private actor OrchestratorRuntime: DurableTaskExecutionRuntime {
   private var continuations: [TaskID: AsyncStream<TaskExecutionObservation>.Continuation] = [:]
+  private var bindings: [TaskID: ExecutionBinding] = [:]
 
   func lockKeys(
     for submission: TaskSubmission,
@@ -479,14 +480,13 @@ private actor OrchestratorRuntime: DurableTaskExecutionRuntime {
     var continuation: AsyncStream<TaskExecutionObservation>.Continuation!
     let observations = AsyncStream<TaskExecutionObservation> { continuation = $0 }
     continuations[taskID] = continuation
-    return TaskExecutionSession(
-      binding: ExecutionBinding(
-        threadID: preparation.threadID,
-        turnID: TurnID(rawValue: "turn-orchestrator-\(preparation.turnGeneration)"),
-        turnGeneration: preparation.turnGeneration
-      ),
-      observations: observations
+    let binding = ExecutionBinding(
+      threadID: preparation.threadID,
+      turnID: TurnID(rawValue: "turn-orchestrator-\(preparation.turnGeneration)"),
+      turnGeneration: preparation.turnGeneration
     )
+    bindings[taskID] = binding
+    return TaskExecutionSession(binding: binding, observations: observations)
   }
 
   func cancelPreparation(taskID _: TaskID) {}
@@ -511,7 +511,19 @@ private actor OrchestratorRuntime: DurableTaskExecutionRuntime {
   func resolveApproval(taskID _: TaskID, approvalID _: ApprovalID, approved _: Bool) {}
   func interrupt(taskID _: TaskID, binding _: ExecutionBinding) {}
 
+  func abortSession(taskID: TaskID, binding: ExecutionBinding) throws {
+    guard bindings[taskID] == binding else {
+      throw OrchestratorRuntimeError.bindingMismatch
+    }
+    bindings[taskID] = nil
+    continuations.removeValue(forKey: taskID)?.finish()
+  }
+
   func emit(_ observation: TaskExecutionObservation, taskID: TaskID) {
     continuations[taskID]?.yield(observation)
   }
+}
+
+private enum OrchestratorRuntimeError: Error {
+  case bindingMismatch
 }

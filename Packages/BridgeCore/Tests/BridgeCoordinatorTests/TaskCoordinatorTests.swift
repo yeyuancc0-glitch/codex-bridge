@@ -205,6 +205,109 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertTrue(ownedLocks.isEmpty)
   }
 
+  func testConcurrentApprovalResolutionIsDurablyReservedOnce() async throws {
+    let gate = SteerGate(failsOnRelease: false)
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime(approvalGate: gate)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "approval-reservation", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let approvalID = ApprovalID(rawValue: "approval-reservation")
+    await runtime.emit(.codexApprovalRequested(approvalID), taskID: taskID)
+    try await waitForPhase(.awaitingCodexApproval, taskID: taskID, coordinator: coordinator)
+    let intentCountBefore = try await store.events(for: taskID).count {
+      $0.kind == "task.runtimeIntent"
+    }
+
+    let first = Task {
+      try await coordinator.resolveCodexApproval(
+        taskID: taskID,
+        approvalID: approvalID,
+        approved: true
+      )
+    }
+    await gate.waitUntilStarted()
+    let reserved = try await coordinator.task(taskID)
+    XCTAssertFalse(reserved.aggregate.pendingApprovalIDs.contains(approvalID))
+    XCTAssertTrue(reserved.aggregate.resolvingApprovalIDs.contains(approvalID))
+
+    do {
+      _ = try await coordinator.resolveCodexApproval(
+        taskID: taskID,
+        approvalID: approvalID,
+        approved: false
+      )
+      XCTFail("Expected the durable approval reservation to reject a second decision")
+    } catch TaskTransitionError.approvalNotPending(let rejected) {
+      XCTAssertEqual(rejected, approvalID)
+    }
+
+    await gate.release()
+    let resolved = try await first.value
+    XCTAssertEqual(resolved.aggregate.phase, .running)
+    XCTAssertTrue(resolved.aggregate.resolvingApprovalIDs.isEmpty)
+    let responses = await runtime.approvalResponses()
+    XCTAssertEqual(responses, [approvalID: true])
+    let kinds = try await store.events(for: taskID).map(\.kind)
+    XCTAssertEqual(kinds.filter { $0 == "task.runtimeIntent" }.count, intentCountBefore + 1)
+    XCTAssertEqual(kinds.filter { $0 == "task.codexApprovalResolutionRequested" }.count, 1)
+  }
+
+  func testRecoveryFailsAmbiguousApprovalResolutionAndReleasesLocks() async throws {
+    let gate = SteerGate(failsOnRelease: false)
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime(approvalGate: gate)
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "approval-recovery", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let approvalID = ApprovalID(rawValue: "approval-recovery")
+    await runtime.emit(.codexApprovalRequested(approvalID), taskID: taskID)
+    try await waitForPhase(.awaitingCodexApproval, taskID: taskID, coordinator: coordinator)
+    let resolution = Task {
+      try await coordinator.resolveCodexApproval(
+        taskID: taskID,
+        approvalID: approvalID,
+        approved: true
+      )
+    }
+    await gate.waitUntilStarted()
+
+    let recoveringCoordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: FakeRuntime()
+    )
+    let recovered = try await recoveringCoordinator.recoverIncompleteTasks()
+
+    XCTAssertEqual(recovered.map(\.aggregate.phase), [.failed])
+    XCTAssertEqual(
+      recovered.first?.aggregate.failureReason,
+      "Approval resolution was ambiguous after restart."
+    )
+    let ownedLocks = try await store.lockKeysOwned(by: taskID)
+    XCTAssertTrue(ownedLocks.isEmpty)
+
+    await gate.release()
+    do {
+      _ = try await resolution.value
+      XCTFail("Expected the stale approval resolution to fail")
+    } catch {}
+  }
+
   func testObservationStreamEndingWithoutTerminalEventFailsAndReleasesLocks() async throws {
     let store = try EventStore.inMemory()
     let runtime = FakeRuntime()
@@ -223,6 +326,32 @@ final class TaskCoordinatorTests: XCTestCase {
 
     try await waitForPhase(.failed, taskID: submitted.aggregate.id, coordinator: coordinator)
     let ownedLocks = try await store.lockKeysOwned(by: submitted.aggregate.id)
+    XCTAssertTrue(ownedLocks.isEmpty)
+  }
+
+  func testDuplicateApprovalAbortsExactSessionBeforeFailureReleasesLocks() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let taskID = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "duplicate-approval", permissionMode: "read-only")
+    ).aggregate.id
+    try await waitForPhase(.running, taskID: taskID, coordinator: coordinator)
+    let approvalID = ApprovalID(rawValue: "duplicate-approval")
+
+    await runtime.emit(.codexApprovalRequested(approvalID), taskID: taskID)
+    try await waitForPhase(.awaitingCodexApproval, taskID: taskID, coordinator: coordinator)
+    await runtime.emit(.codexApprovalRequested(approvalID), taskID: taskID)
+
+    try await waitForPhase(.failed, taskID: taskID, coordinator: coordinator)
+    let aborts = await runtime.abortCount()
+    XCTAssertEqual(aborts, 1)
+    let ownedLocks = try await store.lockKeysOwned(by: taskID)
     XCTAssertTrue(ownedLocks.isEmpty)
   }
 
@@ -666,21 +795,26 @@ private actor FakeRuntime: TaskExecutionRuntime {
   private let failApprovalResolution: Bool
   private let failInterrupt: Bool
   private let steerGate: SteerGate?
+  private let approvalGate: SteerGate?
   private var starts = 0
   private var taskStarts: [TaskID: UInt64] = [:]
   private var interrupts = 0
+  private var aborts = 0
   private var continuations: [TaskID: AsyncStream<TaskExecutionObservation>.Continuation] = [:]
+  private var bindings: [TaskID: ExecutionBinding] = [:]
   private var responses: [ApprovalID: Bool] = [:]
   private var steers: [(binding: ExecutionBinding, prompt: String)] = []
 
   init(
     failApprovalResolution: Bool = false,
     failInterrupt: Bool = false,
-    steerGate: SteerGate? = nil
+    steerGate: SteerGate? = nil,
+    approvalGate: SteerGate? = nil
   ) {
     self.failApprovalResolution = failApprovalResolution
     self.failInterrupt = failInterrupt
     self.steerGate = steerGate
+    self.approvalGate = approvalGate
   }
 
   func lockKeys(
@@ -707,12 +841,14 @@ private actor FakeRuntime: TaskExecutionRuntime {
     var continuation: AsyncStream<TaskExecutionObservation>.Continuation!
     let stream = AsyncStream<TaskExecutionObservation> { continuation = $0 }
     continuations[taskID] = continuation
+    let binding = ExecutionBinding(
+      threadID: previousBinding?.threadID ?? ThreadID(rawValue: "thread-\(taskID.rawValue)"),
+      turnID: TurnID(rawValue: "turn-\(taskID.rawValue)-\(generation)"),
+      turnGeneration: generation
+    )
+    bindings[taskID] = binding
     return TaskExecutionSession(
-      binding: ExecutionBinding(
-        threadID: previousBinding?.threadID ?? ThreadID(rawValue: "thread-\(taskID.rawValue)"),
-        turnID: TurnID(rawValue: "turn-\(taskID.rawValue)-\(generation)"),
-        turnGeneration: generation
-      ),
+      binding: binding,
       observations: stream
     )
   }
@@ -721,8 +857,13 @@ private actor FakeRuntime: TaskExecutionRuntime {
     start(taskID: taskID, submission: submission, previousBinding: nil)
   }
 
-  func resolveApproval(taskID _: TaskID, approvalID: ApprovalID, approved: Bool) throws {
+  func resolveApproval(
+    taskID _: TaskID,
+    approvalID: ApprovalID,
+    approved: Bool
+  ) async throws {
     if failApprovalResolution { throw FakeRuntimeError.approvalResolutionFailed }
+    if let approvalGate { _ = await approvalGate.block() }
     responses[approvalID] = approved
   }
 
@@ -742,6 +883,14 @@ private actor FakeRuntime: TaskExecutionRuntime {
     interrupts += 1
   }
 
+  func abortSession(taskID: TaskID, binding: ExecutionBinding) throws {
+    guard let current = bindings[taskID] else { return }
+    guard current == binding else { throw FakeRuntimeError.bindingMismatch }
+    aborts += 1
+    bindings[taskID] = nil
+    continuations.removeValue(forKey: taskID)?.finish()
+  }
+
   func emit(_ observation: TaskExecutionObservation, taskID: TaskID) {
     continuations[taskID]?.yield(observation)
   }
@@ -752,6 +901,7 @@ private actor FakeRuntime: TaskExecutionRuntime {
 
   func startCount() -> Int { starts }
   func interruptCount() -> Int { interrupts }
+  func abortCount() -> Int { aborts }
   func approvalResponses() -> [ApprovalID: Bool] { responses }
   func steerCalls() -> [(binding: ExecutionBinding, prompt: String)] { steers }
 }
@@ -760,6 +910,7 @@ private enum FakeRuntimeError: Error {
   case approvalResolutionFailed
   case interruptFailed
   case steerFailed
+  case bindingMismatch
 }
 
 private enum PipelineLifecycleTestError: Error {

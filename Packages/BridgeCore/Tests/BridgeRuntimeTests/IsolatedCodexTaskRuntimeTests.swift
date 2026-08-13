@@ -162,6 +162,110 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     await runtime.cancelPreparation(taskID: taskID)
   }
 
+  func testAbortSessionRequiresExactBindingAndWaitsForShutdown() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: resumeSteerInterruptScript(root: fixture.root.path)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let taskID = TaskID(rawValue: "task-abort")
+    let session = try await runtime.start(
+      taskID: taskID,
+      submission: makeSubmission(
+        projectID: fixture.projectID,
+        thread: .existing(ThreadID(rawValue: "thread-existing"))
+      ),
+      previousBinding: nil
+    )
+
+    do {
+      try await runtime.abortSession(
+        taskID: taskID,
+        binding: ExecutionBinding(
+          threadID: session.binding.threadID,
+          turnID: TurnID(rawValue: "wrong-turn"),
+          turnGeneration: session.binding.turnGeneration
+        )
+      )
+      XCTFail("Expected the stale binding to be rejected")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .bindingMismatch)
+    }
+
+    try await runtime.abortSession(taskID: taskID, binding: session.binding)
+    var observations = session.observations.makeAsyncIterator()
+    let streamEnd = await observations.next()
+    XCTAssertNil(streamEnd)
+    do {
+      try await runtime.steer(
+        taskID: taskID,
+        binding: session.binding,
+        prompt: "This session has already stopped."
+      )
+      XCTFail("Expected the stopped session to be unavailable")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .sessionUnavailable)
+    }
+  }
+
+  func testPreparingSuccessorRejectsStaleAbortAndDuplicatePreparation() async throws {
+    let fixture = try await makeFixture()
+    let location = RuntimeProjectLocation(
+      workingDirectoryURL: fixture.root,
+      repositoryRootURL: fixture.root
+    )
+    let gate = RuntimeLocationGate(location: location, blockedCall: 2)
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: resumeSteerInterruptScript(root: fixture.root.path),
+      locations: gate
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let taskID = TaskID(rawValue: "task-preparation-reservation")
+    let submission = makeSubmission(
+      projectID: fixture.projectID,
+      thread: .existing(ThreadID(rawValue: "thread-existing"))
+    )
+    let first = try await runtime.start(
+      taskID: taskID,
+      submission: submission,
+      previousBinding: nil
+    )
+    try await runtime.abortSession(taskID: taskID, binding: first.binding)
+
+    let successor = Task {
+      try await runtime.prepare(
+        taskID: taskID,
+        submission: submission,
+        previousBinding: first.binding
+      )
+    }
+    await gate.waitUntilBlocked()
+
+    do {
+      try await runtime.abortSession(taskID: taskID, binding: first.binding)
+      XCTFail("Expected a stale abort to fail while the successor is preparing")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .activeSession)
+    }
+    do {
+      _ = try await runtime.prepare(
+        taskID: taskID,
+        submission: submission,
+        previousBinding: first.binding
+      )
+      XCTFail("Expected duplicate preparation to be rejected")
+    } catch {
+      XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .activeSession)
+    }
+
+    await gate.release()
+    let preparation = try await successor.value
+    XCTAssertEqual(preparation.turnGeneration, 2)
+    await runtime.cancelPreparation(taskID: taskID)
+  }
+
   func testApprovalWithoutStartedItemFailsClosed() async throws {
     let fixture = try await makeFixture()
     let runtime = makeRuntime(
@@ -185,6 +289,30 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     } catch {
       XCTAssertEqual(error as? IsolatedCodexTaskRuntimeError, .sessionEnded)
     }
+  }
+
+  func testTurnCompletionCannotDiscardAnUnresolvedApproval() async throws {
+    let fixture = try await makeFixture()
+    let runtime = makeRuntime(
+      fixture: fixture,
+      script: unresolvedApprovalCompletionScript(root: fixture.root.path)
+    )
+    addTeardownBlock { await runtime.shutdown() }
+    let session = try await runtime.start(
+      taskID: TaskID(rawValue: "task-unresolved-approval"),
+      submission: makeSubmission(projectID: fixture.projectID, thread: .new),
+      previousBinding: nil
+    )
+    var observations = session.observations.makeAsyncIterator()
+    guard case .codexApprovalRequested? = await observations.next() else {
+      return XCTFail("Expected the pending approval before the malicious completion")
+    }
+    guard case .failed(let reason)? = await observations.next() else {
+      return XCTFail("Expected fail-closed handling for unresolved approval completion")
+    }
+    XCTAssertEqual(reason, "Codex completed a turn with unresolved approval requests.")
+    let streamEnd = await observations.next()
+    XCTAssertNil(streamEnd)
   }
 
   private struct Fixture {
@@ -217,9 +345,21 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
       workingDirectoryURL: fixture.root,
       repositoryRootURL: fixture.root
     )
+    return makeRuntime(
+      fixture: fixture,
+      script: script,
+      locations: ClosureRuntimeProjectLocationResolver { _ in location }
+    )
+  }
+
+  private func makeRuntime(
+    fixture: Fixture,
+    script: String,
+    locations: any RuntimeProjectLocationResolving
+  ) -> IsolatedCodexTaskRuntime {
     return IsolatedCodexTaskRuntime(
       registry: fixture.registry,
-      locations: ClosureRuntimeProjectLocationResolver { _ in location },
+      locations: locations,
       configuration: IsolatedCodexTaskRuntimeConfiguration(
         appServer: AppServerConfiguration(
           executableURL: URL(fileURLWithPath: "/bin/sh"),
@@ -342,6 +482,30 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
       .replacingOccurrences(of: "__TURN__", with: turn)
   }
 
+  private func unresolvedApprovalCompletionScript(root: String) -> String {
+    let thread = threadJSON(id: "thread-new", root: root)
+    let turn = turnJSON(id: "turn-new", status: "inProgress")
+    let completed = turnJSON(id: "turn-new", status: "completed")
+    return commonHandshake
+      + "\n"
+        + #"""
+        IFS= read -r thread_start
+        printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+        IFS= read -r turn_start
+        printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-new","turn":__TURN__}}'
+        printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+        printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-new","turnId":"turn-new","startedAtMs":1,"item":{"id":"item-1","type":"commandExecution"}}}'
+        printf '%s\n' '{"id":"approval-1","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-new","turnId":"turn-new","itemId":"item-1","approvalId":null,"startedAtMs":1}}'
+        sleep 0.1
+        printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-new","turn":__COMPLETED__}}'
+        sleep 2
+        """#
+      .replacingOccurrences(of: "__ROOT__", with: root)
+      .replacingOccurrences(of: "__THREAD__", with: thread)
+      .replacingOccurrences(of: "__TURN__", with: turn)
+      .replacingOccurrences(of: "__COMPLETED__", with: completed)
+  }
+
   private var commonHandshake: String {
     #"""
     IFS= read -r initialize
@@ -362,6 +526,42 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     """
     {"id":"\(id)","status":"\(status)","error":null,"items":[],"itemsView":"full","startedAt":1,"completedAt":null,"durationMs":null}
     """
+  }
+}
+
+private actor RuntimeLocationGate: RuntimeProjectLocationResolving {
+  private let location: RuntimeProjectLocation
+  private let blockedCall: Int
+  private var calls = 0
+  private var isBlocked = false
+  private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+  init(location: RuntimeProjectLocation, blockedCall: Int) {
+    self.location = location
+    self.blockedCall = blockedCall
+  }
+
+  func location(for _: TaskSubmission) async -> RuntimeProjectLocation {
+    calls += 1
+    guard calls == blockedCall else { return location }
+    isBlocked = true
+    for waiter in blockedWaiters {
+      waiter.resume()
+    }
+    blockedWaiters.removeAll(keepingCapacity: false)
+    await withCheckedContinuation { releaseWaiter = $0 }
+    return location
+  }
+
+  func waitUntilBlocked() async {
+    if isBlocked { return }
+    await withCheckedContinuation { blockedWaiters.append($0) }
+  }
+
+  func release() {
+    releaseWaiter?.resume()
+    releaseWaiter = nil
   }
 }
 

@@ -70,6 +70,7 @@ public protocol TaskExecutionRuntime: Sendable {
   ) async
   func steer(taskID: TaskID, binding: ExecutionBinding, prompt: String) async throws
   func interrupt(taskID: TaskID, binding: ExecutionBinding) async throws
+  func abortSession(taskID: TaskID, binding: ExecutionBinding) async throws
 }
 
 /// Opt-in durable startup protocol used by production runtimes.
@@ -95,6 +96,7 @@ public protocol DurableTaskExecutionRuntime: TaskExecutionRuntime {
 
 public enum TaskExecutionRuntimeCompatibilityError: Error, Equatable, Sendable {
   case steerUnsupported
+  case abortUnsupported
 }
 
 extension TaskExecutionRuntime {
@@ -125,6 +127,13 @@ extension TaskExecutionRuntime {
     prompt _: String
   ) async throws {
     throw TaskExecutionRuntimeCompatibilityError.steerUnsupported
+  }
+
+  public func abortSession(
+    taskID _: TaskID,
+    binding _: ExecutionBinding
+  ) async throws {
+    throw TaskExecutionRuntimeCompatibilityError.abortUnsupported
   }
 }
 

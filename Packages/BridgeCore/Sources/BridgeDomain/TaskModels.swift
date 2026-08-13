@@ -165,6 +165,7 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
   public internal(set) var activity: TaskActivity
   public internal(set) var binding: ExecutionBinding?
   public internal(set) var pendingApprovalIDs: Set<ApprovalID>
+  public internal(set) var resolvingApprovalIDs: Set<ApprovalID>
   public internal(set) var stopIntent: StopIntent?
   public internal(set) var reportReference: String?
   public internal(set) var failureReason: String?
@@ -177,9 +178,58 @@ public struct TaskAggregate: Codable, Equatable, Sendable {
     self.activity = .idle
     self.binding = nil
     self.pendingApprovalIDs = []
+    self.resolvingApprovalIDs = []
     self.stopIntent = nil
     self.reportReference = nil
     self.failureReason = nil
     self.recoveryOrigin = nil
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case submission
+    case phase
+    case activity
+    case binding
+    case pendingApprovalIDs
+    case resolvingApprovalIDs
+    case stopIntent
+    case reportReference
+    case failureReason
+    case recoveryOrigin
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(TaskID.self, forKey: .id)
+    submission = try container.decode(TaskSubmission.self, forKey: .submission)
+    phase = try container.decode(TaskPhase.self, forKey: .phase)
+    activity = try container.decode(TaskActivity.self, forKey: .activity)
+    binding = try container.decodeIfPresent(ExecutionBinding.self, forKey: .binding)
+    pendingApprovalIDs = try container.decode(Set<ApprovalID>.self, forKey: .pendingApprovalIDs)
+    resolvingApprovalIDs =
+      try container.decodeIfPresent(
+        Set<ApprovalID>.self,
+        forKey: .resolvingApprovalIDs
+      ) ?? []
+    stopIntent = try container.decodeIfPresent(StopIntent.self, forKey: .stopIntent)
+    reportReference = try container.decodeIfPresent(String.self, forKey: .reportReference)
+    failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+    recoveryOrigin = try container.decodeIfPresent(TaskPhase.self, forKey: .recoveryOrigin)
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(submission, forKey: .submission)
+    try container.encode(phase, forKey: .phase)
+    try container.encode(activity, forKey: .activity)
+    try container.encodeIfPresent(binding, forKey: .binding)
+    try container.encode(pendingApprovalIDs, forKey: .pendingApprovalIDs)
+    try container.encode(resolvingApprovalIDs, forKey: .resolvingApprovalIDs)
+    try container.encodeIfPresent(stopIntent, forKey: .stopIntent)
+    try container.encodeIfPresent(reportReference, forKey: .reportReference)
+    try container.encodeIfPresent(failureReason, forKey: .failureReason)
+    try container.encodeIfPresent(recoveryOrigin, forKey: .recoveryOrigin)
   }
 }

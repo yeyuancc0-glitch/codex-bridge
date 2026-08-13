@@ -54,6 +54,19 @@ public actor EventStore {
     )
   }
 
+  public func appendBatch(
+    _ events: [TaskEventEnvelope],
+    expectedLastSequence: Int64,
+    snapshot: TaskStateSnapshot
+  ) throws {
+    try persist(
+      events,
+      expectedLastSequence: expectedLastSequence,
+      lockMutation: .none,
+      snapshot: snapshot
+    )
+  }
+
   public func appendReleasingOwnedLocks(
     _ event: TaskEventEnvelope,
     expectedLastSequence: Int64,

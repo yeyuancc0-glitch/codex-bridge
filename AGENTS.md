@@ -62,7 +62,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - Git、验证、Supervisor 与最终报告证据必须绑定同一个 `task + project + thread + turn + generation + event sequence` 作用域；旧 generation 证据不得完成新 generation，最终编排阶段必须可幂等恢复。
 - 生产任务完成只能走 `BridgePipeline.PipelineFinalizer`：必须解码并核对 typed Git/Verification/Supervisor `final_accept` 证据与报告 SHA-256；`TaskCoordinator.complete` 仅保留低层兼容，不得由 App/MCP 直接调用。
 - 生产验证命令授权使用持久化一次性 capability，绑定 task/project/command/root device+inode/generation/expiry 并在启动进程前原子消费；旧 `.localUserApproved` 仅为直接本机兼容 API，不得接入任务流水线。
-- Codex 审批响应使用持久化 barrier：先记录意图并发送精确关联响应，终态通知暂存到 Approved/Denied 事实写入完成后才归约；持久化失败必须关闭会话并失败任务。
+- Codex 审批响应使用持久化 barrier：同一事务先把 ticket 从 pending CAS 预留为 resolving 并记录意图，再发送精确关联响应；终态通知暂存到 Approved/Denied 事实写入完成后才归约。未决 ticket 禁止进入 verifying；运行期协议或持久化失败必须先按精确 generation 终止并等待会话退出，确认停止后才可失败任务并释放锁。
 - 生产任务流水线在持久化 turn 启动意图后、真正启动 app-server turn 前保存 Git baseline；最终化必须绑定精确 task/thread/turn/generation/event sequence。应用重启时按 Finalizer → Pipeline preflight → 通用任务恢复的顺序处理，避免把可继续完成的 verifying 任务降为 unknown。
 - 生产验证命令只能消费绑定 task/project/root/command/generation 的一次性本机授权句柄；缺少句柄时只记录明确的 unavailable 证据，禁止调用兼容用的直接批准接口或伪造 passed。
 

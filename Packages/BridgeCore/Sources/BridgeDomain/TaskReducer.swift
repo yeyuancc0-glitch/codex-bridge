@@ -6,6 +6,7 @@ public enum TaskEvent: Codable, Equatable, Sendable {
   case preparationStarted
   case turnStarted(ExecutionBinding)
   case codexApprovalRequested(ApprovalID)
+  case codexApprovalResolutionRequested(ApprovalID, approved: Bool)
   case codexApprovalApproved(ApprovalID)
   case codexApprovalDenied(ApprovalID, StopIntent)
   case supervisionStarted
@@ -30,6 +31,7 @@ public enum TaskEvent: Codable, Equatable, Sendable {
     case .preparationStarted: "preparationStarted"
     case .turnStarted: "turnStarted"
     case .codexApprovalRequested: "codexApprovalRequested"
+    case .codexApprovalResolutionRequested: "codexApprovalResolutionRequested"
     case .codexApprovalApproved: "codexApprovalApproved"
     case .codexApprovalDenied: "codexApprovalDenied"
     case .supervisionStarted: "supervisionStarted"
@@ -84,6 +86,8 @@ public enum TaskReducer {
       return try startTurn(aggregate, binding: binding, event: event)
     case .codexApprovalRequested(let approvalID):
       return try requestCodexApproval(aggregate, approvalID: approvalID, event: event)
+    case .codexApprovalResolutionRequested(let approvalID, _):
+      return try reserveCodexApproval(aggregate, approvalID: approvalID, event: event)
     case .codexApprovalApproved(let approvalID):
       return try approveCodexApproval(aggregate, approvalID: approvalID, event: event)
     case .codexApprovalDenied(let approvalID, let intent):
@@ -184,7 +188,9 @@ extension TaskReducer {
     event: TaskEvent
   ) throws -> TaskAggregate {
     try requirePhase(aggregate, [.running, .awaitingCodexApproval], event: event)
-    guard !aggregate.pendingApprovalIDs.contains(approvalID) else {
+    guard !aggregate.pendingApprovalIDs.contains(approvalID),
+      !aggregate.resolvingApprovalIDs.contains(approvalID)
+    else {
       throw TaskTransitionError.approvalAlreadyPending(approvalID)
     }
 
@@ -200,13 +206,37 @@ extension TaskReducer {
     event: TaskEvent
   ) throws -> TaskAggregate {
     try requirePhase(aggregate, [.awaitingCodexApproval], event: event)
-    guard aggregate.pendingApprovalIDs.contains(approvalID) else {
+    guard
+      aggregate.pendingApprovalIDs.contains(approvalID)
+        || aggregate.resolvingApprovalIDs.contains(approvalID)
+    else {
       throw TaskTransitionError.approvalNotPending(approvalID)
     }
 
     var next = aggregate
     next.pendingApprovalIDs.remove(approvalID)
-    next.phase = next.pendingApprovalIDs.isEmpty ? .running : .awaitingCodexApproval
+    next.resolvingApprovalIDs.remove(approvalID)
+    next.phase =
+      next.pendingApprovalIDs.isEmpty && next.resolvingApprovalIDs.isEmpty
+      ? .running : .awaitingCodexApproval
+    return next
+  }
+
+  fileprivate static func reserveCodexApproval(
+    _ aggregate: TaskAggregate,
+    approvalID: ApprovalID,
+    event: TaskEvent
+  ) throws -> TaskAggregate {
+    try requirePhase(aggregate, [.awaitingCodexApproval], event: event)
+    guard aggregate.pendingApprovalIDs.contains(approvalID),
+      !aggregate.resolvingApprovalIDs.contains(approvalID)
+    else {
+      throw TaskTransitionError.approvalNotPending(approvalID)
+    }
+
+    var next = aggregate
+    next.pendingApprovalIDs.remove(approvalID)
+    next.resolvingApprovalIDs.insert(approvalID)
     return next
   }
 
@@ -217,7 +247,10 @@ extension TaskReducer {
     event: TaskEvent
   ) throws -> TaskAggregate {
     try requirePhase(aggregate, [.awaitingCodexApproval], event: event)
-    guard aggregate.pendingApprovalIDs.contains(approvalID) else {
+    guard
+      aggregate.pendingApprovalIDs.contains(approvalID)
+        || aggregate.resolvingApprovalIDs.contains(approvalID)
+    else {
       throw TaskTransitionError.approvalNotPending(approvalID)
     }
     guard aggregate.stopIntent == nil else {
@@ -226,6 +259,7 @@ extension TaskReducer {
 
     var next = aggregate
     next.pendingApprovalIDs.remove(approvalID)
+    next.resolvingApprovalIDs.remove(approvalID)
     next.stopIntent = intent
     return next
   }
@@ -293,6 +327,7 @@ extension TaskReducer {
     next.phase = intent.outcome == .suspend ? .suspended : .interrupted
     next.activity = .idle
     next.pendingApprovalIDs.removeAll()
+    next.resolvingApprovalIDs.removeAll()
     next.stopIntent = nil
     return next
   }
@@ -302,11 +337,13 @@ extension TaskReducer {
     event: TaskEvent
   ) throws -> TaskAggregate {
     try requirePhase(aggregate, [.running, .awaitingCodexApproval], event: event)
+    guard aggregate.pendingApprovalIDs.isEmpty, aggregate.resolvingApprovalIDs.isEmpty else {
+      throw invalidTransition(aggregate, event: event)
+    }
 
     var next = aggregate
     next.phase = .verifying
     next.activity = .idle
-    next.pendingApprovalIDs.removeAll()
     next.stopIntent = nil
     return next
   }
@@ -370,6 +407,7 @@ extension TaskReducer {
     next.phase = .failed
     next.activity = .idle
     next.pendingApprovalIDs.removeAll()
+    next.resolvingApprovalIDs.removeAll()
     next.stopIntent = nil
     next.failureReason = reason
     next.recoveryOrigin = nil
@@ -443,6 +481,7 @@ extension TaskReducer {
     next.recoveryOrigin = nil
     if target != .awaitingCodexApproval {
       next.pendingApprovalIDs.removeAll()
+      next.resolvingApprovalIDs.removeAll()
     }
     if target == .suspended || target == .verifying || target == .completed {
       next.stopIntent = nil
@@ -569,10 +608,14 @@ extension TaskReducer {
     if target == .completed, aggregate.reportReference == nil {
       throw TaskTransitionError.reportRequired
     }
-    if target == .running, !aggregate.pendingApprovalIDs.isEmpty {
+    if target == .running,
+      !aggregate.pendingApprovalIDs.isEmpty || !aggregate.resolvingApprovalIDs.isEmpty
+    {
       throw TaskTransitionError.invalidRecoveryTarget(target)
     }
-    if target == .awaitingCodexApproval, aggregate.pendingApprovalIDs.isEmpty {
+    if target == .awaitingCodexApproval,
+      aggregate.pendingApprovalIDs.isEmpty || !aggregate.resolvingApprovalIDs.isEmpty
+    {
       throw TaskTransitionError.invalidRecoveryTarget(target)
     }
     if target == .running || target == .awaitingCodexApproval {

@@ -77,10 +77,24 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     let root: RegisteredRoot
   }
 
+  private struct TerminatingSession: Sendable {
+    let binding: ExecutionBinding?
+    let session: CodexTaskSession
+    let task: Task<Void, Never>
+  }
+
+  private struct PreparationReservation: Equatable, Sendable {
+    let identifier: UUID
+    let previousBinding: ExecutionBinding?
+  }
+
   private let registry: ProjectRegistry
   private let locations: any RuntimeProjectLocationResolving
   private let configuration: IsolatedCodexTaskRuntimeConfiguration
   private var sessions: [TaskID: CodexTaskSession] = [:]
+  private var sessionBindings: [TaskID: ExecutionBinding] = [:]
+  private var terminatingSessions: [TaskID: TerminatingSession] = [:]
+  private var preparationReservations: [TaskID: PreparationReservation] = [:]
   private var preparedStates: [TaskID: PreparedState] = [:]
 
   public init(
@@ -142,12 +156,47 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     submission: TaskSubmission,
     previousBinding: ExecutionBinding?
   ) async throws -> PreparedTaskExecution {
-    try await removeTerminatedSession(taskID: taskID)
-    guard sessions[taskID] == nil else { throw IsolatedCodexTaskRuntimeError.activeSession }
-    guard sessions.count < configuration.maximumConcurrentSessions else {
-      throw IsolatedCodexTaskRuntimeError.sessionLimitReached
+    guard preparationReservations[taskID] == nil else {
+      throw IsolatedCodexTaskRuntimeError.activeSession
     }
+    let reservation = PreparationReservation(
+      identifier: UUID(),
+      previousBinding: previousBinding
+    )
+    preparationReservations[taskID] = reservation
+    do {
+      try await removeTerminatedSession(taskID: taskID, reservation: reservation)
+      guard sessions[taskID] == nil else {
+        throw IsolatedCodexTaskRuntimeError.activeSession
+      }
+      guard
+        sessions.count + preparationReservations.count
+          <= configuration.maximumConcurrentSessions
+      else {
+        throw IsolatedCodexTaskRuntimeError.sessionLimitReached
+      }
+      return try await prepareReserved(
+        taskID: taskID,
+        submission: submission,
+        previousBinding: previousBinding,
+        reservation: reservation
+      )
+    } catch {
+      removePreparationReservation(taskID: taskID, matching: reservation)
+      throw error
+    }
+  }
+
+  private func prepareReserved(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    previousBinding: ExecutionBinding?,
+    reservation: PreparationReservation
+  ) async throws -> PreparedTaskExecution {
     let location = try await authorizedLocation(for: submission)
+    guard preparationReservations[taskID] == reservation else {
+      throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
     let client = CodexAppServerClient(
       configuration: configuration.appServer,
       defaultTimeoutNanoseconds: configuration.requestTimeoutNanoseconds,
@@ -165,6 +214,7 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       }
     )
     sessions[taskID] = session
+    preparationReservations[taskID] = nil
     await session.beginConsumingEvents()
 
     do {
@@ -240,14 +290,15 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
       binding: binding,
       timeoutNanoseconds: configuration.startEventTimeoutNanoseconds
     )
+    sessionBindings[taskID] = binding
     preparedStates[taskID] = nil
     return TaskExecutionSession(binding: binding, observations: session.observations)
   }
 
   public func cancelPreparation(taskID: TaskID) async {
+    preparationReservations[taskID] = nil
     preparedStates[taskID] = nil
-    guard let session = sessions.removeValue(forKey: taskID) else { return }
-    await session.shutdown()
+    try? await terminateSession(taskID: taskID, expectedBinding: nil)
   }
 
   public func start(
@@ -295,13 +346,18 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     try await session.interrupt(binding: binding)
   }
 
+  public func abortSession(taskID: TaskID, binding: ExecutionBinding) async throws {
+    try await terminateSession(taskID: taskID, expectedBinding: binding)
+  }
+
   public func shutdown() async {
-    let active = Array(sessions.values)
-    sessions.removeAll(keepingCapacity: false)
-    preparedStates.removeAll(keepingCapacity: false)
-    for session in active {
-      await session.shutdown()
+    preparationReservations.removeAll(keepingCapacity: false)
+    let taskIDs = Set(sessions.keys).union(terminatingSessions.keys)
+    for taskID in taskIDs {
+      try? await terminateSession(taskID: taskID, expectedBinding: nil)
     }
+    sessionBindings.removeAll(keepingCapacity: false)
+    preparedStates.removeAll(keepingCapacity: false)
   }
 
   private func prepareThread(
@@ -553,17 +609,90 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
   private func removeSession(taskID: TaskID, matching session: CodexTaskSession) {
     guard sessions[taskID] === session else { return }
     sessions[taskID] = nil
+    sessionBindings[taskID] = nil
     preparedStates[taskID] = nil
   }
 
-  private func removeTerminatedSession(taskID: TaskID) async throws {
+  private func removePreparationReservation(
+    taskID: TaskID,
+    matching reservation: PreparationReservation
+  ) {
+    guard preparationReservations[taskID] == reservation else { return }
+    preparationReservations[taskID] = nil
+  }
+
+  private func removeTerminatedSession(
+    taskID: TaskID,
+    reservation: PreparationReservation
+  ) async throws {
+    guard preparationReservations[taskID] == reservation else {
+      throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
+    if let terminating = terminatingSessions[taskID] {
+      await terminating.task.value
+      completeTermination(taskID: taskID, session: terminating.session)
+      guard preparationReservations[taskID] == reservation else {
+        throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+      }
+    }
     guard let existing = sessions[taskID] else { return }
     guard await existing.hasTerminated() else {
       throw IsolatedCodexTaskRuntimeError.activeSession
     }
+    guard preparationReservations[taskID] == reservation else {
+      throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
+    let termination = TerminatingSession(
+      binding: sessionBindings[taskID],
+      session: existing,
+      task: Task { await existing.shutdown() }
+    )
+    terminatingSessions[taskID] = termination
     sessions[taskID] = nil
+    sessionBindings[taskID] = nil
     preparedStates[taskID] = nil
-    await existing.shutdown()
+    await termination.task.value
+    completeTermination(taskID: taskID, session: existing)
+    guard preparationReservations[taskID] == reservation else {
+      throw IsolatedCodexTaskRuntimeError.sessionUnavailable
+    }
+  }
+
+  private func terminateSession(
+    taskID: TaskID,
+    expectedBinding: ExecutionBinding?
+  ) async throws {
+    guard preparationReservations[taskID] == nil else {
+      throw IsolatedCodexTaskRuntimeError.activeSession
+    }
+    if let terminating = terminatingSessions[taskID] {
+      guard expectedBinding.map({ $0 == terminating.binding }) ?? true else {
+        throw IsolatedCodexTaskRuntimeError.bindingMismatch
+      }
+      await terminating.task.value
+      completeTermination(taskID: taskID, session: terminating.session)
+      return
+    }
+    guard let session = sessions[taskID] else { return }
+    guard expectedBinding.map({ $0 == sessionBindings[taskID] }) ?? true else {
+      throw IsolatedCodexTaskRuntimeError.bindingMismatch
+    }
+    let termination = TerminatingSession(
+      binding: sessionBindings[taskID],
+      session: session,
+      task: Task { await session.shutdown() }
+    )
+    terminatingSessions[taskID] = termination
+    sessions[taskID] = nil
+    sessionBindings[taskID] = nil
+    preparedStates[taskID] = nil
+    await termination.task.value
+    completeTermination(taskID: taskID, session: session)
+  }
+
+  private func completeTermination(taskID: TaskID, session: CodexTaskSession) {
+    guard let current = terminatingSessions[taskID], current.session === session else { return }
+    terminatingSessions[taskID] = nil
   }
 
   private static func validateThread(

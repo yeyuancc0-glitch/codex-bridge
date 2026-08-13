@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import BridgeDomain
@@ -109,6 +110,34 @@ final class TaskReducerTests: XCTestCase {
     XCTAssertThrowsError(try apply(.codexApprovalApproved(missing), to: task)) { error in
       XCTAssertEqual(error as? TaskTransitionError, .approvalNotPending(missing))
     }
+  }
+
+  func testApprovalResolutionReservationIsExclusiveAndBlocksTurnCompletion() throws {
+    let approvalID = ApprovalID(rawValue: "apr-resolving")
+    var task = try runningTask()
+    task = try apply(.codexApprovalRequested(approvalID), to: task)
+    task = try apply(
+      .codexApprovalResolutionRequested(approvalID, approved: true),
+      to: task
+    )
+
+    XCTAssertTrue(task.pendingApprovalIDs.isEmpty)
+    XCTAssertEqual(task.resolvingApprovalIDs, [approvalID])
+    XCTAssertThrowsError(
+      try apply(.codexApprovalResolutionRequested(approvalID, approved: false), to: task)
+    ) { error in
+      XCTAssertEqual(error as? TaskTransitionError, .approvalNotPending(approvalID))
+    }
+    XCTAssertThrowsError(try apply(.turnCompleted, to: task)) { error in
+      XCTAssertEqual(
+        error as? TaskTransitionError,
+        .invalidTransition(phase: .awaitingCodexApproval, event: "turnCompleted")
+      )
+    }
+
+    task = try apply(.codexApprovalApproved(approvalID), to: task)
+    XCTAssertEqual(task.phase, .running)
+    XCTAssertTrue(task.resolvingApprovalIDs.isEmpty)
   }
 
   func testDeniedCodexApprovalRequestsStopButDoesNotClaimInterruption() throws {
@@ -226,6 +255,25 @@ final class TaskReducerTests: XCTestCase {
     XCTAssertEqual(task.phase, .running)
   }
 
+  func testRecoveryCannotRestoreAnAmbiguousResolvingApproval() throws {
+    let approvalID = ApprovalID(rawValue: "apr-ambiguous")
+    var task = try runningTask()
+    task = try apply(.codexApprovalRequested(approvalID), to: task)
+    task = try apply(
+      .codexApprovalResolutionRequested(approvalID, approved: true),
+      to: task
+    )
+    task = try apply(.recoveryStarted, to: task)
+
+    XCTAssertThrowsError(try apply(.recoveryResolved(to: .awaitingCodexApproval), to: task)) {
+      error in
+      XCTAssertEqual(
+        error as? TaskTransitionError,
+        .invalidRecoveryTarget(.awaitingCodexApproval)
+      )
+    }
+  }
+
   func testFailureIsTerminal() throws {
     var task = try apply(.preparationStarted, to: makeTask())
     task = try apply(.failureRecorded(reason: "Codex process exited"), to: task)
@@ -314,6 +362,30 @@ final class TaskReducerTests: XCTestCase {
     let decodedEvent = try JSONDecoder().decode(TaskEvent.self, from: eventData)
 
     XCTAssertEqual(decodedEvent, event)
+
+    let reservation = TaskEvent.codexApprovalResolutionRequested(
+      approvalID,
+      approved: true
+    )
+    let reservationData = try encoder.encode(reservation)
+    let decodedReservation = try JSONDecoder().decode(TaskEvent.self, from: reservationData)
+    XCTAssertEqual(decodedReservation, reservation)
+  }
+
+  func testLegacyAggregateWithoutResolvingApprovalsDecodesCompatibly() throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let encoded = try encoder.encode(try runningTask())
+    var object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+    )
+    object.removeValue(forKey: "resolvingApprovalIDs")
+    let legacyData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+    let decoded = try JSONDecoder().decode(TaskAggregate.self, from: legacyData)
+
+    XCTAssertTrue(decoded.resolvingApprovalIDs.isEmpty)
+    XCTAssertEqual(decoded.phase, .running)
   }
 }
 
