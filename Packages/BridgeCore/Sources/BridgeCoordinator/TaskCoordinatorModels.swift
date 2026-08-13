@@ -133,6 +133,34 @@ public enum TaskFinalizationAuthorization: Equatable, Sendable {
   case userOverride(reason: String)
 }
 
+public struct TaskPipelineFinalizationReservation: Codable, Equatable, Sendable {
+  public let taskID: TaskID
+  public let binding: ExecutionBinding
+  public let originalSequence: Int64
+  public let reservationSequence: Int64
+  public let reportReference: String
+  public let reportDigest: String
+  public let supervisorDecisionDigest: String
+
+  package init(
+    taskID: TaskID,
+    binding: ExecutionBinding,
+    originalSequence: Int64,
+    reservationSequence: Int64,
+    reportReference: String,
+    reportDigest: String,
+    supervisorDecisionDigest: String
+  ) {
+    self.taskID = taskID
+    self.binding = binding
+    self.originalSequence = originalSequence
+    self.reservationSequence = reservationSequence
+    self.reportReference = reportReference
+    self.reportDigest = reportDigest
+    self.supervisorDecisionDigest = supervisorDecisionDigest
+  }
+}
+
 public struct TaskProjection: Equatable, Sendable {
   public let aggregate: TaskAggregate
   public let lastSequence: Int64
@@ -182,6 +210,7 @@ public enum TaskCoordinatorError: Error, Equatable, Sendable {
   case invalidFailureReason
   case invalidFinalizationAuthorization
   case invalidReportReference
+  case finalizationReservationMismatch
   case lockStateCorrupt(TaskID)
   case recoveryRequiresReconciliation(TaskPhase)
 }

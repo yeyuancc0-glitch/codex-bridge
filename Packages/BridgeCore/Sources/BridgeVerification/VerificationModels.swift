@@ -56,6 +56,8 @@ public enum VerificationCommandSelection: Equatable, Sendable {
 
 public enum VerificationExecutionAuthorization: Equatable, Sendable {
   case notApproved
+  /// Compatibility-only authorization for an immediate, direct local call.
+  /// Production task pipelines must use `VerificationAuthorizationStore` and its handle.
   case localUserApproved
 }
 

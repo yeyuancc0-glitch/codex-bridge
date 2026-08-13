@@ -191,6 +191,34 @@ public actor PipelineArtifactStore {
     }
   }
 
+  public func recoverableFinalizations(limit: Int = 128) throws
+    -> [PipelineFinalizationRecord]
+  {
+    guard (1...Self.maximumActiveScopes).contains(limit) else {
+      throw PipelineArtifactStoreError.invalidArgument("limit")
+    }
+    return try database.read { db in
+      let rows = try Row.fetchAll(
+        db,
+        sql: """
+          SELECT s.* FROM bridge_pipeline_scopes s
+          JOIN bridge_pipeline_current_scopes c
+            ON c.task_id = s.task_id AND c.generation = s.generation
+          WHERE s.stage IN ('supervisor_reviewed', 'report_stored')
+            AND EXISTS (
+              SELECT 1 FROM bridge_pipeline_artifacts a
+              WHERE a.task_id = s.task_id AND a.generation = s.generation
+                AND a.kind_category = 'report_metadata' AND a.kind_key = ''
+            )
+          ORDER BY s.updated_at ASC, s.task_id ASC
+          LIMIT ?
+          """,
+        arguments: [limit]
+      )
+      return try rows.map(Self.decodeFinalization)
+    }
+  }
+
   public func artifacts(for scope: TaskEvidenceScope) throws -> [PipelineArtifactRecord] {
     try database.read { db in
       try Self.requireScope(scope, in: db)

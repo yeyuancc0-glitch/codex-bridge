@@ -33,7 +33,7 @@ public actor EventStore {
     snapshot: TaskStateSnapshot? = nil
   ) throws {
     try persist(
-      event,
+      [event],
       expectedLastSequence: expectedLastSequence,
       lockMutation: .none,
       snapshot: snapshot
@@ -46,7 +46,7 @@ public actor EventStore {
     snapshot: TaskStateSnapshot? = nil
   ) throws {
     try persist(
-      event,
+      [event],
       expectedLastSequence: expectedLastSequence,
       lockMutation: .releaseOwned,
       snapshot: snapshot
@@ -69,15 +69,28 @@ public actor EventStore {
       ownerTaskID: event.taskID
     )
     try persist(
-      event,
+      [event],
       expectedLastSequence: expectedLastSequence,
       lockMutation: .rekeyOwned(from: current, to: replacement),
       snapshot: snapshot
     )
   }
 
+  public func appendBatchReleasingOwnedLocks(
+    _ events: [TaskEventEnvelope],
+    expectedLastSequence: Int64,
+    snapshot: TaskStateSnapshot
+  ) throws {
+    try persist(
+      events,
+      expectedLastSequence: expectedLastSequence,
+      lockMutation: .releaseOwned,
+      snapshot: snapshot
+    )
+  }
+
   private func persist(
-    _ event: TaskEventEnvelope,
+    _ events: [TaskEventEnvelope],
     expectedLastSequence: Int64,
     lockMutation: LockMutation,
     snapshot: TaskStateSnapshot?
@@ -85,18 +98,26 @@ public actor EventStore {
     guard expectedLastSequence >= 0 else {
       throw EventStoreError.invalidArgument("expectedLastSequence")
     }
-
-    let (nextSequence, overflow) = expectedLastSequence.addingReportingOverflow(1)
-    guard !overflow, event.sequence == nextSequence else {
-      throw EventStoreError.invalidEventSequence(
-        expected: overflow ? Int64.max : nextSequence,
-        actual: event.sequence
-      )
+    guard !events.isEmpty, events.count <= 8, let first = events.first, let last = events.last,
+      events.allSatisfy({ $0.taskID == first.taskID })
+    else {
+      throw EventStoreError.invalidArgument("events")
     }
-    try Self.validate(snapshot: snapshot, event: event)
+    var expectedSequence = expectedLastSequence
+    for event in events {
+      let (nextSequence, overflow) = expectedSequence.addingReportingOverflow(1)
+      guard !overflow, event.sequence == nextSequence else {
+        throw EventStoreError.invalidEventSequence(
+          expected: overflow ? Int64.max : nextSequence,
+          actual: event.sequence
+        )
+      }
+      expectedSequence = event.sequence
+    }
+    try Self.validate(snapshot: snapshot, event: last)
 
     try database.write { db in
-      try Self.ensureTask(event.taskID, createdAt: event.createdAt, in: db)
+      try Self.ensureTask(first.taskID, createdAt: first.createdAt, in: db)
       try db.execute(
         sql: """
           UPDATE tasks
@@ -104,9 +125,9 @@ public actor EventStore {
           WHERE task_id = ? AND last_event_seq = ?
           """,
         arguments: [
-          event.sequence,
-          event.createdAt.timeIntervalSince1970,
-          event.taskID.rawValue,
+          last.sequence,
+          last.createdAt.timeIntervalSince1970,
+          first.taskID.rawValue,
           expectedLastSequence,
         ]
       )
@@ -116,32 +137,18 @@ public actor EventStore {
           try Int64.fetchOne(
             db,
             sql: "SELECT last_event_seq FROM tasks WHERE task_id = ?",
-            arguments: [event.taskID.rawValue]
+            arguments: [first.taskID.rawValue]
           ) ?? 0
         throw EventStoreError.optimisticConcurrencyConflict(
-          taskID: event.taskID,
+          taskID: first.taskID,
           expectedLastSequence: expectedLastSequence,
           actualLastSequence: actual
         )
       }
 
-      try db.execute(
-        sql: """
-          INSERT INTO task_events (
-              task_id, seq, schema_version, source, kind, severity, payload, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          """,
-        arguments: [
-          event.taskID.rawValue,
-          event.sequence,
-          Int(event.schemaVersion),
-          event.source,
-          event.kind,
-          event.severity,
-          event.payload,
-          event.createdAt.timeIntervalSince1970,
-        ]
-      )
+      for event in events {
+        try Self.insert(event, in: db)
+      }
 
       if let snapshot {
         try Self.upsert(snapshot, in: db)
@@ -151,17 +158,37 @@ public actor EventStore {
       case .none:
         return
       case .releaseOwned:
-        try Self.releaseOwnedLocks(taskID: event.taskID, in: db)
+        try Self.releaseOwnedLocks(taskID: first.taskID, in: db)
       case .rekeyOwned(let current, let replacement):
         try Self.rekeyOwnedLocks(
-          taskID: event.taskID,
+          taskID: first.taskID,
           from: current,
           to: replacement,
-          acquiredAt: event.createdAt,
+          acquiredAt: last.createdAt,
           in: db
         )
       }
     }
+  }
+
+  private static func insert(_ event: TaskEventEnvelope, in db: Database) throws {
+    try db.execute(
+      sql: """
+        INSERT INTO task_events (
+            task_id, seq, schema_version, source, kind, severity, payload, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+      arguments: [
+        event.taskID.rawValue,
+        event.sequence,
+        Int(event.schemaVersion),
+        event.source,
+        event.kind,
+        event.severity,
+        event.payload,
+        event.createdAt.timeIntervalSince1970,
+      ]
+    )
   }
 
   private static func releaseOwnedLocks(taskID: TaskID, in db: Database) throws {

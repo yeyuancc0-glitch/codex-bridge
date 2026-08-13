@@ -21,6 +21,7 @@ public actor TaskCoordinator {
   private struct TaskFinalizationRecord: Codable {
     let kind: String
     let detail: String
+    let pipelineReservation: TaskPipelineFinalizationReservation?
   }
 
   private struct PreparedExecutionRecord: Codable {
@@ -366,6 +367,8 @@ public actor TaskCoordinator {
     }
   }
 
+  /// Low-level compatibility boundary for callers that already validated authoritative evidence.
+  /// Production composition must not construct this authorization from untrusted model output.
   public func complete(
     taskID: TaskID,
     reportReference: String,
@@ -377,6 +380,11 @@ public actor TaskCoordinator {
     }
     let record = try Self.finalizationRecord(authorization)
     let current = try await task(taskID)
+    if current.lastSequence > 0,
+      try await storedPipelineReservation(after: current.lastSequence - 1, taskID: taskID) != nil
+    {
+      throw TaskCoordinatorError.finalizationReservationMismatch
+    }
     _ = try TaskReducer.reduce(
       current.aggregate,
       event: .finalReportStored(reference: reference)
@@ -398,6 +406,111 @@ public actor TaskCoordinator {
     return completed
   }
 
+  public func preparePipelineFinalization(
+    taskID: TaskID,
+    expectedBinding: ExecutionBinding,
+    expectedSequence: Int64,
+    reportReference: String,
+    reportDigest: String,
+    supervisorDecisionDigest: String
+  ) async throws -> TaskPipelineFinalizationReservation {
+    let reference = reportReference.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard reference == reportReference, !reference.isEmpty, reference.utf8.count <= 1_024,
+      Self.isLowercaseSHA256(reportDigest), reference == "report:sha256:\(reportDigest)",
+      Self.isLowercaseSHA256(supervisorDecisionDigest), expectedSequence > 0
+    else { throw TaskCoordinatorError.finalizationReservationMismatch }
+    let reservationSequence = try Self.nextSequence(after: expectedSequence, taskID: taskID)
+    let reservation = TaskPipelineFinalizationReservation(
+      taskID: taskID,
+      binding: expectedBinding,
+      originalSequence: expectedSequence,
+      reservationSequence: reservationSequence,
+      reportReference: reference,
+      reportDigest: reportDigest,
+      supervisorDecisionDigest: supervisorDecisionDigest
+    )
+    let current = try await task(taskID)
+    guard current.aggregate.phase == .verifying,
+      current.aggregate.binding == expectedBinding
+    else { throw TaskCoordinatorError.finalizationReservationMismatch }
+    if current.lastSequence == reservationSequence {
+      guard
+        try await storedPipelineReservation(after: expectedSequence, taskID: taskID) == reservation
+      else { throw TaskCoordinatorError.finalizationReservationMismatch }
+      return reservation
+    }
+    guard current.lastSequence == expectedSequence else {
+      throw TaskCoordinatorError.finalizationReservationMismatch
+    }
+    let record = TaskFinalizationRecord(
+      kind: "pipeline_finalization_prepared",
+      detail: supervisorDecisionDigest,
+      pipelineReservation: reservation
+    )
+    try await append(
+      .finalization(record),
+      taskID: taskID,
+      expectedSequence: expectedSequence,
+      projection: try advancedProjection(current)
+    )
+    return reservation
+  }
+
+  public func commitPipelineFinalization(
+    _ reservation: TaskPipelineFinalizationReservation
+  ) async throws -> TaskProjection {
+    guard
+      try await storedPipelineReservation(
+        after: reservation.originalSequence,
+        taskID: reservation.taskID
+      ) == reservation
+    else { throw TaskCoordinatorError.finalizationReservationMismatch }
+    let current = try await task(reservation.taskID)
+    guard current.aggregate.phase == .verifying,
+      current.aggregate.binding == reservation.binding,
+      current.lastSequence == reservation.reservationSequence
+    else { throw TaskCoordinatorError.finalizationReservationMismatch }
+
+    let reportEvent = TaskEvent.finalReportStored(reference: reservation.reportReference)
+    let reportAggregate = try TaskReducer.reduce(current.aggregate, event: reportEvent)
+    let completedAggregate = try TaskReducer.reduce(reportAggregate, event: .completionRecorded)
+    let reportSequence = try Self.nextSequence(
+      after: reservation.reservationSequence,
+      taskID: reservation.taskID
+    )
+    let completionSequence = try Self.nextSequence(
+      after: reportSequence,
+      taskID: reservation.taskID
+    )
+    let date = Date()
+    let events = try [
+      envelope(
+        .domain(reportEvent),
+        taskID: reservation.taskID,
+        sequence: reportSequence,
+        createdAt: date
+      ),
+      envelope(
+        .domain(.completionRecorded),
+        taskID: reservation.taskID,
+        sequence: completionSequence,
+        createdAt: date
+      ),
+    ]
+    let completed = TaskProjection(
+      aggregate: completedAggregate,
+      lastSequence: completionSequence
+    )
+    try await store.appendBatchReleasingOwnedLocks(
+      events,
+      expectedLastSequence: reservation.reservationSequence,
+      snapshot: try stateSnapshot(for: completed)
+    )
+    pendingStarts.remove(reservation.taskID)
+    workers[reservation.taskID]?.cancel()
+    return completed
+  }
+
   public func recoverIncompleteTasks() async throws -> [TaskProjection] {
     var recovered: [TaskProjection] = []
     var cursor: TaskID?
@@ -410,6 +523,13 @@ public actor TaskCoordinator {
         var current = try await task(taskID)
         if current.aggregate.phase.isTerminal || current.aggregate.phase == .suspended {
           try await releaseOwnedLocks(taskID)
+          continue
+        }
+        if current.aggregate.phase == .verifying,
+          current.lastSequence > 0,
+          try await storedPipelineReservation(after: current.lastSequence - 1, taskID: taskID)
+            != nil
+        {
           continue
         }
         guard Self.requiresRecovery(current.aggregate.phase) else { continue }
@@ -994,7 +1114,29 @@ public actor TaskCoordinator {
     guard !normalized.isEmpty, normalized == detail, normalized.utf8.count <= 2_048 else {
       throw TaskCoordinatorError.invalidFinalizationAuthorization
     }
-    return TaskFinalizationRecord(kind: kind, detail: detail)
+    return TaskFinalizationRecord(kind: kind, detail: detail, pipelineReservation: nil)
+  }
+
+  private func storedPipelineReservation(
+    after sequence: Int64,
+    taskID: TaskID
+  ) async throws -> TaskPipelineFinalizationReservation? {
+    guard
+      let envelope = try await store.events(
+        for: taskID,
+        afterSequence: sequence,
+        limit: 1
+      ).first
+    else { return nil }
+    let record = try decoder.decode(StoredRecord.self, from: envelope.payload)
+    guard envelope.kind == Self.kind(record), case .finalization(let finalization) = record else {
+      return nil
+    }
+    return finalization.pipelineReservation
+  }
+
+  private static func isLowercaseSHA256(_ value: String) -> Bool {
+    value.count == 64 && value.allSatisfy(Set("0123456789abcdef").contains)
   }
 
   private static func kind(_ record: StoredRecord) -> String {

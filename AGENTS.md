@@ -60,6 +60,8 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 新任务的 submission 与首个领域事件和幂等 claim 在同一 SQLite 事务提交，任何读者都不能观察到只有 claim、没有初始投影的半初始化任务。
 - 生产 Execution 启动必须先准备 app-server 会话并获得精确 Thread identity，再用同一事件事务把 provisional Thread 锁替换为精确 Thread 锁并持久化启动意图；只有事务成功后才能调用 `turn/start`。
 - Git、验证、Supervisor 与最终报告证据必须绑定同一个 `task + project + thread + turn + generation + event sequence` 作用域；旧 generation 证据不得完成新 generation，最终编排阶段必须可幂等恢复。
+- 生产任务完成只能走 `BridgePipeline.PipelineFinalizer`：必须解码并核对 typed Git/Verification/Supervisor `final_accept` 证据与报告 SHA-256；`TaskCoordinator.complete` 仅保留低层兼容，不得由 App/MCP 直接调用。
+- 生产验证命令授权使用持久化一次性 capability，绑定 task/project/command/root device+inode/generation/expiry 并在启动进程前原子消费；旧 `.localUserApproved` 仅为直接本机兼容 API，不得接入任务流水线。
 - Codex 审批响应使用持久化 barrier：先记录意图并发送精确关联响应，终态通知暂存到 Approved/Denied 事实写入完成后才归约；持久化失败必须关闭会话并失败任务。
 
 ## 安全不变量

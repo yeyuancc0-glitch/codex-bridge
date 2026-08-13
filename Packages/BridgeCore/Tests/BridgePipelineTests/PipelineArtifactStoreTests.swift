@@ -347,6 +347,44 @@ final class PipelineArtifactStoreTests: XCTestCase {
     XCTAssertEqual(finalization?.stage, .completed)
   }
 
+  func testRecoverableQueryCannotBeStarvedByEarlierPendingStages() async throws {
+    let store = try PipelineArtifactStore.inMemory()
+    let evidence = Evidence(dirty: false, root: "/private/root", values: [:])
+    for index in 0..<100 {
+      let scope = try makeScope(taskID: "early-\(index)")
+      _ = try await store.begin(scope)
+      _ = try await store.store(scope: scope, kind: .gitBaseline, payload: evidence)
+      _ = try await store.advance(scope, to: .baselineCaptured)
+      _ = try await store.advance(scope, to: .turnCompleted)
+    }
+
+    let recoverable = try makeScope(taskID: "recoverable")
+    _ = try await store.begin(recoverable)
+    _ = try await store.store(scope: recoverable, kind: .gitBaseline, payload: evidence)
+    _ = try await store.advance(recoverable, to: .baselineCaptured)
+    _ = try await store.advance(recoverable, to: .turnCompleted)
+    _ = try await store.store(scope: recoverable, kind: .gitFinal, payload: evidence)
+    _ = try await store.advance(recoverable, to: .gitFinalCaptured)
+    _ = try await store.store(
+      scope: recoverable,
+      kind: .verification("swift-test"),
+      payload: evidence
+    )
+    _ = try await store.advance(recoverable, to: .verificationCompleted)
+    _ = try await store.store(
+      scope: recoverable,
+      kind: .supervisorFinalDecision,
+      payload: evidence
+    )
+    _ = try await store.advance(recoverable, to: .supervisorReviewed)
+    _ = try await store.store(scope: recoverable, kind: .reportMetadata, payload: evidence)
+
+    let mixedPage = try await store.pendingFinalizations(limit: 100)
+    XCTAssertFalse(mixedPage.contains(where: { $0.scope == recoverable }))
+    let targeted = try await store.recoverableFinalizations()
+    XCTAssertEqual(targeted.map(\.scope), [recoverable])
+  }
+
   func testInvalidTimestampsAndDecodedScopesAreRejected() async throws {
     let store = try PipelineArtifactStore.inMemory()
     let scope = try makeScope()

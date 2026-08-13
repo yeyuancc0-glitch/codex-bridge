@@ -4,6 +4,7 @@ import BridgeCoordinator
 import BridgeDomain
 import BridgeMCP
 import BridgePersistence
+import BridgePipeline
 import BridgeProjects
 import BridgeRepositories
 import BridgeSecurity
@@ -14,6 +15,8 @@ struct DesktopComposition: Sendable {
   let repository: ApplicationRepository
   let registry: ProjectRegistry
   let coordinator: TaskCoordinator
+  let pipelineArtifacts: PipelineArtifactStore
+  let pipelineFinalizer: PipelineFinalizer
   let connectionRuntime: DesktopConnectionRuntime
 
   static func make(
@@ -31,6 +34,13 @@ struct DesktopComposition: Sendable {
       admission: DefaultTaskAdmissionPolicy(registry: registry),
       runtime: UnavailableDesktopTaskRuntime()
     )
+    let pipelineArtifacts = try PipelineArtifactStore(path: paths.eventStoreURL.path)
+    let pipelineFinalizer = PipelineFinalizer(
+      artifacts: pipelineArtifacts,
+      coordinator: coordinator,
+      reports: repository
+    )
+    _ = try await pipelineFinalizer.recoverPendingFinalizations()
     _ = try await coordinator.recoverIncompleteTasks()
     let catalog = IsolatedCodexCatalogService(
       configuration: IsolatedCodexCatalogConfiguration(
@@ -72,6 +82,8 @@ struct DesktopComposition: Sendable {
       repository: repository,
       registry: registry,
       coordinator: coordinator,
+      pipelineArtifacts: pipelineArtifacts,
+      pipelineFinalizer: pipelineFinalizer,
       connectionRuntime: connectionRuntime
     )
   }

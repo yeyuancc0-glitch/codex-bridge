@@ -8,6 +8,45 @@ enum ReportingJSON {
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return try encoder.encode(value)
   }
+
+  static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    decoder.keyDecodingStrategy = .custom { path in
+      ReportingCodingKey(Self.propertyName(for: path.last?.stringValue ?? ""))
+    }
+    return try decoder.decode(type, from: data)
+  }
+
+  private static func propertyName(for key: String) -> String {
+    let components = key.split(separator: "_", omittingEmptySubsequences: false)
+    guard let first = components.first else { return key }
+    var result = String(first)
+    for component in components.dropFirst() {
+      result += component.prefix(1).uppercased() + component.dropFirst()
+    }
+    if result.count > 2, result.hasSuffix("Id") {
+      result.replaceSubrange(result.index(result.endIndex, offsetBy: -2)..., with: "ID")
+    }
+    return result
+  }
+}
+
+private struct ReportingCodingKey: CodingKey {
+  let stringValue: String
+  let intValue: Int? = nil
+
+  init(_ stringValue: String) {
+    self.stringValue = stringValue
+  }
+
+  init?(stringValue: String) {
+    self.init(stringValue)
+  }
+
+  init?(intValue: Int) {
+    return nil
+  }
 }
 
 struct ReportInputValidator {

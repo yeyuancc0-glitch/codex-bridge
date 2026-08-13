@@ -121,7 +121,13 @@ let package = Package(
         .target(
             name: "BridgePipeline",
             dependencies: [
+                "BridgeCoordinator",
                 "BridgeDomain",
+                "BridgeGit",
+                "BridgeReporting",
+                "BridgeRepositories",
+                "BridgeSupervisor",
+                "BridgeVerification",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
@@ -162,6 +168,7 @@ let package = Package(
                 "BridgeCoordinator",
                 "BridgeDomain",
                 "BridgeMCP",
+                "BridgePipeline",
                 "BridgePersistence",
                 "BridgePresentation",
                 "BridgeProjects",
@@ -278,7 +285,14 @@ let package = Package(
             name: "BridgePipelineTests",
             dependencies: [
                 "BridgePipeline",
+                "BridgeCoordinator",
                 "BridgeDomain",
+                "BridgeGit",
+                "BridgePersistence",
+                "BridgeReporting",
+                "BridgeRepositories",
+                "BridgeSupervisor",
+                "BridgeVerification",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),

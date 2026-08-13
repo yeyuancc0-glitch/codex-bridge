@@ -102,6 +102,81 @@ public struct VerificationRunner: Sendable {
     }
   }
 
+  public func run(
+    taskID: String,
+    generation: Int64,
+    project: RegisteredProject,
+    workingDirectory: RegisteredRoot,
+    command selection: VerificationCommandSelection,
+    required: Bool,
+    authorization handle: VerificationAuthorizationHandle,
+    authorizationStore: VerificationAuthorizationStore
+  ) async throws -> VerificationRunResult {
+    let resolved = try VerificationCommandResolver().resolve(
+      selection,
+      commands: project.verificationCommands
+    )
+    try validateMembership(workingDirectory, project: project)
+    let start = ContinuousClock().now
+
+    guard commandIsAbsolute(resolved.command) else {
+      return result(for: resolved, required: required, status: .policyDenied, startedAt: start)
+    }
+    let decision = evaluatePolicy(resolved.command, project: project)
+    guard decision.disposition != .deny, Self.isVerificationDecision(decision) else {
+      return result(for: resolved, required: required, status: .policyDenied, startedAt: start)
+    }
+
+    let directory: OpenedVerificationDirectory
+    do {
+      try project.validateCurrentRoots()
+      directory = try OpenedVerificationDirectory(root: workingDirectory)
+      try directory.validatePathIdentity()
+    } catch {
+      return result(for: resolved, required: required, status: .rootUnavailable, startedAt: start)
+    }
+
+    try await authorizationStore.consume(
+      handle,
+      taskID: taskID,
+      project: project,
+      workingDirectory: workingDirectory,
+      command: resolved,
+      generation: generation
+    )
+    return await execute(
+      resolved,
+      required: required,
+      workingDirectory: directory,
+      startedAt: start
+    )
+  }
+
+  private func execute(
+    _ resolved: ResolvedVerificationCommand,
+    required: Bool,
+    workingDirectory: OpenedVerificationDirectory,
+    startedAt start: ContinuousClock.Instant
+  ) async -> VerificationRunResult {
+    do {
+      let outcome = try await processRunner.run(
+        BoundedVerificationProcessConfiguration(
+          executableURL: URL(fileURLWithPath: resolved.command.executable),
+          arguments: resolved.command.arguments,
+          workingDirectory: workingDirectory,
+          environment: Self.environment,
+          timeout: configuration.timeout,
+          terminationGracePeriod: configuration.terminationGracePeriod,
+          maximumStandardOutputBytes: configuration.maximumStandardOutputBytes,
+          maximumStandardErrorBytes: configuration.maximumStandardErrorBytes
+        )
+      )
+      return result(for: resolved, required: required, outcome: outcome, startedAt: start)
+    } catch {
+      return result(for: resolved, required: required, status: .launchFailed, startedAt: start)
+    }
+  }
+
   private func validateMembership(
     _ workingDirectory: RegisteredRoot,
     project: RegisteredProject

@@ -31,6 +31,20 @@ public struct ReportBuilder: Sendable {
     return FinalReportDocument(report: report, json: json)
   }
 
+  public func restore(canonicalJSON json: Data) throws -> FinalReportDocument {
+    guard !json.isEmpty, json.count <= limits.maximumJSONBytes else {
+      throw ReportingError.limitExceeded(
+        field: "final_report_json",
+        maximum: limits.maximumJSONBytes
+      )
+    }
+    guard let report = try? ReportingJSON.decode(FinalReport.self, from: json),
+      report.schemaVersion == Self.schemaVersion,
+      try ReportingJSON.encode(report) == json
+    else { throw ReportingError.invalidEvidence("final_report_json") }
+    return FinalReportDocument(report: report, json: json)
+  }
+
   private func completionAuthority(for input: FinalReportInput) throws -> CompletionAuthority? {
     guard input.status == .completed else { return nil }
     try validateCompletionEvidence(input)
