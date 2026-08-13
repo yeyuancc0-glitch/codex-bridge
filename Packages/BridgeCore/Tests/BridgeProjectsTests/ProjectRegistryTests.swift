@@ -49,6 +49,33 @@ final class ProjectRegistryTests: XCTestCase {
     XCTAssertEqual(stored.forbiddenPatterns, [forbidden])
   }
 
+  func testAccessPolicyUpdatePersistsWithoutChangingProjectIdentity() async throws {
+    let scratch = try makeScratchDirectory()
+    let root = scratch.appending(path: "project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let repository = InMemoryProjectRepository()
+    let registry = ProjectRegistry(repository: repository)
+    let summary = try await registry.register(
+      local: LocalProjectRegistration(name: "Project", rootURL: root)
+    )
+    let originalValue = await repository.project(id: summary.id)
+    let original = try XCTUnwrap(originalValue)
+    let policy = ProjectAccessPolicy(
+      read: .allowed,
+      write: .denied,
+      network: .requiresLocalApproval
+    )
+
+    try await registry.updateAccessPolicy(policy, for: summary.id)
+
+    let updatedValue = await repository.project(id: summary.id)
+    let updated = try XCTUnwrap(updatedValue)
+    XCTAssertEqual(updated.accessPolicy, policy)
+    XCTAssertEqual(updated.id, original.id)
+    XCTAssertEqual(updated.primaryRoot, original.primaryRoot)
+    XCTAssertEqual(updated.createdAt, original.createdAt)
+  }
+
   func testDuplicateSymlinkedRootIsRejected() async throws {
     let scratch = try makeScratchDirectory()
     let root = scratch.appending(path: "project", directoryHint: .isDirectory)

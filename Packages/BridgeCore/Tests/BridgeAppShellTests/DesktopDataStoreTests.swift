@@ -49,7 +49,10 @@ final class DesktopDataStoreTests: XCTestCase {
     let directory = temporaryDirectory()
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
 
-    _ = try await DesktopComposition.make(dataDirectoryURL: directory)
+    _ = try await DesktopComposition.make(
+      dataDirectoryURL: directory,
+      system: DataStoreTestSystemService()
+    )
 
     let artifacts = try FileManager.default.contentsOfDirectory(
       at: directory,
@@ -77,4 +80,13 @@ final class DesktopDataStoreTests: XCTestCase {
     guard lstat(url.path, &metadata) == 0 else { throw CocoaError(.fileReadUnknown) }
     return metadata.st_mode & 0o777
   }
+}
+
+@MainActor
+private final class DataStoreTestSystemService: DesktopSystemServing {
+  func selectProjectDirectory() async -> URL? { nil }
+  func open(_: URL) -> Bool { true }
+  func copyToPasteboard(_: String) -> Bool { true }
+  func showMainWindow() {}
+  func terminateApplication() {}
 }

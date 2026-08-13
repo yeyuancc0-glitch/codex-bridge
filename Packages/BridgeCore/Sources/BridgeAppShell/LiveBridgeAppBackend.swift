@@ -48,6 +48,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private var shutdownFinished = false
   private var activeOperations = 0
   private var operationDrainWaiters: [CheckedContinuation<Void, Never>] = []
+  private var compositionWaiters: [CheckedContinuation<Void, Error>] = []
   private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
 
   init(dataDirectoryURL: URL, system: any DesktopSystemServing) {
@@ -136,17 +137,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   func addProject() async throws {
     try beginOperation()
     defer { endOperation() }
-    let composition = try requireComposition()
-    guard let directoryURL = await system.selectProjectDirectory() else { return }
-    try checkRunning()
-    let registration = try LocalProjectRegistration(
-      name: directoryURL.lastPathComponent,
-      rootURL: directoryURL
-    )
-    _ = try await composition.registry.register(local: registration)
-    try checkRunning()
-    appendDiagnostic("已注册一个本机项目。", status: .ready)
-    try await publishCurrentFacts()
+    _ = try await registerSelectedProject()
   }
 
   func openProject(_ projectID: String) async throws {
@@ -245,6 +236,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       return
     }
     isShuttingDown = true
+    failCompositionWaiters()
     let bootstrap = bootstrapTask
     bootstrap?.cancel()
     await bootstrap?.value
@@ -252,7 +244,9 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     if activeOperations > 0 {
       await withCheckedContinuation { operationDrainWaiters.append($0) }
     }
-    composition = nil
+    let composition = composition
+    self.composition = nil
+    await composition?.shutdown()
     let active = continuations.values
     continuations.removeAll(keepingCapacity: false)
     for continuation in active { continuation.finish() }
@@ -262,6 +256,51 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     for waiter in waiters { waiter.resume() }
   }
 
+  func onboardingProject() async throws -> ProjectSummaryDTO? {
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    return try await composition.registry.summaries().first
+  }
+
+  func registerOnboardingProject() async throws -> ProjectSummaryDTO? {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    return try await registerSelectedProject()
+  }
+
+  func updateOnboardingProjectPolicy(
+    projectID: ProjectID,
+    policy: ProjectAccessPolicy
+  ) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    try await composition.registry.updateAccessPolicy(policy, for: projectID)
+    try checkRunning()
+    appendDiagnostic("已更新项目安全默认值。", status: .ready)
+    try await publishCurrentFacts()
+  }
+
+  func startLocalMCP(authentication: DesktopMCPAuthentication) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    _ = try await composition.mcpRuntime.start(authentication: authentication)
+    try checkRunning()
+  }
+
+  func testLocalMCPConnection() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    try await composition.mcpRuntime.testConnection()
+    try checkRunning()
+  }
+
   private func beginBootstrapIfNeeded() {
     guard bootstrapTask == nil, composition == nil, !isShuttingDown else { return }
     bootstrapTask = Task { [weak self] in
@@ -269,7 +308,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       let failed: Bool
       do {
         let composition = try await DesktopComposition.make(
-          dataDirectoryURL: self.dataDirectoryURL
+          dataDirectoryURL: self.dataDirectoryURL,
+          system: self.system
         )
         try Task.checkCancellation()
         failed = await !self.finishBootstrap(composition)
@@ -285,6 +325,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private func finishBootstrap(_ composition: DesktopComposition) async -> Bool {
     guard !isShuttingDown else { return false }
     self.composition = composition
+    resumeCompositionWaiters()
     appendDiagnostic("本机持久化状态已就绪。", status: .ready)
     do {
       try await publishCurrentFacts()
@@ -297,6 +338,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   private func finishBootstrapTask(failed: Bool) {
     bootstrapTask = nil
     guard failed, !isShuttingDown else { return }
+    failCompositionWaiters()
     publish(
       connectionState: .failed,
       presentation: DesktopPresentationProjection.failure(
@@ -364,6 +406,49 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       )
     )
     if diagnostics.count > 100 { diagnostics.removeFirst(diagnostics.count - 100) }
+  }
+
+  private func registerSelectedProject() async throws -> ProjectSummaryDTO? {
+    let composition = try requireComposition()
+    guard let directoryURL = await system.selectProjectDirectory() else { return nil }
+    try checkRunning()
+    let registration = try LocalProjectRegistration(
+      name: directoryURL.lastPathComponent,
+      rootURL: directoryURL
+    )
+    let project = try await composition.registry.register(local: registration)
+    try checkRunning()
+    appendDiagnostic("已注册一个本机项目。", status: .ready)
+    try await publishCurrentFacts()
+    return project
+  }
+
+  private func waitUntilReady() async throws {
+    try checkRunning()
+    if composition != nil { return }
+    beginBootstrapIfNeeded()
+    try await withCheckedThrowingContinuation { continuation in
+      if composition != nil {
+        continuation.resume()
+      } else if isShuttingDown {
+        continuation.resume(throwing: DesktopBackendError.notReady)
+      } else {
+        compositionWaiters.append(continuation)
+      }
+    }
+    try checkRunning()
+  }
+
+  private func resumeCompositionWaiters() {
+    let waiters = compositionWaiters
+    compositionWaiters.removeAll(keepingCapacity: false)
+    for waiter in waiters { waiter.resume() }
+  }
+
+  private func failCompositionWaiters() {
+    let waiters = compositionWaiters
+    compositionWaiters.removeAll(keepingCapacity: false)
+    for waiter in waiters { waiter.resume(throwing: DesktopBackendError.notReady) }
   }
 
   private func requireComposition() throws -> DesktopComposition {

@@ -77,7 +77,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 ## 项目结构记忆
 
 - `App/`：应用入口、窗口、菜单栏、资源与 Entitlements。
-- `CodexBridge.xcodeproj` / `BridgeAppShell`：真实 macOS App target 与组合根；主窗口和菜单栏共享同一个 `BridgeDesktopRuntime`，Application Support 数据目录固定 0700、数据库文件固定 0600，退出必须等待 bootstrap 和在途本机操作收口。
+- `CodexBridge.xcodeproj` / `BridgeAppShell`：真实 macOS App target 与组合根；主窗口和菜单栏共享同一个 `BridgeDesktopRuntime`。Application Support 数据目录固定 0700、数据库文件固定 0600，退出必须等待 bootstrap 和在途本机操作收口；首次引导只持久化非秘密状态，所有连接 Secret 只进 Keychain，已完成的连接若恢复自检失败必须退回连接测试步骤。
 - `UI/`：Onboarding、Overview、Projects、Threads、Tasks、Approvals、Connections、Logs、Settings 与共享原生组件。
 - `Packages/BridgeCore/Sources/BridgeDomain`：值对象、任务状态机、错误和协议。
 - `BridgeCodexRPC`：Codex 进程、JSON-RPC、能力协商和版本兼容。

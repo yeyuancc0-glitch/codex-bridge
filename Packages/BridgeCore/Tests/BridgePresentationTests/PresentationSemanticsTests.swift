@@ -3,6 +3,15 @@ import XCTest
 @testable import BridgePresentation
 
 final class PresentationSemanticsTests: XCTestCase {
+  func testOnboardingHasNineStableOrderedStepsAndSemanticStatuses() {
+    XCTAssertEqual(OnboardingStep.allCases.map(\.rawValue), Array(0...8))
+    XCTAssertEqual(Set(OnboardingStep.allCases.map(\.title)).count, 9)
+    XCTAssertTrue(OnboardingStep.allCases.allSatisfy { !$0.detail.isEmpty })
+
+    let statuses: [OnboardingItemStatus] = [.pending, .checking, .ready, .warning, .blocked]
+    XCTAssertTrue(statuses.allSatisfy { !$0.systemImage.isEmpty })
+  }
+
   func testSidebarHasExactlyEightStableUniqueDestinations() {
     let destinations = BridgeNavigationDestination.allCases
 

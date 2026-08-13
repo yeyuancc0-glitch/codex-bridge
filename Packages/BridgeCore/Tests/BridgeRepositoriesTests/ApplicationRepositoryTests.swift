@@ -137,6 +137,26 @@ final class ApplicationRepositoryTests: XCTestCase {
     }
   }
 
+  func testProjectAccessPolicyUpdateSurvivesRestart() async throws {
+    let fixture = try makeFixture()
+    let repository = try ApplicationRepository(path: fixture.databasePath)
+    let project = try makeProject(fixture: fixture, id: "prj-policy-update")
+    try await repository.insert(project)
+    let updatedPolicy = ProjectAccessPolicy(
+      read: .allowed,
+      write: .denied,
+      network: .requiresLocalApproval
+    )
+
+    try await repository.updateAccessPolicy(updatedPolicy, for: project.id)
+
+    let reopened = try ApplicationRepository(path: fixture.databasePath)
+    let stored = try await reopened.project(id: project.id)
+    XCTAssertEqual(stored?.accessPolicy, updatedPolicy)
+    XCTAssertEqual(stored?.primaryRoot, project.primaryRoot)
+    XCTAssertEqual(stored?.createdAt, project.createdAt)
+  }
+
   func testConcurrentDatabaseInstancesEnforceOneRootOwner() async throws {
     let fixture = try makeFixture()
     let firstRepository = try ApplicationRepository(path: fixture.databasePath)

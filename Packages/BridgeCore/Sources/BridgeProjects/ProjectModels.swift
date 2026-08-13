@@ -182,6 +182,20 @@ public struct RegisteredProject: Codable, Equatable, Sendable {
     )
   }
 
+  public func updatingAccessPolicy(_ policy: ProjectAccessPolicy) -> RegisteredProject {
+    RegisteredProject(
+      id: id,
+      name: name,
+      primaryRoot: primaryRoot,
+      repositoryRoot: repositoryRoot,
+      worktreeRoots: worktreeRoots,
+      accessPolicy: policy,
+      verificationCommands: verificationCommands,
+      forbiddenPatterns: forbiddenPatterns,
+      createdAt: createdAt
+    )
+  }
+
   public func validateCurrentRoots() throws {
     try primaryRoot.validateCurrentIdentity()
     try repositoryRoot.validateCurrentIdentity()

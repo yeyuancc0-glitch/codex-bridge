@@ -42,6 +42,15 @@ public actor ProjectRegistry {
     try await repository.addWorktree(root, to: projectID)
   }
 
+  public func updateAccessPolicy(
+    _ policy: ProjectAccessPolicy,
+    for projectID: ProjectID
+  ) async throws {
+    let project = try await requireProject(projectID)
+    try project.validateCurrentRoots()
+    try await repository.updateAccessPolicy(policy, for: projectID)
+  }
+
   public func summaries() async throws -> [ProjectSummaryDTO] {
     let projects = try await repository.allProjects()
     for project in projects {

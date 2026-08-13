@@ -10,9 +10,15 @@ public struct BridgeDesktopRootView: View {
   }
 
   public var body: some View {
-    BridgeRootView(store: runtime.presentationStore)
-      .frame(minWidth: 760, minHeight: 520)
-      .task { runtime.start() }
+    Group {
+      if runtime.onboardingFinished {
+        BridgeRootView(store: runtime.presentationStore)
+      } else {
+        OnboardingView(store: runtime.onboardingStore)
+      }
+    }
+    .frame(minWidth: 760, minHeight: 520)
+    .task { runtime.start() }
   }
 }
 

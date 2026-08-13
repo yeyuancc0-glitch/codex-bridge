@@ -109,6 +109,29 @@ extension ApplicationRepository {
     }
   }
 
+  public func updateAccessPolicy(
+    _ policy: ProjectAccessPolicy,
+    for projectID: ProjectID
+  ) throws {
+    try Self.validateIdentifier(projectID.rawValue, field: "project_id", maximum: 256)
+    try database.write { db in
+      guard let project = try Self.fetchProject(id: projectID, in: db) else {
+        throw ProjectRegistryError.unknownProject
+      }
+      let updated = project.updatingAccessPolicy(policy)
+      try Self.validate(updated)
+      let encoded = try Self.encodeProject(updated)
+      try db.execute(
+        sql: """
+          UPDATE bridge_repository_projects
+          SET configuration_json = ?, configuration_sha256 = ?
+          WHERE project_id = ?
+          """,
+        arguments: [encoded, Self.digest(encoded), projectID.rawValue]
+      )
+    }
+  }
+
   static func fetchProject(id: ProjectID, in db: Database) throws -> RegisteredProject? {
     guard
       let row = try Row.fetchOne(

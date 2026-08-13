@@ -148,14 +148,19 @@ let package = Package(
         .target(
             name: "BridgeAppShell",
             dependencies: [
+                "BridgeApplication",
                 "BridgeAppModel",
+                "BridgeCodexRPC",
                 "BridgeCoordinator",
                 "BridgeDomain",
+                "BridgeMCP",
                 "BridgePersistence",
                 "BridgePresentation",
                 "BridgeProjects",
                 "BridgeRepositories",
                 "BridgeSecurity",
+                "BridgeTunnel",
+                .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
         .target(
@@ -301,9 +306,11 @@ let package = Package(
             dependencies: [
                 "BridgeAppShell",
                 "BridgeAppModel",
+                "BridgeCodexRPC",
                 "BridgeDomain",
                 "BridgePresentation",
                 "BridgeProjects",
+                "BridgeSecurity",
             ]
         ),
         .testTarget(
