@@ -95,6 +95,44 @@ public actor CodexAppServerClient {
     )
   }
 
+  public func readAccount(
+    _ params: GetAccountParams = GetAccountParams()
+  ) async throws -> GetAccountResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "account/read",
+      params: params,
+      response: GetAccountResponse.self
+    )
+  }
+
+  public func startChatGPTLogin() async throws -> StartChatGPTLoginResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "account/login/start",
+      params: StartChatGPTLoginParams(),
+      response: StartChatGPTLoginResponse.self
+    )
+  }
+
+  public func cancelLogin(_ params: CancelLoginParams) async throws -> CancelLoginResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "account/login/cancel",
+      params: params,
+      response: CancelLoginResponse.self
+    )
+  }
+
+  public func readAccountRateLimits() async throws -> GetAccountRateLimitsResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "account/rateLimits/read",
+      params: EmptyCodexParams(),
+      response: GetAccountRateLimitsResponse.self
+    )
+  }
+
   package func startThread(
     _ params: ThreadStartParams
   ) async throws -> ThreadStartResponse {
@@ -282,3 +320,5 @@ public actor CodexAppServerClient {
     }
   }
 }
+
+private struct EmptyCodexParams: Codable, Sendable {}
