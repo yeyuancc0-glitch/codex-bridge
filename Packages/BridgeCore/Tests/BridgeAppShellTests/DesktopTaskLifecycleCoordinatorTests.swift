@@ -271,6 +271,8 @@ final class DesktopTaskLifecycleCoordinatorTests: XCTestCase {
       pollInterval: .seconds(60)
     )
     try await coordinator.start()
+    await power.emit(.willSleep)
+    try await Self.waitUntil { await connection.suspendCount == 1 }
     await power.emit(.didWake)
     _ = await revalidationStarted.value
     let shutdown = Task { await coordinator.shutdown() }

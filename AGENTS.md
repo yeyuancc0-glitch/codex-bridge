@@ -74,7 +74,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
 - Secure Tunnel helper 在已就绪后意外退出时，只重建 helper，不停止本地 MCP 或本地任务；使用有界 `1s/2s/4s` 退避且每次重新执行完整 helper 信任与严格 ready 校验。认证/授权诊断立即停止自动重试，耗尽三次后保持远程 admission 关闭并要求本机用户处理；Transport stop/shutdown 必须取消并等待在途重启。
 - 终态通知的点击路由只携带版本化、有界且通过出站安全检查的 task identity；App 未启动或任务快照未就绪时由 Presentation 保留单个待选任务，加载后只选择精确匹配项，用户手动选择会取消旧路由。
-- `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；`didWake` 只能在任务事实刷新和当前 Transport 严格复核后重新开放，不能把该复核冒充完整的 app-server/Thread/Git 恢复。
+- `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；只有对应 sleep epoch 的 `didWake` 才能在任务事实刷新和当前 Transport 严格复核后重新开放。孤立或重复 wake 事件必须幂等忽略，不能重测健康链路或把已开放 admission 关回休眠；Transport 复核也不能冒充完整的 app-server/Thread/Git 恢复。
 
 ## 安全不变量
 

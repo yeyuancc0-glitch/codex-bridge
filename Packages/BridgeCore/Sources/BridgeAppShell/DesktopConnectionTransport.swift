@@ -165,7 +165,7 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
 
   func beginWakeRevalidation() -> Transition? {
     lock.withLock {
-      guard state == .asleep || state == .open else { return nil }
+      guard state == .asleep else { return nil }
       epoch &+= 1
       state = .revalidating
       return Transition(epoch: epoch, reopensOnSuccess: true)
@@ -389,9 +389,7 @@ actor DesktopConnectionRuntime {
   }
 
   func revalidateRemoteAdmissionsAfterWake() async throws {
-    guard let transition = admissionGate.beginWakeRevalidation() else {
-      throw DesktopTransportError.connectionFailed
-    }
+    guard let transition = admissionGate.beginWakeRevalidation() else { return }
     let generation = activeGeneration
     guard let active else {
       guard admissionGate.complete(transition) else {

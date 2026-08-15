@@ -459,6 +459,30 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testOrphanWakeDoesNotRetestOrCloseHealthyTunnel() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(tunnel: tunnel),
+      monitorInterval: .seconds(60)
+    )
+    let tunnelID = try TunnelID(validating: "tunnel_\(String(repeating: "b", count: 32))")
+    _ = try await runtime.configureSecureTunnel(
+      tunnelID: tunnelID,
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.orphan-wake"),
+      localMCPHeaderSecret: String(repeating: "x", count: 43)
+    )
+    let testCount = await tunnel.admissionTestCount()
+
+    try await runtime.revalidateRemoteAdmissionsAfterWake()
+
+    let accepts = await runtime.acceptsRemoteSubmissionsNow()
+    let testCountAfterWake = await tunnel.admissionTestCount()
+    XCTAssertTrue(accepts)
+    XCTAssertEqual(testCountAfterWake, testCount + 1)
+    await runtime.stop()
+  }
+
   func testSleepSupersedesAnOlderReplacementTransition() throws {
     let gate = DesktopRemoteAdmissionGate()
     let transition = try XCTUnwrap(gate.beginReplacement())
