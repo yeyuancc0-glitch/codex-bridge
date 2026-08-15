@@ -72,6 +72,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 项目移除或离线卷身份重绑与新任务提交/暂停任务恢复必须共享 project mutation gate；变更期间禁止新的 admission，存在活动任务时拒绝变更。移除只在同一仓库事务删除 Thread 绑定、注册根和项目配置；身份重绑只接受用户重新选择的同一规范化路径、仅支持无 worktree 的单根项目，并在同一事务替换 root identity、清除陈旧 Thread 绑定。两者都绝不移动或删除本机项目文件。
 - Codex 账号限额只在用户刷新概览时通过隔离 catalog 读取，不在启动或任务事件上轮询；应用层仅投影校验后的百分比、重置时间与触达状态，禁止把服务端自由文本带入 UI。
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
+- Secure Tunnel helper 在已就绪后意外退出时，只重建 helper，不停止本地 MCP 或本地任务；使用有界 `1s/2s/4s` 退避且每次重新执行完整 helper 信任与严格 ready 校验。认证/授权诊断立即停止自动重试，耗尽三次后保持远程 admission 关闭并要求本机用户处理；Transport stop/shutdown 必须取消并等待在途重启。
 - 终态通知的点击路由只携带版本化、有界且通过出站安全检查的 task identity；App 未启动或任务快照未就绪时由 Presentation 保留单个待选任务，加载后只选择精确匹配项，用户手动选择会取消旧路由。
 - `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；`didWake` 只能在任务事实刷新和当前 Transport 严格复核后重新开放，不能把该复核冒充完整的 app-server/Thread/Git 恢复。
 

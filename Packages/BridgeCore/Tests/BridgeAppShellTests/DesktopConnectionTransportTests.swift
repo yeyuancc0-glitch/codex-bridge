@@ -195,6 +195,117 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testSecureTransportRestartsFailedHelperWithoutRestartingLocalMCP() async throws {
+    let mcp = ConnectionTestMCP()
+    let first = ConnectionTestTunnel()
+    let replacement = ConnectionTestTunnel()
+    let factory = ConnectionSequenceTunnelFactory(tunnels: [first, replacement])
+    let transport = SecureMCPTunnelTransport(
+      mcp: mcp,
+      tunnelFactory: factory,
+      tunnelID: try TunnelID(validating: "tunnel_\(String(repeating: "r", count: 32))"),
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.restart"),
+      localMCPHeaderSecret: String(repeating: "s", count: 43),
+      restartDelays: [.milliseconds(1)]
+    )
+    try await transport.start()
+    await first.setLifecycle(.failed)
+
+    let degraded = await transport.health()
+    XCTAssertEqual(degraded.lifecycle, .degraded)
+    XCTAssertFalse(degraded.acceptsRemoteSubmissions)
+    try await waitUntil { await replacement.startCount() == 1 }
+
+    let recovered = await transport.health()
+    let localStarts = await mcp.startCount()
+    let localStops = await mcp.stopCount()
+    let firstStops = await first.stopCount()
+    let factoryMakes = await factory.makeCount()
+    XCTAssertEqual(recovered.lifecycle, .ready)
+    XCTAssertTrue(recovered.acceptsRemoteSubmissions)
+    XCTAssertEqual(localStarts, 1)
+    XCTAssertEqual(localStops, 0)
+    XCTAssertEqual(firstStops, 1)
+    XCTAssertEqual(factoryMakes, 2)
+    await transport.stop()
+  }
+
+  func testSecureTransportDoesNotRetryAuthenticationFailure() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let factory = ConnectionSequenceTunnelFactory(tunnels: [tunnel])
+    let transport = SecureMCPTunnelTransport(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: factory,
+      tunnelID: try TunnelID(validating: "tunnel_\(String(repeating: "a", count: 32))"),
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.auth-failure"),
+      localMCPHeaderSecret: String(repeating: "t", count: 43),
+      restartDelays: [.milliseconds(1)]
+    )
+    try await transport.start()
+    await tunnel.setLifecycle(.failed)
+    await tunnel.setActionRequired(true)
+
+    let health = await transport.health()
+    try await Task.sleep(for: .milliseconds(20))
+    let factoryMakes = await factory.makeCount()
+    XCTAssertEqual(health.lifecycle, .failed)
+    XCTAssertTrue(health.actionRequired)
+    XCTAssertEqual(factoryMakes, 1)
+    await transport.stop()
+  }
+
+  func testSecureTransportBoundsRestartAttemptsAndRequiresManualRecovery() async throws {
+    let initial = ConnectionTestTunnel()
+    let failures = (0..<3).map { _ in ConnectionTestTunnel(failsOnStart: true) }
+    let factory = ConnectionSequenceTunnelFactory(tunnels: [initial] + failures)
+    let transport = SecureMCPTunnelTransport(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: factory,
+      tunnelID: try TunnelID(validating: "tunnel_\(String(repeating: "b", count: 32))"),
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.exhausted"),
+      localMCPHeaderSecret: String(repeating: "u", count: 43),
+      restartDelays: [.zero, .zero, .zero]
+    )
+    try await transport.start()
+    await initial.setLifecycle(.failed)
+    _ = await transport.health()
+    try await waitUntil { await factory.makeCount() == 4 }
+    try await waitUntil { await transport.health().actionRequired }
+
+    let exhausted = await transport.health()
+    XCTAssertEqual(exhausted.lifecycle, .failed)
+    XCTAssertFalse(exhausted.acceptsRemoteSubmissions)
+    XCTAssertTrue(exhausted.actionRequired)
+    await transport.stop()
+  }
+
+  func testSecureTransportStopCancelsPendingRestart() async throws {
+    let initial = ConnectionTestTunnel()
+    let replacement = ConnectionTestTunnel()
+    let factory = ConnectionSequenceTunnelFactory(tunnels: [initial, replacement])
+    let mcp = ConnectionTestMCP()
+    let transport = SecureMCPTunnelTransport(
+      mcp: mcp,
+      tunnelFactory: factory,
+      tunnelID: try TunnelID(validating: "tunnel_\(String(repeating: "c", count: 32))"),
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.cancel"),
+      localMCPHeaderSecret: String(repeating: "v", count: 43),
+      restartDelays: [.milliseconds(100)]
+    )
+    try await transport.start()
+    await initial.setLifecycle(.failed)
+    _ = await transport.health()
+
+    await transport.stop()
+    try await Task.sleep(for: .milliseconds(150))
+    let factoryMakes = await factory.makeCount()
+    let localStops = await mcp.stopCount()
+    let replacementStarts = await replacement.startCount()
+    XCTAssertEqual(factoryMakes, 1)
+    XCTAssertEqual(localStops, 1)
+    XCTAssertEqual(replacementStarts, 0)
+  }
+
   func testRemoteSubmissionCheckReadsTunnelHealthWithoutWaitingForMonitor() async throws {
     let tunnel = ConnectionTestTunnel()
     let runtime = DesktopConnectionRuntime(
@@ -388,6 +499,18 @@ final class DesktopConnectionTransportTests: XCTestCase {
     }
   }
 
+  private func waitUntil(
+    timeout: Duration = .seconds(1),
+    _ condition: @escaping @Sendable () async -> Bool
+  ) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while ContinuousClock.now < deadline {
+      if await condition() { return }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTFail("Timed out waiting for condition")
+  }
+
 }
 
 private actor ConnectionDrainProbe {
@@ -437,13 +560,23 @@ private actor ConnectionTestRemoteMCP: DesktopRemoteMCPTesting {
 }
 
 private actor ConnectionTestTunnel: DesktopTunnelManaging {
+  private let failsOnStart: Bool
   private var starts = 0
   private var stops = 0
   private var admissionTests = 0
   private var lifecycle = TunnelLifecycle.stopped
+  private var requiresAction = false
 
-  func start() {
+  init(failsOnStart: Bool = false) {
+    self.failsOnStart = failsOnStart
+  }
+
+  func start() throws {
     starts += 1
+    if failsOnStart {
+      lifecycle = .failed
+      throw DesktopTransportError.connectionFailed
+    }
     lifecycle = .ready
   }
   func stop() {
@@ -460,13 +593,37 @@ private actor ConnectionTestTunnel: DesktopTunnelManaging {
       standardOutput: "",
       standardError: "",
       wasTruncated: false,
-      actionRequired: false
+      actionRequired: requiresAction
     )
   }
   func startCount() -> Int { starts }
   func stopCount() -> Int { stops }
   func setLifecycle(_ value: TunnelLifecycle) { lifecycle = value }
+  func setActionRequired(_ value: Bool) { requiresAction = value }
   func admissionTestCount() -> Int { admissionTests }
+}
+
+private actor ConnectionSequenceTunnelFactory: DesktopTunnelManagerBuilding {
+  private let tunnels: [ConnectionTestTunnel]
+  private var nextIndex = 0
+
+  init(tunnels: [ConnectionTestTunnel]) {
+    self.tunnels = tunnels
+  }
+
+  func make(
+    tunnelID _: TunnelID,
+    runtimeKeyReference _: SecretReference,
+    localMCPURL _: URL,
+    localMCPHeaderSecret _: String
+  ) async throws -> any DesktopTunnelManaging {
+    guard !tunnels.isEmpty else { throw DesktopTransportError.helperUnavailable }
+    let index = min(nextIndex, tunnels.count - 1)
+    nextIndex += 1
+    return tunnels[index]
+  }
+
+  func makeCount() -> Int { nextIndex }
 }
 
 private actor ConnectionTestTunnelFactory: DesktopTunnelManagerBuilding {
