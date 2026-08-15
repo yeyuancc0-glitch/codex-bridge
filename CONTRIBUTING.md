@@ -23,6 +23,10 @@ Set `CODEX_BRIDGE_XCODE_DEVELOPER_DIR` when complete Xcode is installed somewher
 
 Tests should exercise real state transitions, SQLite transactions, filesystem identities, process lifecycle or protocol fixtures. A mock-call assertion alone is not evidence for a security or recovery invariant.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` mirrors the credential-free checks above on GitHub's ARM64 `xcode-27` runner for pull requests, pushes to `main` and manual runs. It uses a read-only repository token and does not load Runtime Keys, ChatGPT credentials, signing identities or notarization credentials. The hosted `xcode-27` image is a public preview, so a green workflow proves source, protocol and unsigned native-build compatibility on that image; it does not replace the signed release or clean-Mac acceptance in `docs/RELEASE.md`.
+
 ## Pull requests
 
 - Explain the user-visible outcome and the security/state invariant being changed.
