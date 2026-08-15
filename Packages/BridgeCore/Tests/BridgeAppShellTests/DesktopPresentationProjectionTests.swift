@@ -145,6 +145,44 @@ final class DesktopPresentationProjectionTests: XCTestCase {
     XCTAssertFalse(detail.canInterrupt)
   }
 
+  func testTaskStartedAtUsesPersistedTurnStartedEvent() throws {
+    let taskID = TaskID(rawValue: "task-started-at")
+    var aggregate = TaskAggregate(id: taskID, submission: submission())
+    aggregate = try TaskReducer.reduce(aggregate, event: .preparationStarted)
+    aggregate = try TaskReducer.reduce(
+      aggregate,
+      event: .turnStarted(
+        ExecutionBinding(
+          threadID: ThreadID(rawValue: "thread-started-at"),
+          turnID: TurnID(rawValue: "turn-started-at"),
+          turnGeneration: 1
+        )
+      )
+    )
+    let startedAt = Date(timeIntervalSince1970: 42)
+    let event = TaskEventEnvelope(
+      taskID: taskID,
+      sequence: 2,
+      schemaVersion: 1,
+      source: "bridge.coordinator",
+      kind: "task.turnStarted",
+      severity: "info",
+      payload: Data("{}".utf8),
+      createdAt: startedAt
+    )
+
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [(TaskProjection(aggregate: aggregate, lastSequence: 2), [event])],
+      diagnostics: []
+    )
+
+    guard case .ready(let page) = snapshot.tasks, let detail = page.details.first else {
+      return XCTFail("Expected task detail")
+    }
+    XCTAssertEqual(detail.startedAt, startedAt)
+  }
+
   private func submission() -> TaskSubmission {
     TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: "projection-approval"),

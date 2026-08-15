@@ -395,7 +395,7 @@ struct DesktopPresentationProjection {
       status: status(aggregate.phase),
       supervisorStatus: DesktopSupervisorAvailability.productionReviewAvailable
         ? (aggregate.submission.supervisor.enabled ? .waiting : .paused) : .blocked,
-      startedAt: events.first(where: { $0.kind == "task.domain.turnStarted" })?.createdAt,
+      startedAt: events.first(where: { $0.kind == "task.turnStarted" })?.createdAt,
       plan: aggregate.submission.contract.requirements,
       currentStep: aggregate.phase.label,
       finalSummary: aggregate.reportReference == nil ? nil : "最终报告已存储",
