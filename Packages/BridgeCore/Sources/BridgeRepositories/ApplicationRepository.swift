@@ -9,7 +9,7 @@ import GRDB
 
 public actor ApplicationRepository:
   MutableProjectRepository, ProjectRootRebindingRepository, ThreadBindingRepository,
-  DurableThreadBindingStore, FinalReportStore
+  DurableThreadBindingStore, FinalReportStore, FinalReportRetentionStore
 {
   static let maximumProjectJSONBytes = 256 * 1_024
   static let maximumReportJSONBytes = 256 * 1_024

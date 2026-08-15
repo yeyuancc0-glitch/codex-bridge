@@ -83,6 +83,40 @@ final class PipelinePreflightStoreTests: XCTestCase {
     XCTAssertEqual(records.map(\.key.taskID.rawValue), ["task-other", "task-preflight"])
   }
 
+  func testRetentionDiscardIsNarrowRestartSafeAndIdempotent() async throws {
+    let fixture = try makeFixture()
+    let first = try PipelinePreflightStore(path: fixture.storeURL.path)
+    let second = try PipelinePreflightStore(path: fixture.storeURL.path)
+    try await first.storeBaseline(context: fixture.preStart, baseline: fixture.baseline)
+    let other = makeOtherContext(from: fixture)
+    try await second.storeBaseline(context: other.preStart, baseline: other.baseline)
+
+    let removed = try await first.discardForRetention(taskID: fixture.preStart.taskID)
+    XCTAssertEqual(removed, .removed)
+    let restarted = try PipelinePreflightStore(path: fixture.storeURL.path)
+    let restartedTaskIDs = try await restarted.allRecords().map(\.key.taskID.rawValue)
+    XCTAssertEqual(restartedTaskIDs, ["task-other"])
+    let repeated = try await second.discardForRetention(taskID: fixture.preStart.taskID)
+    XCTAssertEqual(repeated, .alreadyAbsent)
+    let secondTaskIDs = try await second.allRecords().map(\.key.taskID.rawValue)
+    XCTAssertEqual(secondTaskIDs, ["task-other"])
+  }
+
+  func testRetentionDiscardRejectsInvalidTaskIdentityWithoutRewritingStore() async throws {
+    let fixture = try makeFixture()
+    let store = try PipelinePreflightStore(path: fixture.storeURL.path)
+    try await store.storeBaseline(context: fixture.preStart, baseline: fixture.baseline)
+    let original = try Data(contentsOf: fixture.storeURL)
+
+    do {
+      _ = try await store.discardForRetention(taskID: TaskID(rawValue: "bad\0task"))
+      XCTFail("Expected invalid task identity")
+    } catch {
+      XCTAssertEqual(error as? PipelinePreflightStoreError, .invalidArgument("taskID"))
+    }
+    XCTAssertEqual(try Data(contentsOf: fixture.storeURL), original)
+  }
+
   private struct Fixture {
     let directory: URL
     let storeURL: URL

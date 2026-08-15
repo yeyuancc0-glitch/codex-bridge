@@ -307,6 +307,101 @@ final class VerificationAuthorizationStoreTests: XCTestCase {
     let records = try XCTUnwrap(object["records"] as? [[String: Any]])
     XCTAssertEqual(records.count, 1)
   }
+
+  func testRetentionCleanupBlocksOnActiveAuthorizationThenRemovesOnlyTargetRecords() async throws {
+    let fixture = try AuthorizationFixture(label: "retention")
+    defer { fixture.remove() }
+    let command = try VerificationCommand(executable: "/usr/bin/true")
+    let project = try fixture.project(commands: [command])
+    let issuedAt = Date(timeIntervalSince1970: 2_100_000_000)
+    let clock = TestAuthorizationClock(issuedAt)
+    let issuer = try VerificationAuthorizationStore(path: fixture.storePath, clock: clock)
+    let consumed = try await issuer.issue(
+      taskID: "task-retention",
+      project: project,
+      workingDirectory: project.primaryRoot,
+      command: .index(0),
+      generation: 1,
+      validFor: 10
+    )
+    _ = try await issuer.issue(
+      taskID: "task-retention",
+      project: project,
+      workingDirectory: project.primaryRoot,
+      command: .index(0),
+      generation: 2,
+      validFor: 10
+    )
+    let other = try await issuer.issue(
+      taskID: "task-other",
+      project: project,
+      workingDirectory: project.primaryRoot,
+      command: .index(0),
+      generation: 1,
+      validFor: 100
+    )
+    clock.set(issuedAt.addingTimeInterval(1))
+    _ = try await VerificationRunner().run(
+      taskID: "task-retention",
+      generation: 1,
+      project: project,
+      workingDirectory: project.primaryRoot,
+      command: .index(0),
+      required: true,
+      authorization: consumed,
+      authorizationStore: issuer
+    )
+    let beforeBlockedCleanup = try Data(contentsOf: URL(fileURLWithPath: fixture.storePath))
+
+    let second = try VerificationAuthorizationStore(path: fixture.storePath, clock: clock)
+    let blocked = try await second.removeRecordsForRetention(taskID: "task-retention")
+    XCTAssertEqual(blocked, .blockedByActiveAuthorization)
+    XCTAssertEqual(
+      try Data(contentsOf: URL(fileURLWithPath: fixture.storePath)),
+      beforeBlockedCleanup
+    )
+
+    clock.set(issuedAt.addingTimeInterval(11))
+    let removed = try await issuer.removeRecordsForRetention(taskID: "task-retention")
+    XCTAssertEqual(removed, .removed(2))
+    let restarted = try VerificationAuthorizationStore(path: fixture.storePath, clock: clock)
+    let repeated = try await restarted.removeRecordsForRetention(taskID: "task-retention")
+    XCTAssertEqual(repeated, .removed(0))
+    clock.set(issuedAt.addingTimeInterval(12))
+    let otherResult = try await VerificationRunner().run(
+      taskID: "task-other",
+      generation: 1,
+      project: project,
+      workingDirectory: project.primaryRoot,
+      command: .index(0),
+      required: true,
+      authorization: other,
+      authorizationStore: restarted
+    )
+    XCTAssertEqual(otherResult.status, .passed)
+  }
+
+  func testRetentionCleanupConservativelyBlocksFutureUnconsumedAuthorization() async throws {
+    let fixture = try AuthorizationFixture(label: "retention-future")
+    defer { fixture.remove() }
+    let command = try VerificationCommand(executable: "/usr/bin/true")
+    let project = try fixture.project(commands: [command])
+    let issuedAt = Date(timeIntervalSince1970: 2_100_000_100)
+    let clock = TestAuthorizationClock(issuedAt)
+    let store = try VerificationAuthorizationStore(path: fixture.storePath, clock: clock)
+    _ = try await store.issue(
+      taskID: "task-future",
+      project: project,
+      workingDirectory: project.primaryRoot,
+      command: .index(0),
+      generation: 1,
+      validFor: 10
+    )
+
+    clock.set(issuedAt.addingTimeInterval(-1))
+    let blocked = try await store.removeRecordsForRetention(taskID: "task-future")
+    XCTAssertEqual(blocked, .blockedByActiveAuthorization)
+  }
 }
 
 private final class TestAuthorizationClock: VerificationAuthorizationClock, @unchecked Sendable {

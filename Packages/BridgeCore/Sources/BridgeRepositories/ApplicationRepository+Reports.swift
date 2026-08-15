@@ -46,6 +46,37 @@ extension ApplicationRepository {
     }
   }
 
+  public func removeFinalReportForRetention(
+    taskID: TaskID,
+    expectedSHA256: String
+  ) throws -> FinalReportRetentionRemoval {
+    try Self.validateIdentifier(taskID.rawValue, field: "task_id", maximum: 256)
+    let expectedDigest = try Self.retentionDigest(expectedSHA256)
+    return try database.write { db in
+      guard
+        let storedDigest = try Data.fetchOne(
+          db,
+          sql: "SELECT report_sha256 FROM bridge_repository_final_reports WHERE task_id = ?",
+          arguments: [taskID.rawValue]
+        )
+      else { return .alreadyAbsent }
+      guard storedDigest.count == 32 else {
+        throw ApplicationRepositoryError.corruptRecord("final_report.checksum")
+      }
+      guard storedDigest == expectedDigest else {
+        throw FinalReportRetentionError.digestMismatch(taskID)
+      }
+      try db.execute(
+        sql: "DELETE FROM bridge_repository_final_reports WHERE task_id = ? AND report_sha256 = ?",
+        arguments: [taskID.rawValue, expectedDigest]
+      )
+      guard db.changesCount == 1 else {
+        throw ApplicationRepositoryError.corruptRecord("final_report.retention_delete")
+      }
+      return .removed
+    }
+  }
+
   static func fetchFinalReport(
     taskID: TaskID,
     in db: Database
@@ -190,6 +221,28 @@ extension ApplicationRepository {
     guard !patterns.contains(where: { value.range(of: $0, options: .regularExpression) != nil })
     else {
       throw ApplicationRepositoryError.sensitiveReportContent
+    }
+  }
+
+  private static func retentionDigest(_ value: String) throws -> Data {
+    let bytes = Array(value.utf8)
+    guard bytes.count == 64 else { throw FinalReportRetentionError.invalidExpectedSHA256 }
+    var digest = Data()
+    digest.reserveCapacity(32)
+    for index in stride(from: 0, to: bytes.count, by: 2) {
+      guard let high = hexNibble(bytes[index]), let low = hexNibble(bytes[index + 1]) else {
+        throw FinalReportRetentionError.invalidExpectedSHA256
+      }
+      digest.append((high << 4) | low)
+    }
+    return digest
+  }
+
+  private static func hexNibble(_ byte: UInt8) -> UInt8? {
+    switch byte {
+    case 48...57: byte - 48
+    case 97...102: byte - 87
+    default: nil
     }
   }
 }

@@ -4,6 +4,7 @@ import BridgePersistence
 import BridgeProjects
 import BridgeReporting
 import BridgeSecurity
+import CryptoKit
 import Foundation
 import GRDB
 import XCTest
@@ -344,6 +345,62 @@ final class ApplicationRepositoryTests: XCTestCase {
     XCTAssertEqual(stored?.json, document.json)
     XCTAssertFalse(String(decoding: document.json, as: UTF8.self).contains("stdout"))
     XCTAssertFalse(String(decoding: document.json, as: UTF8.self).contains("raw_output"))
+  }
+
+  func testFinalReportRetentionRemovalRequiresExactDigestAndIsRestartIdempotent() async throws {
+    let fixture = try makeFixture()
+    let taskID = TaskID(rawValue: "tsk-retained-report")
+    let document = try makeReport(taskID: taskID.rawValue, project: "Codex Bridge")
+    let digest = SHA256.hash(data: document.json).map { String(format: "%02x", $0) }.joined()
+    let repository = try ApplicationRepository(path: fixture.databasePath)
+    _ = try await repository.storeFinalReport(document)
+
+    do {
+      _ = try await repository.removeFinalReportForRetention(
+        taskID: taskID,
+        expectedSHA256: String(repeating: "0", count: 64)
+      )
+      XCTFail("Expected digest mismatch")
+    } catch {
+      XCTAssertEqual(error as? FinalReportRetentionError, .digestMismatch(taskID))
+    }
+    let retained = try await repository.finalReport(for: taskID)
+    XCTAssertNotNil(retained)
+
+    let second = try ApplicationRepository(path: fixture.databasePath)
+    let removed = try await second.removeFinalReportForRetention(
+      taskID: taskID,
+      expectedSHA256: digest
+    )
+    XCTAssertEqual(removed, .removed)
+    let restarted = try ApplicationRepository(path: fixture.databasePath)
+    let missing = try await restarted.finalReport(for: taskID)
+    XCTAssertNil(missing)
+    let repeated = try await restarted.removeFinalReportForRetention(
+      taskID: taskID,
+      expectedSHA256: digest
+    )
+    XCTAssertEqual(repeated, .alreadyAbsent)
+  }
+
+  func testFinalReportRetentionRemovalRejectsMalformedDigestWithoutMutation() async throws {
+    let fixture = try makeFixture()
+    let taskID = TaskID(rawValue: "tsk-invalid-retention-digest")
+    let document = try makeReport(taskID: taskID.rawValue, project: "Codex Bridge")
+    let repository = try ApplicationRepository(path: fixture.databasePath)
+    _ = try await repository.storeFinalReport(document)
+
+    do {
+      _ = try await repository.removeFinalReportForRetention(
+        taskID: taskID,
+        expectedSHA256: String(repeating: "A", count: 64)
+      )
+      XCTFail("Expected invalid digest")
+    } catch {
+      XCTAssertEqual(error as? FinalReportRetentionError, .invalidExpectedSHA256)
+    }
+    let retained = try await repository.finalReport(for: taskID)
+    XCTAssertEqual(retained?.json, document.json)
   }
 
   func testUnknownRepositoryMigrationAndSchemaVersionAreRejected() throws {

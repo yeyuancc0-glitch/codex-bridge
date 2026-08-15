@@ -16,6 +16,16 @@ public enum ApplicationRepositoryError: Error, Equatable, Sendable {
   case sensitiveReportContent
 }
 
+public enum FinalReportRetentionError: Error, Equatable, Sendable {
+  case invalidExpectedSHA256
+  case digestMismatch(TaskID)
+}
+
+public enum FinalReportRetentionRemoval: Equatable, Sendable {
+  case removed
+  case alreadyAbsent
+}
+
 public struct ThreadProjectBindingRecord: Codable, Equatable, Sendable {
   public let threadID: String
   public let projectID: ProjectID
@@ -85,4 +95,11 @@ public protocol FinalReportStore: Sendable {
   ) async throws -> FinalReportMetadata
 
   func finalReport(for taskID: TaskID) async throws -> StoredFinalReport?
+}
+
+public protocol FinalReportRetentionStore: Sendable {
+  func removeFinalReportForRetention(
+    taskID: TaskID,
+    expectedSHA256: String
+  ) async throws -> FinalReportRetentionRemoval
 }

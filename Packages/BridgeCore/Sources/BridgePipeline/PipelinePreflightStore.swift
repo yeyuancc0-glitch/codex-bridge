@@ -14,7 +14,16 @@ public enum PipelinePreflightStoreError: Error, Equatable, Sendable {
   case missing(TaskID)
 }
 
-public actor PipelinePreflightStore {
+public enum PipelinePreflightRetentionRemoval: Equatable, Sendable {
+  case removed
+  case alreadyAbsent
+}
+
+public protocol PipelinePreflightRetentionStore: Sendable {
+  func discardForRetention(taskID: TaskID) async throws -> PipelinePreflightRetentionRemoval
+}
+
+public actor PipelinePreflightStore: PipelinePreflightRetentionStore {
   public static let maximumRecords = 256
   public static let maximumFileBytes = 2 * 1_024 * 1_024
   public static let maximumBaselineBytes = 512 * 1_024
@@ -107,9 +116,19 @@ public actor PipelinePreflightStore {
   }
 
   func discard(taskID: TaskID) throws {
+    _ = try discardForRetention(taskID: taskID)
+  }
+
+  public func discardForRetention(taskID: TaskID) throws -> PipelinePreflightRetentionRemoval {
+    guard !taskID.rawValue.isEmpty, taskID.rawValue.utf8.count <= 256,
+      !taskID.rawValue.contains("\0"),
+      taskID.rawValue.rangeOfCharacter(from: .controlCharacters) == nil
+    else { throw PipelinePreflightStoreError.invalidArgument("taskID") }
+    var removal = PipelinePreflightRetentionRemoval.alreadyAbsent
     try updateRecords { records in
-      records[taskID.rawValue] = nil
+      if records.removeValue(forKey: taskID.rawValue) != nil { removal = .removed }
     }
+    return removal
   }
 
   private func updateRecords(

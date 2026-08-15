@@ -42,6 +42,16 @@ public enum VerificationAuthorizationError: Error, Equatable, Sendable {
   case bindingMismatch
 }
 
+public enum VerificationAuthorizationRetentionRemoval: Equatable, Sendable {
+  case removed(Int)
+  case blockedByActiveAuthorization
+}
+
+public protocol VerificationAuthorizationRetentionStore: Sendable {
+  func removeRecordsForRetention(taskID: String) async throws
+    -> VerificationAuthorizationRetentionRemoval
+}
+
 package protocol VerificationAuthorizationClock: Sendable {
   func now() -> Date
 }
@@ -52,7 +62,7 @@ package struct SystemVerificationAuthorizationClock: VerificationAuthorizationCl
   package func now() -> Date { Date() }
 }
 
-public actor VerificationAuthorizationStore {
+public actor VerificationAuthorizationStore: VerificationAuthorizationRetentionStore {
   public static let maximumLifetime: TimeInterval = 3_600
   public static let maximumRecords = 4_096
   private static let processLock = NSLock()
@@ -170,6 +180,28 @@ public actor VerificationAuthorizationStore {
       var updated = records
       updated[nonceDigest] = record.consumed(at: now.timeIntervalSince1970)
       try persist(updated)
+    }
+  }
+
+  public func removeRecordsForRetention(taskID: String) throws
+    -> VerificationAuthorizationRetentionRemoval
+  {
+    try Self.validateTaskID(taskID)
+    return try withExclusiveStoreLock {
+      let now = clock.now().timeIntervalSince1970
+      guard now.isFinite else {
+        throw VerificationAuthorizationError.invalidArgument("retentionTime")
+      }
+      let records = try Self.load(path: path)
+      let target = records.filter { $0.value.taskID == taskID }
+      if target.values.contains(where: { $0.blocksRetention(at: now) }) {
+        return .blockedByActiveAuthorization
+      }
+      guard !target.isEmpty else { return .removed(0) }
+      var updated = records
+      for key in target.keys { updated[key] = nil }
+      try persist(updated)
+      return .removed(target.count)
     }
   }
 
@@ -395,6 +427,10 @@ private struct AuthorizationRecord: Codable {
       expiresAt: expiresAt,
       consumedAt: timestamp
     )
+  }
+
+  func blocksRetention(at timestamp: TimeInterval) -> Bool {
+    consumedAt == nil && expiresAt > timestamp
   }
 
   private static func isLowercaseSHA256(_ value: String) -> Bool {
