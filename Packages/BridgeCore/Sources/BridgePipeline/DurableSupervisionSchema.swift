@@ -1,3 +1,4 @@
+import BridgePersistence
 import GRDB
 
 enum DurableSupervisionSchema {
@@ -5,14 +6,17 @@ enum DurableSupervisionSchema {
   static let migrationPrefix = "BridgeSupervision."
   static let migrationV1 = "BridgeSupervision.v1"
   static let knownMigrations: Set<String> = [migrationV1]
+  static let migrationIdentifiers = [migrationV1]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
       try preflight(database)
-      var migrator = DatabaseMigrator()
-      migrator.registerMigration(migrationV1) { db in
-        try createVersionOne(in: db)
-      }
+      let migrator = makeMigrator()
+      try DatabaseMigrationBackup.createIfNeeded(
+        database: database,
+        knownMigrationIdentifiers: migrationIdentifiers,
+        componentIdentifier: "BridgeSupervision"
+      )
       try migrator.migrate(database)
       try validate(database)
     } catch let error as DurableSupervisionLedgerError {
@@ -20,6 +24,14 @@ enum DurableSupervisionSchema {
     } catch {
       throw DurableSupervisionLedgerError.corruptSchema
     }
+  }
+
+  static func makeMigrator() -> DatabaseMigrator {
+    var migrator = DatabaseMigrator()
+    migrator.registerMigration(migrationV1) { db in
+      try createVersionOne(in: db)
+    }
+    return migrator
   }
 
   private static func preflight(_ database: DatabaseQueue) throws {

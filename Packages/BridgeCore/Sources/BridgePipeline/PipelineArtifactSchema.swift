@@ -1,3 +1,4 @@
+import BridgePersistence
 import GRDB
 
 enum PipelineArtifactSchema {
@@ -5,14 +6,17 @@ enum PipelineArtifactSchema {
   static let migrationPrefix = "BridgePipeline."
   static let migrationV1 = "BridgePipeline.v1"
   static let knownMigrations: Set<String> = [migrationV1]
+  static let migrationIdentifiers = [migrationV1]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
       try preflight(database)
-      var migrator = DatabaseMigrator()
-      migrator.registerMigration(migrationV1) { db in
-        try createVersionOne(in: db)
-      }
+      let migrator = makeMigrator()
+      try DatabaseMigrationBackup.createIfNeeded(
+        database: database,
+        knownMigrationIdentifiers: migrationIdentifiers,
+        componentIdentifier: "BridgePipeline"
+      )
       try migrator.migrate(database)
       try validate(database)
     } catch let error as PipelineArtifactStoreError {
@@ -20,6 +24,14 @@ enum PipelineArtifactSchema {
     } catch {
       throw PipelineArtifactStoreError.corruptSchema
     }
+  }
+
+  static func makeMigrator() -> DatabaseMigrator {
+    var migrator = DatabaseMigrator()
+    migrator.registerMigration(migrationV1) { db in
+      try createVersionOne(in: db)
+    }
+    return migrator
   }
 
   private static func preflight(_ database: DatabaseQueue) throws {

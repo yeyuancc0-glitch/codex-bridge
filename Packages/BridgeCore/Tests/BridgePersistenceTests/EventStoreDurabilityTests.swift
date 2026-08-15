@@ -623,7 +623,11 @@ final class EventStoreDurabilityTests: XCTestCase {
   }
 
   private func removeDatabaseFiles(at path: String) {
-    for candidate in [path, path + "-shm", path + "-wal"] {
+    let backup = try? DatabaseMigrationBackup.backupURL(
+      databasePath: path,
+      componentIdentifier: "BridgePersistence"
+    ).path
+    for candidate in [path, path + "-shm", path + "-wal", backup].compactMap({ $0 }) {
       try? FileManager.default.removeItem(atPath: candidate)
     }
   }

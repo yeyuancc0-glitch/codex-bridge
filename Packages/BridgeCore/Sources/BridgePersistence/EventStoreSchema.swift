@@ -1,9 +1,29 @@
 import GRDB
 
 enum EventStoreSchema {
+  static let migrationIdentifiers = [
+    "createEventStore",
+    "addTaskStateSnapshots",
+    "addDurableTaskChangeLog",
+    "addTaskNotificationLedger",
+    "addTaskNotificationLeases",
+    "addLifecyclePreferences",
+    "addTaskChangeHeadState",
+  ]
+
   static func migrate(_ database: DatabaseQueue) throws {
+    let migrator = makeMigrator()
+    try DatabaseMigrationBackup.createIfNeeded(
+      database: database,
+      knownMigrationIdentifiers: migrationIdentifiers,
+      componentIdentifier: "BridgePersistence"
+    )
+    try migrator.migrate(database)
+  }
+
+  static func makeMigrator() -> DatabaseMigrator {
     var migrator = DatabaseMigrator()
-    migrator.registerMigration("createEventStore") { db in
+    migrator.registerMigration(migrationIdentifiers[0]) { db in
       try db.execute(
         sql: """
           CREATE TABLE tasks (
@@ -55,7 +75,7 @@ enum EventStoreSchema {
           )
           """)
     }
-    migrator.registerMigration("addTaskStateSnapshots") { db in
+    migrator.registerMigration(migrationIdentifiers[1]) { db in
       try db.execute(
         sql: """
           CREATE TABLE task_state_snapshots (
@@ -73,7 +93,7 @@ enum EventStoreSchema {
           ON task_state_snapshots(recovery_required, task_id)
           """)
     }
-    migrator.registerMigration("addDurableTaskChangeLog") { db in
+    migrator.registerMigration(migrationIdentifiers[2]) { db in
       try db.execute(
         sql: """
           CREATE TABLE task_change_log (
@@ -102,7 +122,7 @@ enum EventStoreSchema {
           END
           """)
     }
-    migrator.registerMigration("addTaskNotificationLedger") { db in
+    migrator.registerMigration(migrationIdentifiers[3]) { db in
       try db.execute(
         sql: """
           CREATE TABLE task_notification_consumers (
@@ -139,7 +159,7 @@ enum EventStoreSchema {
           ON task_notification_ledger(consumer_id, state, change_id)
           """)
     }
-    migrator.registerMigration("addTaskNotificationLeases") { db in
+    migrator.registerMigration(migrationIdentifiers[4]) { db in
       try db.execute(
         sql: """
           ALTER TABLE task_notification_ledger
@@ -156,7 +176,7 @@ enum EventStoreSchema {
           ON task_notification_ledger(consumer_id, state, lease_until, change_id)
           """)
     }
-    migrator.registerMigration("addLifecyclePreferences") { db in
+    migrator.registerMigration(migrationIdentifiers[5]) { db in
       try db.execute(
         sql: """
           CREATE TABLE lifecycle_preferences (
@@ -175,7 +195,7 @@ enum EventStoreSchema {
           ) VALUES (1, 0, 1, 0)
           """)
     }
-    migrator.registerMigration("addTaskChangeHeadState") { db in
+    migrator.registerMigration(migrationIdentifiers[6]) { db in
       try db.execute(
         sql: """
           CREATE TABLE task_change_state (
@@ -202,6 +222,6 @@ enum EventStoreSchema {
           END
           """)
     }
-    try migrator.migrate(database)
+    return migrator
   }
 }

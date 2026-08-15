@@ -58,6 +58,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - interrupt/suspend 先记录意图，只有 app-server 的 turn 停止事实才能进入对应终态。
 - 任何会改变 Codex 状态的审批、停止或纠偏操作都先追加持久化意图；只有 RPC 成功或 app-server 事件确认后才能记录完成事实。Suspended 事实与旧 generation 两把锁的释放必须在同一 SQLite 事务提交；立即 resume 必须等待旧 worker 退出或排入 successor start，再重新原子获取两把锁并启动新 turn generation。
 - `EventStore` 通过事件序号 CAS 追加；提交幂等键是 `(origin, key)`，同指纹复用、异指纹拒绝；Thread 与工作树两把锁必须在同一 SQLite 事务获取。
+- 所有内部 SQLite migrator 在已有库存在已知待迁移版本时，必须先发布组件隔离、`0600`、SQLite online backup 生成的一致性备份；新库与已是当前版本的库跳过，备份边界或完整性失败必须在任何 schema mutation 前停止。
 - 新任务的 submission 与首个领域事件和幂等 claim 在同一 SQLite 事务提交，任何读者都不能观察到只有 claim、没有初始投影的半初始化任务。
 - 生产 Execution 启动必须先准备 app-server 会话并获得精确 Thread identity，再用同一事件事务把 provisional Thread 锁替换为精确 Thread 锁并持久化启动意图；只有事务成功后才能调用 `turn/start`。
 - Git、验证、Supervisor 与最终报告证据必须绑定同一个 `task + project + thread + turn + generation + event sequence` 作用域；旧 generation 证据不得完成新 generation，最终编排阶段必须可幂等恢复。

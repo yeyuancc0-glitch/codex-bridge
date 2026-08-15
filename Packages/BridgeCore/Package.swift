@@ -101,6 +101,7 @@ let package = Package(
             name: "BridgeRepositories",
             dependencies: [
                 "BridgeDomain",
+                "BridgePersistence",
                 "BridgeSecurity",
                 "BridgeProjects",
                 "BridgeExecution",
@@ -124,6 +125,7 @@ let package = Package(
                 "BridgeCoordinator",
                 "BridgeDomain",
                 "BridgeGit",
+                "BridgePersistence",
                 "BridgeProjects",
                 "BridgeReporting",
                 "BridgeRepositories",
