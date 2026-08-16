@@ -263,9 +263,9 @@ struct DesktopPresentationProjection {
       }
       let modelOptions = value.models.map(model)
       let supervisors = modelOptions.sorted { left, right in
-        let leftIsDefault = left.id == LocalReadOnlyTaskPolicy.defaultSupervisorModelID
-        let rightIsDefault = right.id == LocalReadOnlyTaskPolicy.defaultSupervisorModelID
-        if leftIsDefault != rightIsDefault { return leftIsDefault }
+        let leftIsRecommended = left.id == LocalReadOnlyTaskPolicy.recommendedSupervisorModelID
+        let rightIsRecommended = right.id == LocalReadOnlyTaskPolicy.recommendedSupervisorModelID
+        if leftIsRecommended != rightIsRecommended { return leftIsRecommended }
         return left.id < right.id
       }
       let supervisorRecommendation =

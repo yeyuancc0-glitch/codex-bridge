@@ -55,7 +55,7 @@ final class BridgeApplicationServiceTests: XCTestCase {
 
     XCTAssertEqual(result.models.map(\.modelID), ["gpt-other", "gpt-specialized"])
     XCTAssertFalse(
-      result.models.map(\.modelID).contains(LocalReadOnlyTaskPolicy.defaultSupervisorModelID)
+      result.models.map(\.modelID).contains(LocalReadOnlyTaskPolicy.recommendedSupervisorModelID)
     )
   }
 

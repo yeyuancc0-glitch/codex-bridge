@@ -3,7 +3,7 @@
 ## 项目长期目标
 
 - 构建一个 GitHub 开源、个人自托管、零开发者云服务器的原生 macOS 应用。
-- 让 ChatGPT 网页版通过 MCP 安全调用用户本机 Codex；ChatGPT 负责形成任务契约，Codex 负责执行，默认推荐 Luna（但允许用户选择其他可用模型）负责只读监督，Bridge 负责权限、状态、审批、连接和证据。
+- 让 ChatGPT 网页版通过 MCP 安全调用用户本机 Codex；ChatGPT 负责形成任务契约，Codex 负责执行，默认推荐目录中的 Luna（不是内置模型；允许用户选择其他可用模型）负责只读监督，Bridge 负责权限、状态、审批、连接和证据。
 - V1 的完成标准以 `ChatGPT-Codex-Bridge-原生Swift本地开源版完整方案-V2.0.md` 为准；不能把局部原型当作完整交付。
 
 ## 权威来源
@@ -139,7 +139,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 不启用 Mac App Sandbox；启用 Hardened Runtime、签名、公证和项目白名单。
 - 默认 OpenAI Secure MCP Tunnel；用户自备强认证 HTTPS 为高级替代；本机模式用于开发。
 - Codex 官方 ChatGPT 登录负责 Execution 与 Supervisor 用量；不要求模型 API Key。
-- 动态读取模型和 reasoning effort；默认推荐 Luna，但用户可选择目录中的其他模型；不可用用户选择的模型时返回明确失败，绝不静默换模型。
+- 动态读取模型和 reasoning effort；默认推荐当前目录中的 Luna（不是内置模型），但用户可选择目录中的其他模型；不可用用户选择的模型时返回明确失败，绝不静默换模型。
 - `submit_task` 异步返回，任务通过游标查询；ChatGPT 对话不能被本机主动唤醒。
 - V1 默认原工作区并保存 Git baseline；新 Thread 可实验性使用 worktree，绝不自动清理。
 - 设计交付模式由用户授权代理决定：采用“完成设计包后直接实现”，不生成页面参考图。
@@ -150,7 +150,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 2. 建立原生应用骨架、持久化、日志、Keychain、系统检测和项目注册。
 3. 完成本地只读 MCP 闭环，再接 Tunnel。
 4. 完成任务执行、安全审批与结构化报告。
-5. 完成默认推荐 Luna 的 Supervisor、恢复、完整 UI、通知、打包与发布。
+5. 完成目录可用时默认推荐 Luna 的 Supervisor、恢复、完整 UI、通知、打包与发布。
 
 ## 常用命令
 
@@ -209,7 +209,7 @@ codex app-server generate-json-schema --out DIR
 - 原生任务证据必须由用户选中任务后按需读取，不得在全局任务刷新时对历史终态任务批量解码；缓存必须绑定 `task + binding generation + event sequence + report reference` 并保持有界，校验失败明确显示 unavailable，禁止伪装为空证据。
 - 最终 Git patch 使用 0700/0600 私有持久存储、digest 绑定、有界 LRU、跨实例文件锁和提交标记裁剪；首次访问形成受总容量约束的验证快照，MCP 分页必须按真实双形态 200 KiB 编码预算和 UTF-8 边界缩页。
 - 本地验证器不是 OS sandbox。本机明确批准验证命令后，项目程序或工具链插件仍可能自行读取项目外文件或联网；已知网络命令和 Shell wrapper 必须硬拒绝，发布前若要声称强隔离必须另接真正的进程沙箱。
-- Execution 与 Supervisor 都必须动态核对精确 model/effort；默认 Luna 或用户选择的其他模型不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
+- Execution 与 Supervisor 都必须动态核对精确 model/effort；目录中的默认推荐 Luna 或用户选择的其他模型不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
 - Supervisor 的 checkpoint 出站过滤只约束提示内容，不约束同一 app-server 进程自行读取文件。没有 OS 级 evidence-only 隔离或经实测的 no-tools 协议能力时，终局复核和持续 checkpoint 都不得在 production 启动进程；状态必须诚实显示 unavailable。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 数据根目录 inode 的 advisory lock 只能绑定已打开对象；若发布威胁模型要求抵抗同一 UID 主动 rename 并重建整个数据根，必须另接稳定父锚或 LaunchServices/launchd 单实例机制，不能把当前目录锁描述为已覆盖该攻击。

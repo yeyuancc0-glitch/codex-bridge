@@ -1403,7 +1403,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     effort: String?,
     models: [MCPModelSummary]
   ) throws -> (model: String, effort: String) {
-    let selectedModelID = modelID ?? LocalReadOnlyTaskPolicy.defaultSupervisorModelID
+    let selectedModelID = modelID ?? LocalReadOnlyTaskPolicy.recommendedSupervisorModelID
     guard let model = models.first(where: { $0.modelID == selectedModelID }) else {
       throw DesktopBackendError.operationFailed
     }

@@ -20,6 +20,7 @@ public enum BridgeApplicationError: Error, Equatable, Sendable {
 
 public enum LocalReadOnlyTaskPolicy {
   /// A selection hint only; the live Codex catalog remains the source of truth.
+  public static var recommendedSupervisorModelID: String { supervisorModelID }
   public static let supervisorModelID = "gpt-5.6-luna"
 
   public static func isLunaModel(id: String, displayName: String) -> Bool {
@@ -27,7 +28,10 @@ public enum LocalReadOnlyTaskPolicy {
     return id == supervisorModelID
   }
 
-  public static var defaultSupervisorModelID: String { supervisorModelID }
+  @available(
+    *, deprecated, message: "Use recommendedSupervisorModelID; this is not a built-in model."
+  )
+  public static var defaultSupervisorModelID: String { recommendedSupervisorModelID }
 }
 
 public actor BridgeApplicationService:
