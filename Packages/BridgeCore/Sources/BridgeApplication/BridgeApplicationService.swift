@@ -19,6 +19,7 @@ public enum BridgeApplicationError: Error, Equatable, Sendable {
 }
 
 public enum LocalReadOnlyTaskPolicy {
+  /// A selection hint only; the live Codex catalog remains the source of truth.
   public static let supervisorModelID = "gpt-5.6-luna"
 
   public static func isLunaModel(id: String, displayName: String) -> Bool {

@@ -114,9 +114,11 @@ readonly created_at="$(/bin/date -u -r "${commit_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
   "${repository_root}/docs/DEPENDENCIES.md" \
   "${candidate_directory}/DEPENDENCIES.md"
 
-print -r -- \
-  "UNSIGNED LOCAL RELEASE CANDIDATE — NOT FOR PUBLIC DISTRIBUTION\n\nThis candidate verifies Universal 2 compilation, helper staging, bundle structure, SBOM generation and packaging. It is not Developer ID signed, notarized or stapled." \
-  > "${candidate_directory}/RELEASE-CANDIDATE.txt"
+{
+  print -r -- "UNSIGNED LOCAL RELEASE CANDIDATE — NOT FOR PUBLIC DISTRIBUTION"
+  print -r -- ""
+  print -r -- "This candidate verifies Universal 2 compilation, helper staging, bundle structure, SBOM generation and packaging. It is not Developer ID signed, notarized or stapled."
+} > "${candidate_directory}/RELEASE-CANDIDATE.txt"
 /bin/chmod 0644 "${candidate_directory}/RELEASE-CANDIDATE.txt"
 
 (

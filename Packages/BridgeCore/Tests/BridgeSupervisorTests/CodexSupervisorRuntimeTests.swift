@@ -6,6 +6,9 @@ import XCTest
 @testable import BridgeSupervisor
 
 final class CodexSupervisorRuntimeTests: XCTestCase {
+  private static let recommendedModel = "gpt-5.6-luna"
+  private static let recommendedEffort = "medium"
+
   func testProductionConfigurationRejectsReviewBeforeStartingProcess() async throws {
     let root = try temporaryRoot()
     let registered = try RegisteredRoot(capturing: root)
@@ -23,7 +26,9 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
     do {
       _ = try await runtime.review(
         try checkpoint(sequence: 1, stage: .progress),
-        root: registered
+        root: registered,
+        model: Self.recommendedModel,
+        effort: Self.recommendedEffort
       )
       XCTFail("Expected evidence isolation to be unavailable")
     } catch CodexSupervisorRuntimeError.evidenceIsolationUnavailable {}
@@ -60,7 +65,9 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
 
     let result = try await runtime.review(
       try checkpoint(sequence: 1, stage: .progress),
-      root: registered
+      root: registered,
+      model: Self.recommendedModel,
+      effort: Self.recommendedEffort
     )
     XCTAssertEqual(result.decision, .continue)
   }
@@ -75,14 +82,18 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
 
     let first = try await runtime.review(
       try checkpoint(sequence: 1, stage: .progress),
-      root: registered
+      root: registered,
+      model: Self.recommendedModel,
+      effort: Self.recommendedEffort
     )
     XCTAssertEqual(first.decision, .continue)
     XCTAssertEqual(first.summary, "Execution remains within the approved scope.")
 
     let second = try await runtime.review(
       try checkpoint(sequence: 2, stage: .final),
-      root: registered
+      root: registered,
+      model: Self.recommendedModel,
+      effort: Self.recommendedEffort
     )
     XCTAssertEqual(second.decision, .finalAccept)
     XCTAssertEqual(second.confidence, 0.98)
@@ -99,10 +110,32 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
     do {
       _ = try await runtime.review(
         try checkpoint(sequence: 1, stage: .progress),
-        root: registered
+        root: registered,
+        model: Self.recommendedModel,
+        effort: Self.recommendedEffort
       )
       XCTFail("Expected the exact Supervisor model to be unavailable")
     } catch CodexSupervisorRuntimeError.modelUnavailable {}
+  }
+
+  func testCatalogWithoutLunaRunsWithExplicitlySelectedOtherModel() async throws {
+    let root = try temporaryRoot()
+    let registered = try RegisteredRoot(capturing: root)
+    let runtime = CodexSupervisorRuntime(
+      configuration: configuration(
+        script: supervisorScript(root: registered.canonicalPath)
+          .replacingOccurrences(of: Self.recommendedModel, with: "another-model")
+      )
+    )
+    addTeardownBlock { await runtime.shutdown() }
+
+    let result = try await runtime.review(
+      try checkpoint(sequence: 1, stage: .progress),
+      root: registered,
+      model: "another-model",
+      effort: Self.recommendedEffort
+    )
+    XCTAssertEqual(result.decision, .continue)
   }
 
   private func checkpoint(

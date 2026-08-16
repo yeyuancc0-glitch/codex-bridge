@@ -134,11 +134,13 @@ public actor CodexSupervisorRuntime {
     self.configuration = configuration
   }
 
+  /// Reviews with the exact model and effort selected from the current catalog.
+  /// This low-level runtime never chooses a product default.
   public func review(
     _ checkpoint: SupervisorCheckpoint,
     root: RegisteredRoot,
-    model: String = "gpt-5.6-luna",
-    effort: String = "medium"
+    model: String,
+    effort: String
   ) async throws -> SupervisorDecision {
     guard
       configuration.permitsUnconfinedProjectReadForProtocolTesting
@@ -182,6 +184,18 @@ public actor CodexSupervisorRuntime {
       await removeAndStop(taskID: checkpoint.taskID, session: session)
       throw CodexSupervisorRuntimeError.processFailed
     }
+  }
+
+  /// Preserves source compatibility for callers compiled against the original
+  /// convenience signature while refusing to invent a model outside the live catalog.
+  @available(*, deprecated, message: "Pass the current Codex catalog model and effort explicitly.")
+  public func review(
+    _ checkpoint: SupervisorCheckpoint,
+    root: RegisteredRoot
+  ) async throws -> SupervisorDecision {
+    _ = checkpoint
+    _ = root
+    throw CodexSupervisorRuntimeError.modelUnavailable
   }
 
   public func shutdown(taskID: String) async {

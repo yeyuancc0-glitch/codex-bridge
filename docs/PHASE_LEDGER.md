@@ -44,3 +44,10 @@
 | Open-source continuous integration | phase 7 | implemented | pull requests, `main` pushes and manual runs use a credential-free ARM64 Xcode 27 workflow with read-only repository permissions; package tests, strict formatting, Inspector contract, unsigned App build and isolated native accessibility smoke test are separate gates | `.github/workflows/ci.yml`; `CONTRIBUTING.md` | workflow YAML parsed locally; every mirrored command passed with Xcode 27 Beta 5, including the full Swift package, Inspector 2.1.0, unsigned App build and XCUITest | first hosted `xcode-27` run remains pending until the commit is pushed; public-preview runner drift does not replace signed release acceptance |
 
 Update this ledger whenever code or runtime evidence changes a status. `blocked` here describes an artifact state, not the overall goal status.
+
+## Latest Local Evidence (2026-08-16)
+
+- Commit `ff390bf` adds a credential-free `universal2` CI job. The matching local Xcode 27 Beta 5 archive verified both `arm64` and `x86_64` slices.
+- `Scripts/build-release-candidate.sh` produced an unsigned Universal 2 ZIP/DMG candidate with an SPDX SBOM, checksums, legal files and the pinned OpenAI tunnel-client v0.0.11. The App and helper slices, helper digest, package checksums and DMG integrity were inspected locally.
+- The candidate remains a structural acceptance artifact only. Developer ID signing, notarization, staple, clean-machine Gatekeeper, real Runtime Key/Tunnel ID, isolated official Supervisor logins and ChatGPT Developer Mode acceptance remain external gates.
+- Dynamic model semantics were rechecked: Luna is a recommendation only; `model/list` remains authoritative, another advertised model can be selected explicitly, and an unavailable selected model fails without substitution.
