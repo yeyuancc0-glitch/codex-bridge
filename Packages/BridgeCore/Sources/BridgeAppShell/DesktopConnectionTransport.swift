@@ -276,6 +276,7 @@ actor DesktopConnectionRuntime {
   private let remoteTester: any DesktopRemoteMCPTesting
   private let tunnelFactory: any DesktopTunnelManagerBuilding
   private let status: BridgeStatusStore?
+  private let availability: DesktopSupervisorAvailability.Snapshot
   private let monitorInterval: Duration
   private let admissionGate: DesktopRemoteAdmissionGate
   private var active: (any ChatGPTBridgeTransport)?
@@ -292,12 +293,14 @@ actor DesktopConnectionRuntime {
     tunnelFactory: any DesktopTunnelManagerBuilding,
     status: BridgeStatusStore? = nil,
     monitorInterval: Duration = .seconds(2),
-    admissionGate: DesktopRemoteAdmissionGate = DesktopRemoteAdmissionGate()
+    admissionGate: DesktopRemoteAdmissionGate = DesktopRemoteAdmissionGate(),
+    availability: DesktopSupervisorAvailability.Snapshot = DesktopSupervisorAvailability.current
   ) {
     self.mcp = mcp
     self.remoteTester = remoteTester
     self.tunnelFactory = tunnelFactory
     self.status = status
+    self.availability = availability
     self.monitorInterval = monitorInterval
     self.admissionGate = admissionGate
   }
@@ -594,17 +597,11 @@ actor DesktopConnectionRuntime {
     if !health.acceptsRemoteSubmissions {
       degradations.append("Remote ChatGPT connectivity is not available.")
     }
-    degradations.append(DesktopSupervisorAvailability.degradation)
-    await status.update(
-      BridgeStatusSnapshot(
-        appVersion: "0.1.0",
-        mcpState: health.localMCPURL == nil ? "stopped" : "ready",
-        tunnelState: health.lifecycle.rawValue,
-        executionState: "idle",
-        supervisorState: "unavailable",
-        degradations: degradations,
-        pendingApprovalCount: 0
-      )
+    let snapshot = availability.status(
+      mcpState: health.localMCPURL == nil ? "stopped" : "ready",
+      tunnelState: health.lifecycle.rawValue,
+      additionalDegradations: degradations
     )
+    await status.update(snapshot)
   }
 }

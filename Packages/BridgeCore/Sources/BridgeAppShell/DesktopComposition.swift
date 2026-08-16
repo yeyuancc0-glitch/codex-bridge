@@ -159,14 +159,9 @@ struct DesktopComposition: Sendable {
         )
       )
     let status = BridgeStatusStore(
-      initial: BridgeStatusSnapshot(
-        appVersion: "0.1.0",
+      initial: DesktopSupervisorAvailability.current.status(
         mcpState: "stopped",
-        tunnelState: "stopped",
-        executionState: "idle",
-        supervisorState: "unavailable",
-        degradations: [DesktopSupervisorAvailability.degradation],
-        pendingApprovalCount: 0
+        tunnelState: "stopped"
       )
     )
     let application = BridgeApplicationService(
@@ -192,7 +187,7 @@ struct DesktopComposition: Sendable {
     let mcpRuntime = DesktopMCPRuntime(
       application: application,
       status: status,
-      supervisorAvailable: DesktopSupervisorAvailability.productionReviewAvailable
+      availability: DesktopSupervisorAvailability.current
     )
     let admissionGate = DesktopRemoteAdmissionGate()
     let connectionRuntime = DesktopConnectionRuntime(
@@ -203,7 +198,8 @@ struct DesktopComposition: Sendable {
         secretStore: secretStore
       ),
       status: status,
-      admissionGate: admissionGate
+      admissionGate: admissionGate,
+      availability: DesktopSupervisorAvailability.current
     )
     await mcpRuntime.setRemoteTaskAdmissionLeaseCheck { [weak connectionRuntime] in
       await connectionRuntime?.acquireRemoteSubmissionLease()
@@ -275,7 +271,34 @@ struct DesktopComposition: Sendable {
 }
 
 enum DesktopSupervisorAvailability {
-  static let productionReviewAvailable = false
-  static let degradation =
-    "Supervisor is disabled until isolated Codex authentication and a credentialed boundary test pass."
+  struct Snapshot: Equatable, Sendable {
+    let isAvailable: Bool
+
+    var state: String { isAvailable ? "ready" : "unavailable" }
+
+    var degradation: String? {
+      isAvailable
+        ? nil
+        : "Supervisor is disabled until isolated Codex authentication and a credentialed boundary test pass."
+    }
+
+    func status(
+      mcpState: String,
+      tunnelState: String,
+      additionalDegradations: [String] = []
+    ) -> BridgeStatusSnapshot {
+      BridgeStatusSnapshot(
+        appVersion: "0.1.0",
+        mcpState: mcpState,
+        tunnelState: tunnelState,
+        executionState: "idle",
+        supervisorState: state,
+        degradations: (degradation.map { [$0] } ?? []) + additionalDegradations,
+        pendingApprovalCount: 0
+      )
+    }
+  }
+
+  static let current = Snapshot(isAvailable: false)
+  static var productionReviewAvailable: Bool { current.isAvailable }
 }

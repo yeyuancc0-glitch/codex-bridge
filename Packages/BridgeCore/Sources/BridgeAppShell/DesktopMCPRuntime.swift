@@ -23,6 +23,7 @@ actor DesktopMCPRuntime {
   private let application: BridgeApplicationService
   private let taskOperations: DesktopMCPTaskOperations
   private let status: BridgeStatusStore
+  private let availability: DesktopSupervisorAvailability.Snapshot
   private var server: MCPBridgeServer?
   private var endpoint: MCPBridgeEndpoint?
   private var authentication: DesktopMCPAuthentication?
@@ -34,14 +35,15 @@ actor DesktopMCPRuntime {
   init(
     application: BridgeApplicationService,
     status: BridgeStatusStore,
-    supervisorAvailable: Bool = false
+    availability: DesktopSupervisorAvailability.Snapshot = DesktopSupervisorAvailability.current
   ) {
     self.application = application
     taskOperations = DesktopMCPTaskOperations(
       application: application,
-      supervisorAvailable: supervisorAvailable
+      supervisorAvailable: availability.isAvailable
     )
     self.status = status
+    self.availability = availability
   }
 
   func start(authentication requested: DesktopMCPAuthentication) async throws -> URL {
@@ -76,7 +78,7 @@ actor DesktopMCPRuntime {
     self.server = server
     self.endpoint = endpoint
     authentication = requested
-    await status.update(Self.statusSnapshot(mcpState: "ready"))
+    await status.update(availability.status(mcpState: "ready", tunnelState: "stopped"))
     return endpoint.localURL
   }
 
@@ -161,7 +163,7 @@ actor DesktopMCPRuntime {
     endpoint = nil
     authentication = nil
     await server?.stop()
-    await status.update(Self.statusSnapshot(mcpState: "stopped"))
+    await status.update(availability.status(mcpState: "stopped", tunnelState: "stopped"))
   }
 
   private func beginMutation() async {
@@ -193,17 +195,6 @@ actor DesktopMCPRuntime {
     await taskOperations.setRemoteAdmissionLeaseCheck(check)
   }
 
-  private static func statusSnapshot(mcpState: String) -> BridgeStatusSnapshot {
-    BridgeStatusSnapshot(
-      appVersion: "0.1.0",
-      mcpState: mcpState,
-      tunnelState: "stopped",
-      executionState: "idle",
-      supervisorState: "unavailable",
-      degradations: [DesktopSupervisorAvailability.degradation],
-      pendingApprovalCount: 0
-    )
-  }
 }
 
 extension DesktopMCPRuntime: DesktopMCPServing {}

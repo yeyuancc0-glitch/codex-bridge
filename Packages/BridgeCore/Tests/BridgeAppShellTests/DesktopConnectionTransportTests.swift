@@ -1,3 +1,5 @@
+import BridgeApplication
+import BridgeMCP
 import BridgeSecurity
 import BridgeTunnel
 import Foundation
@@ -6,6 +8,40 @@ import XCTest
 @testable import BridgeAppShell
 
 final class DesktopConnectionTransportTests: XCTestCase {
+  func testAvailableSupervisorIsProjectedInConnectionStatus() async throws {
+    let status = BridgeStatusStore(
+      initial: BridgeStatusSnapshot(
+        appVersion: "0.1.0",
+        mcpState: "stopped",
+        tunnelState: "stopped",
+        executionState: "idle",
+        supervisorState: "unavailable",
+        pendingApprovalCount: 0
+      )
+    )
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(),
+      status: status,
+      availability: DesktopSupervisorAvailability.Snapshot(isAvailable: true)
+    )
+
+    _ = try await runtime.configureLocal(
+      authentication: .path(secret: String(repeating: "a", count: 43))
+    )
+    let snapshot = try await status.snapshot(
+      deadline: ContinuousClock.now.advanced(by: .seconds(1))
+    )
+
+    XCTAssertEqual(snapshot.supervisorState, "ready")
+    XCTAssertFalse(
+      snapshot.degradations.contains {
+        $0.localizedCaseInsensitiveContains("supervisor")
+      }
+    )
+    await runtime.stop()
+  }
+
   func testLocalTransportIsReadyButNeverClaimsRemoteReachability() async throws {
     let mcp = ConnectionTestMCP()
     let runtime = DesktopConnectionRuntime(
