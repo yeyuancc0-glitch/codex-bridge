@@ -268,6 +268,10 @@ struct DesktopPresentationProjection {
         if leftIsDefault != rightIsDefault { return leftIsDefault }
         return left.id < right.id
       }
+      let supervisorRecommendation =
+        supervisors.contains {
+          LocalReadOnlyTaskPolicy.isLunaModel(id: $0.id, displayName: $0.displayName)
+        } ? "Luna" : nil
       let executions = modelOptions
       let blocker: String?
       if projectOptions.isEmpty {
@@ -285,6 +289,7 @@ struct DesktopPresentationProjection {
           threadID: value.threadID,
           executionModels: executions,
           supervisorModels: supervisors,
+          supervisorRecommendation: supervisorRecommendation,
           supervisorAvailable: DesktopSupervisorAvailability.productionReviewAvailable
             && !supervisors.isEmpty,
           blocker: blocker,

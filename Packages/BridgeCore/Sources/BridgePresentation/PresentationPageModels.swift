@@ -317,6 +317,7 @@ public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
   public let threadID: String?
   public let executionModels: [LocalTaskModelOptionPresentation]
   public let supervisorModels: [LocalTaskModelOptionPresentation]
+  public let supervisorRecommendation: String?
   public let supervisorAvailable: Bool
   public let blocker: String?
   public let isSubmitting: Bool
@@ -328,6 +329,7 @@ public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
     threadID: String? = nil,
     executionModels: [LocalTaskModelOptionPresentation],
     supervisorModels: [LocalTaskModelOptionPresentation],
+    supervisorRecommendation: String? = nil,
     supervisorAvailable: Bool = true,
     blocker: String? = nil,
     isSubmitting: Bool = false
@@ -338,6 +340,7 @@ public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
     self.threadID = threadID
     self.executionModels = executionModels
     self.supervisorModels = supervisorModels
+    self.supervisorRecommendation = supervisorRecommendation
     self.supervisorAvailable = supervisorAvailable
     self.blocker = blocker
     self.isSubmitting = isSubmitting

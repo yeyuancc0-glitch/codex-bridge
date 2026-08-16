@@ -149,12 +149,12 @@ private struct ReadOnlyTaskComposer: View {
           }
           Toggle("启用语义监督", isOn: $useSemanticSupervision)
             .disabled(!composer.supervisorAvailable)
-          Picker("Supervisor 模型（推荐 Luna）", selection: supervisorModelBinding) {
+          Picker(supervisorPickerTitle, selection: supervisorModelBinding) {
             ForEach(composer.supervisorModels) { model in
               Text(model.displayName).tag(model.id)
             }
           }
-          .help("Luna 仅在当前 Codex model/list 可用时优先显示；也可以选择其他可用模型。")
+          .help(supervisorPickerHelp)
           .disabled(!useSemanticSupervision)
           Picker("Supervisor effort", selection: $supervisorEffort) {
             ForEach(supervisorEfforts, id: \.self) { effort in
@@ -182,6 +182,20 @@ private struct ReadOnlyTaskComposer: View {
 
   private var supervisorEfforts: [String] {
     composer.supervisorModels.first(where: { $0.id == supervisorModel })?.efforts ?? []
+  }
+
+  private var supervisorPickerTitle: String {
+    if let recommendation = composer.supervisorRecommendation {
+      return "Supervisor 模型（推荐 " + recommendation + "）"
+    }
+    return "Supervisor 模型（从当前目录选择）"
+  }
+
+  private var supervisorPickerHelp: String {
+    if composer.supervisorRecommendation != nil {
+      return "Luna 是当前目录中的默认推荐项；也可以选择其他可用模型。"
+    }
+    return "当前目录没有 Luna；请选择一个当前可用的 Supervisor 模型。"
   }
 
   private var executionModelBinding: Binding<String> {

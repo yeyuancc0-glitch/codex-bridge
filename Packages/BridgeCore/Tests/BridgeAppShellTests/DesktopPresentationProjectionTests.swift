@@ -46,6 +46,42 @@ final class DesktopPresentationProjectionTests: XCTestCase {
     XCTAssertEqual(model.preferredEffort, "high")
   }
 
+  func testComposerProjectionDoesNotAdvertiseLunaWhenCatalogOmitsIt() throws {
+    var operatorState = DesktopOperatorState()
+    operatorState.composer = .ready(
+      DesktopLocalTaskComposer(
+        requestID: "request",
+        projectID: "project",
+        threadID: nil,
+        models: [
+          MCPModelSummary(
+            modelID: "gpt-other",
+            displayName: "Other",
+            isDefault: true,
+            reasoningEfforts: ["high"]
+          )
+        ],
+        isSubmitting: false,
+        submittedDraft: nil
+      )
+    )
+
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [],
+      diagnostics: [],
+      operatorState: operatorState
+    )
+
+    guard case .ready(let page) = snapshot.tasks,
+      case .ready(let composer)? = page.readOnlyComposer
+    else {
+      return XCTFail("Expected a projected model composer")
+    }
+    XCTAssertNil(composer.supervisorRecommendation)
+    XCTAssertEqual(composer.supervisorModels.map(\.id), ["gpt-other"])
+  }
+
   func testCodexApprovalWithoutOperationEvidenceIsDenyOnly() throws {
     let taskID = TaskID(rawValue: "task-approval")
     let approvalID = ApprovalID(rawValue: "approval-1")
