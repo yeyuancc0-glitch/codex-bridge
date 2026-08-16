@@ -200,6 +200,8 @@ public protocol BridgeAppBackend: Sendable {
   func dismissReadOnlyTask() async throws
   func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws
   func exportSupportBundle() async throws
+  func exportBackup() async throws
+  func restoreBackup() async throws
   func updateSetting(key: String, enabled: Bool) async throws
   func updateRetentionPolicy(
     eventDays: Int,
@@ -217,6 +219,7 @@ public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
   case taskEvidenceUnsupported
   case recoveryResolutionUnsupported
   case retentionPolicyUnsupported
+  case backupRestoreUnsupported
 }
 
 extension BridgeAppBackend {
@@ -304,5 +307,13 @@ extension BridgeAppBackend {
   public func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws {
     _ = draft
     throw BridgeAppBackendCompatibilityError.localTaskComposerUnsupported
+  }
+
+  public func exportBackup() async throws {
+    throw BridgeAppBackendCompatibilityError.backupRestoreUnsupported
+  }
+
+  public func restoreBackup() async throws {
+    throw BridgeAppBackendCompatibilityError.backupRestoreUnsupported
   }
 }

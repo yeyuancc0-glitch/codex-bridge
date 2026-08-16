@@ -213,6 +213,7 @@ codex app-server generate-json-schema --out DIR
 - Supervisor 的 checkpoint 出站过滤只约束提示内容，不约束同一 app-server 进程自行读取文件。没有 OS 级 evidence-only 隔离或经实测的 no-tools 协议能力时，终局复核和持续 checkpoint 都不得在 production 启动进程；状态必须诚实显示 unavailable。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 数据根目录 inode 的 advisory lock 只能绑定已打开对象；若发布威胁模型要求抵抗同一 UID 主动 rename 并重建整个数据根，必须另接稳定父锚或 LaunchServices/launchd 单实例机制，不能把当前目录锁描述为已覆盖该攻击。
+- 备份/恢复等任何会在数据根上执行原子替换或 swap 的门，必须先查 `EventStore.heldLockOwnerTaskIDs`：恢复后保留双锁的 `unknown` 任务不在 active-snapshot 列表里，只查活动快照会漏掉它；恢复只在下次启动、任何 store 打开前应用，绝不在运行时替换数据库。
 - 不带包装脚本的 `/usr/bin/xcodebuild` 会误用 Command Line Tools；看到测试宏、XCTest 或 SDK 缺失时先检查 `DEVELOPER_DIR`，不要重复安装 Xcode。
 
 ## 维护检查

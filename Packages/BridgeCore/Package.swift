@@ -184,6 +184,7 @@ let package = Package(
                 "BridgeSupervisor",
                 "BridgeTunnel",
                 "BridgeVerification",
+                .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "MCP", package: "swift-sdk"),
             ]

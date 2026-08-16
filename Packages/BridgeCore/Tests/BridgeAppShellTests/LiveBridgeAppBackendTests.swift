@@ -1,8 +1,13 @@
 import BridgeAppModel
 import BridgeApplication
+import BridgeCoordinator
 import BridgeDomain
 import BridgeMCP
+import BridgePersistence
+import BridgePipeline
 import BridgePresentation
+import BridgeRepositories
+import Darwin
 import Foundation
 import XCTest
 
@@ -592,6 +597,145 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await backend.shutdown()
   }
 
+  func testExportBackupRejectsWhenActiveTaskHoldsLock() async throws {
+    let root = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let backups = root.appendingPathComponent("Backups", isDirectory: true)
+    try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+    let system = await TestDesktopSystemService(
+      selectedDirectory: nil,
+      backupDestination: backups.appendingPathComponent("CodexBridge.backup", isDirectory: true)
+    )
+    let backend = LiveBridgeAppBackend(dataDirectoryURL: directory, system: system)
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&iterator)
+
+    // Simulate a running task that lost its app-server after bootstrap: a task in
+    // `unknown` phase that still holds its thread/worktree locks.
+    let eventStore = try EventStore(
+      path: directory.appendingPathComponent("task-events.sqlite").path
+    )
+    let coordinator = TaskCoordinator(
+      store: eventStore,
+      admission: BackupAdmission(),
+      runtime: BackupHoldingRuntime()
+    )
+    let seeded = try await coordinator.submit(origin: "test", submission: backupSubmission())
+    _ = try await waitForRunning(seeded.aggregate.id, coordinator: coordinator)
+    _ = try await coordinator.recoverIncompleteTasks()
+    let lockOwners = try await eventStore.heldLockOwnerTaskIDs(limit: 10)
+    XCTAssertFalse(lockOwners.isEmpty)
+
+    do {
+      try await backend.exportBackup()
+      XCTFail("Expected export to be blocked by the active task")
+    } catch {
+      XCTAssertEqual(error as? DesktopBackendError, .backupBlockedByActiveTasks)
+    }
+    await backend.shutdown()
+  }
+
+  private func waitForRunning(
+    _ taskID: TaskID,
+    coordinator: TaskCoordinator
+  ) async throws -> TaskProjection {
+    for _ in 0..<200 {
+      let task = try await coordinator.task(taskID)
+      if task.aggregate.phase == .running { return task }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    return try await coordinator.task(taskID)
+  }
+
+  func testExportBackupCreatesValidPackageAndUpdatesSettings() async throws {
+    let root = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let backups = root.appendingPathComponent("Backups", isDirectory: true)
+    try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+    let destination = backups.appendingPathComponent("CodexBridge.backup", isDirectory: true)
+    let system = await TestDesktopSystemService(
+      selectedDirectory: nil,
+      backupDestination: destination
+    )
+    let backend = LiveBridgeAppBackend(dataDirectoryURL: directory, system: system)
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&iterator)
+
+    try await backend.exportBackup()
+
+    _ = try DesktopBackupPackage.validate(at: destination)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+    let settings = try await nextSettingsSnapshot(&iterator)
+    guard case .ready(let page) = settings.presentation.settings else {
+      return XCTFail("Expected ready settings")
+    }
+    XCTAssertTrue(page.backupSummary.contains("上次导出"))
+    XCTAssertTrue(page.canExportBackup)
+    await backend.shutdown()
+  }
+
+  func testRestoreBackupStagesValidPackageAndRequestsRestart() async throws {
+    let root = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Data", isDirectory: true)
+    let first = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: nil)
+    )
+    let firstStream = await first.stateUpdates()
+    var firstIterator = firstStream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&firstIterator)
+    let snapshot = try DesktopBackupSnapshotProvider.makeSnapshotDirectory(
+      dataDirectoryURL: directory
+    )
+    defer { try? FileManager.default.removeItem(at: snapshot.directoryURL) }
+    let backups = root.appendingPathComponent("Backups", isDirectory: true)
+    try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+    let package = backups.appendingPathComponent("CodexBridge.backup", isDirectory: true)
+    _ = try DesktopBackupPackage.create(from: snapshot.directoryURL, at: package)
+    await first.shutdown()
+
+    let secondSystem = await TestDesktopSystemService(
+      selectedDirectory: nil,
+      backupPackage: package
+    )
+    let second = LiveBridgeAppBackend(dataDirectoryURL: directory, system: secondSystem)
+    let secondStream = await second.stateUpdates()
+    var secondIterator = secondStream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&secondIterator)
+
+    try await second.restoreBackup()
+
+    XCTAssertTrue(
+      DesktopRestoreCoordinator.pendingMarkerExists(dataDirectoryURL: directory)
+    )
+    let terminateCount = await secondSystem.terminateCount
+    XCTAssertEqual(terminateCount, 1)
+    let settings = try await nextSettingsSnapshot(&secondIterator)
+    guard case .ready(let page) = settings.presentation.settings else {
+      return XCTFail("Expected ready settings")
+    }
+    XCTAssertTrue(page.restoreSummary.contains("已暂存恢复"))
+    XCTAssertFalse(page.canExportBackup)
+    XCTAssertFalse(page.canRestoreBackup)
+  }
+
+  private func nextSettingsSnapshot(
+    _ iterator: inout AsyncThrowingStream<BridgeAppStateSnapshot, Error>.Iterator
+  ) async throws -> BridgeAppStateSnapshot {
+    for _ in 0..<10 {
+      guard let snapshot = try await iterator.next() else {
+        throw TestFailure.streamEnded
+      }
+      if case .ready = snapshot.presentation.settings { return snapshot }
+    }
+    throw TestFailure.snapshotMissing
+  }
+
   private func nextReadySnapshot(
     _ iterator: inout AsyncThrowingStream<BridgeAppStateSnapshot, Error>.Iterator
   ) async throws -> BridgeAppStateSnapshot {
@@ -674,6 +818,50 @@ final class LiveBridgeAppBackendTests: XCTestCase {
       isDirectory: true
     )
   }
+}
+
+private struct BackupAdmission: TaskAdmissionPolicy {
+  func decision(for _: TaskSubmission) -> TaskAdmissionDecision { .start }
+}
+
+private actor BackupHoldingRuntime: TaskExecutionRuntime {
+  private var continuations: [TaskID: AsyncStream<TaskExecutionObservation>.Continuation] = [:]
+
+  func lockKeys(for submission: TaskSubmission) -> [String] {
+    ["thread:\(submission.idempotencyKey.rawValue)", "worktree:\(submission.projectID.rawValue)"]
+  }
+
+  func start(taskID: TaskID, submission _: TaskSubmission) -> TaskExecutionSession {
+    let pair = AsyncStream<TaskExecutionObservation>.makeStream()
+    continuations[taskID] = pair.continuation
+    return TaskExecutionSession(
+      binding: ExecutionBinding(
+        threadID: ThreadID(rawValue: "thread-backup"),
+        turnID: TurnID(rawValue: "turn-backup"),
+        turnGeneration: 1
+      ),
+      observations: pair.stream
+    )
+  }
+
+  func resolveApproval(taskID _: TaskID, approvalID _: ApprovalID, approved _: Bool) {}
+  func interrupt(taskID _: TaskID, binding _: ExecutionBinding) {}
+}
+
+private func backupSubmission() -> TaskSubmission {
+  TaskSubmission(
+    idempotencyKey: IdempotencyKey(rawValue: "backup-active-task"),
+    projectID: ProjectID(rawValue: "project-backup"),
+    thread: .new,
+    execution: ExecutionOptions(
+      model: "gpt-test",
+      effort: "medium",
+      permissionMode: "read-only",
+      networkAccess: false
+    ),
+    supervisor: SupervisorOptions(enabled: false, model: "", effort: ""),
+    contract: TaskContract(goal: "Backup gate", acceptanceCriteria: ["Safe"])
+  )
 }
 
 private actor TestCodexCatalog: CodexCatalogQuerying {
@@ -867,18 +1055,25 @@ private enum TestFailure: Error {
 @MainActor
 private final class TestDesktopSystemService: DesktopSystemServing {
   private let selectedDirectory: URL?
+  private let backupDestination: URL?
+  private let backupPackage: URL?
   private var currentLaunchAtLoginStatus: DesktopLaunchAtLoginStatus
   private(set) var openedURLs: [URL] = []
   private(set) var copiedValues: [String] = []
   private(set) var savedSupportBundles: [Data] = []
+  private(set) var terminateCount = 0
 
   private(set) var launchAtLoginMutations: [Bool] = []
 
   init(
     selectedDirectory: URL?,
-    launchAtLoginStatus: DesktopLaunchAtLoginStatus = .unavailable
+    launchAtLoginStatus: DesktopLaunchAtLoginStatus = .unavailable,
+    backupDestination: URL? = nil,
+    backupPackage: URL? = nil
   ) {
     self.selectedDirectory = selectedDirectory
+    self.backupDestination = backupDestination
+    self.backupPackage = backupPackage
     currentLaunchAtLoginStatus = launchAtLoginStatus
   }
 
@@ -889,6 +1084,10 @@ private final class TestDesktopSystemService: DesktopSystemServing {
     launchAtLoginMutations.append(enabled)
     currentLaunchAtLoginStatus = enabled ? .enabled : .disabled
   }
+
+  func selectBackupDestination() async -> URL? { backupDestination }
+
+  func selectBackupPackage() async -> URL? { backupPackage }
 
   func selectProjectDirectory() async -> URL? { selectedDirectory }
 
@@ -911,7 +1110,7 @@ private final class TestDesktopSystemService: DesktopSystemServing {
   }
 
   func showMainWindow() {}
-  func terminateApplication() {}
+  func terminateApplication() { terminateCount += 1 }
 }
 
 @MainActor

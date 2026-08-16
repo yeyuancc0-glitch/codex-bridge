@@ -617,6 +617,25 @@ public actor EventStore {
     }
   }
 
+  /// Returns distinct task IDs that currently hold at least one lock, bounded.
+  public func heldLockOwnerTaskIDs(limit: Int) throws -> [TaskID] {
+    guard (1...500).contains(limit) else {
+      throw EventStoreError.invalidArgument("limit")
+    }
+    return try database.read { db in
+      try String.fetchAll(
+        db,
+        sql: """
+          SELECT DISTINCT owner_task_id
+          FROM locks
+          ORDER BY owner_task_id
+          LIMIT ?
+          """,
+        arguments: [limit]
+      ).map(TaskID.init(rawValue:))
+    }
+  }
+
   public func lockOwner(for lockKey: String) throws -> TaskID? {
     try database.read { db in
       try String.fetchOne(

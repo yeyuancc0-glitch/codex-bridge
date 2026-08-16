@@ -112,7 +112,8 @@ struct DesktopPresentationProjection {
         settings(
           lifecyclePreferences,
           launchAtLoginStatus: launchAtLoginStatus,
-          retentionPolicy: retentionPolicy
+          retentionPolicy: retentionPolicy,
+          backupRestore: operatorState.backupRestore
         )
       )
     )
@@ -650,9 +651,11 @@ struct DesktopPresentationProjection {
   private static func settings(
     _ preferences: LifecyclePreferences,
     launchAtLoginStatus: DesktopLaunchAtLoginStatus,
-    retentionPolicy: RetentionPolicyPresentation
+    retentionPolicy: RetentionPolicyPresentation,
+    backupRestore: DesktopOperatorLoad<DesktopBackupRestoreState>
   ) -> SettingsPagePresentation {
-    SettingsPagePresentation(
+    let backupActionsAvailable = backupActionsAvailable(backupRestore)
+    return SettingsPagePresentation(
       general: [
         SettingTogglePresentation(
           id: "launch-at-login",
@@ -691,8 +694,43 @@ struct DesktopPresentationProjection {
         ),
       ],
       retentionSummary: "事件 \(retentionPolicy.eventDays) 天；元数据 \(retentionPolicy.metadataDays) 天",
-      retentionPolicy: retentionPolicy
+      retentionPolicy: retentionPolicy,
+      backupSummary: backupSummary(backupRestore),
+      restoreSummary: restoreSummary(backupRestore),
+      canExportBackup: backupActionsAvailable.canExport,
+      canRestoreBackup: backupActionsAvailable.canRestore
     )
+  }
+
+  private static func backupActionsAvailable(
+    _ state: DesktopOperatorLoad<DesktopBackupRestoreState>
+  ) -> (canExport: Bool, canRestore: Bool) {
+    guard case .ready(let value) = state else { return (false, false) }
+    return (!value.restorePending, !value.restorePending)
+  }
+
+  private static func backupSummary(
+    _ state: DesktopOperatorLoad<DesktopBackupRestoreState>
+  ) -> String {
+    guard case .ready(let value) = state else { return "备份状态尚未就绪" }
+    guard let lastBackupAt = value.lastBackupAt else { return "尚未导出备份" }
+    return "上次导出：\(lastBackupAt.formatted(date: .abbreviated, time: .shortened))"
+  }
+
+  private static func restoreSummary(
+    _ state: DesktopOperatorLoad<DesktopBackupRestoreState>
+  ) -> String {
+    guard case .ready(let value) = state else { return "恢复状态尚未就绪" }
+    if value.restorePending {
+      return "已暂存恢复；退出后重新打开应用完成恢复"
+    }
+    guard let result = value.restoreResult else { return "尚未执行恢复" }
+    switch result.status {
+    case .succeeded:
+      return "恢复成功：\(result.message)"
+    case .failed:
+      return "恢复失败：\(result.message)；原数据已保留"
+    }
   }
 
   private static func launchAtLoginDetail(_ status: DesktopLaunchAtLoginStatus) -> String {

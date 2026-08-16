@@ -22,6 +22,11 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
   case projectHasActiveTasks
   case invalidIdentifier
   case operationFailed
+  case backupBlockedByActiveTasks
+  case backupBlockedByPendingRestore
+  case invalidBackupPackage
+  case backupUnavailable
+  case restoreUnavailable
 
   public var errorDescription: String? {
     switch self {
@@ -45,6 +50,16 @@ public enum DesktopBackendError: LocalizedError, Equatable, Sendable {
       "请求标识无效。"
     case .operationFailed:
       "本机操作未完成。"
+    case .backupBlockedByActiveTasks:
+      "存在活动任务或待审批，当前不能导出或恢复备份。"
+    case .backupBlockedByPendingRestore:
+      "已有一份待完成的恢复；请先退出并重新打开 Bridge 完成恢复。"
+    case .invalidBackupPackage:
+      "所选备份未通过校验，原有数据未改动。"
+    case .backupUnavailable:
+      "备份未能安全完成。"
+    case .restoreUnavailable:
+      "恢复未能安全完成；原有数据已保留。"
     }
   }
 }
@@ -993,6 +1008,137 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     return result
   }
 
+  func exportBackup() async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    try await requireQuiescentForBackup(composition: composition)
+    guard !DesktopRestoreCoordinator.pendingMarkerExists(dataDirectoryURL: dataDirectoryURL) else {
+      throw DesktopBackendError.backupBlockedByPendingRestore
+    }
+    let destination = await system.selectBackupDestination()
+    guard let destination else { return }
+    try checkRunning()
+    do {
+      let (snapshotDirectory, summary) = try DesktopBackupSnapshotProvider.makeSnapshotDirectory(
+        dataDirectoryURL: dataDirectoryURL
+      )
+      defer { try? FileManager.default.removeItem(at: snapshotDirectory) }
+      try checkRunning()
+      let manifest = try DesktopBackupPackage.create(from: snapshotDirectory, at: destination)
+      operatorState.backupRestore = .ready(
+        DesktopBackupRestoreState(
+          lastBackupAt: manifest.createdAt,
+          restoreResult: restoreResult,
+          restorePending: false
+        )
+      )
+      appendDiagnostic(
+        "已导出备份：\(summary.databases.count) 个数据库快照。",
+        status: .ready
+      )
+      try await publishCurrentFacts()
+    } catch {
+      try? await publishCurrentFacts()
+      throw mapBackupRestoreError(error)
+    }
+  }
+
+  func restoreBackup() async throws {
+    try beginOperation()
+    let marker: DesktopRestoreMarker?
+    do {
+      try await waitUntilReady()
+      let composition = try requireComposition()
+      try await requireQuiescentForBackup(composition: composition)
+      let packageURL = await system.selectBackupPackage()
+      guard let packageURL else {
+        endOperation()
+        return
+      }
+      try checkRunning()
+      marker = try DesktopRestoreCoordinator.prepareRestore(
+        packageURL: packageURL,
+        dataDirectoryURL: dataDirectoryURL
+      )
+    } catch {
+      endOperation()
+      throw mapBackupRestoreError(error)
+    }
+    endOperation()
+    guard marker != nil else { return }
+    operatorState.backupRestore = .ready(
+      DesktopBackupRestoreState(
+        lastBackupAt: lastBackupAt,
+        restoreResult: nil,
+        restorePending: true
+      )
+    )
+    appendDiagnostic(
+      "备份已校验并暂存；Bridge 将退出，重新打开后完成恢复。",
+      status: .checking
+    )
+    try? await publishCurrentFacts()
+    await shutdown()
+    await system.terminateApplication()
+  }
+
+  private func requireQuiescentForBackup(composition: DesktopComposition) async throws {
+    // Any held lock (including tasks left in `unknown` by recovery) blocks export
+    // and restore: swapping the data root underneath pending recovery is unsafe.
+    let lockOwners = try await composition.eventStore.heldLockOwnerTaskIDs(limit: 1)
+    guard lockOwners.isEmpty else {
+      throw DesktopBackendError.backupBlockedByActiveTasks
+    }
+    var cursor: TaskID?
+    var inspected = 0
+    while inspected < Self.maximumActiveTasks {
+      let remaining = Self.maximumActiveTasks - inspected
+      let page = try await composition.eventStore.taskIDsWithActiveSnapshots(
+        afterTaskID: cursor,
+        limit: min(500, remaining)
+      )
+      guard !page.isEmpty else { return }
+      for taskID in page {
+        let task = try await composition.coordinator.task(taskID)
+        if !task.aggregate.pendingApprovalIDs.isEmpty {
+          throw DesktopBackendError.backupBlockedByActiveTasks
+        }
+      }
+      inspected += page.count
+      cursor = page.last
+      if page.count < min(500, remaining) { break }
+    }
+    throw DesktopBackendError.backupBlockedByActiveTasks
+  }
+
+  private func mapBackupRestoreError(_ error: Error) -> DesktopBackendError {
+    switch error {
+    case DesktopBackupRestoreError.restoreAlreadyPending:
+      .backupBlockedByPendingRestore
+    case DesktopBackupRestoreError.invalidPackage,
+      DesktopBackupRestoreError.invalidSnapshot,
+      DesktopBackupRestoreError.unsupportedSnapshotSchema,
+      DesktopBackupRestoreError.stagingUnavailable:
+      .invalidBackupPackage
+    case DesktopBackupRestoreError.restoreIncomplete:
+      .restoreUnavailable
+    default:
+      .backupUnavailable
+    }
+  }
+
+  private var lastBackupAt: Date? {
+    guard case .ready(let state) = operatorState.backupRestore else { return nil }
+    return state.lastBackupAt
+  }
+
+  private var restoreResult: DesktopRestoreResult? {
+    guard case .ready(let state) = operatorState.backupRestore else { return nil }
+    return state.restoreResult
+  }
+
   func updateSetting(key: String, enabled: Bool) async throws {
     try beginOperation()
     defer { endOperation() }
@@ -1186,6 +1332,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       let failed: Bool
       var createdComposition: DesktopComposition?
       do {
+        try await self.preparePendingRestoreBeforeBootstrap()
         let composition = try await DesktopComposition.make(
           dataDirectoryURL: self.dataDirectoryURL,
           system: self.system,
@@ -1209,7 +1356,10 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         await createdComposition?.shutdown()
         failed = true
       }
-      await self.finishBootstrapTask(failed: failed)
+      await self.finishBootstrapTask(
+        failed: failed,
+        message: "Bridge 无法安全打开本机数据目录。请检查目录权限后重试。"
+      )
     }
   }
 
@@ -1228,16 +1378,59 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
   }
 
-  private func finishBootstrapTask(failed: Bool) {
+  private func finishBootstrapTask(
+    failed: Bool,
+    message: String = "Bridge 无法安全打开本机数据目录。请检查目录权限后重试。"
+  ) {
     bootstrapTask = nil
     guard failed, !isShuttingDown else { return }
     failCompositionWaiters()
     publish(
       connectionState: .failed,
-      presentation: DesktopPresentationProjection.failure(
-        message: "Bridge 无法安全打开本机数据目录。请检查目录权限后重试。"
-      )
+      presentation: DesktopPresentationProjection.failure(message: message)
     )
+  }
+
+  private func preparePendingRestoreBeforeBootstrap() async throws {
+    do {
+      switch try DesktopRestoreCoordinator.performPendingRestoreIfNeeded(
+        dataDirectoryURL: dataDirectoryURL
+      ) {
+      case .none:
+        if let result = DesktopRestoreCoordinator.latestResult(dataDirectoryURL: dataDirectoryURL) {
+          operatorState.backupRestore = .ready(
+            DesktopBackupRestoreState(
+              lastBackupAt: nil,
+              restoreResult: result,
+              restorePending: false
+            )
+          )
+        }
+      case .succeeded(let result):
+        operatorState.backupRestore = .ready(
+          DesktopBackupRestoreState(
+            lastBackupAt: nil,
+            restoreResult: result,
+            restorePending: false
+          )
+        )
+        appendDiagnostic("备份恢复完成。", status: .ready)
+      case .failed(let result):
+        operatorState.backupRestore = .ready(
+          DesktopBackupRestoreState(
+            lastBackupAt: nil,
+            restoreResult: result,
+            restorePending: false
+          )
+        )
+        appendDiagnostic("备份恢复未完成：\(result.message)", status: .blocked)
+      }
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      appendDiagnostic("备份恢复未能安全完成；请保留数据目录并联系支持。", status: .blocked)
+      throw error
+    }
   }
 
   private func installConnectionObserver(_ runtime: DesktopConnectionRuntime) {

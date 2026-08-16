@@ -37,12 +37,19 @@ struct DesktopLocalTaskComposer: Equatable, Sendable {
   let submittedDraft: ReadOnlyTaskDraftPresentation?
 }
 
+struct DesktopBackupRestoreState: Equatable, Sendable {
+  var lastBackupAt: Date?
+  var restoreResult: DesktopRestoreResult?
+  var restorePending: Bool
+}
+
 struct DesktopOperatorState: Equatable, Sendable {
   var selectedProjectID: String?
   var threads: DesktopOperatorLoad<DesktopThreadCatalogPage> = .notLoaded
   var history: DesktopOperatorLoad<DesktopThreadHistoryPage>?
   var composer: DesktopOperatorLoad<DesktopLocalTaskComposer>?
   var rateLimits: DesktopOperatorLoad<CatalogRateLimitSummary> = .notLoaded
+  var backupRestore: DesktopOperatorLoad<DesktopBackupRestoreState> = .notLoaded
   var threadGeneration: UInt64 = 0
   var historyGeneration: UInt64 = 0
 

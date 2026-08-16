@@ -40,6 +40,8 @@ public protocol DesktopSystemServing: Sendable {
     _ data: Data,
     suggestedFileName: String
   ) async -> DesktopSupportBundleSaveResult
+  @MainActor func selectBackupDestination() async -> URL?
+  @MainActor func selectBackupPackage() async -> URL?
   @MainActor func showMainWindow()
   @MainActor func terminateApplication()
   @MainActor func setLaunchAtLoginEnabled(_ enabled: Bool) throws
@@ -57,6 +59,10 @@ extension DesktopSystemServing {
     _ = projectName
     return await selectProjectDirectory()
   }
+
+  @MainActor public func selectBackupDestination() async -> URL? { nil }
+
+  @MainActor public func selectBackupPackage() async -> URL? { nil }
 }
 
 public struct AppKitDesktopSystemService: DesktopSystemServing {
@@ -132,6 +138,41 @@ public struct AppKitDesktopSystemService: DesktopSystemServing {
     guard await panel.begin() == .OK, let url = panel.url else { return .cancelled }
     return await Task.detached { DesktopSupportBundleWriter.persist(data, at: url) }.value
       ? .saved : .failed
+  }
+
+  @MainActor
+  public func selectBackupDestination() async -> URL? {
+    let panel = NSSavePanel()
+    panel.title = "导出 Codex Bridge 备份"
+    panel.message = "备份包含三份一致性数据库快照，不包含密钥、凭证或日志。"
+    panel.nameFieldStringValue = "CodexBridge-Backup-\(Self.dateStamp())"
+    panel.canCreateDirectories = true
+    panel.allowedContentTypes = [.folder]
+    guard await panel.begin() == .OK, let url = panel.url else { return nil }
+    return url
+  }
+
+  @MainActor
+  public func selectBackupPackage() async -> URL? {
+    let panel = NSOpenPanel()
+    panel.title = "选择 Codex Bridge 备份"
+    panel.message = "选择由 Codex Bridge 导出的备份目录。恢复前会先在私有目录中校验。"
+    panel.prompt = "选择备份"
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = false
+    panel.resolvesAliases = true
+    guard await panel.begin() == .OK else { return nil }
+    return panel.url
+  }
+
+  private static func dateStamp() -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd-HHmm"
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone.current
+    return formatter.string(from: Date())
   }
 
   @MainActor

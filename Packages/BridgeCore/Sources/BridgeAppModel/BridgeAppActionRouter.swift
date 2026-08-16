@@ -100,6 +100,10 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.setReceivingPaused(paused)
     case .exportSupportBundle:
       try await backend.exportSupportBundle()
+    case .exportBackup:
+      try await backend.exportBackup()
+    case .restoreBackup:
+      try await backend.restoreBackup()
     case .updateSetting(let key, let enabled):
       try await backend.updateSetting(key: key, enabled: enabled)
     case .updateRetentionPolicy(

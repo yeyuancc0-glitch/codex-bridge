@@ -171,6 +171,8 @@ public enum PresentationAction: Equatable, Sendable {
   case testConnection
   case setReceivingPaused(Bool)
   case exportSupportBundle
+  case exportBackup
+  case restoreBackup
   case updateSetting(key: String, enabled: Bool)
   case updateRetentionPolicy(
     eventDays: Int,

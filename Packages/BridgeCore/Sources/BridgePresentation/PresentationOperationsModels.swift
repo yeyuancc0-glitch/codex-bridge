@@ -126,19 +126,31 @@ public struct SettingsPagePresentation: Equatable, Sendable {
   public let security: [SettingTogglePresentation]
   public let retentionSummary: String
   public let retentionPolicy: RetentionPolicyPresentation
+  public let backupSummary: String
+  public let restoreSummary: String
+  public let canExportBackup: Bool
+  public let canRestoreBackup: Bool
 
   public init(
     general: [SettingTogglePresentation],
     notifications: [SettingTogglePresentation],
     security: [SettingTogglePresentation],
     retentionSummary: String,
-    retentionPolicy: RetentionPolicyPresentation = .defaults
+    retentionPolicy: RetentionPolicyPresentation = .defaults,
+    backupSummary: String = "尚未导出备份",
+    restoreSummary: String = "尚未执行恢复",
+    canExportBackup: Bool = false,
+    canRestoreBackup: Bool = false
   ) {
     self.general = general
     self.notifications = notifications
     self.security = security
     self.retentionSummary = retentionSummary
     self.retentionPolicy = retentionPolicy
+    self.backupSummary = backupSummary
+    self.restoreSummary = restoreSummary
+    self.canExportBackup = canExportBackup
+    self.canRestoreBackup = canRestoreBackup
   }
 }
 

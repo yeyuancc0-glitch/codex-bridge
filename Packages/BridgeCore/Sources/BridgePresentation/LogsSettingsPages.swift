@@ -125,6 +125,25 @@ private struct SettingsForm: View {
           value: page.retentionPolicy.recentTaskLimit.map(String.init) ?? "不额外限制"
         )
       }
+      Section("备份与恢复") {
+        LabeledContent("最近备份", value: page.backupSummary)
+        LabeledContent("恢复状态", value: page.restoreSummary)
+        HStack {
+          Button("导出备份…", systemImage: "externaldrive.badge.plus") {
+            Task { await store.perform(.exportBackup) }
+          }
+          .disabled(!page.canExportBackup)
+          .help(page.canExportBackup ? "导出三份 SQLite 的一致快照" : "存在待应用恢复或活动任务时不能导出")
+          Button("恢复备份…", systemImage: "arrow.counterclockwise") {
+            Task { await store.perform(.restoreBackup) }
+          }
+          .disabled(!page.canRestoreBackup)
+          .help(page.canRestoreBackup ? "选择备份包；校验后退出应用，重新打开时完成恢复" : "已存在待应用恢复时不能再次恢复")
+        }
+        Text("恢复会先校验备份包，再由应用退出重启完成原子替换；期间不会改动当前数据。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
     }
     .formStyle(.grouped)
   }
