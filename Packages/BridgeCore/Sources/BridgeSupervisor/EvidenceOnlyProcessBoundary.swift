@@ -64,25 +64,26 @@ public enum EvidenceOnlyProcessBoundary {
   public static func configuration(
     wrapping base: AppServerConfiguration,
     isolatedHomeURL: URL,
-    deniedReadRoots: [URL]
+    deniedReadRoots: [URL],
+    networkAccess: Bool = false
   ) throws -> AppServerConfiguration {
     guard FileManager.default.fileExists(atPath: sandboxExecutableURL.path) else {
       throw EvidenceOnlyProcessBoundaryError.unavailable
     }
     let isolatedHome = try normalizedPath(isolatedHomeURL, field: "isolatedHome")
     let deniedRoots = try Set(
-      ["/Users"]
-        + deniedReadRoots.map {
-          try normalizedPath($0, field: "deniedReadRoot")
-        }
+      deniedReadRoots.map {
+        try normalizedPath($0, field: "deniedReadRoot")
+      }
     )
     guard !deniedRoots.contains(where: { isolatedHome == $0 || isolatedHome.hasPrefix($0 + "/") })
     else {
       throw EvidenceOnlyProcessBoundaryError.invalidPath("isolatedHome")
     }
     let executableDirectory = base.executableURL.deletingLastPathComponent().path
+    let protectedRoots = deniedRoots.union(["/Users"])
     guard
-      !deniedRoots.contains(where: {
+      !protectedRoots.contains(where: {
         executableDirectory == $0 || executableDirectory.hasPrefix($0 + "/")
       })
     else {
@@ -100,7 +101,8 @@ public enum EvidenceOnlyProcessBoundary {
     let profile = try makeProfile(
       allowedReadRoots: allowedReads,
       deniedReadRoots: deniedRoots,
-      isolatedHome: isolatedHome
+      isolatedHome: isolatedHome,
+      networkAccess: networkAccess
     )
     guard profile.utf8.count <= maximumProfileBytes else {
       throw EvidenceOnlyProcessBoundaryError.profileTooLarge
@@ -122,10 +124,16 @@ public enum EvidenceOnlyProcessBoundary {
     )
   }
 
+  package static func isPrivateDirectory(_ url: URL) -> Bool {
+    guard url.isFileURL else { return false }
+    return hasPrivateDirectoryMetadata(atPath: url.standardizedFileURL.path)
+  }
+
   private static func makeProfile(
     allowedReadRoots: Set<String>,
     deniedReadRoots: Set<String>,
-    isolatedHome: String
+    isolatedHome: String,
+    networkAccess: Bool
   ) throws -> String {
     let allowReads = try allowedReadRoots.sorted().map { path in
       "(subpath \(try profileLiteral(path)))"
@@ -134,18 +142,22 @@ public enum EvidenceOnlyProcessBoundary {
       "(subpath \(try profileLiteral(path)))"
     }.joined(separator: " ")
     let home = try profileLiteral(isolatedHome)
+    let userOutsideHome = "(require-all (subpath \"/Users\") (require-not (subpath \(home))))"
     let parent = try profileLiteral(
       URL(fileURLWithPath: isolatedHome).deletingLastPathComponent().path
     )
+    let networkRule = networkAccess ? "(allow network-outbound)" : "(deny network*)"
     return """
       (version 1)
       (import "system.sb")
       (allow process*)
-      (deny network*)
+      \(networkRule)
       (allow file-read* \(allowReads))
       (allow file-read-metadata (subpath "/private") (subpath "/private/var")
         (subpath "/private/var/folders") (subpath "/private/var/select") (subpath \(parent)))
       (allow file-write* (subpath \(home)))
+      (deny file-read* \(userOutsideHome))
+      (deny file-write* \(userOutsideHome))
       (deny file-read* \(denyReads))
       (deny file-write* \(denyReads))
       """

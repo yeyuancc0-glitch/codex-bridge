@@ -12,6 +12,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
   /// A private HOME/CODEX_HOME prepared by the desktop host for evidence-only
   /// Supervisor sessions. The project root is denied per session.
   public let evidenceOnlyHomeURL: URL?
+  public let authenticationProvisioner: CodexSupervisorAuthenticationProvisioner?
   package let permitsUnconfinedProjectReadForProtocolTesting: Bool
 
   public init(
@@ -21,7 +22,8 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     reviewTimeoutNanoseconds: UInt64 = 180_000_000_000,
     eventBufferLimit: Int = 128,
     maximumConcurrentTasks: Int = 2,
-    evidenceOnlyHomeURL: URL? = nil
+    evidenceOnlyHomeURL: URL? = nil,
+    authenticationProvisioner: CodexSupervisorAuthenticationProvisioner? = nil
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
@@ -30,6 +32,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.maximumConcurrentTasks = max(1, maximumConcurrentTasks)
     self.evidenceOnlyHomeURL = evidenceOnlyHomeURL
+    self.authenticationProvisioner = authenticationProvisioner
     permitsUnconfinedProjectReadForProtocolTesting = false
   }
 
@@ -50,6 +53,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
       eventBufferLimit: eventBufferLimit,
       maximumConcurrentTasks: maximumConcurrentTasks,
       evidenceOnlyHomeURL: evidenceOnlyHomeURL,
+      authenticationProvisioner: nil,
       permitsUnconfinedProjectReadForProtocolTesting: true
     )
   }
@@ -62,6 +66,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     eventBufferLimit: Int,
     maximumConcurrentTasks: Int,
     evidenceOnlyHomeURL: URL?,
+    authenticationProvisioner: CodexSupervisorAuthenticationProvisioner?,
     permitsUnconfinedProjectReadForProtocolTesting: Bool
   ) {
     self.appServer = appServer
@@ -71,6 +76,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.maximumConcurrentTasks = max(1, maximumConcurrentTasks)
     self.evidenceOnlyHomeURL = evidenceOnlyHomeURL
+    self.authenticationProvisioner = authenticationProvisioner
     self.permitsUnconfinedProjectReadForProtocolTesting =
       permitsUnconfinedProjectReadForProtocolTesting
   }
@@ -92,6 +98,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
       eventBufferLimit: eventBufferLimit,
       maximumConcurrentTasks: maximumConcurrentTasks,
       evidenceOnlyHomeURL: evidenceOnlyHomeURL,
+      authenticationProvisioner: authenticationProvisioner,
       permitsUnconfinedProjectReadForProtocolTesting: permitsUnconfinedProjectReadForProtocolTesting
     )
   }
@@ -114,6 +121,7 @@ public enum CodexSupervisorRuntimeError: Error, Equatable, Sendable {
   case reviewTimedOut
   case unsafeCheckpoint
   case evidenceIsolationUnavailable
+  case authenticationRequired
   case processFailed
 }
 
@@ -208,6 +216,7 @@ public actor CodexSupervisorRuntime {
     guard sessions.count + creating.count < configuration.maximumConcurrentTasks else {
       throw CodexSupervisorRuntimeError.taskLimitReached
     }
+    creating.insert(taskID)
     let sessionConfiguration: CodexSupervisorRuntimeConfiguration
     var sessionHome: URL?
     if configuration.permitsUnconfinedProjectReadForProtocolTesting {
@@ -220,18 +229,34 @@ public actor CodexSupervisorRuntime {
       do {
         let preparedHome = try EvidenceOnlyProcessBoundary.prepareSessionHome(in: home)
         sessionHome = preparedHome
+        if let authenticationProvisioner = configuration.authenticationProvisioner {
+          do {
+            _ = try await authenticationProvisioner.ensureAuthenticated(
+              homeURL: preparedHome,
+              deniedReadRoots: [URL(fileURLWithPath: root.canonicalPath, isDirectory: true)]
+            )
+          } catch {
+            throw CodexSupervisorRuntimeError.authenticationRequired
+          }
+        }
         sessionConfiguration = try configuration.withEvidenceOnlyProcessBoundary(
           home: preparedHome,
           deniedRoot: root
         )
+      } catch let error as CodexSupervisorRuntimeError {
+        creating.remove(taskID)
+        if let sessionHome {
+          EvidenceOnlyProcessBoundary.removeSessionHome(sessionHome, from: home)
+        }
+        throw error
       } catch {
+        creating.remove(taskID)
         if let sessionHome {
           EvidenceOnlyProcessBoundary.removeSessionHome(sessionHome, from: home)
         }
         throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
       }
     }
-    creating.insert(taskID)
     let session = CodexSupervisorSession(
       taskID: taskID,
       root: root,
@@ -292,6 +317,8 @@ public actor CodexSupervisorRuntime {
     case .invalidTaskIdentifier, .invalidModel, .invalidEffort, .rootChanged, .taskLimitReached,
       .reviewAlreadyActive, .modelUnavailable, .effortUnavailable, .responseMissing,
       .responseTooLarge, .unsafeCheckpoint, .evidenceIsolationUnavailable:
+      false
+    case .authenticationRequired:
       false
     }
   }

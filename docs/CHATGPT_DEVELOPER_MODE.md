@@ -9,6 +9,7 @@
 - macOS 14 或更高版本，Codex CLI 已安装并能启动 `codex app-server`；
 - Codex Bridge 已完成首次启动，项目已通过应用内目录选择器注册；
 - Codex 登录由应用内向导完成。不要把 `auth.json`、Cookie 或任何 Token 复制到聊天、日志或仓库；
+- Supervisor 的每个隔离 HOME 也只能由该 HOME 内的 Codex app-server 通过官方 ChatGPT 登录接口完成配置。Bridge 不复制或读取主 HOME、其他任务 HOME 或 `auth.json`；因此首次启用新的隔离会话可能需要用户再次在系统浏览器完成登录。
 - ChatGPT 账号具备 Developer Mode / 自定义 MCP 应用权限；
 - 若使用 Secure MCP Tunnel，已经在 OpenAI 平台创建仅用于 Tunnel 的 Restricted Runtime Key，并知道 Tunnel ID。
 
@@ -80,6 +81,8 @@ Before starting any task, call list_projects, list_threads when continuing work,
 6. 只有 `get_final_report` 返回绑定同一 task/project/thread/turn/generation 的终态报告，才在 ChatGPT 中宣称完成；
 7. 断开 Tunnel 后确认本地任务不被停止、新的远程提交被拒绝；恢复 Tunnel 后确认重新通过严格健康检查；
 8. 用恶意 fixture 验证 Supervisor 不能读取项目根、用户目录或联网，也不能批准审批请求。
+
+Supervisor 认证的顺序必须是：创建任务隔离 HOME，启动仅允许出站网络的认证 app-server，用户在系统浏览器完成官方登录，收到匹配的 `account/login/completed` 成功通知并由 `account/read` 核验，然后停止认证进程，再用同一 HOME 启动完全禁网的只读 Supervisor 进程。
 
 任何一步失败都保留明确的 unavailable/failed 事实，不用自然语言或旧 generation 证据替代成功结果。
 

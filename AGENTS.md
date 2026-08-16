@@ -86,6 +86,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 相对路径必须标准化、解析符号链接后再次验证仍在注册根目录内；读取时从根目录描述符逐级 `openat + O_NOFOLLOW`，并复核根与目标文件的 device/inode，防止校验后替换竞态。
 - 默认拒绝 `.env*`、私钥、Keychain、浏览器 Cookie、Codex auth 等敏感路径。
 - Runtime Key 只用于 Tunnel，永不传给 Codex/Luna，永不写日志或支持包。
+- Supervisor 认证只由 Codex app-server 写入隔离 HOME；Bridge 永不读取、复制、解析或记录 `auth.json`、Cookie、Token、登录 URL 或验证码。每个隔离 HOME 需要独立的官方登录事实，不能声称跨 HOME 复用登录。
 - 支持包只能从明确允许的有界结构化事实生成；不导出 Endpoint、项目/任务标识、原始输出、源文件或凭证。导出 JSON 上限 1 MiB，以规范化目录描述符逐级无跟随打开，再用 `0600` 临时文件原子替换。
 - App 启动必须持有私有 0700 数据根目录 inode 和 0600 lock file 的跨进程租约；退出先停止并排空全部本地 MCP 请求，再关闭 lifecycle、Connection、Supervisor 与 Execution，旧 wake 或连接替换不得重新开放提交。
 - 网络默认关闭；包安装、网络、Git 写和项目外访问要求本机确认。
@@ -105,7 +106,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - `BridgePersistence`：SQLite/GRDB 事件存储与迁移。
 - `BridgeProjects` / `BridgeGit` / `BridgeSecurity`：项目白名单、Git 证据与确定性策略。
 - `BridgeMCP`：本地 Streamable HTTP MCP 与工具适配。
-- `BridgeSupervisor`：检查点、结构化判断、防循环与纠偏；`EvidenceOnlyProcessBoundary` 用 macOS Seatbelt 将可选 Supervisor app-server 限制在隔离 HOME，并拒绝 `/Users` 与注册项目根的读写，当前仅完成恶意读取本机回归，未因认证配置缺口打开生产 admission。
+- `BridgeSupervisor`：检查点、结构化判断、防循环与纠偏；`EvidenceOnlyProcessBoundary` 用 macOS Seatbelt 将可选 Supervisor app-server 限制在每任务隔离 HOME，并拒绝 HOME 之外的 `/Users` 与注册项目根读写。认证只允许用户通过该 HOME 的官方 `account/login/start` + 系统浏览器 + `account/login/completed` + `account/read` 完成，认证进程仅允许出站网络，随后必须停止并以完全禁网配置重启 review；当前仅完成 fixture 回归，未因认证配置缺口打开生产 admission。
 - `BridgeRuntime`：每任务隔离的 Execution app-server 会话、审批关联、generation、steer/interrupt 和终态观察。
 - `BridgeRepositories`：项目配置、Thread 绑定和最终报告的 GRDB 持久仓库。
 - `BridgeApplication`：把项目、Thread、模型、任务、报告和文件能力组合成 MCP/Application API；对外 DTO 必须脱敏且不得暴露规范化绝对根路径。

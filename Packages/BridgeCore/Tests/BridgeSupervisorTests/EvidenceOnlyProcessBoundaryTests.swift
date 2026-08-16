@@ -43,6 +43,42 @@ final class EvidenceOnlyProcessBoundaryTests: XCTestCase {
     XCTAssertEqual(process.terminationStatus, 0)
   }
 
+  func testWrappedProcessDeniesARealUsersPathOutsideIsolatedHome() throws {
+    let userHome = FileManager.default.homeDirectoryForCurrentUser
+    let directory = userHome.appending(
+      path: "Library/Caches/bridge-evidence-boundary-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    let home = directory.appending(path: "home", directoryHint: .isDirectory)
+    let sentinel = directory.appendingPathComponent("user-secret.txt")
+    try FileManager.default.createDirectory(
+      at: home,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    try Data("user-secret".utf8).write(to: sentinel, options: .completeFileProtection)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+
+    let script = "test ! -r \"\(sentinel.path)\" && test ! -w \"\(sentinel.path)\""
+    let configuration = try EvidenceOnlyProcessBoundary.configuration(
+      wrapping: AppServerConfiguration(
+        executableURL: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", script]
+      ),
+      isolatedHomeURL: home,
+      deniedReadRoots: []
+    )
+    let process = Process()
+    process.executableURL = configuration.executableURL
+    process.arguments = configuration.arguments
+    process.currentDirectoryURL = configuration.currentDirectoryURL
+    process.environment = configuration.environment
+    try process.run()
+    process.waitUntilExit()
+
+    XCTAssertEqual(process.terminationStatus, 0)
+  }
+
   func testRejectsProfilePathInjection() {
     XCTAssertThrowsError(
       try EvidenceOnlyProcessBoundary.configuration(
@@ -78,6 +114,33 @@ final class EvidenceOnlyProcessBoundaryTests: XCTestCase {
     let profile = configuration.arguments[1]
     XCTAssertTrue(profile.contains("(deny network*)"))
     XCTAssertFalse(profile.contains("(allow network*)"))
+  }
+
+  func testAuthenticationProfileAllowsOutboundOnly() throws {
+    let home = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-evidence-auth-home-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(
+      at: home,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+
+    let configuration = try EvidenceOnlyProcessBoundary.configuration(
+      wrapping: AppServerConfiguration(
+        executableURL: URL(fileURLWithPath: "/bin/sh"),
+        arguments: []
+      ),
+      isolatedHomeURL: home,
+      deniedReadRoots: [],
+      networkAccess: true
+    )
+    let profile = configuration.arguments[1]
+    XCTAssertTrue(profile.contains("(allow network-outbound)"))
+    XCTAssertFalse(profile.contains("(allow network*)"))
+    XCTAssertFalse(profile.contains("(allow network-inbound)"))
   }
 
   func testSessionCleanupDoesNotFollowReplacedRootSymlink() throws {

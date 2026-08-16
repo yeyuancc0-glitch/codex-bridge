@@ -82,10 +82,19 @@ struct DesktopComposition: Sendable {
       coordinator: coordinator,
       reports: repository
     )
+    let supervisorAuthentication = CodexSupervisorAuthenticationProvisioner(
+      configuration: CodexSupervisorAuthenticationConfiguration(
+        clientInfo: .bridge(version: "0.1.0")
+      ),
+      openAuthenticationURL: { url in
+        await MainActor.run { system.open(url) }
+      }
+    )
     let supervisorRuntime = CodexSupervisorRuntime(
       configuration: CodexSupervisorRuntimeConfiguration(
         clientInfo: .bridge(version: "0.1.0"),
-        evidenceOnlyHomeURL: paths.supervisorHomeURL
+        evidenceOnlyHomeURL: paths.supervisorHomeURL,
+        authenticationProvisioner: supervisorAuthentication
       )
     )
     let verificationStore = try VerificationAuthorizationStore(

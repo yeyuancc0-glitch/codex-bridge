@@ -32,7 +32,7 @@ Codex Bridge.app
 2. **macOS 小应用使用 Swift 6、SwiftUI 和必要的 AppKit 原生开发。**
 3. **Codex 执行和 Luna 监督都复用用户现有的 Codex ChatGPT 官方登录。** 不要求用户提供用于模型推理的 OpenAI API Key。
 4. **执行模型和推理深度由用户启动任务时选择，选项通过 Codex `model/list` 动态读取。**
-5. **监督模型默认是 `gpt-5.6-luna`，推理深度默认 `medium`。** 如果账户不可用 Luna，不静默替换模型，而是提示用户选择降级策略。
+5. **监督模型默认推荐 Luna，推理深度默认 `medium`。** Luna 不是内置模型；用户可以从当前 `model/list` 目录选择其他可用模型和 effort。已选择模型不可用时明确失败，不静默替换。
 6. **ChatGPT 网页版不能直接访问 localhost。** 默认使用 OpenAI Secure MCP Tunnel；它不需要自建服务器，但当前官方实现仍要求一个仅具备 Tunnel Read + Use 权限的 Platform Runtime Key。该 Key 只用于隧道鉴权，不用于 Codex 或 Luna 推理计费。
 7. **完全不想配置 OpenAI Platform Runtime Key 的用户，可以改用自己提供的公网 HTTPS MCP 地址。** 例如具备稳定域名和认证的 Cloudflare Tunnel。该模式不再是私有 OpenAI 隧道，需要额外承担公网端点和认证风险。
 8. **Codex app-server 使用 stdio 由本机 Swift 应用启动。** 不把 app-server 端口暴露到网络。
@@ -927,7 +927,7 @@ codex://threads/<thread-id>
 - Thread 属于该项目的精确 cwd；
 - Model 存在于最新 `model/list`；
 - Effort 属于该模型支持集合；
-- Luna 可用，或用户已明确同意降级；
+- 选定的 Supervisor 模型存在于最新目录且 effort 受该模型支持；
 - 权限模式未超过项目上限；
 - 项目没有被另一个写任务锁定；
 - 现有 Thread 没有另一个 active turn；
@@ -1004,7 +1004,7 @@ effort = medium
 
 启动前检查：
 
-- Luna 是否存在；
+- 选定 Supervisor 模型是否存在；
 - `medium` 是否支持；
 - 当前账户是否可用；
 - 速率限制是否允许。
@@ -1465,7 +1465,7 @@ Supervisor 不得让执行 Agent无限修复到“看起来差不多”。
 
 ### 18.8 Supervisor 失效降级
 
-若 Luna 速率受限或 Supervisor 进程失败：
+若选定 Supervisor 模型速率受限或 Supervisor 进程失败：
 
 - 执行任务默认暂停，除非用户已选择“允许确定性监督降级继续”；
 - UI 明确显示语义监督离线；
@@ -2472,12 +2472,12 @@ iOS App
 
 ### 35.4 监督
 
-- Supervisor 默认 Luna + medium；
+- Supervisor 默认推荐 Luna + medium，用户可选择目录中的其他模型和 effort；
 - Supervisor 为只读；
 - 能识别测试失败、范围扩大和明显偏离；
 - 能通过 `turn/steer` 纠偏；
 - 超过自动纠偏上限转人工；
-- Luna 不可用时不静默换模型；
+- 已选择模型不可用时明确失败，不静默换模型；
 - 最终验收有独立 Supervisor 决策。
 
 ### 35.5 安全
@@ -2547,11 +2547,11 @@ iOS App
 **原因：** 隔离、恢复和权限简单。  
 **代价：** 额外内存和 Codex 并发用量。
 
-### ADR-007：Luna 默认监督
+### ADR-007：Luna 默认推荐监督
 
-**决策：** Luna + medium。  
+**决策：** 默认推荐 Luna + medium，但不内置或强制；用户可选择当前目录中的其他模型和 effort。
 **原因：** 高频监督需要成本和延迟较低的模型。  
-**代价：** Luna 不可用时必须人工选择降级。
+**代价：** 已选择模型不可用时任务必须明确失败，用户需要重新选择可用模型。
 
 ### ADR-008：本地审批为最终权限边界
 
