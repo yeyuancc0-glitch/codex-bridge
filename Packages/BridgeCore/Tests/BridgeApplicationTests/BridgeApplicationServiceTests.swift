@@ -649,6 +649,46 @@ final class BridgeApplicationServiceTests: XCTestCase {
     XCTAssertLessThan(startedAt.duration(to: clock.now), .seconds(2))
   }
 
+  func testIsolatedCatalogMapsWireDefaultReasoningEffortIntoCatalogModel() async throws {
+    let catalog = IsolatedCodexCatalogService(
+      configuration: IsolatedCodexCatalogConfiguration(
+        appServer: AppServerConfiguration(
+          executableURL: URL(fileURLWithPath: "/bin/sh"),
+          arguments: [
+            "-c",
+            #"""
+            IFS= read -r initialize
+            printf '%s\n' '{"id":1,"result":{"userAgent":"fixture","codexHome":"/private/fixture","platformFamily":"unix","platformOs":"macos"}}'
+            IFS= read -r initialized
+            IFS= read -r models
+            printf '%s\n' '{"id":2,"result":{"data":[{"id":"fixture-model","model":"fixture-model","displayName":"Fixture","description":"fixture","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Low"},{"reasoningEffort":"high","description":"High"}],"defaultReasoningEffort":"high","isDefault":true}],"nextCursor":null}}'
+            sleep 2
+            """#,
+          ],
+          environment: ["PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"]
+        ),
+        clientInfo: .bridge(version: "test")
+      )
+    )
+
+    let models = try await catalog.listModels(
+      deadline: ContinuousClock.now.advanced(by: .seconds(5))
+    )
+
+    XCTAssertEqual(
+      models,
+      [
+        CatalogModel(
+          id: "fixture-model",
+          displayName: "Fixture",
+          isDefault: true,
+          reasoningEfforts: ["low", "high"],
+          defaultReasoningEffort: "high"
+        )
+      ]
+    )
+  }
+
   func testProjectFileToolsUseRelativePathsAndRedactSecrets() async throws {
     let fixture = try Fixture()
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
