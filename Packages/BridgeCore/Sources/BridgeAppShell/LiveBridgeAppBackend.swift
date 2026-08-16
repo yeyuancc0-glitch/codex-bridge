@@ -342,9 +342,18 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try await publishCurrentFacts()
   }
 
-  func setReceivingPaused(_ paused: Bool) throws {
-    _ = paused
-    throw DesktopBackendError.connectionNotConfigured
+  func setReceivingPaused(_ paused: Bool) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    try await composition.lifecycleCoordinator.updateReceivingPaused(paused)
+    try checkRunning()
+    appendDiagnostic(
+      paused ? "已暂停新的远程任务提交；本地任务继续运行。" : "已恢复新的远程任务提交。",
+      status: paused ? .paused : .ready
+    )
+    try await publishCurrentFacts()
   }
 
   func addProject() async throws {
@@ -1463,6 +1472,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         evidenceStateByTaskID: evidenceStateByTaskID,
         diagnostics: diagnostics,
         connection: connection,
+        receivingPaused: lifecyclePreferences.receivingPaused,
         operatorState: operatorState,
         canExportSupportBundle: canExportSupportBundleOverride
           ?? (canExportSupportBundle && !isExportingSupportBundle),

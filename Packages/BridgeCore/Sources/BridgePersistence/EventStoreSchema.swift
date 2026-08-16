@@ -10,6 +10,7 @@ enum EventStoreSchema {
     "addLifecyclePreferences",
     "addTaskChangeHeadState",
     "addTaskRetentionFoundation",
+    "addReceivingPausePreference",
   ]
 
   static func migrate(_ database: DatabaseQueue) throws {
@@ -325,6 +326,14 @@ enum EventStoreSchema {
           CREATE TRIGGER task_events_no_update
           BEFORE UPDATE ON task_events
           BEGIN SELECT RAISE(ABORT, 'task events are append-only'); END;
+          """)
+    }
+    migrator.registerMigration(migrationIdentifiers[8]) { db in
+      try db.execute(
+        sql: """
+          ALTER TABLE lifecycle_preferences
+          ADD COLUMN receiving_paused INTEGER NOT NULL DEFAULT 0
+            CHECK (receiving_paused IN (0, 1))
           """)
     }
     return migrator

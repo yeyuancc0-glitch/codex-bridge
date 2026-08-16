@@ -59,7 +59,10 @@ final class CodexBridgeUITests: XCTestCase {
     XCTAssertTrue(statusItem.waitForExistence(timeout: 5))
     statusItem.click()
     XCTAssertTrue(app.menuItems["连接尚未配置"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.menuItems["运行任务：0"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.menuItems["待审批：0"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.menuItems["打开 Codex Bridge"].exists)
+    XCTAssertTrue(app.menuItems["暂停接收新任务"].exists)
     XCTAssertTrue(app.menuItems["退出"].exists)
   }
 }

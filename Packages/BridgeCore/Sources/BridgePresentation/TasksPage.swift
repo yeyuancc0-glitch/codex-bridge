@@ -242,6 +242,7 @@ private struct ReadOnlyTaskComposer: View {
 private struct TaskWorkspace: View {
   let page: TaskPagePresentation
   @ObservedObject var store: BridgePresentationStore
+  @State private var compactPath: [String] = []
 
   @ViewBuilder
   var body: some View {
@@ -252,19 +253,67 @@ private struct TaskWorkspace: View {
         description: Text("从 ChatGPT 提交任务后会显示在这里。")
       )
     } else {
-      HSplitView {
-        List(page.tasks, selection: taskSelection) { task in
-          TaskCompactRow(task: task)
-            .tag(task.id)
-            .padding(.vertical, BridgeTheme.spacingTight)
-        }
-        .frame(minWidth: 250, idealWidth: 320)
-        .accessibilityLabel("任务列表")
-
-        detail
-          .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
+      ViewThatFits(in: .horizontal) {
+        wideWorkspace
+          .frame(minWidth: 690)
+        compactWorkspace
+      }
+      .onAppear { synchronizeCompactPath() }
+      .onChange(of: store.selectedTaskID) { _, _ in synchronizeCompactPath() }
+      .onChange(of: compactPath) { _, path in
+        store.selectTask(path.last)
       }
     }
+  }
+
+  private var wideWorkspace: some View {
+    HSplitView {
+      List(page.tasks, selection: taskSelection) { task in
+        TaskCompactRow(task: task)
+          .tag(task.id)
+          .padding(.vertical, BridgeTheme.spacingTight)
+      }
+      .frame(minWidth: 250, idealWidth: 320)
+      .accessibilityLabel("任务列表")
+
+      detail
+        .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
+    }
+  }
+
+  private var compactWorkspace: some View {
+    NavigationStack(path: $compactPath) {
+      List(page.tasks) { task in
+        NavigationLink(value: task.id) {
+          TaskCompactRow(task: task)
+            .padding(.vertical, BridgeTheme.spacingTight)
+        }
+      }
+      .accessibilityLabel("任务列表")
+      .navigationTitle("任务")
+      .navigationDestination(for: String.self) { taskID in
+        if let task = page.details.first(where: { $0.id == taskID }) {
+          TaskDetailView(task: task, store: store)
+        } else {
+          ContentUnavailableView(
+            "没有任务详情",
+            systemImage: "doc.text.magnifyingglass",
+            description: Text("等待任务详情完成同步。")
+          )
+        }
+      }
+      .onAppear { synchronizeCompactPath() }
+    }
+  }
+
+  private func synchronizeCompactPath() {
+    guard let selectedTaskID = store.selectedTaskID,
+      page.tasks.contains(where: { $0.id == selectedTaskID })
+    else {
+      if !compactPath.isEmpty { compactPath.removeAll() }
+      return
+    }
+    if compactPath.last != selectedTaskID { compactPath = [selectedTaskID] }
   }
 
   @ViewBuilder

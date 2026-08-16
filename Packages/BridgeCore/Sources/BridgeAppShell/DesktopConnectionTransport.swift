@@ -124,10 +124,12 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
   struct Snapshot: Equatable, Sendable {
     let epoch: UInt64
     let permitsRemoteSubmissions: Bool
+    let receivingPaused: Bool
   }
 
   private enum State: Equatable {
     case open
+    case closed
     case asleep
     case revalidating
     case stopping
@@ -141,6 +143,7 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
   private let lock = NSLock()
   private var epoch: UInt64 = 0
   private var state = State.open
+  private var receivingPaused = false
   private var inFlightLeases = 0
   private var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -148,8 +151,16 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
     lock.withLock {
       Snapshot(
         epoch: epoch,
-        permitsRemoteSubmissions: state == .open
+        permitsRemoteSubmissions: state == .open && !receivingPaused,
+        receivingPaused: receivingPaused
       )
+    }
+  }
+
+  func setReceivingPaused(_ paused: Bool) {
+    lock.withLock {
+      guard state != .stopping else { return }
+      receivingPaused = paused
     }
   }
 
@@ -163,9 +174,11 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
     }
   }
 
-  func beginWakeRevalidation() -> Transition? {
+  func beginWakeRevalidation(activeTransportAvailable: Bool) -> Transition? {
     lock.withLock {
-      guard state == .asleep else { return nil }
+      guard state == .asleep || (state == .closed && activeTransportAvailable) else {
+        return nil
+      }
       epoch &+= 1
       state = .revalidating
       return Transition(epoch: epoch, reopensOnSuccess: true)
@@ -175,10 +188,32 @@ final class DesktopRemoteAdmissionGate: @unchecked Sendable {
   func beginReplacement() -> Transition? {
     lock.withLock {
       guard state != .stopping else { return nil }
-      let reopens = state == .open
+      let reopens = state == .open || state == .closed
       epoch &+= 1
       if reopens { state = .revalidating }
       return Transition(epoch: epoch, reopensOnSuccess: reopens)
+    }
+  }
+
+  func closeForStop() {
+    lock.withLock {
+      guard state != .stopping else { return }
+      epoch &+= 1
+      state = .closed
+    }
+  }
+
+  @discardableResult
+  func fail(_ transition: Transition) -> Bool {
+    lock.withLock {
+      guard state != .stopping, epoch == transition.epoch else { return false }
+      if transition.reopensOnSuccess {
+        guard state == .revalidating else { return false }
+        state = .closed
+      } else {
+        guard state == .asleep else { return false }
+      }
+      return true
     }
   }
 
@@ -383,18 +418,27 @@ actor DesktopConnectionRuntime {
     await admissionGate.waitForLeaseDrain()
   }
 
+  func setReceivingPaused(_ paused: Bool) async {
+    admissionGate.setReceivingPaused(paused)
+    await admissionGate.waitForLeaseDrain()
+    await record(effectiveHealth(await active?.health() ?? .stopped))
+  }
+
   func suspendRemoteAdmissionsForSleep() async {
     admissionGate.closeForSleep()
     await record(effectiveHealth(await active?.health() ?? .stopped))
   }
 
   func revalidateRemoteAdmissionsAfterWake() async throws {
-    guard let transition = admissionGate.beginWakeRevalidation() else { return }
+    let activeTransportAvailable = active != nil
+    guard
+      let transition = admissionGate.beginWakeRevalidation(
+        activeTransportAvailable: activeTransportAvailable
+      )
+    else { return }
     let generation = activeGeneration
     guard let active else {
-      guard admissionGate.complete(transition) else {
-        throw DesktopTransportError.connectionFailed
-      }
+      _ = admissionGate.fail(transition)
       await record(.stopped)
       return
     }
@@ -409,6 +453,7 @@ actor DesktopConnectionRuntime {
       await record(health)
     } catch {
       if transition.epoch == admissionGate.snapshot().epoch, generation == activeGeneration {
+        _ = admissionGate.fail(transition)
         await record(effectiveHealth(await active.health()))
       }
       throw error
@@ -419,14 +464,13 @@ actor DesktopConnectionRuntime {
     await beginTransportMutation()
     defer { endTransportMutation() }
     activeGeneration &+= 1
-    let transition = admissionGate.beginReplacement()
+    admissionGate.closeForStop()
     await admissionGate.waitForLeaseDrain()
     monitorTask?.cancel()
     monitorTask = nil
     let active = active
     self.active = nil
     await active?.stop()
-    if let transition { _ = admissionGate.complete(transition) }
     await record(.stopped)
   }
 
@@ -476,6 +520,7 @@ actor DesktopConnectionRuntime {
       beginMonitoring()
       return localMCPURL
     } catch {
+      _ = admissionGate.fail(transition)
       await transport.stop()
       await record(.stopped)
       throw error

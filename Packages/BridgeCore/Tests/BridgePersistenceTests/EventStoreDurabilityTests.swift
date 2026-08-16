@@ -398,21 +398,31 @@ final class EventStoreDurabilityTests: XCTestCase {
     let second = try EventStore(path: path)
     let notificationUpdateDate = timestamp(300)
     let sleepUpdateDate = timestamp(301)
+    let receivingPauseUpdateDate = timestamp(302)
     async let notifications: Void = first.setNotificationsEnabled(
       true,
       updatedAt: notificationUpdateDate
     )
     async let idleSleep: Void = second.setIdleSleepEnabled(false, updatedAt: sleepUpdateDate)
-    _ = try await (notifications, idleSleep)
+    async let receivingPaused: Void = first.setReceivingPaused(
+      true,
+      updatedAt: receivingPauseUpdateDate
+    )
+    _ = try await (notifications, idleSleep, receivingPaused)
 
     let restarted = try EventStore(path: path)
     let persisted = try await restarted.lifecyclePreferences()
     XCTAssertEqual(
       persisted,
-      LifecyclePreferences(notificationsEnabled: true, idleSleepEnabled: false)
+      LifecyclePreferences(
+        notificationsEnabled: true,
+        idleSleepEnabled: false,
+        receivingPaused: true
+      )
     )
-    try await restarted.setNotificationsEnabled(false, updatedAt: timestamp(302))
-    try await restarted.setIdleSleepEnabled(true, updatedAt: timestamp(303))
+    try await restarted.setNotificationsEnabled(false, updatedAt: timestamp(303))
+    try await restarted.setIdleSleepEnabled(true, updatedAt: timestamp(304))
+    try await restarted.setReceivingPaused(false, updatedAt: timestamp(305))
     let restored = try await first.lifecyclePreferences()
     XCTAssertEqual(restored, .defaults)
   }
@@ -542,7 +552,8 @@ final class EventStoreDurabilityTests: XCTestCase {
             'addTaskNotificationLedger',
             'addTaskNotificationLeases',
             'addLifecyclePreferences',
-            'addTaskChangeHeadState'
+            'addTaskChangeHeadState',
+            'addReceivingPausePreference'
           )
           """)
       try db.execute(

@@ -183,6 +183,53 @@ final class DesktopPresentationProjectionTests: XCTestCase {
     XCTAssertEqual(detail.startedAt, startedAt)
   }
 
+  func testSettingsRetentionSummaryUsesPersistedPolicyValues() {
+    let policy = RetentionPolicyPresentation(
+      eventDays: 14,
+      metadataDays: 45,
+      recentTaskLimit: 20,
+      revision: 7
+    )
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [],
+      diagnostics: [],
+      retentionPolicy: policy
+    )
+
+    guard case .ready(let settings) = snapshot.settings else {
+      return XCTFail("Expected settings projection")
+    }
+    XCTAssertEqual(settings.retentionSummary, "事件 14 天；元数据 45 天")
+    XCTAssertEqual(settings.retentionPolicy, policy)
+  }
+
+  func testPausedReceivingIsVisibleAndStillAllowsLocalConnectionTesting() {
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [],
+      diagnostics: [],
+      connection: DesktopTransportHealth(
+        lifecycle: .ready,
+        acceptsRemoteSubmissions: true,
+        endpointDescription: "Manual HTTPS",
+        localMCPURL: URL(string: "http://127.0.0.1:43210/mcp")!,
+        actionRequired: false
+      ),
+      receivingPaused: true
+    )
+
+    guard case .ready(let overview) = snapshot.overview,
+      case .ready(let connections) = snapshot.connections
+    else {
+      return XCTFail("Expected ready overview and connection pages")
+    }
+    XCTAssertTrue(connections.receivingPaused)
+    XCTAssertTrue(connections.canChangeReceiving)
+    XCTAssertEqual(overview.connectionPath.last?.status, .paused)
+    XCTAssertEqual(overview.attentionItems.first?.status, .paused)
+  }
+
   private func submission() -> TaskSubmission {
     TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: "projection-approval"),

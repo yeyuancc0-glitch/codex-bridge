@@ -17,6 +17,7 @@ struct DesktopPresentationProjection {
     evidenceStateByTaskID: [TaskID: TaskEvidenceLoadPresentation] = [:],
     diagnostics: [LogEntryPresentation],
     connection: DesktopTransportHealth = .stopped,
+    receivingPaused: Bool = false,
     operatorState: DesktopOperatorState = DesktopOperatorState(),
     canExportSupportBundle: Bool = false,
     lifecyclePreferences: LifecyclePreferences = .defaults,
@@ -41,18 +42,22 @@ struct DesktopPresentationProjection {
       row.status == .running || row.status == .waiting || row.status == .checking
     }
     let recent = taskRows.filter { row in !active.contains(where: { $0.id == row.id }) }
-    let connectionNodes = connectionPath(connection)
+    let connectionNodes = connectionPath(connection, receivingPaused: receivingPaused)
     let attentionItems: [AttentionItemPresentation] =
-      connection.acceptsRemoteSubmissions
+      connection.acceptsRemoteSubmissions && !receivingPaused
       ? []
       : [
         AttentionItemPresentation(
           id: "connection-setup",
-          title: connection.localMCPURL == nil ? "连接尚未配置" : "远程连接尚未就绪",
-          detail: connection.actionRequired
-            ? "连接需要本机处理认证或配置错误。"
-            : "本机能力保持可用；严格远程健康检查通过前不会接收 ChatGPT 任务。",
-          status: connection.actionRequired ? .blocked : .waiting,
+          title: connection.localMCPURL == nil
+            ? "连接尚未配置"
+            : (receivingPaused ? "已暂停接收新任务" : "远程连接尚未就绪"),
+          detail: receivingPaused
+            ? "本机任务继续运行；恢复接收后才会接受新的远程提交。"
+            : connection.actionRequired
+              ? "连接需要本机处理认证或配置错误。"
+              : "本机能力保持可用；严格远程健康检查通过前不会接收 ChatGPT 任务。",
+          status: receivingPaused ? .paused : (connection.actionRequired ? .blocked : .waiting),
           destination: .connections
         )
       ]
@@ -91,8 +96,8 @@ struct DesktopPresentationProjection {
           mode: connection.endpointDescription,
           endpoint: connection.localMCPURL.map(Self.publicLocalEndpoint) ?? "本地 MCP 尚未启动",
           nodes: connectionNodes,
-          receivingPaused: false,
-          canChangeReceiving: false,
+          receivingPaused: receivingPaused,
+          canChangeReceiving: connection.localMCPURL != nil,
           canTest: connection.localMCPURL != nil
         )
       ),
@@ -558,7 +563,8 @@ struct DesktopPresentationProjection {
   }
 
   private static func connectionPath(
-    _ connection: DesktopTransportHealth
+    _ connection: DesktopTransportHealth,
+    receivingPaused: Bool
   ) -> [ConnectionNodePresentation] {
     let mcpReady = connection.localMCPURL != nil
     let remoteReady = connection.acceptsRemoteSubmissions
@@ -578,14 +584,16 @@ struct DesktopPresentationProjection {
       ConnectionNodePresentation(
         id: "tunnel",
         title: connection.endpointDescription,
-        detail: connectionDetail(connection),
+        detail: connectionDetail(connection, receivingPaused: receivingPaused),
         status: presentationStatus(connection.lifecycle)
       ),
       ConnectionNodePresentation(
         id: "chatgpt",
         title: "ChatGPT",
-        detail: remoteReady ? "严格远程健康检查已通过" : "远程提交保持关闭",
-        status: remoteReady ? .ready : .disconnected
+        detail: receivingPaused
+          ? "手动暂停新的远程提交"
+          : (remoteReady ? "严格远程健康检查已通过" : "远程提交保持关闭"),
+        status: receivingPaused ? .paused : (remoteReady ? .ready : .disconnected)
       ),
     ]
   }
@@ -600,7 +608,10 @@ struct DesktopPresentationProjection {
     }
   }
 
-  private static func connectionDetail(_ connection: DesktopTransportHealth) -> String {
+  private static func connectionDetail(
+    _ connection: DesktopTransportHealth,
+    receivingPaused: Bool
+  ) -> String {
     if connection.actionRequired { return "需要本机处理认证或配置错误" }
     return switch connection.lifecycle {
     case .stopped: "尚未启动"
@@ -608,7 +619,9 @@ struct DesktopPresentationProjection {
     case .authenticating: "正在验证传输凭证"
     case .connecting: "正在完成远程健康检查"
     case .ready:
-      connection.acceptsRemoteSubmissions ? "远程传输已就绪" : "仅本机连接已就绪"
+      receivingPaused
+        ? "已手动暂停新的远程提交"
+        : (connection.acceptsRemoteSubmissions ? "远程传输已就绪" : "仅本机连接已就绪")
     case .degraded: "连接已降级，拒绝新的远程任务"
     case .failed: "连接失败"
     }
@@ -668,7 +681,7 @@ struct DesktopPresentationProjection {
           isEnabled: false
         ),
       ],
-      retentionSummary: "事件 (retentionPolicy.eventDays) 天；元数据 (retentionPolicy.metadataDays) 天",
+      retentionSummary: "事件 \(retentionPolicy.eventDays) 天；元数据 \(retentionPolicy.metadataDays) 天",
       retentionPolicy: retentionPolicy
     )
   }

@@ -30,6 +30,7 @@ struct ProjectsPage: View {
 private struct ProjectWorkspace: View {
   let page: ProjectPagePresentation
   @ObservedObject var store: BridgePresentationStore
+  @State private var compactPath: [String] = []
 
   @ViewBuilder
   var body: some View {
@@ -40,19 +41,67 @@ private struct ProjectWorkspace: View {
         description: Text("添加一个本机项目后，Bridge 才能读取或运行任务。")
       )
     } else {
-      HSplitView {
-        List(page.projects, selection: projectSelection) { project in
-          ProjectRow(project: project)
-            .tag(project.id)
-            .padding(.vertical, BridgeTheme.spacingTight)
-        }
-        .frame(minWidth: 240, idealWidth: 300)
-        .accessibilityLabel("已注册项目")
-        detail
-          .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-          .padding(.leading, BridgeTheme.spacingSection)
+      ViewThatFits(in: .horizontal) {
+        wideWorkspace
+          .frame(minWidth: 660)
+        compactWorkspace
+      }
+      .onAppear { synchronizeCompactPath() }
+      .onChange(of: store.selectedProjectID) { _, _ in synchronizeCompactPath() }
+      .onChange(of: compactPath) { _, path in
+        store.selectProject(path.last)
       }
     }
+  }
+
+  private var wideWorkspace: some View {
+    HSplitView {
+      List(page.projects, selection: projectSelection) { project in
+        ProjectRow(project: project)
+          .tag(project.id)
+          .padding(.vertical, BridgeTheme.spacingTight)
+      }
+      .frame(minWidth: 240, idealWidth: 300)
+      .accessibilityLabel("已注册项目")
+      detail
+        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.leading, BridgeTheme.spacingSection)
+    }
+  }
+
+  private var compactWorkspace: some View {
+    NavigationStack(path: $compactPath) {
+      List(page.projects) { project in
+        NavigationLink(value: project.id) {
+          ProjectRow(project: project)
+            .padding(.vertical, BridgeTheme.spacingTight)
+        }
+      }
+      .accessibilityLabel("已注册项目")
+      .navigationTitle("项目")
+      .navigationDestination(for: String.self) { projectID in
+        if let project = page.projects.first(where: { $0.id == projectID }) {
+          ProjectDetail(project: project, store: store)
+        } else {
+          ContentUnavailableView(
+            "项目不可用",
+            systemImage: "folder",
+            description: Text("等待项目注册信息同步。")
+          )
+        }
+      }
+      .onAppear { synchronizeCompactPath() }
+    }
+  }
+
+  private func synchronizeCompactPath() {
+    guard let selectedProjectID = store.selectedProjectID,
+      page.projects.contains(where: { $0.id == selectedProjectID })
+    else {
+      if !compactPath.isEmpty { compactPath.removeAll() }
+      return
+    }
+    if compactPath.last != selectedProjectID { compactPath = [selectedProjectID] }
   }
 
   @ViewBuilder

@@ -72,6 +72,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 项目移除或离线卷身份重绑与新任务提交/暂停任务恢复必须共享 project mutation gate；变更期间禁止新的 admission，存在活动任务时拒绝变更。移除只在同一仓库事务删除 Thread 绑定、注册根和项目配置；身份重绑只接受用户重新选择的同一规范化路径、仅支持无 worktree 的单根项目，并在同一事务替换 root identity、清除陈旧 Thread 绑定。两者都绝不移动或删除本机项目文件。
 - Codex 账号限额只在用户刷新概览时通过隔离 catalog 读取，不在启动或任务事件上轮询；应用层仅投影校验后的百分比、重置时间与触达状态，禁止把服务端自由文本带入 UI。
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
+- 手动暂停接收是独立于睡眠/停止的持久偏好：由 `DesktopTaskLifecycleCoordinator` 写入 EventStore，再驱动 `DesktopRemoteAdmissionGate` 排空已获 lease 的请求；它只关闭新的远程提交，不中断本地任务，连接替换和唤醒复核成功后仍保持暂停，恢复操作也不能绕过当前 transport 健康状态。
 - Secure Tunnel helper 在已就绪后意外退出时，只重建 helper，不停止本地 MCP 或本地任务；使用有界 `1s/2s/4s` 退避且每次重新执行完整 helper 信任与严格 ready 校验。认证/授权诊断立即停止自动重试，耗尽三次后保持远程 admission 关闭并要求本机用户处理；Transport stop/shutdown 必须取消并等待在途重启。
 - 终态通知的点击路由只携带版本化、有界且通过出站安全检查的 task identity；App 未启动或任务快照未就绪时由 Presentation 保留单个待选任务，加载后只选择精确匹配项，用户手动选择会取消旧路由。
 - `willSleep` 必须同步关闭新的远程提交并等待已获得 lease 的请求排空；只有对应 sleep epoch 的 `didWake` 才能在任务事实刷新和当前 Transport 严格复核后重新开放。孤立或重复 wake 事件必须幂等忽略，不能重测健康链路或把已开放 admission 关回休眠；Transport 复核也不能冒充完整的 app-server/Thread/Git 恢复。
@@ -112,6 +113,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - `BridgeVerification`：仅执行项目已登记且经本机确认的验证命令，结果只保存有界结构化摘要和哈希，不返回原始进程输出。
 - `BridgePresentation` / `BridgeAppModel`：原生 SwiftUI 纯展示层与 `@MainActor` 应用投影/动作路由；基础设施状态只能单向进入快照，审批授权能力缺失或不匹配时必须退化为只能拒绝。
 - `BridgeTunnel`：官方 helper 校验、启动、健康和恢复。
+- `docs/CHATGPT_DEVELOPER_MODE.md`：ChatGPT Developer Mode、Secure Tunnel/Manual HTTPS 的人工接入与生产验收顺序；凭证只由用户在本机输入，不进入仓库。
 - `BridgeReporting`：结构化最终报告和脱敏支持包。
 - `BridgePipeline`：按不可变执行作用域持久化 Git、验证、Supervisor 与报告元数据，并维护可恢复的 finalization saga；普通查询不返回原始证据 payload。
 - Retention 由 `EventStore` 的 policy/CAS/job 记录和 `DesktopTaskRetentionCoordinator` 驱动，是有界、可恢复的 saga：必须先把终态 metadata 变为 archive-authoritative，再按活动锁、通知 lease、验证授权和外部清理结果推进 pipeline、supervision、事件历史与 payload 清理，metadata purge 只能最后执行；pipeline patch physical release 使用持久 manifest，supervision 删除终态记录后必须恢复 append-only triggers。
@@ -190,6 +192,7 @@ codex app-server generate-json-schema --out DIR
 - dirty 工作区中任务修改与用户修改可能混合；必须保存 baseline 并在报告中诚实标注。
 - Git 证据命令只能用固定 `/usr/bin/git`、最小环境和已打开目录 fd 作为 cwd；仓库本地 filter、fsmonitor、include、textconv/command 或任何 `filter` attribute 都必须在执行 status/diff 前 fail-closed，防止证据收集执行项目代码。
 - Tunnel 断线不能中断本地任务，但断线期间不得接受新的远程任务。
+- 远程 admission 的 `closed`、`asleep`、`revalidating` 和 `stopping` 状态必须分离：停止或失败唤醒复核后保持 `closed`，只有新的健康配置完成才重新开放；不能复用“成功后重开”的 replacement transition 完成停止。
 - AppShell 的 `DesktopConnectionRuntime` 是 Local、Manual HTTPS 与 Secure Tunnel 三种传输的唯一生命周期和健康状态源；切换模式必须先停止旧链路，本机 MCP 就绪不能被投影为 ChatGPT 远程就绪。Manual HTTPS 只接受无重定向的强认证 `/mcp` 地址，并使用有界请求、响应和超时。
 - `tunnel-client` 必须使用调用方预建的 0700 私有根、dirfd/inode 绑定的每次运行目录、Unix-domain health/admin socket 与最小化子进程环境。禁止把配置交给可替换的 pathname；非秘密配置使用固定 argv，Runtime Key 经 fd3、MCP 静态认证头经 fd4。官方 v0.0.11 不支持把 MCP URL 写成 `file:`，所以只传非秘密 `http://127.0.0.1:<port>/mcp`。`/readyz` 只证明本地 MCP 就绪，只有 health peer PID 匹配、严格 ready 且 control-plane poll 成功并新鲜时才可显示 Tunnel 已连接。
 - Tunnel helper 必须先按外部可信的签名后 SHA-256 校验打开的同一 fd，再以 suspended 状态 spawn；只有动态 SecCode 通过宿主 Team requirement 且 CDHash 与静态 fd 身份相同时才恢复和写入秘密。签名前 supply manifest 不能充当运行时信任根。

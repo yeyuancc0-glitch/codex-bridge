@@ -121,6 +121,77 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testStoppingReadyTransportClosesAdmissionUntilLaterConfiguration() async throws {
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      remoteTester: ConnectionTestRemoteMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory()
+    )
+    _ = try await runtime.configureManual(
+      localAuthentication: .path(secret: String(repeating: "s", count: 43)),
+      endpoint: URL(string: "https://bridge.example/mcp")!,
+      authorization: "Bearer stop-test-token"
+    )
+    try await runtime.testConnection()
+    let acceptsBeforeStop = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertTrue(acceptsBeforeStop)
+
+    await runtime.stop()
+
+    let acceptsAfterStop = await runtime.acceptsRemoteSubmissionsNow()
+    let stoppedHealth = await runtime.health()
+    XCTAssertFalse(acceptsAfterStop)
+    XCTAssertFalse(stoppedHealth.acceptsRemoteSubmissions)
+
+    _ = try await runtime.configureLocal(
+      authentication: .path(secret: String(repeating: "t", count: 43))
+    )
+    let acceptsAfterLocalConfiguration = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertFalse(acceptsAfterLocalConfiguration)
+    await runtime.stop()
+  }
+
+  func testFailedReplacementClosesAdmissionAndAllowsLaterConfiguration() async throws {
+    let mcp = ConnectionTestMCP()
+    let initial = ConnectionTestTunnel()
+    let failing = ConnectionTestTunnel(failsOnStart: true)
+    let recovered = ConnectionTestTunnel()
+    let factory = ConnectionSequenceTunnelFactory(tunnels: [initial, failing, recovered])
+    let runtime = DesktopConnectionRuntime(
+      mcp: mcp,
+      tunnelFactory: factory,
+      monitorInterval: .seconds(60)
+    )
+    let configuration = DesktopOnboardingTransportConfiguration.secure(
+      headerSecret: String(repeating: "g", count: 43),
+      tunnelID: try TunnelID(validating: "tunnel_\(String(repeating: "a", count: 32))"),
+      runtimeKeyReference: try SecretReference(validating: "runtime-key.replacement")
+    )
+
+    _ = try await runtime.configure(configuration)
+    let acceptsInitially = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertTrue(acceptsInitially)
+
+    do {
+      _ = try await runtime.configure(configuration)
+      XCTFail("Expected replacement startup to fail")
+    } catch {
+      XCTAssertEqual(error as? DesktopTransportError, .connectionFailed)
+    }
+    let acceptsAfterFailure = await runtime.acceptsRemoteSubmissionsNow()
+    let failedHealth = await runtime.health()
+    XCTAssertFalse(acceptsAfterFailure)
+    XCTAssertFalse(failedHealth.acceptsRemoteSubmissions)
+
+    _ = try await runtime.configure(configuration)
+    let recoveredHealth = await runtime.health()
+    let acceptsAfterRecovery = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertEqual(recoveredHealth.lifecycle, .ready)
+    XCTAssertTrue(recoveredHealth.acceptsRemoteSubmissions)
+    XCTAssertTrue(acceptsAfterRecovery)
+    await runtime.stop()
+  }
+
   func testBundledFactoryFailsClosedWithoutSignedHelper() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "bridge-transport-factory-\(UUID().uuidString)",
@@ -328,6 +399,46 @@ final class DesktopConnectionTransportTests: XCTestCase {
     await runtime.stop()
   }
 
+  func testManualReceivingPauseDrainsLeasesAndSurvivesTransportReplacement() async throws {
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      remoteTester: ConnectionTestRemoteMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(),
+      monitorInterval: .seconds(60)
+    )
+    let configuration = DesktopOnboardingTransportConfiguration.manual(
+      pathSecret: String(repeating: "p", count: 43),
+      endpoint: URL(string: "https://bridge.example/mcp")!,
+      authorization: "Bearer pause-test-token"
+    )
+    _ = try await runtime.configure(configuration)
+    try await runtime.testConnection()
+    let acquiredLease = await runtime.acquireRemoteSubmissionLease()
+    let lease = try XCTUnwrap(acquiredLease)
+
+    let pause = Task { await runtime.setReceivingPaused(true) }
+    try await Task.sleep(for: .milliseconds(20))
+    let acceptsWhilePaused = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertFalse(acceptsWhilePaused)
+    XCTAssertFalse(pause.isCancelled)
+
+    lease.release()
+    await pause.value
+    let pausedHealth = await runtime.health()
+    let acceptsAfterPause = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertNotNil(pausedHealth.localMCPURL)
+    XCTAssertFalse(acceptsAfterPause)
+
+    _ = try await runtime.configure(configuration)
+    let acceptsAfterReplacement = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertFalse(acceptsAfterReplacement)
+    try await runtime.testConnection()
+    await runtime.setReceivingPaused(false)
+    let acceptsAfterResume = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertTrue(acceptsAfterResume)
+    await runtime.stop()
+  }
+
   func testSleepDrainWaitsForAnAdmittedRemoteSubmissionLease() async throws {
     let tunnel = ConnectionTestTunnel()
     let runtime = DesktopConnectionRuntime(
@@ -417,6 +528,48 @@ final class DesktopConnectionTransportTests: XCTestCase {
     let failedHealth = await runtime.health()
     XCTAssertFalse(acceptedAfterFailure)
     XCTAssertFalse(failedHealth.acceptsRemoteSubmissions)
+
+    _ = try await runtime.configureLocal(
+      authentication: .path(secret: String(repeating: "u", count: 43))
+    )
+    let acceptsAfterReconfiguration = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertFalse(acceptsAfterReconfiguration)
+    await runtime.stop()
+  }
+
+  func testFailedWakeRevalidationCanRecoverWithoutAnotherSleepCycle() async throws {
+    let tunnel = ConnectionTestTunnel()
+    let runtime = DesktopConnectionRuntime(
+      mcp: ConnectionTestMCP(),
+      tunnelFactory: ConnectionTestTunnelFactory(tunnel: tunnel),
+      monitorInterval: .seconds(60)
+    )
+    let tunnelID = try TunnelID(validating: "tunnel_\(String(repeating: "c", count: 32))")
+    _ = try await runtime.configureSecureTunnel(
+      tunnelID: tunnelID,
+      runtimeKeyReference: SecretReference(rawValue: "runtime-key.wake-retry"),
+      localMCPHeaderSecret: String(repeating: "n", count: 43)
+    )
+    await runtime.suspendRemoteAdmissionsForSleep()
+    await tunnel.setLifecycle(.degraded)
+
+    do {
+      try await runtime.revalidateRemoteAdmissionsAfterWake()
+      XCTFail("Expected wake revalidation to fail")
+    } catch {
+      XCTAssertEqual(error as? DesktopTransportError, .connectionFailed)
+    }
+    let acceptsAfterFailure = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertFalse(acceptsAfterFailure)
+
+    await tunnel.setLifecycle(.ready)
+    try await runtime.revalidateRemoteAdmissionsAfterWake()
+
+    let recoveredHealth = await runtime.health()
+    let acceptsAfterRecovery = await runtime.acceptsRemoteSubmissionsNow()
+    XCTAssertEqual(recoveredHealth.lifecycle, .ready)
+    XCTAssertTrue(recoveredHealth.acceptsRemoteSubmissions)
+    XCTAssertTrue(acceptsAfterRecovery)
     await runtime.stop()
   }
 
@@ -496,7 +649,7 @@ final class DesktopConnectionTransportTests: XCTestCase {
   func testPermanentShutdownSupersedesAnOlderWakeTransition() throws {
     let gate = DesktopRemoteAdmissionGate()
     gate.closeForSleep()
-    let transition = try XCTUnwrap(gate.beginWakeRevalidation())
+    let transition = try XCTUnwrap(gate.beginWakeRevalidation(activeTransportAvailable: true))
 
     gate.closePermanently()
 

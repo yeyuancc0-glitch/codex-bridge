@@ -25,10 +25,12 @@ public struct BridgeDesktopRootView: View {
 public struct BridgeMenuBarView: View {
   @ObservedObject private var runtime: BridgeDesktopRuntime
   @ObservedObject private var appModel: BridgeAppModel
+  @ObservedObject private var presentationStore: BridgePresentationStore
 
   public init(runtime: BridgeDesktopRuntime) {
     self.runtime = runtime
     _appModel = ObservedObject(wrappedValue: runtime.appModel)
+    _presentationStore = ObservedObject(wrappedValue: runtime.presentationStore)
   }
 
   public var body: some View {
@@ -38,10 +40,28 @@ public struct BridgeMenuBarView: View {
       Text(statusDetail)
         .font(.caption)
         .foregroundStyle(.secondary)
+      Label("运行任务：\(runningTaskCount)", systemImage: "play.circle")
+        .font(.caption)
+      Label("待审批：\(pendingApprovalCount)", systemImage: "hand.raised")
+        .font(.caption)
       Divider()
       Button("打开 Codex Bridge", systemImage: "macwindow") {
         runtime.showMainWindow()
       }
+      Button(
+        receivingPaused ? "恢复接收新任务" : "暂停接收新任务",
+        systemImage: receivingPaused ? "play.circle" : "pause.circle"
+      ) {
+        Task {
+          _ = await presentationStore.perform(.setReceivingPaused(!receivingPaused))
+        }
+      }
+      .disabled(!canChangeReceiving)
+      .help(
+        canChangeReceiving
+          ? (receivingPaused ? "恢复新的远程任务提交" : "暂停新的远程任务提交；不会中断本地任务")
+          : "接收策略尚未接通"
+      )
       Button("退出", systemImage: "power") {
         runtime.terminateApplication()
       }
@@ -78,6 +98,34 @@ public struct BridgeMenuBarView: View {
     case .running: "link.badge.plus"
     case .failed: "xmark.octagon.fill"
     }
+  }
+
+  private var runningTaskCount: String {
+    guard case .ready(let overview) = presentationStore.snapshot.overview else {
+      return "读取中"
+    }
+    return String(overview.activeTasks.count)
+  }
+
+  private var pendingApprovalCount: String {
+    guard case .ready(let approvals) = presentationStore.snapshot.approvals else {
+      return "读取中"
+    }
+    return String(approvals.pending.count)
+  }
+
+  private var receivingPaused: Bool {
+    guard case .ready(let connections) = presentationStore.snapshot.connections else {
+      return false
+    }
+    return connections.receivingPaused
+  }
+
+  private var canChangeReceiving: Bool {
+    guard case .ready(let connections) = presentationStore.snapshot.connections else {
+      return false
+    }
+    return connections.canChangeReceiving
   }
 
   private func connectionTitle(_ connection: BridgeAppConnectionState) -> String {

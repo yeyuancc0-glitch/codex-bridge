@@ -24,15 +24,65 @@ struct ThreadsPage: View {
 private struct ThreadWorkspace: View {
   let page: ThreadPagePresentation
   @ObservedObject var store: BridgePresentationStore
+  @State private var compactPath: [String] = []
 
   var body: some View {
     VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
       projectPicker
-      HSplitView {
-        threadList
-          .frame(minWidth: 360, idealWidth: 460, maxWidth: 580)
-        history
-          .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+      ViewThatFits(in: .horizontal) {
+        wideWorkspace
+          .frame(minWidth: 780)
+        compactWorkspace
+      }
+    }
+  }
+
+  private var wideWorkspace: some View {
+    HSplitView {
+      threadList
+        .frame(minWidth: 360, idealWidth: 460, maxWidth: 580)
+      history
+        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+    }
+  }
+
+  private var compactWorkspace: some View {
+    NavigationStack(path: $compactPath) {
+      List(page.threads) { thread in
+        NavigationLink(value: thread.id) {
+          HStack(alignment: .top, spacing: BridgeTheme.spacingRegular) {
+            Image(systemName: thread.status.systemImage)
+              .foregroundStyle(thread.status.tint)
+              .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: BridgeTheme.spacingTight) {
+              Text(thread.preview)
+                .font(.body.weight(.medium))
+              Text("\(thread.projectName) · \(thread.source)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Text(thread.updatedAt.bridgeFormatted)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
+          .accessibilityElement(children: .combine)
+          .accessibilityLabel(
+            "线程 \(thread.id)，\(thread.preview)，\(thread.status.accessibilitySummary)"
+          )
+        }
+      }
+      .accessibilityLabel("Codex 线程列表")
+      .navigationTitle("线程")
+      .navigationDestination(for: String.self) { threadID in
+        if let thread = page.threads.first(where: { $0.id == threadID }) {
+          CompactThreadDestination(thread: thread, page: page, store: store)
+        } else {
+          ContentUnavailableView(
+            "线程不可用",
+            systemImage: "text.bubble",
+            description: Text("等待线程信息同步。")
+          )
+        }
       }
     }
   }
@@ -266,5 +316,82 @@ private struct ThreadHistoryView: View {
 
   private func roleImage(_ role: String) -> String {
     role == "assistant" ? "cpu" : "person"
+  }
+}
+
+private struct CompactThreadDestination: View {
+  let thread: ThreadPresentation
+  let page: ThreadPagePresentation
+  @ObservedObject var store: BridgePresentationStore
+
+  var body: some View {
+    Group {
+      if case .ready(let history) = page.history, history.threadID == thread.id {
+        ThreadHistoryView(history: history, store: store)
+      } else if case .some(.loading) = page.history {
+        ProgressView("正在读取历史")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        ContentUnavailableView(
+          "正在读取历史",
+          systemImage: "clock.arrow.circlepath",
+          description: Text("Bridge 正在读取当前项目中精确匹配的 Thread。")
+        )
+        .task(id: thread.id) {
+          guard let projectID = thread.projectID else { return }
+          await store.perform(
+            .readBoundThreadHistory(projectID: projectID, threadID: thread.id)
+          )
+        }
+      }
+    }
+    .navigationTitle(thread.preview)
+    .toolbar {
+      ToolbarItemGroup {
+        Button("在 Codex 中打开", systemImage: "arrow.up.forward.app") {
+          Task { await openThread() }
+        }
+        .disabled(!thread.canOpenInCodex)
+        Menu("更多操作", systemImage: "ellipsis.circle") {
+          Button("继续线程", systemImage: "arrow.forward.circle") {
+            Task { await prepareTask() }
+          }
+          .disabled(!thread.canContinueNow)
+          Button("创建新任务", systemImage: "plus.circle") {
+            Task { await prepareTask() }
+          }
+          .disabled(!thread.canCreateTask)
+          Button("复制 Thread ID", systemImage: "doc.on.doc") {
+            Task { await store.perform(.copyThreadID(thread.id)) }
+          }
+          if thread.canArchive {
+            Divider()
+            Button("归档 Supervisor 线程", systemImage: "archivebox") {
+              Task { await store.perform(.archiveSupervisorThread(thread.id)) }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private func openThread() async {
+    if let projectID = thread.projectID {
+      await store.perform(.openBoundThreadInCodex(projectID: projectID, threadID: thread.id))
+    } else {
+      await store.perform(.openThreadInCodex(thread.id))
+    }
+  }
+
+  @MainActor
+  private func prepareTask() async {
+    guard let projectID = thread.projectID else {
+      await store.perform(.createTaskFromThread(thread.id))
+      return
+    }
+    let prepared = await store.perform(
+      .prepareReadOnlyTask(projectID: projectID, threadID: thread.id)
+    )
+    if prepared { store.destination = .tasks }
   }
 }

@@ -104,6 +104,35 @@ final class DesktopTaskLifecycleCoordinatorTests: XCTestCase {
     await coordinator.shutdown()
   }
 
+  func testPersistedReceivingPauseIsAppliedBeforeLifecycleObserversStart() async throws {
+    let store = try EventStore.inMemory()
+    try await store.setReceivingPaused(true)
+    let connection = RecordingLifecycleConnection()
+    let power = await MainActor.run { ControllablePowerSource() }
+    let coordinator = DesktopTaskLifecycleCoordinator(
+      eventStore: store,
+      coordinator: StaticTaskProjectionReader(projections: [:]),
+      service: DesktopTaskLifecycleService(
+        notifications: RecordingTaskNotifier(),
+        notificationStore: DesktopTaskNotificationLedger(
+          store: store,
+          ownerInstanceID: "receiving-pause"
+        ),
+        idleSleep: RecordingIdleSleepPreventer(),
+        powerSource: power
+      ),
+      connection: connection,
+      ownerInstanceID: "receiving-pause",
+      pollInterval: .seconds(60)
+    )
+
+    try await coordinator.start()
+
+    let receivingPaused = await connection.receivingPaused
+    XCTAssertTrue(receivingPaused)
+    await coordinator.shutdown()
+  }
+
   func testAuthorizationBoundarySkipsEventsCommittedWhileNotificationsWereDisabled()
     async throws
   {
@@ -496,6 +525,7 @@ private actor RecordingLifecycleConnection: DesktopLifecycleConnectionControllin
   private(set) var suspendCount = 0
   private(set) var drainCount = 0
   private(set) var revalidationCount = 0
+  private(set) var receivingPaused = false
 
   func suspendRemoteAdmissionsForSleep() {
     suspendCount += 1
@@ -507,6 +537,10 @@ private actor RecordingLifecycleConnection: DesktopLifecycleConnectionControllin
 
   func waitForRemoteSubmissionDrain() {
     drainCount += 1
+  }
+
+  func setReceivingPaused(_ paused: Bool) {
+    receivingPaused = paused
   }
 }
 

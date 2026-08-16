@@ -18,9 +18,14 @@ protocol DesktopLifecycleConnectionControlling: Sendable {
   func suspendRemoteAdmissionsForSleep() async
   func revalidateRemoteAdmissionsAfterWake() async throws
   func waitForRemoteSubmissionDrain() async
+  func setReceivingPaused(_ paused: Bool) async
 }
 
 extension DesktopConnectionRuntime: DesktopLifecycleConnectionControlling {}
+
+extension DesktopLifecycleConnectionControlling {
+  func setReceivingPaused(_ paused: Bool) async {}
+}
 
 actor DesktopTaskNotificationLedger: DesktopTaskNotificationStore {
   static let consumerID = "desktop.notifications.v1"
@@ -105,6 +110,7 @@ actor DesktopTaskLifecycleCoordinator {
   private var drainWaiters: [CheckedContinuation<Void, Never>] = []
   private var isChangingNotificationPreference = false
   private var isChangingIdleSleepPreference = false
+  private var isChangingReceivingPreference = false
   private var isRevalidatingWake = false
   private var lifecycleState = LifecycleState.running
   private var lifecycleGeneration: UInt64 = 0
@@ -138,6 +144,7 @@ actor DesktopTaskLifecycleCoordinator {
     let preferences = try await eventStore.lifecyclePreferences()
     await service.setNotificationDeliveryEnabled(preferences.notificationsEnabled)
     try await service.setIdleSleepPreventionEnabled(preferences.idleSleepEnabled)
+    await connection.setReceivingPaused(preferences.receivingPaused)
     try await synchronizeActiveTasks()
   }
 
@@ -192,6 +199,18 @@ actor DesktopTaskLifecycleCoordinator {
       try? await service.setIdleSleepPreventionEnabled(false)
       throw error
     }
+  }
+
+  func updateReceivingPaused(_ paused: Bool) async throws {
+    try requireRunning()
+    guard !isChangingReceivingPreference else {
+      throw DesktopTaskLifecycleError.notificationStoreFailed
+    }
+    isChangingReceivingPreference = true
+    defer { isChangingReceivingPreference = false }
+    try await eventStore.setReceivingPaused(paused)
+    await connection.setReceivingPaused(paused)
+    try requireRunning()
   }
 
   func preferences() async throws -> LifecyclePreferences {

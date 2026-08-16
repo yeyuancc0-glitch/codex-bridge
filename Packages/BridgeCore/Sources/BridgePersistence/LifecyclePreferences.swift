@@ -4,15 +4,22 @@ import GRDB
 public struct LifecyclePreferences: Equatable, Sendable {
   public static let defaults = LifecyclePreferences(
     notificationsEnabled: false,
-    idleSleepEnabled: true
+    idleSleepEnabled: true,
+    receivingPaused: false
   )
 
   public let notificationsEnabled: Bool
   public let idleSleepEnabled: Bool
+  public let receivingPaused: Bool
 
-  public init(notificationsEnabled: Bool, idleSleepEnabled: Bool) {
+  public init(
+    notificationsEnabled: Bool,
+    idleSleepEnabled: Bool,
+    receivingPaused: Bool = false
+  ) {
     self.notificationsEnabled = notificationsEnabled
     self.idleSleepEnabled = idleSleepEnabled
+    self.receivingPaused = receivingPaused
   }
 }
 
@@ -23,7 +30,7 @@ extension EventStore {
         let row = try Row.fetchOne(
           db,
           sql: """
-            SELECT notifications_enabled, idle_sleep_enabled
+            SELECT notifications_enabled, idle_sleep_enabled, receiving_paused
             FROM lifecycle_preferences
             WHERE singleton_id = 1
             """
@@ -73,15 +80,39 @@ extension EventStore {
     }
   }
 
+  public func setReceivingPaused(_ paused: Bool, updatedAt: Date = Date()) throws {
+    guard updatedAt.timeIntervalSince1970.isFinite else {
+      throw EventStoreError.invalidArgument("updatedAt")
+    }
+    try database.write { db in
+      try db.execute(
+        sql: """
+          UPDATE lifecycle_preferences
+          SET receiving_paused = ?, updated_at = ?
+          WHERE singleton_id = 1
+          """,
+        arguments: [
+          paused,
+          updatedAt.timeIntervalSince1970,
+        ]
+      )
+      try Self.requireLifecyclePreferencesUpdate(db)
+    }
+  }
+
   private static func decodeLifecyclePreferences(_ row: Row) throws -> LifecyclePreferences {
     let notifications: Int64 = row["notifications_enabled"]
     let idleSleep: Int64 = row["idle_sleep_enabled"]
-    guard (0...1).contains(notifications), (0...1).contains(idleSleep) else {
+    let receivingPaused: Int64 = row["receiving_paused"]
+    guard (0...1).contains(notifications), (0...1).contains(idleSleep),
+      (0...1).contains(receivingPaused)
+    else {
       throw EventStoreError.invalidArgument("lifecyclePreferences")
     }
     return LifecyclePreferences(
       notificationsEnabled: notifications == 1,
-      idleSleepEnabled: idleSleep == 1
+      idleSleepEnabled: idleSleep == 1,
+      receivingPaused: receivingPaused == 1
     )
   }
 
