@@ -58,17 +58,20 @@ public struct CatalogModel: Equatable, Sendable {
   public let displayName: String
   public let isDefault: Bool
   public let reasoningEfforts: [String]
+  public let defaultReasoningEffort: String?
 
   public init(
     id: String,
     displayName: String,
     isDefault: Bool,
-    reasoningEfforts: [String]
+    reasoningEfforts: [String],
+    defaultReasoningEffort: String? = nil
   ) {
     self.id = id
     self.displayName = displayName
     self.isDefault = isDefault
     self.reasoningEfforts = reasoningEfforts
+    self.defaultReasoningEffort = defaultReasoningEffort
   }
 }
 

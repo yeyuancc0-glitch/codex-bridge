@@ -59,6 +59,45 @@ final class BridgeApplicationServiceTests: XCTestCase {
     )
   }
 
+  func testModelCatalogPreservesDefaultReasoningEffortAndRejectsUnknownDefault() async throws {
+    let fixture = try Fixture()
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let result = try await fixture.service(
+      catalog: CatalogFixture(
+        models: [
+          CatalogModel(
+            id: "gpt-test",
+            displayName: "Test",
+            isDefault: true,
+            reasoningEfforts: ["low", "high"],
+            defaultReasoningEffort: "high"
+          )
+        ]
+      )
+    ).listModels(deadline: ContinuousClock.now.advanced(by: .seconds(5)))
+
+    XCTAssertEqual(result.models.first?.defaultReasoningEffort, "high")
+
+    do {
+      _ = try await fixture.service(
+        catalog: CatalogFixture(
+          models: [
+            CatalogModel(
+              id: "gpt-test",
+              displayName: "Test",
+              isDefault: true,
+              reasoningEfforts: ["low", "high"],
+              defaultReasoningEffort: "unsupported"
+            )
+          ]
+        )
+      ).listModels(deadline: ContinuousClock.now.advanced(by: .seconds(5)))
+      XCTFail("Expected an unknown default reasoning effort to fail closed")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
+  }
+
   func testProjectAndThreadQueriesNeverExposeCanonicalPathsOrSecrets() async throws {
     let fixture = try Fixture()
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }

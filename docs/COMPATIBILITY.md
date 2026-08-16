@@ -14,6 +14,7 @@
 ## Fail-closed compatibility behavior
 
 - Unknown Codex model or reasoning effort is never silently replaced.
+- A catalog-declared default reasoning effort is advisory UI state; missing legacy defaults fall back only to the first advertised effort, while an unknown declared default fails closed.
 - Thread binding requires the exact registered working directory.
 - Recovery uses read-only `thread/read`; an in-progress Turn without an attached event stream becomes `unknown` and keeps its locks until the user explicitly marks it suspended.
 - Production Supervisor remains unavailable until evidence-only isolation or a tested upstream no-tools capability exists.

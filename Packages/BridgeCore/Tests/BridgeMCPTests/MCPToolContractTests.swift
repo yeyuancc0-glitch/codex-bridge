@@ -31,6 +31,12 @@ final class MCPToolContractTests: XCTestCase {
       XCTAssertEqual(byName[name]?.annotations.destructiveHint, false)
       XCTAssertEqual(byName[name]?.annotations.idempotentHint, true)
     }
+    let modelItems = byName["list_models"]?.outputSchema?.objectValue?["properties"]?
+      .objectValue?["models"]?.objectValue?["items"]?.objectValue
+    XCTAssertNotNil(modelItems?["properties"]?.objectValue?["default_reasoning_effort"])
+    XCTAssertFalse(
+      modelItems?["required"]?.arrayValue?.contains(.string("default_reasoning_effort")) == true
+    )
     XCTAssertEqual(byName["submit_task"]?.annotations.readOnlyHint, false)
     XCTAssertEqual(byName["submit_task"]?.annotations.destructiveHint, false)
     XCTAssertEqual(byName["submit_task"]?.annotations.idempotentHint, true)
@@ -94,6 +100,7 @@ final class MCPToolContractTests: XCTestCase {
     let model = try XCTUnwrap(resultObject(models)["models"]?.arrayValue?.first?.objectValue)
     XCTAssertEqual(model["model_id"], "gpt-5.6-sol")
     XCTAssertEqual(model["reasoning_efforts"]?.arrayValue, ["low", "high"])
+    XCTAssertEqual(model["default_reasoning_effort"], "high")
   }
 
   func testUnknownAndMalformedArgumentsAreInvalidParams() async {
@@ -175,6 +182,19 @@ final class MCPToolContractTests: XCTestCase {
         MCPToolResultEncoder.productionMaximumBytes
       )
     }
+  }
+
+  func testModelSummaryDecodesLegacyPayloadWithoutDefaultEffort() throws {
+    let data = Data(
+      #"""
+      {"model_id":"legacy","display_name":"Legacy","is_default":false,"reasoning_efforts":["medium"]}
+      """#.utf8
+    )
+    let model = try JSONDecoder().decode(MCPModelSummary.self, from: data)
+
+    XCTAssertNil(model.defaultReasoningEffort)
+    let encoded = try JSONEncoder().encode(model)
+    XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("default_reasoning_effort"))
   }
 
   func testUnexpectedQueryErrorBecomesGenericInternalError() async {
@@ -480,7 +500,8 @@ private actor InMemoryMCPQueries: BridgeMCPQueries {
           modelID: "gpt-5.6-sol",
           displayName: "GPT-5.6 Sol",
           isDefault: true,
-          reasoningEfforts: ["low", "high"]
+          reasoningEfforts: ["low", "high"],
+          defaultReasoningEffort: "high"
         )
       ]
     )

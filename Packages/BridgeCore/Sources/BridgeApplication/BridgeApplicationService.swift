@@ -331,7 +331,8 @@ public actor BridgeApplicationService:
           modelID: model.id,
           displayName: Self.sanitize(model.displayName, maximumBytes: 1_024),
           isDefault: model.isDefault,
-          reasoningEfforts: model.reasoningEfforts
+          reasoningEfforts: model.reasoningEfforts,
+          defaultReasoningEffort: model.defaultReasoningEffort
         )
       }
       return MCPModelList(models: values)
@@ -567,6 +568,12 @@ public actor BridgeApplicationService:
         guard OutboundContentSecurity.isSafe(effort) else {
           throw BridgeApplicationError.invalidCatalogResponse
         }
+      }
+      if let defaultEffort = model.defaultReasoningEffort {
+        try Self.validateIdentifier(defaultEffort, maximum: 64)
+        guard OutboundContentSecurity.isSafe(defaultEffort),
+          model.reasoningEfforts.contains(defaultEffort)
+        else { throw BridgeApplicationError.invalidCatalogResponse }
       }
     }
     return models

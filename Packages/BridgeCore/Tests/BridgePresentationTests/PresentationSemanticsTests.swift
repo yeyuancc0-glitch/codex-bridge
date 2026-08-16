@@ -101,6 +101,33 @@ final class PresentationSemanticsTests: XCTestCase {
     XCTAssertFalse(project.showsDirtyIndicator)
   }
 
+  func testModelPresentationPrefersCatalogDefaultAndFallsBackForLegacyCatalogs() {
+    let catalogDefault = LocalTaskModelOptionPresentation(
+      id: "model",
+      displayName: "Model",
+      efforts: ["low", "high"],
+      defaultReasoningEffort: "high",
+      isDefault: true
+    )
+    let legacyCatalog = LocalTaskModelOptionPresentation(
+      id: "legacy",
+      displayName: "Legacy",
+      efforts: ["medium"],
+      isDefault: false
+    )
+    let invalidCatalogDefault = LocalTaskModelOptionPresentation(
+      id: "invalid",
+      displayName: "Invalid",
+      efforts: ["low", "high"],
+      defaultReasoningEffort: "unsupported",
+      isDefault: false
+    )
+
+    XCTAssertEqual(catalogDefault.preferredEffort, "high")
+    XCTAssertEqual(legacyCatalog.preferredEffort, "medium")
+    XCTAssertEqual(invalidCatalogDefault.preferredEffort, "low")
+  }
+
   func testUnavailableCapabilitiesAndUnknownFactsRemainExplicit() {
     let connection = ConnectionPagePresentation(
       mode: "未配置",

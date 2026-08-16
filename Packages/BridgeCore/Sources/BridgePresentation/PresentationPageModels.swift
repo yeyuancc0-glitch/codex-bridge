@@ -275,13 +275,38 @@ public struct LocalTaskModelOptionPresentation: Identifiable, Equatable, Sendabl
   public let id: String
   public let displayName: String
   public let efforts: [String]
+  public let defaultReasoningEffort: String?
   public let isDefault: Bool
 
-  public init(id: String, displayName: String, efforts: [String], isDefault: Bool) {
+  public init(
+    id: String,
+    displayName: String,
+    efforts: [String],
+    defaultReasoningEffort: String? = nil,
+    isDefault: Bool
+  ) {
     self.id = id
     self.displayName = displayName
     self.efforts = efforts
+    self.defaultReasoningEffort = defaultReasoningEffort
     self.isDefault = isDefault
+  }
+
+  public init(id: String, displayName: String, efforts: [String], isDefault: Bool) {
+    self.init(
+      id: id,
+      displayName: displayName,
+      efforts: efforts,
+      defaultReasoningEffort: nil,
+      isDefault: isDefault
+    )
+  }
+
+  public var preferredEffort: String {
+    if let defaultReasoningEffort, efforts.contains(defaultReasoningEffort) {
+      return defaultReasoningEffort
+    }
+    return efforts.first ?? ""
   }
 }
 

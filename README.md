@@ -63,7 +63,7 @@ The probe:
 - starts `codex app-server --stdio`;
 - owns one LF-delimited JSON stdout reader and drains stderr separately;
 - sends `initialize` with stable capabilities disabled, then `initialized`;
-- reads the live model catalog and supported reasoning efforts;
+- reads the live model catalog, supported reasoning efforts, and each model's optional catalog-declared default effort;
 - never reads account details, authentication storage, Threads or project files.
 
 Run individual checks:

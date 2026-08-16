@@ -414,6 +414,10 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     XCTAssertEqual(composer.executionModels.count, 2)
     XCTAssertEqual(composer.supervisorModels.map(\.id).first, "gpt-5.6-luna")
     XCTAssertTrue(composer.supervisorModels.map(\.id).contains("execution-model"))
+    XCTAssertEqual(composer.executionModels.first?.defaultReasoningEffort, "high")
+    XCTAssertEqual(composer.supervisorModels.first?.defaultReasoningEffort, "medium")
+    XCTAssertEqual(composer.executionModels.first?.preferredEffort, "high")
+    XCTAssertEqual(composer.supervisorModels.first?.preferredEffort, "medium")
     XCTAssertNil(composer.blocker)
     XCTAssertFalse(composer.supervisorAvailable)
     let submission = try LiveBridgeAppBackend.readOnlySubmission(
@@ -713,13 +717,15 @@ private actor TestCodexCatalog: CodexCatalogQuerying {
         id: "execution-model",
         displayName: "Execution",
         isDefault: true,
-        reasoningEfforts: ["low", "high"]
+        reasoningEfforts: ["low", "high"],
+        defaultReasoningEffort: "high"
       ),
       CatalogModel(
         id: "gpt-5.6-luna",
         displayName: "Luna",
         isDefault: false,
-        reasoningEfforts: ["medium"]
+        reasoningEfforts: ["medium"],
+        defaultReasoningEffort: "medium"
       ),
     ]
   }

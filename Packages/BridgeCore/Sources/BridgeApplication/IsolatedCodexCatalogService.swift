@@ -192,7 +192,8 @@ public actor IsolatedCodexCatalogService: CodexCatalogQuerying {
       id: source.id,
       displayName: source.displayName,
       isDefault: source.isDefault,
-      reasoningEfforts: source.supportedReasoningEfforts.map(\.reasoningEffort)
+      reasoningEfforts: source.supportedReasoningEfforts.map(\.reasoningEffort),
+      defaultReasoningEffort: source.defaultReasoningEffort
     )
   }
 

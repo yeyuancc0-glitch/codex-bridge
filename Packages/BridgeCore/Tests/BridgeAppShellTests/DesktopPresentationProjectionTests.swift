@@ -1,5 +1,6 @@
 import BridgeCoordinator
 import BridgeDomain
+import BridgeMCP
 import BridgePersistence
 import BridgePresentation
 import XCTest
@@ -7,6 +8,44 @@ import XCTest
 @testable import BridgeAppShell
 
 final class DesktopPresentationProjectionTests: XCTestCase {
+  func testComposerProjectionPreservesCatalogDefaultEffort() throws {
+    var operatorState = DesktopOperatorState()
+    operatorState.composer = .ready(
+      DesktopLocalTaskComposer(
+        requestID: "request",
+        projectID: "project",
+        threadID: nil,
+        models: [
+          MCPModelSummary(
+            modelID: "execution",
+            displayName: "Execution",
+            isDefault: true,
+            reasoningEfforts: ["low", "high"],
+            defaultReasoningEffort: "high"
+          )
+        ],
+        isSubmitting: false,
+        submittedDraft: nil
+      )
+    )
+
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [],
+      diagnostics: [],
+      operatorState: operatorState
+    )
+
+    guard case .ready(let page) = snapshot.tasks,
+      case .ready(let composer)? = page.readOnlyComposer,
+      let model = composer.executionModels.first
+    else {
+      return XCTFail("Expected a projected model composer")
+    }
+    XCTAssertEqual(model.defaultReasoningEffort, "high")
+    XCTAssertEqual(model.preferredEffort, "high")
+  }
+
   func testCodexApprovalWithoutOperationEvidenceIsDenyOnly() throws {
     let taskID = TaskID(rawValue: "task-approval")
     let approvalID = ApprovalID(rawValue: "approval-1")

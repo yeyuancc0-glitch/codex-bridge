@@ -245,17 +245,20 @@ public struct MCPModelSummary: Codable, Equatable, Sendable {
   public let displayName: String
   public let isDefault: Bool
   public let reasoningEfforts: [String]
+  public let defaultReasoningEffort: String?
 
   public init(
     modelID: String,
     displayName: String,
     isDefault: Bool,
-    reasoningEfforts: [String]
+    reasoningEfforts: [String],
+    defaultReasoningEffort: String? = nil
   ) {
     self.modelID = modelID
     self.displayName = displayName
     self.isDefault = isDefault
     self.reasoningEfforts = reasoningEfforts
+    self.defaultReasoningEffort = defaultReasoningEffort
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -263,6 +266,7 @@ public struct MCPModelSummary: Codable, Equatable, Sendable {
     case displayName = "display_name"
     case isDefault = "is_default"
     case reasoningEfforts = "reasoning_efforts"
+    case defaultReasoningEffort = "default_reasoning_effort"
   }
 }
 

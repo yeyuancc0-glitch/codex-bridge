@@ -299,6 +299,7 @@ struct DesktopPresentationProjection {
       id: value.modelID,
       displayName: value.displayName,
       efforts: value.reasoningEfforts,
+      defaultReasoningEffort: value.defaultReasoningEffort,
       isDefault: value.isDefault
     )
   }

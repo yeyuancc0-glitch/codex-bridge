@@ -154,6 +154,14 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
     guard !criteria.isEmpty else { throw DesktopBackendError.operationFailed }
     let composition = try requireComposition()
+    let models = try await composition.application.listModels(
+      deadline: ContinuousClock.now.advanced(by: .seconds(20))
+    ).models
+    let supervisor = try Self.supervisorSelection(
+      modelID: submission.supervisorModel,
+      effort: submission.supervisorEffort,
+      models: models
+    )
     let task = TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: submission.requestID),
       projectID: ProjectID(rawValue: submission.projectID),
@@ -166,8 +174,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       ),
       supervisor: SupervisorOptions(
         enabled: true,
-        model: submission.supervisorModel ?? LocalReadOnlyTaskPolicy.defaultSupervisorModelID,
-        effort: submission.supervisorEffort ?? "medium"
+        model: supervisor.model,
+        effort: supervisor.effort
       ),
       contract: TaskContract(goal: submission.goal, acceptanceCriteria: criteria)
     )
@@ -1388,6 +1396,22 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       ),
       contract: TaskContract(goal: goal, acceptanceCriteria: criteria)
     )
+  }
+
+  private static func supervisorSelection(
+    modelID: String?,
+    effort: String?,
+    models: [MCPModelSummary]
+  ) throws -> (model: String, effort: String) {
+    let selectedModelID = modelID ?? LocalReadOnlyTaskPolicy.defaultSupervisorModelID
+    guard let model = models.first(where: { $0.modelID == selectedModelID }) else {
+      throw DesktopBackendError.operationFailed
+    }
+    let selectedEffort = effort ?? model.defaultReasoningEffort ?? model.reasoningEfforts.first
+    guard let selectedEffort, model.reasoningEfforts.contains(selectedEffort) else {
+      throw DesktopBackendError.operationFailed
+    }
+    return (model: model.modelID, effort: selectedEffort)
   }
 
   private static func draft(

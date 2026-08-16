@@ -72,10 +72,10 @@ private struct ReadOnlyTaskComposer: View {
     let supervisor = composer.supervisorModels.first
     _projectID = State(initialValue: composer.initialProjectID)
     _executionModel = State(initialValue: execution?.id ?? "")
-    _executionEffort = State(initialValue: execution?.efforts.first ?? "")
+    _executionEffort = State(initialValue: execution?.preferredEffort ?? "")
     _useSemanticSupervision = State(initialValue: composer.supervisorAvailable)
     _supervisorModel = State(initialValue: supervisor?.id ?? "")
-    _supervisorEffort = State(initialValue: supervisor?.efforts.first ?? "")
+    _supervisorEffort = State(initialValue: supervisor?.preferredEffort ?? "")
   }
 
   var body: some View {
@@ -190,7 +190,7 @@ private struct ReadOnlyTaskComposer: View {
       set: { value in
         executionModel = value
         executionEffort =
-          composer.executionModels.first(where: { $0.id == value })?.efforts.first ?? ""
+          composer.executionModels.first(where: { $0.id == value })?.preferredEffort ?? ""
       }
     )
   }
@@ -201,7 +201,7 @@ private struct ReadOnlyTaskComposer: View {
       set: { value in
         supervisorModel = value
         supervisorEffort =
-          composer.supervisorModels.first(where: { $0.id == value })?.efforts.first ?? ""
+          composer.supervisorModels.first(where: { $0.id == value })?.preferredEffort ?? ""
       }
     )
   }

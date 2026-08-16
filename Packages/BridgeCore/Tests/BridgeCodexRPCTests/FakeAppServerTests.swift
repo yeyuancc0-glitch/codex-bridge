@@ -225,6 +225,7 @@ final class FakeAppServerTests: XCTestCase {
     let models = try await client.listModels()
     XCTAssertEqual(models.data.count, 1)
     XCTAssertEqual(models.data[0].id, "future")
+    XCTAssertEqual(models.data[0].defaultReasoningEffort, "future-effort")
     XCTAssertEqual(
       models.data[0].supportedReasoningEfforts[0].reasoningEffort,
       "future-effort"
