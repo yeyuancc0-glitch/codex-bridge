@@ -237,6 +237,74 @@ final class ProjectRegistryTests: XCTestCase {
     XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains(root.path))
   }
 
+  func testSingleRootRebindReplacesIdentityAfterRemount() async throws {
+    let scratch = try makeScratchDirectory()
+    let root = scratch.appending(path: "project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let repository = InMemoryProjectRepository()
+    let registry = ProjectRegistry(repository: repository)
+    let summary = try await registry.register(
+      local: LocalProjectRegistration(name: "Project", rootURL: root)
+    )
+
+    let originalLocation = scratch.appending(
+      path: "project-before-remount", directoryHint: .isDirectory)
+    try FileManager.default.moveItem(at: root, to: originalLocation)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    do {
+      _ = try await registry.summary(for: summary.id)
+      XCTFail("Expected the remounted root to fail identity validation")
+    } catch {
+      XCTAssertEqual(error as? PathSecurityError, .rootIdentityChanged)
+    }
+
+    let replacementRoot = try RegisteredRoot(capturing: root)
+    try await registry.rebindSingleRoot(for: summary.id, confirmedRootURL: root)
+
+    let stored = await repository.project(id: summary.id)
+    let rebound = try XCTUnwrap(stored)
+    XCTAssertEqual(rebound.primaryRoot, replacementRoot)
+    XCTAssertEqual(rebound.repositoryRoot, replacementRoot)
+    try rebound.validateCurrentRoots()
+  }
+
+  func testSingleRootRebindRejectsWorktreeOrSplitRoots() async throws {
+    let scratch = try makeScratchDirectory()
+    let root = scratch.appending(path: "project", directoryHint: .isDirectory)
+    let worktree = scratch.appending(path: "worktree", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+
+    let registry = ProjectRegistry(repository: InMemoryProjectRepository())
+    let summary = try await registry.register(
+      local: LocalProjectRegistration(name: "Project", rootURL: root)
+    )
+    try await registry.addExplicitWorktree(localRootURL: worktree, to: summary.id)
+
+    await assertRegistryError(.rootRebindingUnsupported) {
+      try await registry.rebindSingleRoot(for: summary.id, confirmedRootURL: root)
+    }
+  }
+
+  func testSingleRootRebindRejectsADifferentConfirmedPath() async throws {
+    let scratch = try makeScratchDirectory()
+    let root = scratch.appending(path: "project", directoryHint: .isDirectory)
+    let other = scratch.appending(path: "other", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+
+    let registry = ProjectRegistry(repository: InMemoryProjectRepository())
+    let summary = try await registry.register(
+      local: LocalProjectRegistration(name: "Project", rootURL: root)
+    )
+
+    await assertRegistryError(.rootSelectionMismatch) {
+      try await registry.rebindSingleRoot(for: summary.id, confirmedRootURL: other)
+    }
+  }
+
   func testInvalidCommandAndPatternAreRejectedAtConstruction() {
     XCTAssertThrowsError(try VerificationCommand(executable: "swift test" + "\n"))
     XCTAssertThrowsError(try VerificationCommand(executable: "swift", arguments: ["bad\0arg"]))

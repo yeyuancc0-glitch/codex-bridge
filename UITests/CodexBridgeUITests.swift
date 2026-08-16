@@ -66,3 +66,48 @@ final class CodexBridgeUITests: XCTestCase {
     XCTAssertTrue(app.menuItems["退出"].exists)
   }
 }
+
+final class CodexBridgeAppearanceUITests: XCTestCase {
+  /// Verifies the shell renders in both light and dark system appearance using
+  /// an isolated HOME, without depending on a real Codex account or store.
+  @MainActor
+  func testFirstRunRendersInLightAndDarkAppearance() throws {
+    for appearance in ["Light", "Dark"] {
+      continueAfterFailure = false
+      let isolatedHome = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "CodexBridgeUITests-\(UUID().uuidString)",
+        isDirectory: true
+      )
+      try FileManager.default.createDirectory(
+        at: isolatedHome,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: NSNumber(value: 0o700)]
+      )
+      let app = XCUIApplication()
+      app.launchEnvironment["HOME"] = isolatedHome.path
+      app.launchEnvironment["CFFIXED_USER_HOME"] = isolatedHome.path
+      app.launchArguments += [
+        "-AppleLanguages", "(zh-Hans)",
+        "-AppleLocale", "zh_CN",
+        "-AppleInterfaceStyle", appearance,
+      ]
+      app.launch()
+      defer {
+        app.terminate()
+        try? FileManager.default.removeItem(at: isolatedHome)
+      }
+
+      let window = app.windows.firstMatch
+      XCTAssertTrue(window.waitForExistence(timeout: 15), "\(appearance) window missing")
+      XCTAssertTrue(
+        app.staticTexts["欢迎"].waitForExistence(timeout: 15),
+        "\(appearance) welcome missing"
+      )
+      XCTAssertTrue(app.staticTexts["步骤 1 / 9"].exists, "\(appearance) step missing")
+      XCTAssertTrue(
+        app.buttons["继续"].waitForExistence(timeout: 15),
+        "\(appearance) continue missing"
+      )
+    }
+  }
+}
