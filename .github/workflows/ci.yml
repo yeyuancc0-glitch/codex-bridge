@@ -79,3 +79,36 @@ jobs:
           -derivedDataPath .build/XcodeUITests
           -parallel-testing-enabled NO
           test
+
+  universal2:
+    name: Unsigned Universal 2 archive
+    runs-on: xcode-27
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Archive both macOS architectures
+        run: >-
+          Scripts/with-xcode.sh xcodebuild
+          -project CodexBridge.xcodeproj
+          -scheme CodexBridge
+          -configuration Release
+          -destination 'generic/platform=macOS'
+          -archivePath .build/CodexBridge.xcarchive
+          archive
+          CODE_SIGNING_ALLOWED=NO
+          ARCHS='arm64 x86_64'
+          ONLY_ACTIVE_ARCH=NO
+          REQUIRE_TUNNEL_HELPER=NO
+
+      - name: Verify archived app is Universal 2
+        run: |
+          app=".build/CodexBridge.xcarchive/Products/Applications/CodexBridge.app/Contents/MacOS/CodexBridge"
+          test -f "$app"
+          architectures="$(/usr/bin/lipo -archs "$app")"
+          test "$architectures" = "x86_64 arm64" || test "$architectures" = "arm64 x86_64"
+          /usr/bin/lipo "$app" -verify_arch x86_64
+          /usr/bin/lipo "$app" -verify_arch arm64

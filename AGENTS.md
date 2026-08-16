@@ -184,7 +184,7 @@ codex app-server generate-json-schema --out DIR
 - app-server stdout 与事件队列都必须有硬上限；审批/服务端请求不得静默丢弃，拥塞时终止会话并进入恢复。
 - 每个 app-server 会话只能有一个事件消费 actor；多个 `AsyncStream` iterator 会分流而不是广播，UI/执行器/审批必须订阅该 actor 归一化后的事件。
 - Xcode 27 下不要在 detached task 中用阻塞式 `FileHandle.read(upToCount:)` 驱动管道；使用 `readabilityHandler` 接入有界 `AsyncStream`，再由单消费者解析。
-- `.github/workflows/ci.yml` 在 GitHub 的 ARM64 `xcode-27` public-preview runner 上执行无凭证门禁；只证明源码、协议和 unsigned App 兼容，不读取 Runtime Key/账号/签名材料，也不能替代 Developer ID、公证、真实 Tunnel 或干净 Mac 验收。macOS XCUITest 固定精确 arm64 destination 且关闭并行执行，避免 Automation 服务争用造成假失败。
+- `.github/workflows/ci.yml` 在 GitHub 的 ARM64 `xcode-27` public-preview runner 上执行无凭证门禁；core/native job 证明源码、协议和 arm64 unsigned App/UI 兼容，universal2 job 额外归档并验证 unsigned `arm64+x86_64` App，不读取 Runtime Key/账号/签名材料，也不能替代 Developer ID、公证、真实 Tunnel 或干净 Mac 验收。macOS XCUITest 固定精确 arm64 destination 且关闭并行执行，避免 Automation 服务争用造成假失败。
 - Thread 只能按规范化 cwd/worktree 精确绑定，不能按标题或“最近使用”猜测。
 - 自动审批不能信任审批请求里的 shell 字符串或 best-effort `commandActions`；必须用 `threadId + turnId + itemId/approvalId` 关联已持久化的权威执行事件，缺少规范化 argv、路径或大小时一律不自动批准。
 - 三类 app-server 审批请求必须使用有界强类型模型解码，并与同一 `item/started` 的 immutable identity、时间和 `inProgress` 状态精确关联；审批证据与 pending 事实原子持久化。命令字符串与 `commandActions` 只作为明确标注的展示证据，未形成规范化权威操作前 UI 只能拒绝。

@@ -25,7 +25,7 @@ Tests should exercise real state transitions, SQLite transactions, filesystem id
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` mirrors the credential-free checks above on GitHub's ARM64 `xcode-27` runner for pull requests, pushes to `main` and manual runs. It uses a read-only repository token and does not load Runtime Keys, ChatGPT credentials, signing identities or notarization credentials. The hosted `xcode-27` image is a public preview, so a green workflow proves source, protocol and unsigned native-build compatibility on that image; it does not replace the signed release or clean-Mac acceptance in `docs/RELEASE.md`.
+`.github/workflows/ci.yml` mirrors the credential-free checks above on GitHub's ARM64 `xcode-27` runner for pull requests, pushes to `main` and manual runs. In addition to the arm64 Debug/UI checks, the workflow archives a credential-free Release app with both `arm64` and `x86_64` slices and verifies it with `lipo`. It uses a read-only repository token and does not load Runtime Keys, ChatGPT credentials, signing identities or notarization credentials. The hosted `xcode-27` image is a public preview, so a green workflow proves source, protocol and unsigned native-build compatibility on that image; it does not replace the signed release or clean-Mac acceptance in `docs/RELEASE.md`.
 
 ## Pull requests
 
