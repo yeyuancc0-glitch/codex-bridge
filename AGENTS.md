@@ -196,6 +196,7 @@ codex app-server generate-json-schema --out DIR
 - 远程 admission 的 `closed`、`asleep`、`revalidating` 和 `stopping` 状态必须分离：停止或失败唤醒复核后保持 `closed`，只有新的健康配置完成才重新开放；不能复用“成功后重开”的 replacement transition 完成停止。
 - AppShell 的 `DesktopConnectionRuntime` 是 Local、Manual HTTPS 与 Secure Tunnel 三种传输的唯一生命周期和健康状态源；切换模式必须先停止旧链路，本机 MCP 就绪不能被投影为 ChatGPT 远程就绪。Manual HTTPS 只接受无重定向的强认证 `/mcp` 地址，并使用有界请求、响应和超时。
 - `tunnel-client` 必须使用调用方预建的 0700 私有根、dirfd/inode 绑定的每次运行目录、Unix-domain health/admin socket 与最小化子进程环境。禁止把配置交给可替换的 pathname；非秘密配置使用固定 argv，Runtime Key 经 fd3、MCP 静态认证头经 fd4。官方 v0.0.11 不支持把 MCP URL 写成 `file:`，所以只传非秘密 `http://127.0.0.1:<port>/mcp`。`/readyz` 只证明本地 MCP 就绪，只有 health peer PID 匹配、严格 ready 且 control-plane poll 成功并新鲜时才可显示 Tunnel 已连接。
+- Tunnel `/metrics` 的 Prometheus 样本值是第二个空白分隔字段；可选第三字段是 exporter 抓取时间，不能替代控制面最近成功时间，样本值为 0 或过期时必须保持远程 admission 关闭。
 - Tunnel helper 必须先按外部可信的签名后 SHA-256 校验打开的同一 fd，再以 suspended 状态 spawn；只有动态 SecCode 通过宿主 Team requirement 且 CDHash 与静态 fd 身份相同时才恢复和写入秘密。签名前 supply manifest 不能充当运行时信任根。
 - Xcode 的 `Stage Tunnel Helper` phase 对普通开发构建是可选的；Release 候选必须显式提供独立可信的 unsigned helper SHA-256。Helper 先签名/暂存，再计算 App 内 post-stage 摘要，最后才签外层 App。
 - Swift MCP SDK 0.12.1 不提供可直接导入的生产 HTTP listener；`BridgeMCP` 必须自建仅绑定 `127.0.0.1` 的 NIO 外层，负责秘密路径或 Tunnel 认证头、请求/会话/结果上限、超时、背压和清理。SDK 的 stateful stored events 与多处 AsyncStream 无界，须按 `docs/MCP_SWIFT_SDK_INTEGRATION.md` 轮换会话。
