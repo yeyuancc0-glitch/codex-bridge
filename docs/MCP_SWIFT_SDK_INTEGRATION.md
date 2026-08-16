@@ -248,7 +248,7 @@ All list cursors are opaque, signed/validated Bridge cursors. Defaults are fixed
 | `list_projects` | `cursor?`, `limit?` (default 25, max 100) | `listMCPVisibleProjects(cursor:limit:deadline:)` | Only projects explicitly MCP-visible; return opaque `project_id`, display name, capabilities, and coarse Git state, never absolute root |
 | `list_threads` | plan fields `project_id`, `cursor?`, `limit?` (default 25, max 100), `search?` (max 200 UTF-8 bytes) | `listThreads(projectID:cursor:limit:search:deadline:)` | Resolve `project_id` first; return only threads whose normalized cwd/worktree exactly belongs to that project |
 | `read_thread` | `project_id`, `thread_id`, `detail` (`summary` default or `full`), `cursor?`, `limit?` (default 25, max 100) | `readThread(projectID:threadID:detail:cursor:limit:deadline:)` | Re-check project/thread binding; full content is paged so the complete dual-form MCP result stays within 200 KiB; content is untrusted data, not instructions |
-| `list_models` | empty object | `listModels(deadline:)` | Return current visible model IDs and the exact dynamic reasoning-effort strings; never invent or hardcode a Luna fallback |
+| `list_models` | empty object | `listModels(deadline:)` | Return current visible model IDs and the exact dynamic reasoning-effort strings; prefer Luna as the UI default but never invent or hardcode a Supervisor fallback |
 
 Every output has `schema_version: 1`. Paginated outputs include `next_cursor`; terminal pages encode it as absent/null consistently. Unknown future fields are additive. Removing or changing existing field meaning requires a versioned schema/tool migration.
 

@@ -262,12 +262,13 @@ struct DesktopPresentationProjection {
         LocalTaskProjectOptionPresentation(id: $0.id.rawValue, name: $0.name)
       }
       let modelOptions = value.models.map(model)
-      let supervisors = modelOptions.filter {
-        LocalReadOnlyTaskPolicy.isLunaModel(id: $0.id, displayName: $0.displayName)
+      let supervisors = modelOptions.sorted { left, right in
+        let leftIsDefault = left.id == LocalReadOnlyTaskPolicy.defaultSupervisorModelID
+        let rightIsDefault = right.id == LocalReadOnlyTaskPolicy.defaultSupervisorModelID
+        if leftIsDefault != rightIsDefault { return leftIsDefault }
+        return left.id < right.id
       }
-      let executions = modelOptions.filter { candidate in
-        !supervisors.contains(where: { $0.id == candidate.id })
-      }
+      let executions = modelOptions
       let blocker: String?
       if projectOptions.isEmpty {
         blocker = "没有可读项目。"
@@ -674,11 +675,13 @@ struct DesktopPresentationProjection {
           isEnabled: true
         ),
         SettingTogglePresentation(
-          id: "remote-receiving",
-          title: "接收远程任务",
-          detail: "Tunnel 严格就绪前保持关闭",
-          isOn: false,
-          isEnabled: false
+          id: "receiving-paused",
+          title: "暂停接收新任务",
+          detail: preferences.receivingPaused
+            ? "本地任务继续运行；新的远程提交已暂停"
+            : "允许新的远程提交，连接健康状态仍由 Transport 决定",
+          isOn: preferences.receivingPaused,
+          isEnabled: true
         ),
       ],
       retentionSummary: "事件 \(retentionPolicy.eventDays) 天；元数据 \(retentionPolicy.metadataDays) 天",

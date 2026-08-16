@@ -3,7 +3,7 @@
 ## 项目长期目标
 
 - 构建一个 GitHub 开源、个人自托管、零开发者云服务器的原生 macOS 应用。
-- 让 ChatGPT 网页版通过 MCP 安全调用用户本机 Codex；ChatGPT 负责形成任务契约，Codex 负责执行，Luna 负责只读监督，Bridge 负责权限、状态、审批、连接和证据。
+- 让 ChatGPT 网页版通过 MCP 安全调用用户本机 Codex；ChatGPT 负责形成任务契约，Codex 负责执行，默认推荐 Luna（但允许用户选择其他可用模型）负责只读监督，Bridge 负责权限、状态、审批、连接和证据。
 - V1 的完成标准以 `ChatGPT-Codex-Bridge-原生Swift本地开源版完整方案-V2.0.md` 为准；不能把局部原型当作完整交付。
 
 ## 权威来源
@@ -68,7 +68,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 生产任务流水线在持久化 turn 启动意图后、真正启动 app-server turn 前保存 Git baseline；最终化必须绑定精确 task/thread/turn/generation/event sequence。应用重启时按 Finalizer → Pipeline preflight → 通用任务恢复的顺序处理，避免把可继续完成的 verifying 任务降为 unknown。
 - 启动与唤醒恢复只允许用只读 `thread/read(includeTurns: true)` 对账：精确绑定的 completed/interrupted/failed 可归约，仍由当前 Runtime 持有的 session 可继续观察；仅看到 inProgress 但无法重接事件流时必须进入 unknown 并保留锁，严禁用 `thread/resume` 或新 `turn/start` 伪造恢复。unknown 只能由本机用户明确标记为 suspended，且恢复事实与两把锁释放必须在同一事务提交；该动作不恢复旧进程、不启动新 Turn。
 - 生产验证命令只能消费绑定 task/project/root/command/generation 的一次性本机授权句柄；缺少句柄时只记录明确的 unavailable 证据，禁止调用兼容用的直接批准接口或伪造 passed。
-- 原生本机任务使用独立 `macos.app` origin，只允许 read-only、无网络、动态目录中精确存在的 execution model/effort，以及精确 `gpt-5.6-luna` Supervisor；existing Thread 在 claim 前必须重新核对项目 cwd。Thread/history/model 目录只作不持久化的有界投影，所有 catalog 操作共享单飞门并受整体 deadline 约束。
+- 原生本机任务使用独立 `macos.app` origin，只允许 read-only、无网络、动态目录中精确存在的 execution model/effort 和用户选择的 Supervisor model/effort；默认首选 `gpt-5.6-luna`，不可用时不静默替换已选择模型；existing Thread 在 claim 前必须重新核对项目 cwd。Thread/history/model 目录只作不持久化的有界投影，所有 catalog 操作共享单飞门并受整体 deadline 约束。
 - 项目移除或离线卷身份重绑与新任务提交/暂停任务恢复必须共享 project mutation gate；变更期间禁止新的 admission，存在活动任务时拒绝变更。移除只在同一仓库事务删除 Thread 绑定、注册根和项目配置；身份重绑只接受用户重新选择的同一规范化路径、仅支持无 worktree 的单根项目，并在同一事务替换 root identity、清除陈旧 Thread 绑定。两者都绝不移动或删除本机项目文件。
 - Codex 账号限额只在用户刷新概览时通过隔离 catalog 读取，不在启动或任务事件上轮询；应用层仅投影校验后的百分比、重置时间与触达状态，禁止把服务端自由文本带入 UI。
 - App 生命周期只把 `taskChanges()` 当唤醒提示，正确性来自 EventStore 的全局持久 change cursor；终态通知用 `taskID + event sequence + terminal kind` 的稳定标识和 SQLite reservation 去重，通知开关与 consumer cursor 边界必须在同一 SQLite 事务提交，关闭时不重放历史。
@@ -138,7 +138,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 不启用 Mac App Sandbox；启用 Hardened Runtime、签名、公证和项目白名单。
 - 默认 OpenAI Secure MCP Tunnel；用户自备强认证 HTTPS 为高级替代；本机模式用于开发。
 - Codex 官方 ChatGPT 登录负责 Execution 与 Supervisor 用量；不要求模型 API Key。
-- 动态读取模型和 reasoning effort；不可用 Luna 时不静默降级。
+- 动态读取模型和 reasoning effort；默认推荐 Luna，但用户可选择目录中的其他模型；不可用用户选择的模型时返回明确失败，绝不静默换模型。
 - `submit_task` 异步返回，任务通过游标查询；ChatGPT 对话不能被本机主动唤醒。
 - V1 默认原工作区并保存 Git baseline；新 Thread 可实验性使用 worktree，绝不自动清理。
 - 设计交付模式由用户授权代理决定：采用“完成设计包后直接实现”，不生成页面参考图。
@@ -149,7 +149,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 2. 建立原生应用骨架、持久化、日志、Keychain、系统检测和项目注册。
 3. 完成本地只读 MCP 闭环，再接 Tunnel。
 4. 完成任务执行、安全审批与结构化报告。
-5. 完成 Luna Supervisor、恢复、完整 UI、通知、打包与发布。
+5. 完成默认推荐 Luna 的 Supervisor、恢复、完整 UI、通知、打包与发布。
 
 ## 常用命令
 
@@ -207,7 +207,7 @@ codex app-server generate-json-schema --out DIR
 - 原生任务证据必须由用户选中任务后按需读取，不得在全局任务刷新时对历史终态任务批量解码；缓存必须绑定 `task + binding generation + event sequence + report reference` 并保持有界，校验失败明确显示 unavailable，禁止伪装为空证据。
 - 最终 Git patch 使用 0700/0600 私有持久存储、digest 绑定、有界 LRU、跨实例文件锁和提交标记裁剪；首次访问形成受总容量约束的验证快照，MCP 分页必须按真实双形态 200 KiB 编码预算和 UTF-8 边界缩页。
 - 本地验证器不是 OS sandbox。本机明确批准验证命令后，项目程序或工具链插件仍可能自行读取项目外文件或联网；已知网络命令和 Shell wrapper 必须硬拒绝，发布前若要声称强隔离必须另接真正的进程沙箱。
-- Execution 与 Supervisor 都必须动态核对精确 model/effort；Luna 不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
+- Execution 与 Supervisor 都必须动态核对精确 model/effort；默认 Luna 或用户选择的其他模型不可用时返回明确失败，绝不静默换模型。Supervisor 固定只读、无网络、`approvalPolicy = never`，收到任何服务端审批请求立即 fail-closed。
 - Supervisor 的 checkpoint 出站过滤只约束提示内容，不约束同一 app-server 进程自行读取文件。没有 OS 级 evidence-only 隔离或经实测的 no-tools 协议能力时，终局复核和持续 checkpoint 都不得在 production 启动进程；状态必须诚实显示 unavailable。
 - 官方 MCP Inspector 验收固定使用 `@modelcontextprotocol/inspector@2.1.0` 和测试专用随机 Path Secret；错误调用必须分别核验 stdout 完整结果、stderr `tool_is_error` 与退出码 5。Inspector 是 one-shot，不能把 fresh connection 称为 same-session reconnect，也不能代替协议取消测试。
 - 数据根目录 inode 的 advisory lock 只能绑定已打开对象；若发布威胁模型要求抵抗同一 UID 主动 rename 并重建整个数据根，必须另接稳定父锚或 LaunchServices/launchd 单实例机制，不能把当前目录锁描述为已覆盖该攻击。

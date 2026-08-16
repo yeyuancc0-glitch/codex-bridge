@@ -209,18 +209,25 @@ public actor CodexSupervisorRuntime {
       throw CodexSupervisorRuntimeError.taskLimitReached
     }
     let sessionConfiguration: CodexSupervisorRuntimeConfiguration
+    var sessionHome: URL?
     if configuration.permitsUnconfinedProjectReadForProtocolTesting {
       sessionConfiguration = configuration
+      sessionHome = nil
     } else {
       guard let home = configuration.evidenceOnlyHomeURL else {
         throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
       }
       do {
+        let preparedHome = try EvidenceOnlyProcessBoundary.prepareSessionHome(in: home)
+        sessionHome = preparedHome
         sessionConfiguration = try configuration.withEvidenceOnlyProcessBoundary(
-          home: home,
+          home: preparedHome,
           deniedRoot: root
         )
       } catch {
+        if let sessionHome {
+          EvidenceOnlyProcessBoundary.removeSessionHome(sessionHome, from: home)
+        }
         throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
       }
     }
@@ -230,7 +237,9 @@ public actor CodexSupervisorRuntime {
       root: root,
       model: model,
       effort: effort,
-      configuration: sessionConfiguration
+      configuration: sessionConfiguration,
+      sessionHome: sessionHome,
+      sessionHomeRoot: configuration.evidenceOnlyHomeURL
     )
     do {
       try await session.start()
@@ -294,6 +303,8 @@ private actor CodexSupervisorSession {
   private let model: String
   private let effort: String
   private let configuration: CodexSupervisorRuntimeConfiguration
+  private let sessionHome: URL?
+  private let sessionHomeRoot: URL?
   private let client: CodexAppServerClient
   private var eventTask: Task<Void, Never>?
   private var threadID: String?
@@ -306,13 +317,17 @@ private actor CodexSupervisorSession {
     root: RegisteredRoot,
     model: String,
     effort: String,
-    configuration: CodexSupervisorRuntimeConfiguration
+    configuration: CodexSupervisorRuntimeConfiguration,
+    sessionHome: URL?,
+    sessionHomeRoot: URL?
   ) {
     self.taskID = taskID
     self.root = root
     self.model = model
     self.effort = effort
     self.configuration = configuration
+    self.sessionHome = sessionHome
+    self.sessionHomeRoot = sessionHomeRoot
     client = CodexAppServerClient(
       configuration: configuration.appServer,
       defaultTimeoutNanoseconds: configuration.requestTimeoutNanoseconds,
@@ -327,6 +342,10 @@ private actor CodexSupervisorSession {
   func start() async throws {
     beginConsumingEvents()
     do {
+      let liveRoot = try RegisteredRoot(
+        capturing: URL(fileURLWithPath: root.canonicalPath, isDirectory: true)
+      )
+      guard liveRoot == root else { throw CodexSupervisorRuntimeError.rootChanged }
       try await client.start()
       _ = try await client.initialize(clientInfo: configuration.clientInfo)
       try await validateModel()
@@ -412,6 +431,9 @@ private actor CodexSupervisorSession {
     eventTask?.cancel()
     eventTask = nil
     await client.stop()
+    if let sessionHome, let sessionHomeRoot {
+      EvidenceOnlyProcessBoundary.removeSessionHome(sessionHome, from: sessionHomeRoot)
+    }
   }
 
   private func beginConsumingEvents() {

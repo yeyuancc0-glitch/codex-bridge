@@ -389,7 +389,7 @@ final class BridgeApplicationServiceTests: XCTestCase {
     XCTAssertEqual(storedTaskIDs.count, 1)
   }
 
-  func testLocalSubmissionEnforcesReadOnlyDynamicExecutionAndLunaModels() async throws {
+  func testLocalSubmissionEnforcesReadOnlyDynamicExecutionAndSupervisorModels() async throws {
     let fixture = try Fixture(admission: .start)
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
     let project = fixture.project(
@@ -405,7 +405,7 @@ final class BridgeApplicationServiceTests: XCTestCase {
       localSubmission(valid, supervisorEnabled: false),
       localSubmission(valid, executionModel: "missing-model"),
       localSubmission(valid, executionEffort: "missing-effort"),
-      localSubmission(valid, supervisorModel: "gpt-test"),
+      localSubmission(valid, supervisorModel: "missing-supervisor-model"),
       localSubmission(valid, supervisorEffort: "missing-effort"),
     ]
 
@@ -436,15 +436,11 @@ final class BridgeApplicationServiceTests: XCTestCase {
         ),
       ]
     )
-    do {
-      _ = try await fixture.service(catalog: misleadingCatalog).submitLocalTask(
-        localSubmission(valid, supervisorModel: "not-supervisor"),
-        deadline: deadline
-      )
-      XCTFail("A display name must not grant the trusted Supervisor role")
-    } catch {
-      XCTAssertEqual(error as? BridgeMCPQueryError, .contractRejected)
-    }
+    let accepted = try await fixture.service(catalog: misleadingCatalog).submitLocalTask(
+      localSubmission(valid, supervisorModel: "not-supervisor"),
+      deadline: deadline
+    )
+    XCTAssertFalse(accepted.reusedExistingTask)
   }
 
   func testLocalSubmissionCanExplicitlyAuthorizeDeterministicFallback() async throws {

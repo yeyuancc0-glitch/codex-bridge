@@ -274,6 +274,29 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     await backend.shutdown()
   }
 
+  func testReceivingPauseSettingPersistsThroughBackendAction() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let backend = LiveBridgeAppBackend(
+      dataDirectoryURL: directory,
+      system: await TestDesktopSystemService(selectedDirectory: nil)
+    )
+    let stream = await backend.stateUpdates()
+    var iterator = stream.makeAsyncIterator()
+    _ = try await nextReadySnapshot(&iterator)
+
+    try await backend.updateSetting(key: "receiving-paused", enabled: true)
+    let paused = try await nextReadySnapshot(&iterator)
+    guard case .ready(let settings) = paused.presentation.settings,
+      let toggle = settings.security.first(where: { $0.id == "receiving-paused" })
+    else {
+      return XCTFail("Expected receiving pause setting")
+    }
+    XCTAssertTrue(toggle.isOn)
+
+    await backend.shutdown()
+  }
+
   func testOverviewRefreshReadsBoundedAccountRateLimits() async throws {
     let directory = temporaryDirectory()
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
@@ -388,8 +411,9 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     guard case .ready(let taskPage) = composerSnapshot.presentation.tasks,
       case .ready(let composer)? = taskPage.readOnlyComposer
     else { return XCTFail("Expected a read-only task composer") }
-    XCTAssertEqual(composer.executionModels.map(\.id), ["execution-model"])
-    XCTAssertEqual(composer.supervisorModels.map(\.id), ["gpt-5.6-luna"])
+    XCTAssertEqual(composer.executionModels.count, 2)
+    XCTAssertEqual(composer.supervisorModels.map(\.id).first, "gpt-5.6-luna")
+    XCTAssertTrue(composer.supervisorModels.map(\.id).contains("execution-model"))
     XCTAssertNil(composer.blocker)
     XCTAssertFalse(composer.supervisorAvailable)
     let submission = try LiveBridgeAppBackend.readOnlySubmission(

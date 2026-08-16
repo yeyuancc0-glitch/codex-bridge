@@ -79,4 +79,46 @@ final class EvidenceOnlyProcessBoundaryTests: XCTestCase {
     XCTAssertTrue(profile.contains("(deny network*)"))
     XCTAssertFalse(profile.contains("(allow network*)"))
   }
+
+  func testSessionCleanupDoesNotFollowReplacedRootSymlink() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-evidence-cleanup-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    let root = directory.appending(path: "root", directoryHint: .isDirectory)
+    let replacement = directory.appending(
+      path: "replacement",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(
+      at: root,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    try FileManager.default.createDirectory(
+      at: replacement,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    let sessionName = "session-\(UUID().uuidString.lowercased())"
+    let session = root.appendingPathComponent(sessionName, isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: session,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    try FileManager.default.removeItem(at: root)
+    try FileManager.default.createSymbolicLink(at: root, withDestinationURL: replacement)
+    let replacementSession = replacement.appendingPathComponent(sessionName, isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: replacementSession,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+
+    EvidenceOnlyProcessBoundary.removeSessionHome(session, from: root)
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: replacementSession.path))
+  }
 }

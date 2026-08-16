@@ -1,5 +1,6 @@
 import BridgeCoordinator
 import BridgeDomain
+import BridgePersistence
 import BridgePresentation
 import XCTest
 
@@ -202,6 +203,28 @@ final class DesktopPresentationProjectionTests: XCTestCase {
     }
     XCTAssertEqual(settings.retentionSummary, "事件 14 天；元数据 45 天")
     XCTAssertEqual(settings.retentionPolicy, policy)
+  }
+
+  func testSettingsProjectsPersistedReceivingPauseAsAnEnabledToggle() {
+    let snapshot = DesktopPresentationProjection.snapshot(
+      projects: [],
+      tasks: [],
+      diagnostics: [],
+      lifecyclePreferences: LifecyclePreferences(
+        notificationsEnabled: false,
+        idleSleepEnabled: true,
+        receivingPaused: true
+      )
+    )
+
+    guard case .ready(let settings) = snapshot.settings,
+      let receiving = settings.security.first(where: { $0.id == "receiving-paused" })
+    else {
+      return XCTFail("Expected receiving pause setting")
+    }
+    XCTAssertTrue(receiving.isOn)
+    XCTAssertTrue(receiving.isEnabled)
+    XCTAssertEqual(receiving.title, "暂停接收新任务")
   }
 
   func testPausedReceivingIsVisibleAndStillAllowsLocalConnectionTesting() {

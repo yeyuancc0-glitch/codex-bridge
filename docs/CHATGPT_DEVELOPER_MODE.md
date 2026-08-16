@@ -64,7 +64,7 @@ Before starting any task, call list_projects, list_threads when continuing work,
 2. `list_threads`、`list_models` 返回真实边界内的有界结果，标识符不会由 ChatGPT 猜测；
 3. 相对路径文件读取拒绝绝对路径、符号链接逃逸和默认敏感路径；
 4. 连接替换失败会关闭远程 admission，重新配置成功后才恢复；
-5. `get_task` 在 Supervisor 不可用时明确返回 `supervisorState = unavailable`。
+5. `get_task` 在 Supervisor 不可用时明确返回 `supervisorState = unavailable`；Supervisor 默认推荐 Luna，但允许使用当前目录中的其他用户选择模型。
 
 当前仓库的 `productionReviewAvailable` 固定为 `false`。因此，在没有完成真实 Supervisor 隔离认证前，`submit_task` 被拒绝是预期的 fail-closed 结果，不是 ChatGPT 配置错误。
 
@@ -96,7 +96,7 @@ Before starting any task, call list_projects, list_threads when continuing work,
 ## 7. 发布前证据清单
 
 - 真实 Codex ChatGPT 登录完成，且没有导出凭证；
-- 隔离 HOME 下的 Luna initialize、model/list、thread/start、turn/start 和恶意读写/联网回归通过；
+- 隔离 HOME 下的默认 Luna 或用户选择 Supervisor 模型 initialize、model/list、thread/start、turn/start 和恶意读写/联网回归通过；
 - Restricted Runtime Key、Tunnel ID、helper doctor、ready、metrics 和断线重连证据已记录；
 - ChatGPT Developer Mode 完成 16 工具目录和最小任务闭环；
 - 连续 checkpoint、existing Thread recovery、finalization recovery 通过；

@@ -74,6 +74,8 @@ public struct BridgeAppTaskSubmission: Equatable, Sendable {
   public let acceptanceCriteria: [String]
   public let model: String
   public let effort: String
+  public let supervisorModel: String?
+  public let supervisorEffort: String?
   public let permissionMode: String
   public let networkAllowed: Bool
 
@@ -86,7 +88,9 @@ public struct BridgeAppTaskSubmission: Equatable, Sendable {
     model: String,
     effort: String,
     permissionMode: String,
-    networkAllowed: Bool
+    networkAllowed: Bool,
+    supervisorModel: String? = nil,
+    supervisorEffort: String? = nil
   ) {
     self.requestID = requestID
     self.projectID = projectID
@@ -95,6 +99,8 @@ public struct BridgeAppTaskSubmission: Equatable, Sendable {
     self.acceptanceCriteria = acceptanceCriteria
     self.model = model
     self.effort = effort
+    self.supervisorModel = supervisorModel
+    self.supervisorEffort = supervisorEffort
     self.permissionMode = permissionMode
     self.networkAllowed = networkAllowed
   }

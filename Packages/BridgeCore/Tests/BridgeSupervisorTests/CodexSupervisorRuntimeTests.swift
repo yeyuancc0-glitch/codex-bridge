@@ -37,7 +37,11 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
       path: "supervisor-home-\(UUID().uuidString)",
       directoryHint: .isDirectory
     )
-    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(
+      at: home,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
     addTeardownBlock { try? FileManager.default.removeItem(at: home) }
     let runtime = CodexSupervisorRuntime(
       configuration: CodexSupervisorRuntimeConfiguration(

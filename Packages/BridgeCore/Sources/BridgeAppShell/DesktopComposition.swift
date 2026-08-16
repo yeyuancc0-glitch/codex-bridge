@@ -268,5 +268,5 @@ struct DesktopComposition: Sendable {
 enum DesktopSupervisorAvailability {
   static let productionReviewAvailable = false
   static let degradation =
-    "Luna supervision is disabled until isolated Codex authentication and a credentialed boundary test pass."
+    "Supervisor is disabled until isolated Codex authentication and a credentialed boundary test pass."
 }

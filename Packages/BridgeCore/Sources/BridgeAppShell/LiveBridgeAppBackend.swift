@@ -166,8 +166,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       ),
       supervisor: SupervisorOptions(
         enabled: true,
-        model: LocalReadOnlyTaskPolicy.supervisorModelID,
-        effort: "medium"
+        model: submission.supervisorModel ?? LocalReadOnlyTaskPolicy.defaultSupervisorModelID,
+        effort: submission.supervisorEffort ?? "medium"
       ),
       contract: TaskContract(goal: submission.goal, acceptanceCriteria: criteria)
     )
@@ -997,6 +997,8 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       try await lifecycle.updateNotificationsEnabled(enabled)
     case "idle-sleep-prevention":
       try await lifecycle.updateIdleSleepEnabled(enabled)
+    case "receiving-paused":
+      try await lifecycle.updateReceivingPaused(enabled)
     default:
       throw DesktopBackendError.operationFailed
     }
@@ -1363,11 +1365,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     if draft.supervisorEnabled {
       guard let supervisor = composer.models.first(where: { $0.modelID == draft.supervisorModel })
       else { throw DesktopBackendError.operationFailed }
-      guard
-        LocalReadOnlyTaskPolicy.isLunaModel(
-          id: supervisor.modelID,
-          displayName: supervisor.displayName
-        ), supervisor.reasoningEfforts.contains(draft.supervisorEffort)
+      guard supervisor.reasoningEfforts.contains(draft.supervisorEffort)
       else {
         throw DesktopBackendError.operationFailed
       }

@@ -106,11 +106,11 @@ private struct ReadOnlyTaskComposer: View {
       }
       if !composer.supervisorAvailable {
         Label(
-          "Luna 当前不可用；关闭语义监督后将使用确定性 Policy Engine，最终报告会标注用户选择。",
+          "Supervisor 当前不可用；关闭语义监督后将使用确定性 Policy Engine，最终报告会标注用户选择。",
           systemImage: "exclamationmark.triangle"
         )
         .foregroundStyle(.orange)
-        .accessibilityLabel("监督降级：Luna 当前不可用，将使用确定性 Policy Engine")
+        .accessibilityLabel("监督降级：Supervisor 当前不可用，将使用确定性 Policy Engine")
       }
       HStack(alignment: .top, spacing: BridgeTheme.spacingSection) {
         VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
@@ -149,7 +149,7 @@ private struct ReadOnlyTaskComposer: View {
           }
           Toggle("启用语义监督", isOn: $useSemanticSupervision)
             .disabled(!composer.supervisorAvailable)
-          Picker("Luna Supervisor", selection: supervisorModelBinding) {
+          Picker("Supervisor 模型（默认 Luna）", selection: supervisorModelBinding) {
             ForEach(composer.supervisorModels) { model in
               Text(model.displayName).tag(model.id)
             }
@@ -536,7 +536,7 @@ private struct TaskDetailView: View {
     case .supervision:
       VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
         EvidenceSummary(
-          title: "Luna Supervisor",
+          title: "Supervisor 模型",
           summary: task.supervisionSummary,
           emptyMessage: "尚未产生监督结论"
         )

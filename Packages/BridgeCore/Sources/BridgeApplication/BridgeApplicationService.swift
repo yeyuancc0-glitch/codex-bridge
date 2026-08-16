@@ -25,6 +25,8 @@ public enum LocalReadOnlyTaskPolicy {
     _ = displayName
     return id == supervisorModelID
   }
+
+  public static var defaultSupervisorModelID: String { supervisorModelID }
 }
 
 public actor BridgeApplicationService:
@@ -538,10 +540,6 @@ public actor BridgeApplicationService:
     if submission.supervisor.enabled {
       guard
         let supervisor = models.first(where: { $0.id == submission.supervisor.model }),
-        LocalReadOnlyTaskPolicy.isLunaModel(
-          id: supervisor.id,
-          displayName: supervisor.displayName
-        ),
         supervisor.reasoningEfforts.contains(submission.supervisor.effort)
       else { throw BridgeMCPQueryError.contractRejected }
     }

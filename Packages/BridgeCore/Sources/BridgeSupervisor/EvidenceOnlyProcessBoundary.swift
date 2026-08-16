@@ -1,4 +1,5 @@
 import BridgeCodexRPC
+import Darwin
 import Foundation
 
 public enum EvidenceOnlyProcessBoundaryError: Error, Equatable, Sendable {
@@ -13,6 +14,52 @@ public enum EvidenceOnlyProcessBoundaryError: Error, Equatable, Sendable {
 public enum EvidenceOnlyProcessBoundary {
   public static let sandboxExecutableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
   public static let maximumProfileBytes = 32 * 1024
+
+  private static let sessionHomePrefix = "session-"
+
+  /// Creates a private HOME for one Supervisor app-server session.
+  ///
+  /// The desktop data root is deliberately treated as a directory rather than
+  /// as a shared HOME. Keeping each session in its own child prevents Codex
+  /// configuration, caches, and transient files from crossing task boundaries.
+  static func prepareSessionHome(in rootURL: URL) throws -> URL {
+    let root = try privateDirectory(rootURL, field: "isolatedHomeRoot")
+    let child = root.appendingPathComponent(
+      sessionHomePrefix + UUID().uuidString.lowercased(),
+      isDirectory: true
+    )
+    do {
+      try FileManager.default.createDirectory(
+        at: child,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: NSNumber(value: 0o700)]
+      )
+    } catch {
+      throw EvidenceOnlyProcessBoundaryError.unavailable
+    }
+    do {
+      _ = try privateDirectory(child, field: "isolatedHome")
+    } catch {
+      try? FileManager.default.removeItem(at: child)
+      throw error
+    }
+    return child
+  }
+
+  /// Removes only a private session directory created below the supplied root.
+  /// A replaced symlink or non-directory is left untouched.
+  static func removeSessionHome(_ homeURL: URL, from rootURL: URL) {
+    let root = rootURL.standardizedFileURL.path
+    let home = homeURL.standardizedFileURL.path
+    guard home.hasPrefix(root + "/"),
+      URL(fileURLWithPath: home).lastPathComponent.hasPrefix(sessionHomePrefix)
+    else { return }
+
+    guard hasPrivateDirectoryMetadata(atPath: root),
+      hasPrivateDirectoryMetadata(atPath: home)
+    else { return }
+    try? FileManager.default.removeItem(atPath: home)
+  }
 
   public static func configuration(
     wrapping base: AppServerConfiguration,
@@ -113,6 +160,22 @@ public enum EvidenceOnlyProcessBoundary {
       throw EvidenceOnlyProcessBoundaryError.invalidPath(field)
     }
     return path
+  }
+
+  private static func privateDirectory(_ url: URL, field: String) throws -> URL {
+    let path = try normalizedPath(url, field: field)
+    guard hasPrivateDirectoryMetadata(atPath: path) else {
+      throw EvidenceOnlyProcessBoundaryError.invalidPath(field)
+    }
+    return URL(fileURLWithPath: path, isDirectory: true)
+  }
+
+  private static func hasPrivateDirectoryMetadata(atPath path: String) -> Bool {
+    var metadata = stat()
+    return lstat(path, &metadata) == 0
+      && metadata.st_uid == getuid()
+      && metadata.st_mode & S_IFMT == S_IFDIR
+      && metadata.st_mode & 0o777 == 0o700
   }
 
   private static func profileLiteral(_ value: String) throws -> String {
