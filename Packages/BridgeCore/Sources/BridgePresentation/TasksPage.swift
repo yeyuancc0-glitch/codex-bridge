@@ -149,11 +149,12 @@ private struct ReadOnlyTaskComposer: View {
           }
           Toggle("启用语义监督", isOn: $useSemanticSupervision)
             .disabled(!composer.supervisorAvailable)
-          Picker("Supervisor 模型（默认 Luna）", selection: supervisorModelBinding) {
+          Picker("Supervisor 模型（推荐 Luna）", selection: supervisorModelBinding) {
             ForEach(composer.supervisorModels) { model in
               Text(model.displayName).tag(model.id)
             }
           }
+          .help("Luna 仅在当前 Codex model/list 可用时优先显示；也可以选择其他可用模型。")
           .disabled(!useSemanticSupervision)
           Picker("Supervisor effort", selection: $supervisorEffort) {
             ForEach(supervisorEfforts, id: \.self) { effort in

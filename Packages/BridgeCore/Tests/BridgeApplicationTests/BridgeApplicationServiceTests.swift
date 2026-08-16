@@ -29,6 +29,36 @@ final class BridgeApplicationServiceTests: XCTestCase {
     }
   }
 
+  func testModelCatalogDoesNotInjectLunaWhenItIsUnavailable() async throws {
+    let fixture = try Fixture()
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let catalog = CatalogFixture(
+      models: [
+        CatalogModel(
+          id: "gpt-other",
+          displayName: "Other",
+          isDefault: true,
+          reasoningEfforts: ["high"]
+        ),
+        CatalogModel(
+          id: "gpt-specialized",
+          displayName: "Specialized",
+          isDefault: false,
+          reasoningEfforts: ["low", "high"]
+        ),
+      ]
+    )
+
+    let result = try await fixture.service(catalog: catalog).listModels(
+      deadline: ContinuousClock.now.advanced(by: .seconds(5))
+    )
+
+    XCTAssertEqual(result.models.map(\.modelID), ["gpt-other", "gpt-specialized"])
+    XCTAssertFalse(
+      result.models.map(\.modelID).contains(LocalReadOnlyTaskPolicy.defaultSupervisorModelID)
+    )
+  }
+
   func testProjectAndThreadQueriesNeverExposeCanonicalPathsOrSecrets() async throws {
     let fixture = try Fixture()
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }

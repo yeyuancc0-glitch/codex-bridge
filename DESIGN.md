@@ -2,7 +2,7 @@
 
 ## Overview
 
-Codex Bridge 是一个原生 macOS 开发者工具。它连接 ChatGPT 网页版、本机 Codex app-server、Luna Supervisor、项目白名单和本地审批。界面的成功标准不是“看起来像 AI 产品”，而是让用户在高风险、长时运行的开发任务中快速回答四个问题：连接是否健康、Codex 正在做什么、是否需要我决定、结果是否有证据。
+Codex Bridge 是一个原生 macOS 开发者工具。它连接 ChatGPT 网页版、本机 Codex app-server、只读 Supervisor（默认推荐 Luna）、项目白名单和本地审批。界面的成功标准不是“看起来像 AI 产品”，而是让用户在高风险、长时运行的开发任务中快速回答四个问题：连接是否健康、Codex 正在做什么、是否需要我决定、结果是否有证据。
 
 本文件是设计与页面契约；方案文档定义产品能力，Swift 代码中的语义 Token 与原生组件是可执行真相。
 
