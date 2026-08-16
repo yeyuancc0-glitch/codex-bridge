@@ -18,22 +18,22 @@ Codex Bridge.app
 ├── 本地 MCP Server
 ├── Codex app-server 控制器
 ├── Codex 执行任务引擎
-├── Luna 本地监督 Agent
+├── 只读 Supervisor（默认推荐 Luna，使用当前 Codex 目录模型）
 ├── 项目、线程、文件和 Git 管理
 ├── 本地 SQLite 状态库
 └── Secure MCP Tunnel / 公网 HTTPS 连接管理
 ```
 
-用户在 ChatGPT 网页版中讨论需求后，ChatGPT 通过 MCP 调用本机 Codex Bridge。Bridge 在用户允许的项目中找到正确的 Codex 线程，按用户选择的模型和推理深度启动任务，并由本机另一条 Codex 监督线程使用 Luna 持续检查执行情况。Codex 跑偏时，监督 Agent 可以向运行中的 turn 发送纠偏指令；任务完成后，Bridge 保存完整报告，供 ChatGPT 下一次调用读取。
+用户在 ChatGPT 网页版中讨论需求后，ChatGPT 通过 MCP 调用本机 Codex Bridge。Bridge 在用户允许的项目中找到正确的 Codex 线程，按用户选择的模型和推理深度启动任务，并由本机另一条 Codex 监督线程使用当前选择的 Supervisor 模型持续检查执行情况。默认推荐 Luna，但 Luna 不内置；Codex 跑偏时，监督 Agent 可以向运行中的 turn 发送纠偏指令；任务完成后，Bridge 保存完整报告，供 ChatGPT 下一次调用读取。
 
 本方案作出以下确定决策：
 
 1. **不建设开发者自己的云服务器、账号系统、计费系统或多租户后台。**
 2. **macOS 小应用使用 Swift 6、SwiftUI 和必要的 AppKit 原生开发。**
-3. **Codex 执行和 Luna 监督都复用用户现有的 Codex ChatGPT 官方登录。** 不要求用户提供用于模型推理的 OpenAI API Key。
+3. **Codex 执行和 Supervisor（默认推荐 Luna）都复用用户现有的 Codex ChatGPT 官方登录。** 不要求用户提供用于模型推理的 OpenAI API Key。
 4. **执行模型和推理深度由用户启动任务时选择，选项通过 Codex `model/list` 动态读取。**
 5. **监督模型默认推荐 Luna，推理深度默认 `medium`。** Luna 不是内置模型；用户可以从当前 `model/list` 目录选择其他可用模型和 effort。已选择模型不可用时明确失败，不静默替换。
-6. **ChatGPT 网页版不能直接访问 localhost。** 默认使用 OpenAI Secure MCP Tunnel；它不需要自建服务器，但当前官方实现仍要求一个仅具备 Tunnel Read + Use 权限的 Platform Runtime Key。该 Key 只用于隧道鉴权，不用于 Codex 或 Luna 推理计费。
+6. **ChatGPT 网页版不能直接访问 localhost。** 默认使用 OpenAI Secure MCP Tunnel；它不需要自建服务器，但当前官方实现仍要求一个仅具备 Tunnel Read + Use 权限的 Platform Runtime Key。该 Key 只用于隧道鉴权，不用于 Codex 或 Supervisor 模型推理计费。
 7. **完全不想配置 OpenAI Platform Runtime Key 的用户，可以改用自己提供的公网 HTTPS MCP 地址。** 例如具备稳定域名和认证的 Cloudflare Tunnel。该模式不再是私有 OpenAI 隧道，需要额外承担公网端点和认证风险。
 8. **Codex app-server 使用 stdio 由本机 Swift 应用启动。** 不把 app-server 端口暴露到网络。
 9. **监督 Agent 在本机独立 Codex app-server 进程中运行。** 它只有只读权限，不能批准危险操作、不能直接修改项目。
@@ -1340,7 +1340,7 @@ networkAccess = project_setting，默认 false
 
 ---
 
-## 18. Luna 后端监督 Agent
+## 18. Supervisor 后端监督 Agent（默认推荐 Luna）
 
 本方案中的“后端”是指 Bridge 应用内部的后台任务，不是云服务器。
 
@@ -1352,7 +1352,7 @@ Execution app-server
 SupervisorEngine
     ↓ 检查点负载
 Supervisor app-server
-    ↓ Luna / medium / readOnly
+    ↓ 用户选择的目录模型 / effort / readOnly
 结构化决策
     ↓
 continue / steer / suspend / interrupt
@@ -2367,7 +2367,7 @@ Sparkle Appcast
 
 退出条件：写任务不能绕过项目和本地审批边界。
 
-### 阶段 6：Luna Supervisor
+### 阶段 6：Supervisor（默认推荐 Luna）
 
 实现：
 

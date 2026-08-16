@@ -119,14 +119,20 @@ struct UnixHealthClient: Sendable {
     return try HTTPResponse(data: response)
   }
 
-  private static func pollTimestamp(in body: Data) -> TimeInterval? {
+  package static func pollTimestamp(in body: Data) -> TimeInterval? {
     let text = String(decoding: body, as: UTF8.self)
     for line in text.split(separator: "\n") where !line.hasPrefix("#") {
       let fields = line.split(whereSeparator: \.isWhitespace)
-      guard fields.count >= 2 else { continue }
+      guard fields.count == 2 || fields.count == 3 else { continue }
       let metric = fields[0].split(separator: "{").first
       guard metric == "commands_poll_last_successful_timestamp_seconds" else { continue }
-      return TimeInterval(fields.last!)
+      guard let value = Double(fields[1]), value.isFinite else { continue }
+      if fields.count == 3 {
+        guard let sampleTimestamp = Double(fields[2]), sampleTimestamp.isFinite else {
+          continue
+        }
+      }
+      return value
     }
     return nil
   }

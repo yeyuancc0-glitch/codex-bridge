@@ -171,6 +171,27 @@ final class TunnelManagerTests: XCTestCase {
     XCTAssertFalse(acceptsRemote)
   }
 
+  func testStaleMetricValueWithFreshScrapeTimestampNeverAcceptsRemoteSubmissions() async throws {
+    let harness = try Harness(
+      tunnelSuffix: "stale" + String(repeating: "s", count: 27),
+      readinessTimeout: .milliseconds(500)
+    )
+    defer { harness.cleanup() }
+    let manager = try harness.manager()
+
+    do {
+      try await manager.start()
+      XCTFail("Expected stale control-plane poll to prevent readiness")
+    } catch {
+      XCTAssertEqual(error as? TunnelManagerError, .readinessTimedOut)
+    }
+
+    let acceptsRemote = await manager.acceptsRemoteSubmissions()
+    let state = await manager.state()
+    XCTAssertFalse(acceptsRemote)
+    XCTAssertEqual(state, .failed)
+  }
+
   func testInvalidRuntimeRootPermissionsAreRejectedWithoutMutation() async throws {
     let harness = try Harness(tunnelSuffix: String(repeating: "g", count: 32))
     defer { harness.cleanup() }

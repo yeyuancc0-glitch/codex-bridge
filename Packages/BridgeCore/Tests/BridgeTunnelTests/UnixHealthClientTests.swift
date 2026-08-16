@@ -25,6 +25,28 @@ final class UnixHealthClientTests: XCTestCase {
     XCTAssertEqual(response.body, Data("ready".utf8))
   }
 
+  func testPollTimestampUsesMetricValueBeforeOptionalPrometheusSampleTimestamp() {
+    let body = Data(
+      ("# HELP commands_poll_last_successful_timestamp_seconds Poll\n"
+        + "commands_poll_last_successful_timestamp_seconds{scope=\"control\"} 0 9999999999999\n")
+        .utf8
+    )
+
+    XCTAssertEqual(UnixHealthClient.pollTimestamp(in: body), 0)
+  }
+
+  func testPollTimestampRejectsMalformedOrNonFiniteSamples() {
+    let bodies = [
+      Data("commands_poll_last_successful_timestamp_seconds 1 2 3\n".utf8),
+      Data("commands_poll_last_successful_timestamp_seconds NaN 2\n".utf8),
+      Data("commands_poll_last_successful_timestamp_seconds 1 infinity\n".utf8),
+    ]
+
+    for body in bodies {
+      XCTAssertNil(UnixHealthClient.pollTimestamp(in: body))
+    }
+  }
+
   func testHealthSocketRejectsUnexpectedPeerPID() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "health-\(UUID().uuidString.prefix(8))",

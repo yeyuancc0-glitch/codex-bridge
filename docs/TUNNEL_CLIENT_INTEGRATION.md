@@ -41,7 +41,7 @@ The health/admin listener is a Unix-domain socket under the private runtime dire
 
 `GET /healthz` returning `200 live` means only that the process is alive. Strict local readiness requires `GET /readyz` to return exactly `200 ready`. Other 200 bodies such as an auth-required or startup-probe-timeout qualification are not accepted for this product.
 
-`/readyz` does not prove control-plane authentication. A connected state additionally requires `commands_poll_last_successful_timestamp_seconds` from `/metrics` to be non-zero and fresh. With the default 30-second poll and 5-second guardrail, a successful poll older than 70 seconds is stale.
+`/readyz` does not prove control-plane authentication. A connected state additionally requires `commands_poll_last_successful_timestamp_seconds` from `/metrics` to be non-zero and fresh. The Prometheus sample value is the second whitespace-delimited field; an optional third field is an exporter scrape timestamp and is never used as the control-plane poll time. With the default 30-second poll and 5-second guardrail, a successful poll older than 70 seconds is stale.
 
 State mapping:
 
