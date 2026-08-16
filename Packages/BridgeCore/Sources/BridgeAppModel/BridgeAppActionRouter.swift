@@ -90,6 +90,8 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.interruptTask(taskID)
     case .suspendAmbiguousTask(let taskID):
       try await backend.suspendAmbiguousTask(taskID)
+    case .markSupervisorActionApplied(let taskID, let actionID):
+      try await backend.markSupervisorActionApplied(taskID: taskID, actionID: actionID)
     case .authorizeTaskVerification(let taskID):
       try await backend.authorizeTaskVerification(taskID)
     case .testConnection:
@@ -100,6 +102,18 @@ actor BridgeAppActionRouter: BridgePresentationActionHandling {
       try await backend.exportSupportBundle()
     case .updateSetting(let key, let enabled):
       try await backend.updateSetting(key: key, enabled: enabled)
+    case .updateRetentionPolicy(
+      let eventDays,
+      let metadataDays,
+      let recentTaskLimit,
+      let expectedRevision
+    ):
+      try await backend.updateRetentionPolicy(
+        eventDays: eventDays,
+        metadataDays: metadataDays,
+        recentTaskLimit: recentTaskLimit,
+        expectedRevision: expectedRevision
+      )
     case .decideTask(let requestID, let decision, let model, let effort):
       try await backend.resolveLocalTask(
         requestID: requestID,

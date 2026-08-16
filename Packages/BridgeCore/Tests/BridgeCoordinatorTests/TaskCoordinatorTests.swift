@@ -540,6 +540,157 @@ final class TaskCoordinatorTests: XCTestCase {
     XCTAssertEqual(kinds.last, "task.runtimeIntent")
   }
 
+  func testSupervisorMutationCASRejectsStaleEventSequenceBeforeRuntime() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "supervisor-sequence-cas", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let running = try await coordinator.task(submitted.aggregate.id)
+    let binding = try XCTUnwrap(running.aggregate.binding)
+    let staleSequence = running.lastSequence - 1
+
+    do {
+      _ = try await coordinator.steerWithResult(
+        taskID: submitted.aggregate.id,
+        expectedTurnID: binding.turnID,
+        expectedSequence: staleSequence,
+        prompt: "This checkpoint is stale."
+      )
+      XCTFail("Expected stale Supervisor steer to fail before runtime")
+    } catch {
+      XCTAssertEqual(error as? TaskCoordinatorEventSequenceMismatchError, .init())
+    }
+    do {
+      _ = try await coordinator.interruptWithResult(
+        taskID: submitted.aggregate.id,
+        expectedTurnID: binding.turnID,
+        expectedSequence: staleSequence,
+        reason: "This checkpoint is stale."
+      )
+      XCTFail("Expected stale Supervisor interrupt to fail before runtime")
+    } catch {
+      XCTAssertEqual(error as? TaskCoordinatorEventSequenceMismatchError, .init())
+    }
+    do {
+      _ = try await coordinator.suspendWithResult(
+        taskID: submitted.aggregate.id,
+        expectedTurnID: binding.turnID,
+        expectedSequence: staleSequence,
+        reason: "This checkpoint is stale."
+      )
+      XCTFail("Expected stale Supervisor suspend to fail before runtime")
+    } catch {
+      XCTAssertEqual(error as? TaskCoordinatorEventSequenceMismatchError, .init())
+    }
+
+    let staleSteers = await runtime.steerCalls()
+    XCTAssertTrue(staleSteers.isEmpty)
+    let interruptCount = await runtime.interruptCount()
+    XCTAssertEqual(interruptCount, 0)
+    let current = try await coordinator.task(submitted.aggregate.id)
+    XCTAssertEqual(current.lastSequence, running.lastSequence)
+    XCTAssertEqual(current.aggregate.phase, .running)
+  }
+
+  func testSupervisorMutationCASSucceedsWithCurrentSequenceAndPersistsIntent() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "supervisor-sequence-success", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let before = try await coordinator.task(submitted.aggregate.id)
+    let binding = try XCTUnwrap(before.aggregate.binding)
+
+    let result = try await coordinator.steerWithResult(
+      taskID: submitted.aggregate.id,
+      expectedTurnID: binding.turnID,
+      expectedSequence: before.lastSequence,
+      prompt: "Keep the current evidence boundary."
+    )
+
+    XCTAssertEqual(result.projection.lastSequence, before.lastSequence + 1)
+    XCTAssertEqual(result.projection.aggregate.phase, .running)
+    let events = try await store.events(for: submitted.aggregate.id)
+    XCTAssertEqual(events.last?.kind, "task.runtimeIntent")
+    let steerCalls = await runtime.steerCalls()
+    XCTAssertEqual(steerCalls.count, 1)
+  }
+
+  func testConcurrentSupervisorMutationsWithSameSequenceAllowOnlyOneRuntimeCall() async throws {
+    let store = try EventStore.inMemory()
+    let runtime = FakeRuntime()
+    let coordinator = TaskCoordinator(
+      store: store,
+      admission: FixedAdmission(.start),
+      runtime: runtime
+    )
+    let submitted = try await coordinator.submit(
+      origin: "chatgpt",
+      submission: makeSubmission(key: "supervisor-sequence-race", permissionMode: "read-only")
+    )
+    try await waitForPhase(.running, taskID: submitted.aggregate.id, coordinator: coordinator)
+    let before = try await coordinator.task(submitted.aggregate.id)
+    let binding = try XCTUnwrap(before.aggregate.binding)
+
+    let left = Task { () -> Result<TaskMutationResult, Error> in
+      do {
+        return .success(
+          try await coordinator.steerWithResult(
+            taskID: submitted.aggregate.id,
+            expectedTurnID: binding.turnID,
+            expectedSequence: before.lastSequence,
+            prompt: "First concurrent checkpoint."
+          )
+        )
+      } catch {
+        return .failure(error)
+      }
+    }
+    let right = Task { () -> Result<TaskMutationResult, Error> in
+      do {
+        return .success(
+          try await coordinator.steerWithResult(
+            taskID: submitted.aggregate.id,
+            expectedTurnID: binding.turnID,
+            expectedSequence: before.lastSequence,
+            prompt: "Second concurrent checkpoint."
+          )
+        )
+      } catch {
+        return .failure(error)
+      }
+    }
+    let results = await [left.value, right.value]
+
+    XCTAssertEqual(results.compactMap { try? $0.get() }.count, 1)
+    let failures = results.compactMap { result -> Error? in
+      guard case .failure(let error) = result else { return nil }
+      return error
+    }
+    XCTAssertEqual(failures.count, 1)
+    XCTAssertTrue(
+      failures.first is TaskCoordinatorEventSequenceMismatchError
+        || failures.first is EventStoreError
+    )
+    let steerCalls = await runtime.steerCalls()
+    XCTAssertEqual(steerCalls.count, 1)
+  }
+
   func testObservationAfterConcurrentSteerIntentRemainsAuthoritative() async throws {
     let store = try EventStore.inMemory()
     let gate = SteerGate(failsOnRelease: false)

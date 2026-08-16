@@ -496,6 +496,10 @@ public struct TaskCoordinatorTurnMismatchError: Error, Equatable, Sendable {
   public init() {}
 }
 
+public struct TaskCoordinatorEventSequenceMismatchError: Error, Equatable, Sendable {
+  public init() {}
+}
+
 public enum TaskCoordinatorError: Error, Equatable, Sendable {
   case invalidOrigin
   case submissionTooLarge
@@ -512,6 +516,7 @@ public enum TaskCoordinatorError: Error, Equatable, Sendable {
   case invalidFailureReason
   case invalidFinalizationAuthorization
   case invalidReportReference
+  case invalidRetentionLimit
   case finalizationReservationMismatch
   case lockStateCorrupt(TaskID)
   case recoveryRequiresReconciliation(TaskPhase)

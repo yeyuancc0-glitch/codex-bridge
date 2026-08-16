@@ -154,6 +154,7 @@ public protocol BridgeAppBackend: Sendable {
   func steer(_ request: BridgeAppSteerRequest) async throws
   func interruptTask(_ taskID: String) async throws
   func suspendAmbiguousTask(_ taskID: String) async throws
+  func markSupervisorActionApplied(taskID: String, actionID: String) async throws
   func authorizeTaskVerification(_ taskID: String) async throws
   func resolveLocalTask(
     requestID: String,
@@ -194,6 +195,12 @@ public protocol BridgeAppBackend: Sendable {
   func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws
   func exportSupportBundle() async throws
   func updateSetting(key: String, enabled: Bool) async throws
+  func updateRetentionPolicy(
+    eventDays: Int,
+    metadataDays: Int,
+    recentTaskLimit: Int?,
+    expectedRevision: Int64
+  ) async throws
 }
 
 public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
@@ -203,9 +210,19 @@ public enum BridgeAppBackendCompatibilityError: Error, Equatable, Sendable {
   case localTaskComposerUnsupported
   case taskEvidenceUnsupported
   case recoveryResolutionUnsupported
+  case retentionPolicyUnsupported
 }
 
 extension BridgeAppBackend {
+  public func updateRetentionPolicy(
+    eventDays: Int,
+    metadataDays: Int,
+    recentTaskLimit: Int?,
+    expectedRevision: Int64
+  ) async throws {
+    _ = (eventDays, metadataDays, recentTaskLimit, expectedRevision)
+    throw BridgeAppBackendCompatibilityError.retentionPolicyUnsupported
+  }
   public func reconnectProject(_ projectID: String) async throws {
     _ = projectID
     throw BridgeAppBackendCompatibilityError.projectConfigurationUnsupported
@@ -228,6 +245,11 @@ extension BridgeAppBackend {
 
   public func suspendAmbiguousTask(_ taskID: String) async throws {
     _ = taskID
+    throw BridgeAppBackendCompatibilityError.recoveryResolutionUnsupported
+  }
+
+  public func markSupervisorActionApplied(taskID: String, actionID: String) async throws {
+    _ = (taskID, actionID)
     throw BridgeAppBackendCompatibilityError.recoveryResolutionUnsupported
   }
 

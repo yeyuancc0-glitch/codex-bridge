@@ -83,9 +83,14 @@ Verified on 2026-08-12 with the production `BridgeCodexRPC` adapter and `CodexRP
 This Supervisor fixture proves structured-output protocol compatibility only. The current
 `thread/start` and `turn/start` contracts expose no verified switch that disables core file-reading
 tools. `readOnly`, no network, `approvalPolicy = never`, an empty cwd, and developer instructions do
-not prove evidence-only confinement. Production Supervisor review therefore remains disabled until
-an OS-level evidence-only process boundary or a future tested no-tools protocol capability prevents
-project and user-directory reads.
+not prove evidence-only confinement. `BridgeSupervisor.EvidenceOnlyProcessBoundary` now provides a
+macOS Seatbelt profile that isolates `HOME`/`CODEX_HOME`, denies network access, `/Users`, and the
+registered project root, and was verified with a malicious shell fixture that attempts both reads and
+writes. `CodexSupervisorRuntime` wraps every non-fixture production session with that profile and the
+desktop composition provisions a private `supervisor-home` directory. Production review remains
+disabled until the real Codex login and default configuration can be supplied inside that isolated
+HOME without granting denied paths, then the wrapped live app-server must pass
+initialize/model/turn and credentialed end-to-end tests.
 
 The fixture chooses the current default model and the first currently advertised reasoning effort at runtime; the Supervisor scenario searches the live catalog for Luna. These observed IDs/efforts are evidence, not persisted product defaults.
 

@@ -53,14 +53,15 @@ public actor PipelineFinalizer {
     let evidence = try await loadEvidence(scope)
     try validateGit(evidence.baseline, final: evidence.final, scope: scope)
     try validateVerification(evidence.verification, report: document.report)
-    try validateSupervisor(evidence.supervisor, scope: scope)
+    try validateCompletionReview(evidence, scope: scope)
     try validateReport(
       document,
       task: current,
       scope: scope,
       baseline: evidence.baseline,
       final: evidence.final,
-      supervisor: evidence.supervisor
+      supervisor: evidence.supervisor,
+      deterministicPolicy: evidence.deterministicPolicy
     )
 
     let reportDigest = Self.digest(document.json)
@@ -69,7 +70,7 @@ public actor PipelineFinalizer {
       schemaVersion: document.report.schemaVersion,
       status: document.report.status,
       reportJSON: document.json,
-      supervisorDecisionDigest: evidence.supervisor.decisionDigest
+      supervisorDecisionDigest: evidence.authorityDigest
     )
     guard reportEvidence.reportDigest == reportDigest else {
       throw PipelineFinalizerError.invalidReport("digest")
@@ -142,7 +143,12 @@ public actor PipelineFinalizer {
     let baseline: GitBaselineEvidence
     let final: GitFinalEvidence
     let verification: [PipelineVerificationEvidence]
-    let supervisor: PipelineSupervisorFinalEvidence
+    let supervisor: PipelineSupervisorFinalEvidence?
+    let deterministicPolicy: PipelineDeterministicPolicyFinalEvidence?
+
+    var authorityDigest: String {
+      supervisor?.decisionDigest ?? deterministicPolicy?.decisionDigest ?? ""
+    }
   }
 
   private func requiredFinalization(_ scope: TaskEvidenceScope) async throws
@@ -166,12 +172,11 @@ public actor PipelineFinalizer {
         kind: .gitFinal
       )
     else { throw PipelineFinalizerError.missingEvidence(.gitFinal) }
-    guard
-      let supervisor: PipelineSupervisorFinalEvidence = try await artifacts.trustedPayload(
-        for: scope,
-        kind: .supervisorFinalDecision
-      )
-    else { throw PipelineFinalizerError.missingEvidence(.supervisorFinalDecision) }
+    guard let completion = try await artifacts.completionEvidence(for: scope) else {
+      throw PipelineFinalizerError.missingEvidence(.supervisorFinalDecision)
+    }
+    let supervisor = completion.supervisor
+    let deterministicPolicy = completion.deterministicPolicy
     let summaries = try await artifacts.artifacts(for: scope)
     var verification: [PipelineVerificationEvidence] = []
     for summary in summaries {
@@ -195,7 +200,8 @@ public actor PipelineFinalizer {
       baseline: baseline,
       final: final,
       verification: verification,
-      supervisor: supervisor
+      supervisor: supervisor,
+      deterministicPolicy: deterministicPolicy
     )
   }
 
@@ -255,12 +261,20 @@ public actor PipelineFinalizer {
     }
   }
 
-  private func validateSupervisor(
-    _ evidence: PipelineSupervisorFinalEvidence,
+  private func validateCompletionReview(
+    _ evidence: LoadedEvidence,
     scope: TaskEvidenceScope
   ) throws {
-    guard evidence.scope == scope, evidence.checkpointStage == .final,
-      evidence.decision.decision == .finalAccept
+    if let supervisor = evidence.supervisor {
+      guard supervisor.scope == scope, supervisor.checkpointStage == .final,
+        supervisor.decision.decision == .finalAccept
+      else { throw PipelineFinalizerError.invalidSupervisorEvidence }
+      return
+    }
+    guard let deterministicPolicy = evidence.deterministicPolicy,
+      deterministicPolicy.scope == scope,
+      deterministicPolicy.policy.evaluationCompleted,
+      deterministicPolicy.policy.unresolvedBlockers.isEmpty
     else { throw PipelineFinalizerError.invalidSupervisorEvidence }
   }
 
@@ -270,7 +284,8 @@ public actor PipelineFinalizer {
     scope: TaskEvidenceScope,
     baseline: GitBaselineEvidence,
     final: GitFinalEvidence,
-    supervisor: PipelineSupervisorFinalEvidence
+    supervisor: PipelineSupervisorFinalEvidence?,
+    deterministicPolicy: PipelineDeterministicPolicyFinalEvidence?
   ) throws {
     let report = document.report
     guard report.taskID == scope.taskID.rawValue, report.status == .completed,
@@ -279,7 +294,8 @@ public actor PipelineFinalizer {
       report.execution.effort == task.aggregate.submission.execution.effort,
       report.evidence.appServer.threadID == scope.threadID.rawValue,
       report.evidence.appServer.terminalState == .completed,
-      report.evidence.completionAuthority == .supervisorFinalAccept,
+      report.evidence.completionAuthority
+        == (supervisor == nil ? .userOverride : .supervisorFinalAccept),
       report.evidence.git.baselineCaptured,
       report.evidence.git.finalStateCaptured,
       report.evidence.git.dirtyAtStart == baseline.status.isDirty,
@@ -288,11 +304,20 @@ public actor PipelineFinalizer {
         == Set(final.changedFiles + final.untrackedFiles),
       report.evidence.policy.evaluationCompleted,
       report.evidence.policy.unresolvedBlockers.isEmpty,
-      report.supervisor?.finalDecision == .finalAccept,
-      report.supervisor?.model == task.aggregate.submission.supervisor.model,
-      report.supervisor?.effort == task.aggregate.submission.supervisor.effort,
-      supervisor.decision.decision == .finalAccept
+      report.supervisor?.finalDecision == (supervisor == nil ? nil : .finalAccept)
     else { throw PipelineFinalizerError.invalidReport("evidence") }
+    if let supervisor {
+      guard report.supervisor?.model == task.aggregate.submission.supervisor.model,
+        report.supervisor?.effort == task.aggregate.submission.supervisor.effort,
+        supervisor.decision.decision == .finalAccept
+      else { throw PipelineFinalizerError.invalidReport("supervisor") }
+    } else {
+      guard let deterministicPolicy,
+        report.supervisor == nil,
+        report.evidence.userOverride == deterministicPolicy.userOverride,
+        report.evidence.policy == deterministicPolicy.policy
+      else { throw PipelineFinalizerError.invalidReport("deterministic_policy") }
+    }
   }
 
   private func storeAndValidateReport(

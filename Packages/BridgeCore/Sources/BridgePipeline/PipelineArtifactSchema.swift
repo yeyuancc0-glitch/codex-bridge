@@ -2,11 +2,13 @@ import BridgePersistence
 import GRDB
 
 enum PipelineArtifactSchema {
-  static let version: Int64 = 1
+  static let version: Int64 = 3
   static let migrationPrefix = "BridgePipeline."
   static let migrationV1 = "BridgePipeline.v1"
-  static let knownMigrations: Set<String> = [migrationV1]
-  static let migrationIdentifiers = [migrationV1]
+  static let migrationV2 = "BridgePipeline.v2PatchRetention"
+  static let migrationV3 = "BridgePipeline.v3PatchReleaseHandleIndex"
+  static let knownMigrations: Set<String> = [migrationV1, migrationV2, migrationV3]
+  static let migrationIdentifiers = [migrationV1, migrationV2, migrationV3]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
@@ -30,6 +32,17 @@ enum PipelineArtifactSchema {
     var migrator = DatabaseMigrator()
     migrator.registerMigration(migrationV1) { db in
       try createVersionOne(in: db)
+    }
+    migrator.registerMigration(migrationV2) { db in
+      try createVersionTwo(in: db)
+    }
+    migrator.registerMigration(migrationV3) { db in
+      try db.execute(
+        sql: """
+          CREATE INDEX bridge_pipeline_patch_release_item_handle
+          ON bridge_pipeline_patch_release_items(handle_id, task_id);
+          UPDATE bridge_pipeline_meta SET schema_version = 3 WHERE singleton = 1;
+          """)
     }
     return migrator
   }
@@ -60,7 +73,7 @@ enum PipelineArtifactSchema {
         sql: "SELECT schema_version FROM bridge_pipeline_meta WHERE singleton = 1"
       )
       guard versions.count == 1 else { throw PipelineArtifactStoreError.corruptSchema }
-      guard versions[0] == version else {
+      guard (1...version).contains(versions[0]) else {
         throw PipelineArtifactStoreError.unsupportedSchemaVersion(versions[0])
       }
     }
@@ -133,6 +146,55 @@ enum PipelineArtifactSchema {
     )
   }
 
+  private static func createVersionTwo(in db: Database) throws {
+    try db.execute(
+      sql: """
+        CREATE TABLE bridge_pipeline_patch_documents (
+            handle_id TEXT PRIMARY KEY NOT NULL,
+            total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
+            is_truncated INTEGER NOT NULL CHECK (is_truncated IN (0, 1)),
+            CHECK (length(handle_id) = 103)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE bridge_pipeline_patch_references (
+            task_id TEXT NOT NULL,
+            generation INTEGER NOT NULL CHECK (generation > 0),
+            handle_id TEXT NOT NULL,
+            PRIMARY KEY (task_id, generation),
+            FOREIGN KEY (task_id, generation)
+              REFERENCES bridge_pipeline_scopes(task_id, generation) ON DELETE RESTRICT,
+            FOREIGN KEY (handle_id)
+              REFERENCES bridge_pipeline_patch_documents(handle_id) ON DELETE RESTRICT
+        ) WITHOUT ROWID;
+
+        CREATE INDEX bridge_pipeline_patch_reference_handle
+        ON bridge_pipeline_patch_references(handle_id, task_id, generation);
+
+        CREATE TABLE bridge_pipeline_patch_release_manifests (
+            task_id TEXT PRIMARY KEY NOT NULL,
+            created_at REAL NOT NULL CHECK (typeof(created_at) IN ('integer', 'real')),
+            manifest_sha256 BLOB NOT NULL,
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (typeof(manifest_sha256) = 'blob'),
+            CHECK (length(manifest_sha256) = 32)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE bridge_pipeline_patch_release_items (
+            task_id TEXT NOT NULL,
+            handle_id TEXT NOT NULL,
+            total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
+            is_truncated INTEGER NOT NULL CHECK (is_truncated IN (0, 1)),
+            PRIMARY KEY (task_id, handle_id),
+            FOREIGN KEY (task_id)
+              REFERENCES bridge_pipeline_patch_release_manifests(task_id) ON DELETE RESTRICT,
+            CHECK (length(handle_id) = 103)
+        ) WITHOUT ROWID;
+
+        UPDATE bridge_pipeline_meta SET schema_version = 2 WHERE singleton = 1;
+        """
+    )
+  }
+
   private static func validate(_ database: DatabaseQueue) throws {
     try database.read { db in
       guard
@@ -153,11 +215,28 @@ enum PipelineArtifactSchema {
           "task_id", "generation", "kind_category", "kind_key", "schema_version",
           "payload_json", "payload_sha256", "created_at",
         ],
+        "bridge_pipeline_patch_documents": [
+          "handle_id", "total_bytes", "is_truncated",
+        ],
+        "bridge_pipeline_patch_references": ["task_id", "generation", "handle_id"],
+        "bridge_pipeline_patch_release_manifests": [
+          "task_id", "created_at", "manifest_sha256",
+        ],
+        "bridge_pipeline_patch_release_items": [
+          "task_id", "handle_id", "total_bytes", "is_truncated",
+        ],
       ]
       for (table, columns) in expected {
         guard try db.tableExists(table), Set(try db.columns(in: table).map(\.name)) == columns
         else { throw PipelineArtifactStoreError.corruptSchema }
       }
+      let releaseItemIndexes = try db.indexes(on: "bridge_pipeline_patch_release_items")
+      guard
+        let handleIndex = releaseItemIndexes.first(where: {
+          $0.name == "bridge_pipeline_patch_release_item_handle"
+        }),
+        handleIndex.columns == ["handle_id", "task_id"]
+      else { throw PipelineArtifactStoreError.corruptSchema }
     }
   }
 }

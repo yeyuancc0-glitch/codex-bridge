@@ -16,6 +16,7 @@ final class DesktopDataStoreTests: XCTestCase {
     XCTAssertEqual(try permissions(store.directoryURL), 0o700)
     XCTAssertEqual(try permissions(store.eventStoreURL), 0o600)
     XCTAssertEqual(try permissions(store.applicationRepositoryURL), 0o600)
+    XCTAssertEqual(try permissions(store.supervisorHomeURL), 0o700)
   }
 
   func testPrepareRejectsExistingPermissiveDirectory() throws {
@@ -65,7 +66,7 @@ final class DesktopDataStoreTests: XCTestCase {
       var metadata = stat()
       XCTAssertEqual(lstat(artifact.path, &metadata), 0)
       XCTAssertEqual(metadata.st_uid, getuid())
-      if artifact.lastPathComponent == "git-patches" {
+      if ["git-patches", "supervisor-home"].contains(artifact.lastPathComponent) {
         XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFDIR)
         XCTAssertEqual(metadata.st_mode & 0o777, 0o700)
       } else {

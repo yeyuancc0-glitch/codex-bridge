@@ -447,6 +447,31 @@ final class BridgeApplicationServiceTests: XCTestCase {
     }
   }
 
+  func testLocalSubmissionCanExplicitlyAuthorizeDeterministicFallback() async throws {
+    let fixture = try Fixture(admission: .requireLocalApproval)
+    addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
+    let project = fixture.project(
+      root: try RegisteredRoot(capturing: fixture.projectDirectory)
+    )
+    try await fixture.repository.insert(project)
+    let source = fixture.submission(projectID: project.id)
+    let submission = localSubmission(
+      source,
+      supervisorEnabled: false,
+      deterministicFallbackAuthorized: true
+    )
+
+    let receipt = try await fixture.service().submitLocalTask(
+      submission,
+      deadline: ContinuousClock.now.advanced(by: .seconds(5))
+    )
+    let projection = try await fixture.coordinator.task(TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(receipt.phase, TaskPhase.awaitingLocalApproval.rawValue)
+    XCTAssertEqual(projection.aggregate.phase, .awaitingLocalApproval)
+    XCTAssertFalse(projection.aggregate.submission.supervisor.enabled)
+    XCTAssertTrue(projection.aggregate.submission.supervisor.deterministicFallbackAuthorized)
+  }
+
   func testLocalExistingThreadMustBelongToSubmissionProjectBeforeClaim() async throws {
     let fixture = try Fixture(admission: .start)
     addTeardownBlock { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -804,6 +829,7 @@ final class BridgeApplicationServiceTests: XCTestCase {
     permissionMode: String? = nil,
     networkAccess: Bool? = nil,
     supervisorEnabled: Bool? = nil,
+    deterministicFallbackAuthorized: Bool? = nil,
     executionModel: String? = nil,
     executionEffort: String? = nil,
     supervisorModel: String? = nil,
@@ -822,7 +848,9 @@ final class BridgeApplicationServiceTests: XCTestCase {
       supervisor: SupervisorOptions(
         enabled: supervisorEnabled ?? source.supervisor.enabled,
         model: supervisorModel ?? source.supervisor.model,
-        effort: supervisorEffort ?? source.supervisor.effort
+        effort: supervisorEffort ?? source.supervisor.effort,
+        deterministicFallbackAuthorized:
+          deterministicFallbackAuthorized ?? source.supervisor.deterministicFallbackAuthorized
       ),
       contract: source.contract
     )

@@ -4,6 +4,7 @@ import BridgeCoordinator
 import BridgeDomain
 import BridgeMCP
 import BridgePersistence
+import BridgePipeline
 import BridgePresentation
 import BridgeProjects
 import BridgeSecurity
@@ -139,9 +140,46 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try await publishCurrentFacts()
   }
 
-  func submit(_ submission: BridgeAppTaskSubmission) throws -> BridgeAppTaskReceipt {
-    _ = submission
-    throw DesktopBackendError.taskPipelineUnavailable
+  func submit(_ submission: BridgeAppTaskSubmission) async throws -> BridgeAppTaskReceipt {
+    try beginOperation()
+    defer { endOperation() }
+    guard DesktopSupervisorAvailability.productionReviewAvailable else {
+      throw DesktopBackendError.taskPipelineUnavailable
+    }
+    try Self.validateIdentifier(submission.requestID)
+    try Self.validateIdentifier(submission.projectID)
+    try Self.validateIdentifier(submission.goal)
+    let criteria = submission.acceptanceCriteria.filter {
+      !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    guard !criteria.isEmpty else { throw DesktopBackendError.operationFailed }
+    let composition = try requireComposition()
+    let task = TaskSubmission(
+      idempotencyKey: IdempotencyKey(rawValue: submission.requestID),
+      projectID: ProjectID(rawValue: submission.projectID),
+      thread: submission.threadID.map { .existing(ThreadID(rawValue: $0)) } ?? .new,
+      execution: ExecutionOptions(
+        model: submission.model,
+        effort: submission.effort,
+        permissionMode: submission.permissionMode,
+        networkAccess: submission.networkAllowed
+      ),
+      supervisor: SupervisorOptions(
+        enabled: true,
+        model: LocalReadOnlyTaskPolicy.supervisorModelID,
+        effort: "medium"
+      ),
+      contract: TaskContract(goal: submission.goal, acceptanceCriteria: criteria)
+    )
+    let receipt = try await composition.application.submitLocalTask(
+      task,
+      deadline: ContinuousClock.now.advanced(by: .seconds(20))
+    )
+    try checkRunning()
+    return BridgeAppTaskReceipt(
+      taskID: receipt.taskID,
+      reusedExistingTask: receipt.reusedExistingTask
+    )
   }
 
   func steer(_ request: BridgeAppSteerRequest) async throws {
@@ -186,6 +224,25 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     )
     try checkRunning()
     appendDiagnostic("已将恢复状态不确定的任务标记为暂停并释放锁。", status: .paused)
+    try await publishCurrentFacts()
+  }
+
+  func markSupervisorActionApplied(taskID: String, actionID: String) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try Self.validateIdentifier(taskID)
+    try Self.validateIdentifier(actionID)
+    let composition = try requireComposition()
+    let actions = try await composition.supervisionLedger.ambiguousActions(
+      limit: DurableSupervisionLedger.maximumQueryLimit
+    )
+    guard actions.contains(where: { $0.id == actionID && $0.scope.taskID.rawValue == taskID })
+    else {
+      throw DesktopBackendError.operationFailed
+    }
+    _ = try await composition.supervisionLedger.markActionApplied(id: actionID)
+    try checkRunning()
+    appendDiagnostic("操作员已确认 Supervisor 动作的外部结果，动作标记为已应用。", status: .ready)
     try await publishCurrentFacts()
   }
 
@@ -597,14 +654,20 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     }
   }
 
-  func continueThread(_ threadID: String) throws {
+  func continueThread(_ threadID: String) async throws {
     try Self.validateIdentifier(threadID)
-    throw DesktopBackendError.threadCatalogUnavailable
+    try await prepareReadOnlyTask(
+      projectID: operatorState.selectedProjectID,
+      threadID: threadID
+    )
   }
 
-  func createTaskFromThread(_ threadID: String) throws {
+  func createTaskFromThread(_ threadID: String) async throws {
     try Self.validateIdentifier(threadID)
-    throw DesktopBackendError.taskPipelineUnavailable
+    try await prepareReadOnlyTask(
+      projectID: operatorState.selectedProjectID,
+      threadID: threadID
+    )
   }
 
   func copyThreadID(_ threadID: String) async throws {
@@ -800,9 +863,6 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
   }
 
   func submitReadOnlyTask(_ draft: ReadOnlyTaskDraftPresentation) async throws {
-    guard DesktopSupervisorAvailability.productionReviewAvailable else {
-      throw DesktopBackendError.operationFailed
-    }
     try beginOperation()
     defer { endOperation() }
     try beginCatalogOperation()
@@ -931,6 +991,27 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     default:
       throw DesktopBackendError.operationFailed
     }
+    try checkRunning()
+    try await publishCurrentFacts()
+  }
+
+  func updateRetentionPolicy(
+    eventDays: Int,
+    metadataDays: Int,
+    recentTaskLimit: Int?,
+    expectedRevision: Int64
+  ) async throws {
+    try beginOperation()
+    defer { endOperation() }
+    try await waitUntilReady()
+    let composition = try requireComposition()
+    _ = try await composition.eventStore.updateTaskRetentionPolicy(
+      eventDays: eventDays,
+      metadataDays: metadataDays,
+      recentTaskLimit: recentTaskLimit,
+      expectedRevision: expectedRevision
+    )
+    _ = try await composition.retentionCoordinator.run()
     try checkRunning()
     try await publishCurrentFacts()
   }
@@ -1247,8 +1328,10 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     try validateIdentifier(draft.projectID)
     try validateIdentifier(draft.executionModel)
     try validateIdentifier(draft.executionEffort)
-    try validateIdentifier(draft.supervisorModel)
-    try validateIdentifier(draft.supervisorEffort)
+    if draft.supervisorEnabled {
+      try validateIdentifier(draft.supervisorModel)
+      try validateIdentifier(draft.supervisorEffort)
+    }
     if let threadID = draft.threadID {
       try validateIdentifier(threadID)
     }
@@ -1266,14 +1349,20 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       (1...100).contains(criteria.count),
       criteria.allSatisfy({ $0.utf8.count <= 4 * 1_024 }),
       let execution = composer.models.first(where: { $0.modelID == draft.executionModel }),
-      execution.reasoningEfforts.contains(draft.executionEffort),
-      let supervisor = composer.models.first(where: { $0.modelID == draft.supervisorModel }),
-      LocalReadOnlyTaskPolicy.isLunaModel(
-        id: supervisor.modelID,
-        displayName: supervisor.displayName
-      ),
-      supervisor.reasoningEfforts.contains(draft.supervisorEffort)
+      execution.reasoningEfforts.contains(draft.executionEffort)
     else { throw DesktopBackendError.operationFailed }
+    if draft.supervisorEnabled {
+      guard let supervisor = composer.models.first(where: { $0.modelID == draft.supervisorModel })
+      else { throw DesktopBackendError.operationFailed }
+      guard
+        LocalReadOnlyTaskPolicy.isLunaModel(
+          id: supervisor.modelID,
+          displayName: supervisor.displayName
+        ), supervisor.reasoningEfforts.contains(draft.supervisorEffort)
+      else {
+        throw DesktopBackendError.operationFailed
+      }
+    }
     return TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: requestID),
       projectID: ProjectID(rawValue: draft.projectID),
@@ -1285,9 +1374,10 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         networkAccess: false
       ),
       supervisor: SupervisorOptions(
-        enabled: true,
+        enabled: draft.supervisorEnabled,
         model: draft.supervisorModel,
-        effort: draft.supervisorEffort
+        effort: draft.supervisorEffort,
+        deterministicFallbackAuthorized: !draft.supervisorEnabled
       ),
       contract: TaskContract(goal: goal, acceptanceCriteria: criteria)
     )
@@ -1305,6 +1395,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       acceptanceCriteria: source.acceptanceCriteria,
       executionModel: source.executionModel,
       executionEffort: source.executionEffort,
+      supervisorEnabled: source.supervisorEnabled,
       supervisorModel: source.supervisorModel,
       supervisorEffort: source.supervisorEffort
     )
@@ -1325,6 +1416,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
     let canExportSupportBundle = await system.supportsSupportBundleExport
     let launchAtLoginStatus = await system.launchAtLoginStatus
     let lifecyclePreferences = try await composition.lifecycleCoordinator.preferences()
+    let retentionPolicy = try await composition.eventStore.taskRetentionPolicy()
     try checkRunning()
     let projects = try await composition.repository.allProjects()
     try checkRunning()
@@ -1375,7 +1467,13 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
         canExportSupportBundle: canExportSupportBundleOverride
           ?? (canExportSupportBundle && !isExportingSupportBundle),
         lifecyclePreferences: lifecyclePreferences,
-        launchAtLoginStatus: launchAtLoginStatus
+        launchAtLoginStatus: launchAtLoginStatus,
+        retentionPolicy: RetentionPolicyPresentation(
+          eventDays: retentionPolicy.eventDays,
+          metadataDays: retentionPolicy.metadataDays,
+          recentTaskLimit: retentionPolicy.recentTaskLimit,
+          revision: retentionPolicy.revision
+        )
       ),
       pendingSheet: DesktopPresentationProjection.pendingSheet(
         projects: orderedProjects,
@@ -1408,6 +1506,7 @@ actor LiveBridgeAppBackend: BridgeAppBackend {
       + [values.diffSummary, values.supervisionSummary, values.verificationSummary].compactMap {
         $0
       }
+      + values.ambiguousSupervisorActions.map(\.instruction)
     return strings.reduce(into: 0) { total, value in
       let (next, overflow) = total.addingReportingOverflow(value.utf8.count)
       total = overflow ? Int.max : next

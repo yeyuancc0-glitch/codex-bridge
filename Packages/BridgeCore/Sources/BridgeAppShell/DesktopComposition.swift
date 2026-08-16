@@ -26,6 +26,8 @@ struct DesktopComposition: Sendable {
   let application: BridgeApplicationService
   let taskEvidence: DesktopTaskEvidenceProjection
   let pipelineArtifacts: PipelineArtifactStore
+  let supervisionLedger: DurableSupervisionLedger
+  let retentionCoordinator: DesktopTaskRetentionCoordinator
   let pipelineFinalizer: PipelineFinalizer
   let pipelineOrchestrator: TaskPipelineOrchestrator
   let supervisorRuntime: CodexSupervisorRuntime
@@ -72,6 +74,9 @@ struct DesktopComposition: Sendable {
       projectMutationGate: projectMutationGate
     )
     let pipelineArtifacts = try PipelineArtifactStore(path: paths.eventStoreURL.path)
+    let supervisionLedger = try DurableSupervisionLedger(
+      path: paths.supervisionLedgerURL.path
+    )
     let pipelineFinalizer = PipelineFinalizer(
       artifacts: pipelineArtifacts,
       coordinator: coordinator,
@@ -79,7 +84,8 @@ struct DesktopComposition: Sendable {
     )
     let supervisorRuntime = CodexSupervisorRuntime(
       configuration: CodexSupervisorRuntimeConfiguration(
-        clientInfo: .bridge(version: "0.1.0")
+        clientInfo: .bridge(version: "0.1.0"),
+        evidenceOnlyHomeURL: paths.supervisorHomeURL
       )
     )
     let verificationStore = try VerificationAuthorizationStore(
@@ -92,8 +98,9 @@ struct DesktopComposition: Sendable {
       broker: verificationBroker
     )
     let patchStore = try GitPatchStore(persistentDirectory: paths.gitPatchDirectoryURL)
+    let preflightStore = try PipelinePreflightStore(path: paths.pipelinePreflightURL.path)
     let pipelineOrchestrator = TaskPipelineOrchestrator(
-      preflight: try PipelinePreflightStore(path: paths.pipelinePreflightURL.path),
+      preflight: preflightStore,
       artifacts: pipelineArtifacts,
       finalizer: pipelineFinalizer,
       coordinator: coordinator,
@@ -117,12 +124,24 @@ struct DesktopComposition: Sendable {
           unresolvedBlockers: blockers,
           warnings: warnings
         )
-      }
+      },
+      supervision: supervisionLedger
+    )
+    let retentionCoordinator = DesktopTaskRetentionCoordinator(
+      eventStore: eventStore,
+      coordinator: coordinator,
+      pipelineArtifacts: pipelineArtifacts,
+      supervision: supervisionLedger,
+      patches: patchStore,
+      reports: repository,
+      preflight: preflightStore,
+      authorizations: verificationStore
     )
     try await pipelineRelay.install(pipelineOrchestrator)
     _ = try await pipelineFinalizer.recoverPendingFinalizations()
     _ = try await pipelineOrchestrator.recoverPendingPreflights()
     _ = try await coordinator.recoverIncompleteTasks()
+    _ = try await retentionCoordinator.run()
     let catalog: any CodexCatalogQuerying =
       suppliedCatalog
       ?? IsolatedCodexCatalogService(
@@ -158,7 +177,8 @@ struct DesktopComposition: Sendable {
       artifacts: pipelineArtifacts,
       patches: patchStore,
       reports: repository,
-      coordinator: coordinator
+      coordinator: coordinator,
+      supervision: supervisionLedger
     )
     let mcpRuntime = DesktopMCPRuntime(
       application: application,
@@ -222,6 +242,8 @@ struct DesktopComposition: Sendable {
       application: application,
       taskEvidence: taskEvidence,
       pipelineArtifacts: pipelineArtifacts,
+      supervisionLedger: supervisionLedger,
+      retentionCoordinator: retentionCoordinator,
       pipelineFinalizer: pipelineFinalizer,
       pipelineOrchestrator: pipelineOrchestrator,
       supervisorRuntime: supervisorRuntime,
@@ -246,5 +268,5 @@ struct DesktopComposition: Sendable {
 enum DesktopSupervisorAvailability {
   static let productionReviewAvailable = false
   static let degradation =
-    "Luna supervision is disabled because evidence-only process isolation is unavailable."
+    "Luna supervision is disabled until isolated Codex authentication and a credentialed boundary test pass."
 }

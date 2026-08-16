@@ -1,4 +1,5 @@
 import BridgeDomain
+import BridgeGit
 import CryptoKit
 import Foundation
 import GRDB
@@ -27,7 +28,7 @@ public actor PipelineArtifactStore {
     ORDER BY kind_category ASC, kind_key ASC
     LIMIT ?
     """
-  private let database: DatabaseQueue
+  let database: DatabaseQueue
 
   public init(path: String) throws {
     guard !path.isEmpty, path.utf8.count <= 16_384, !path.contains("\0") else {
@@ -55,6 +56,16 @@ public actor PipelineArtifactStore {
   {
     try Self.validate(date: date, field: "date")
     return try database.write { db in
+      let releasePending =
+        try Bool.fetchOne(
+          db,
+          sql:
+            "SELECT EXISTS (SELECT 1 FROM bridge_pipeline_patch_release_manifests WHERE task_id = ?)",
+          arguments: [scope.taskID.rawValue]
+        ) ?? false
+      guard !releasePending else {
+        throw PipelineArtifactStoreError.retentionInProgress(scope.taskID)
+      }
       if let current = try Self.fetchCurrentScope(taskID: scope.taskID, in: db) {
         return try Self.beginReplacing(current, with: scope, at: date, in: db)
       }
@@ -90,6 +101,12 @@ public actor PipelineArtifactStore {
       )
     }
     let digest = Self.digest(json)
+    let patchHandle =
+      validatedKind == .gitFinal
+      ? try PipelinePatchReferencePersistence.patchHandle(
+        payload: json,
+        expectedDigest: digest
+      ) : nil
     return try database.write { db in
       _ = try Self.requireCurrentScope(scope, in: db)
       if let stored = try Self.fetchArtifact(scope: scope, kind: validatedKind, in: db) {
@@ -97,6 +114,14 @@ public actor PipelineArtifactStore {
           stored.record.schemaVersion == schemaVersion
         else {
           throw PipelineArtifactStoreError.artifactConflict(scope.taskID, validatedKind)
+        }
+        if validatedKind == .gitFinal {
+          try PipelinePatchReferencePersistence.ensureReference(
+            payload: stored.payload,
+            expectedDigest: stored.digest,
+            scope: scope,
+            in: db
+          )
         }
         return stored.record
       }
@@ -112,6 +137,9 @@ public actor PipelineArtifactStore {
           Int(schemaVersion), json, digest, date.timeIntervalSince1970,
         ]
       )
+      if validatedKind == .gitFinal {
+        try PipelinePatchReferencePersistence.register(patchHandle, scope: scope, in: db)
+      }
       return Self.makeArtifactRecord(
         scope: scope,
         kind: validatedKind,
@@ -243,15 +271,57 @@ public actor PipelineArtifactStore {
     as type: Payload.Type = Payload.self
   ) throws -> Payload? {
     let validatedKind = try kind.validated()
-    return try database.read { db in
+    return try database.write { db in
       try Self.requireScope(scope, in: db)
       guard let artifact = try Self.fetchArtifact(scope: scope, kind: validatedKind, in: db)
       else { return nil }
+      if validatedKind == .gitFinal {
+        try PipelinePatchReferencePersistence.ensureReference(
+          payload: artifact.payload,
+          expectedDigest: artifact.digest,
+          scope: scope,
+          in: db
+        )
+      }
       do {
         return try JSONDecoder().decode(type, from: artifact.payload)
       } catch {
         throw PipelineArtifactStoreError.corruptRecord
       }
+    }
+  }
+
+  public func completionEvidence(
+    for scope: TaskEvidenceScope
+  ) throws -> PipelineCompletionEvidenceRecord? {
+    try database.write { db in
+      try Self.requireScope(scope, in: db)
+      guard
+        let artifact = try Self.fetchArtifact(
+          scope: scope,
+          kind: .supervisorFinalDecision,
+          in: db
+        )
+      else { return nil }
+      if let supervisor = try? JSONDecoder().decode(
+        PipelineSupervisorFinalEvidence.self,
+        from: artifact.payload
+      ) {
+        return PipelineCompletionEvidenceRecord(
+          supervisor: supervisor,
+          deterministicPolicy: nil
+        )
+      }
+      if let deterministicPolicy = try? JSONDecoder().decode(
+        PipelineDeterministicPolicyFinalEvidence.self,
+        from: artifact.payload
+      ) {
+        return PipelineCompletionEvidenceRecord(
+          supervisor: nil,
+          deterministicPolicy: deterministicPolicy
+        )
+      }
+      throw PipelineArtifactStoreError.corruptRecord
     }
   }
 
@@ -546,7 +616,7 @@ public actor PipelineArtifactStore {
 
   private static func validateActiveRecords(in database: DatabaseQueue) throws {
     do {
-      try database.read { db in
+      try database.write { db in
         let scopes = try Row.fetchAll(
           db,
           sql: activeScopeQuery,
@@ -595,7 +665,15 @@ public actor PipelineArtifactStore {
                 maximum: maximumActivePayloadBytes
               )
             }
-            _ = try decodeArtifact(row, scope: scope)
+            let artifact = try decodeArtifact(row, scope: scope)
+            if artifact.record.kind == .gitFinal {
+              try PipelinePatchReferencePersistence.ensureReference(
+                payload: artifact.payload,
+                expectedDigest: artifact.digest,
+                scope: scope,
+                in: db
+              )
+            }
           }
         }
       }

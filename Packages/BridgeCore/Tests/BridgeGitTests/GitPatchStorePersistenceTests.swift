@@ -218,6 +218,130 @@ final class GitPatchStorePersistenceTests: XCTestCase {
     XCTAssertEqual(readableCount, 1)
   }
 
+  func testExactRemovalIsIdempotentAcrossInstancesAndRestart() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let first = try GitPatchStore(persistentDirectory: directory)
+    let second = try GitPatchStore(persistentDirectory: directory)
+    let handle = try await first.store(Data("remove me".utf8), isTruncated: true)
+
+    let initiallyRemoved = try await second.remove(handle)
+    let repeatedRemoval = try await first.remove(handle)
+    XCTAssertTrue(initiallyRemoved)
+    XCTAssertFalse(repeatedRemoval)
+    let reopened = try GitPatchStore(persistentDirectory: directory)
+    let restartedRemoval = try await reopened.remove(handle)
+    XCTAssertFalse(restartedRemoval)
+    do {
+      _ = try await reopened.page(for: handle)
+      XCTFail("Expected the committed patch removal to survive restart")
+    } catch {
+      XCTAssertEqual(error as? GitEvidenceError, .patchNotFound)
+    }
+  }
+
+  func testRemovalRejectsMismatchedHandleWithoutDeletingPatch() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let store = try GitPatchStore(persistentDirectory: directory)
+    let handle = try await store.store(Data("retained".utf8), isTruncated: false)
+    let mismatched = GitPatchHandle(
+      rawValue: handle.rawValue,
+      totalBytes: handle.totalBytes + 1,
+      isTruncated: handle.isTruncated
+    )
+
+    do {
+      _ = try await store.remove(mismatched)
+      XCTFail("Expected exact handle metadata to be required")
+    } catch {
+      XCTAssertEqual(error as? GitEvidenceError, .patchNotFound)
+    }
+    let page = try await store.page(for: handle)
+    XCTAssertEqual(page.bytes, Data("retained".utf8))
+  }
+
+  func testRemovalPreflightFailurePreservesPatch() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock {
+      if let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) {
+        for name in names {
+          _ = chflags(directory.appendingPathComponent(name).path, 0)
+        }
+      }
+      try? FileManager.default.removeItem(at: directory)
+    }
+    let store = try GitPatchStore(persistentDirectory: directory)
+    let bytes = Data("immutable".utf8)
+    let handle = try await store.store(bytes, isTruncated: false)
+    let path = directory.appendingPathComponent(handle.rawValue)
+    XCTAssertEqual(chflags(path.path, UInt32(UF_IMMUTABLE)), 0)
+
+    do {
+      _ = try await store.remove(handle)
+      XCTFail("Expected immutable patch removal to fail before commit")
+    } catch {
+      XCTAssertEqual(error as? GitEvidenceError, .patchStoreCapacityExceeded)
+    }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+    XCTAssertEqual(chflags(path.path, 0), 0)
+    let reopened = try GitPatchStore(persistentDirectory: directory)
+    let page = try await reopened.page(for: handle)
+    XCTAssertEqual(page.bytes, bytes)
+  }
+
+  func testCommittedRemovalRecoversAfterPhysicalUnlinkFailure() async throws {
+    let directory = temporaryDirectory()
+    addTeardownBlock {
+      if let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) {
+        for name in names {
+          _ = chflags(directory.appendingPathComponent(name).path, 0)
+        }
+      }
+      try? FileManager.default.removeItem(at: directory)
+    }
+    let store = try GitPatchStore(
+      persistentDirectory: directory,
+      maximumDocumentCount: 64,
+      maximumStoredBytes: 64 * 1_024 * 1_024,
+      maximumPageBytes: 200 * 1_024,
+      committedRemovalHook: { directory, temporaryNames in
+        for name in temporaryNames {
+          _ = chflags(
+            directory.appendingPathComponent(name).path,
+            UInt32(UF_IMMUTABLE)
+          )
+        }
+      }
+    )
+    let handle = try await store.store(Data("durable delete".utf8), isTruncated: false)
+
+    let removed = try await store.remove(handle)
+    XCTAssertTrue(removed)
+    let stagedNames = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+    XCTAssertTrue(stagedNames.contains { $0.hasPrefix(".trash_") })
+    XCTAssertTrue(stagedNames.contains { $0.hasPrefix(".commit_") })
+    do {
+      _ = try await store.page(for: handle)
+      XCTFail("Expected unfinished physical cleanup to fail closed")
+    } catch {
+      XCTAssertEqual(error as? GitEvidenceError, .patchStoreCapacityExceeded)
+    }
+
+    for name in stagedNames {
+      _ = chflags(directory.appendingPathComponent(name).path, 0)
+    }
+    let reopened = try GitPatchStore(persistentDirectory: directory)
+    let repeatedRemoval = try await reopened.remove(handle)
+    XCTAssertFalse(repeatedRemoval)
+    do {
+      _ = try await reopened.page(for: handle)
+      XCTFail("Committed removal must never restore the patch")
+    } catch {
+      XCTAssertEqual(error as? GitEvidenceError, .patchNotFound)
+    }
+  }
+
   func testCommittedTrashIsNeverRestoredAfterPartialGarbageCollection() async throws {
     let directory = temporaryDirectory()
     addTeardownBlock {

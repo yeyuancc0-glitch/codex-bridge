@@ -122,12 +122,26 @@ public enum TaskPipelineOrchestratorError: Error, Equatable, Sendable {
   case durableRuntimeRequired
   case unknownProject(ProjectID)
   case scopeMismatch
+  case supervisionScopeMissing(TaskID)
   case stageMismatch(PipelineStage)
   case verificationMismatch
   case supervisorRejected(SupervisorDecisionKind)
+  case deterministicFallbackNotAuthorized
+  case policyRejected
+  case supervisorActionScopeMismatch
+  case supervisorActionUnresolved
 }
 
 public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
+  private enum CompletionReview: Equatable, Sendable {
+    case supervisor(SupervisorDecision)
+    case deterministicPolicy(
+      policy: PolicyEvidence,
+      userOverride: UserCompletionOverride,
+      digest: String
+    )
+  }
+
   private let preflight: PipelinePreflightStore
   private let artifacts: PipelineArtifactStore
   private let finalizer: PipelineFinalizer
@@ -137,6 +151,7 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
   private let verification: any TaskPipelineVerificationRunning
   private let supervisor: any TaskPipelineSupervisorReviewing
   private let policy: any TaskPipelinePolicyEvaluating
+  private let supervision: DurableSupervisionLedger?
 
   public init(
     preflight: PipelinePreflightStore,
@@ -147,7 +162,8 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     git: any TaskPipelineGitEvidenceCollecting,
     verification: any TaskPipelineVerificationRunning,
     supervisor: any TaskPipelineSupervisorReviewing,
-    policy: any TaskPipelinePolicyEvaluating
+    policy: any TaskPipelinePolicyEvaluating,
+    supervision: DurableSupervisionLedger? = nil
   ) {
     self.preflight = preflight
     self.artifacts = artifacts
@@ -158,6 +174,7 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     self.verification = verification
     self.supervisor = supervisor
     self.policy = policy
+    self.supervision = supervision
   }
 
   public func prepareForLegacyTurnStart(taskID _: TaskID, submission _: TaskSubmission) throws {
@@ -176,6 +193,57 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
 
   public func recordStartedTurn(_ context: TaskPipelineStartedContext) async throws {
     try await preflight.recordStartedTurn(context)
+    guard let supervision else { return }
+    let scope = try supervisionScope(
+      taskID: context.preStart.taskID,
+      submission: context.preStart.submission,
+      binding: context.binding
+    )
+    _ = try await supervision.begin(
+      scope: scope,
+      configuration: SupervisorGuardConfiguration(
+        deterministicFallbackAuthorized:
+          !context.preStart.submission.supervisor.enabled
+          && context.preStart.submission.supervisor.deterministicFallbackAuthorized
+      )
+    )
+  }
+
+  public func recordSemanticObservation(_ context: TaskPipelineSemanticContext) async throws {
+    guard let supervision else { return }
+    guard context.projection.aggregate.binding == context.binding else {
+      throw TaskPipelineOrchestratorError.scopeMismatch
+    }
+    let scope = try supervisionScope(
+      taskID: context.projection.aggregate.id,
+      submission: context.projection.aggregate.submission,
+      binding: context.binding
+    )
+    guard let state = try await supervision.state(for: scope) else {
+      throw TaskPipelineOrchestratorError.supervisionScopeMissing(scope.taskID)
+    }
+    let checkpoint = try makeProgressCheckpoint(
+      context: context,
+      state: state.state,
+      configuration: state.configuration
+    )
+    _ = try await supervision.appendCheckpoint(scope: scope, checkpoint: checkpoint)
+    guard context.projection.aggregate.submission.supervisor.enabled else { return }
+    let project = try await requiredProject(scope.projectID)
+    try project.validateCurrentRoots()
+    let decision = try await supervisor.review(
+      checkpoint,
+      root: project.primaryRoot,
+      model: context.projection.aggregate.submission.supervisor.model,
+      effort: context.projection.aggregate.submission.supervisor.effort
+    )
+    let review = try await supervision.appendReview(
+      scope: scope,
+      position: SupervisorReviewPosition(checkpointSequence: checkpoint.sequence, attempt: 0),
+      result: .decision(decision),
+      taskEventSequence: context.projection.lastSequence
+    )
+    try await executeSupervisorAction(review.action)
   }
 
   public func finalizeVerifyingTask(_ context: TaskPipelineVerifyingContext) async throws {
@@ -193,7 +261,20 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     try await preflight.discard(taskID: taskID)
   }
 
+  @discardableResult
+  public func recoverPendingSupervisorActions(limit: Int = 100) async throws -> Int {
+    guard let supervision else { return 0 }
+    let actions = try await supervision.pendingActions(limit: limit)
+    var applied = 0
+    for action in actions {
+      try await executeSupervisorAction(action)
+      applied += 1
+    }
+    return applied
+  }
+
   public func recoverPendingPreflights() async throws -> [TaskProjection] {
+    _ = try await recoverPendingSupervisorActions(limit: DurableSupervisionLedger.maximumQueryLimit)
     var recovered: [TaskProjection] = []
     for record in try await preflight.allRecords() {
       let current = try await coordinator.task(record.key.taskID)
@@ -237,6 +318,7 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     }
     let project = try await requiredProject(scope.projectID)
     let root = try executionRoot(project: project, baseline: record.baseline)
+    try await requireNoAmbiguousSupervisorAction(for: scope)
     var saga = try await artifacts.begin(scope)
     saga = try await persistBaseline(record.baseline, scope: scope, saga: saga)
     saga = try await persistTurnCompletion(scope: scope, saga: saga)
@@ -253,17 +335,6 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
       saga: saga
     )
     saga = verificationResult.saga
-    let supervisorResult = try await persistSupervisor(
-      scope: scope,
-      task: task,
-      root: root,
-      final: finalResult.evidence,
-      verification: verificationResult.evidence,
-      saga: saga
-    )
-    guard supervisorResult.saga.stage == .supervisorReviewed else {
-      throw TaskPipelineOrchestratorError.stageMismatch(supervisorResult.saga.stage)
-    }
     let policyEvidence = try await policy.evaluate(
       TaskPipelinePolicyContext(
         scope: scope,
@@ -273,6 +344,31 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
         verification: verificationResult.evidence
       )
     )
+    let reviewResult = try await persistCompletionReview(
+      scope: scope,
+      task: task,
+      root: root,
+      final: finalResult.evidence,
+      verification: verificationResult.evidence,
+      policy: policyEvidence,
+      saga: saga
+    )
+    guard reviewResult.saga.stage == .supervisorReviewed else {
+      throw TaskPipelineOrchestratorError.stageMismatch(reviewResult.saga.stage)
+    }
+    let reportPolicy: PolicyEvidence
+    let supervisorDecision: SupervisorDecision?
+    let userOverride: UserCompletionOverride?
+    switch reviewResult.review {
+    case .supervisor(let decision):
+      reportPolicy = policyEvidence
+      supervisorDecision = decision
+      userOverride = nil
+    case .deterministicPolicy(let storedPolicy, let override, _):
+      reportPolicy = storedPolicy
+      supervisorDecision = nil
+      userOverride = override
+    }
     let report = try makeReport(
       scope: scope,
       task: task,
@@ -280,13 +376,81 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
       baseline: record.baseline,
       final: finalResult.evidence,
       verification: verificationResult.evidence,
-      supervisorDecision: supervisorResult.evidence.decision,
-      policy: policyEvidence,
+      supervisorDecision: supervisorDecision,
+      policy: reportPolicy,
+      userOverride: userOverride,
       startedAt: record.capturedAt,
       completedAt: Date()
     )
     _ = try await finalizer.finalize(scope: scope, report: report)
+    if let supervision {
+      _ = try await supervision.close(scope: try durableScope(from: scope))
+    }
     try await preflight.discard(taskID: scope.taskID)
+  }
+
+  private func persistCompletionReview(
+    scope: TaskEvidenceScope,
+    task: TaskProjection,
+    root: RegisteredRoot,
+    final: GitFinalEvidence,
+    verification: [PipelineVerificationEvidence],
+    policy: PolicyEvidence,
+    saga: PipelineFinalizationRecord
+  ) async throws -> (saga: PipelineFinalizationRecord, review: CompletionReview) {
+    if task.aggregate.submission.supervisor.enabled {
+      let result = try await persistSupervisor(
+        scope: scope,
+        task: task,
+        root: root,
+        final: final,
+        verification: verification,
+        saga: saga
+      )
+      return (result.saga, .supervisor(result.evidence.decision))
+    }
+    guard task.aggregate.submission.supervisor.deterministicFallbackAuthorized else {
+      throw TaskPipelineOrchestratorError.deterministicFallbackNotAuthorized
+    }
+    if saga.stage == .verificationCompleted {
+      guard policy.evaluationCompleted, policy.unresolvedBlockers.isEmpty else {
+        throw TaskPipelineOrchestratorError.policyRejected
+      }
+      let userOverride = UserCompletionOverride(
+        decisionID: "policy:\(scope.taskID.rawValue):\(scope.generation)",
+        reason: "用户已选择在语义监督不可用时使用确定性 Policy Engine。",
+        confirmedAt: Date()
+      )
+      let evidence = try PipelineDeterministicPolicyFinalEvidence(
+        scope: scope,
+        policy: policy,
+        userOverride: userOverride
+      )
+      _ = try await artifacts.store(
+        scope: scope,
+        kind: .supervisorFinalDecision,
+        payload: evidence
+      )
+      return (
+        try await artifacts.advance(scope, to: .supervisorReviewed),
+        .deterministicPolicy(
+          policy: policy,
+          userOverride: userOverride,
+          digest: evidence.decisionDigest
+        )
+      )
+    }
+    if let evidence = try await artifacts.completionEvidence(for: scope)?.deterministicPolicy {
+      return (
+        saga,
+        .deterministicPolicy(
+          policy: evidence.policy,
+          userOverride: evidence.userOverride,
+          digest: evidence.decisionDigest
+        )
+      )
+    }
+    throw TaskPipelineOrchestratorError.stageMismatch(saga.stage)
   }
 
   private func makeScope(_ task: TaskProjection) throws -> TaskEvidenceScope {
@@ -300,6 +464,86 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
       turnID: binding.turnID,
       generation: generation,
       eventSequence: task.lastSequence
+    )
+  }
+
+  private func durableScope(from scope: TaskEvidenceScope) throws -> DurableSupervisionScope {
+    try DurableSupervisionScope(
+      taskID: scope.taskID,
+      projectID: scope.projectID,
+      threadID: scope.threadID,
+      turnID: scope.turnID,
+      generation: scope.generation
+    )
+  }
+
+  private func requireNoAmbiguousSupervisorAction(for scope: TaskEvidenceScope) async throws {
+    guard let supervision else { return }
+    let durable = try durableScope(from: scope)
+    let ambiguous = try await supervision.ambiguousActions(
+      limit: DurableSupervisionLedger.maximumQueryLimit
+    )
+    guard !ambiguous.contains(where: { $0.scope == durable }) else {
+      throw TaskPipelineOrchestratorError.supervisorActionUnresolved
+    }
+  }
+
+  private func executeSupervisorAction(
+    _ action: DurableSupervisorActionRecord?
+  ) async throws {
+    guard let action, action.state == .pending, let supervision else { return }
+    let attempt = try await supervision.beginActionAttempt(id: action.id)
+    let current = try await coordinator.task(attempt.scope.taskID)
+    guard current.aggregate.phase == .running,
+      current.aggregate.submission.projectID == attempt.scope.projectID,
+      let binding = current.aggregate.binding,
+      binding.threadID == attempt.scope.threadID,
+      binding.turnID == attempt.scope.turnID,
+      Int64(exactly: binding.turnGeneration) == attempt.scope.generation,
+      current.lastSequence == attempt.taskEventSequence
+    else {
+      throw TaskPipelineOrchestratorError.supervisorActionScopeMismatch
+    }
+    switch attempt.kind {
+    case .steer:
+      _ = try await coordinator.steerWithResult(
+        taskID: attempt.scope.taskID,
+        expectedTurnID: binding.turnID,
+        expectedSequence: attempt.taskEventSequence,
+        prompt: attempt.instruction
+      )
+    case .suspend:
+      _ = try await coordinator.suspendWithResult(
+        taskID: attempt.scope.taskID,
+        expectedTurnID: binding.turnID,
+        expectedSequence: attempt.taskEventSequence,
+        reason: attempt.instruction
+      )
+    case .interrupt:
+      _ = try await coordinator.interruptWithResult(
+        taskID: attempt.scope.taskID,
+        expectedTurnID: binding.turnID,
+        expectedSequence: attempt.taskEventSequence,
+        reason: attempt.instruction
+      )
+    }
+    _ = try await supervision.markActionApplied(id: attempt.id)
+  }
+
+  private func supervisionScope(
+    taskID: TaskID,
+    submission: TaskSubmission,
+    binding: ExecutionBinding
+  ) throws -> DurableSupervisionScope {
+    guard let generation = Int64(exactly: binding.turnGeneration) else {
+      throw TaskPipelineOrchestratorError.scopeMismatch
+    }
+    return try DurableSupervisionScope(
+      taskID: taskID,
+      projectID: submission.projectID,
+      threadID: binding.threadID,
+      turnID: binding.turnID,
+      generation: generation
     )
   }
 
@@ -465,6 +709,15 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
       guard decision.decision == .finalAccept else {
         throw TaskPipelineOrchestratorError.supervisorRejected(decision.decision)
       }
+      if let supervision {
+        let durableScope = try durableScope(from: scope)
+        _ = try await supervision.appendReview(
+          scope: durableScope,
+          position: SupervisorReviewPosition(checkpointSequence: checkpoint.sequence, attempt: 0),
+          result: .decision(decision),
+          taskEventSequence: scope.eventSequence
+        )
+      }
       let evidence = try PipelineSupervisorFinalEvidence(
         scope: scope,
         checkpointStage: .final,
@@ -515,6 +768,76 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     )
   }
 
+  private func makeProgressCheckpoint(
+    context: TaskPipelineSemanticContext,
+    state: SupervisorGuardState,
+    configuration: SupervisorGuardConfiguration
+  ) throws -> SupervisorCheckpoint {
+    let observation = context.observation
+    let details = Self.progressDetails(observation)
+    let contract = try Self.encodedContract(context.projection.aggregate.submission.contract)
+    let remainingSteers = max(0, configuration.maximumSteersPerTask - state.taskSteerCount)
+    return try SupervisorCheckpoint(
+      sequence: UInt64(context.projection.lastSequence),
+      taskID: context.projection.aggregate.id.rawValue,
+      turnID: context.binding.turnID.rawValue,
+      stage: .progress,
+      triggers: [details.trigger],
+      content: SupervisorCheckpointContent(
+        taskContract: contract,
+        projectRulePaths: context.projection.aggregate.submission.contract.allowedPaths
+          + context.projection.aggregate.submission.contract.forbiddenPaths,
+        executionModel: context.projection.aggregate.submission.execution.model,
+        executionEffort: context.projection.aggregate.submission.execution.effort,
+        currentPlan: details.currentPlan,
+        recentEvents: [details.event],
+        commandResults: details.commandResults,
+        remainingAutomaticSteers: remainingSteers
+      )
+    )
+  }
+
+  private static func progressDetails(
+    _ observation: TaskSemanticExecutionObservation
+  ) -> (
+    trigger: SupervisorCheckpointTrigger,
+    currentPlan: [String],
+    commandResults: [SupervisorCommandResult],
+    event: String
+  ) {
+    switch observation.evidence {
+    case .planChanged(let plan):
+      return (
+        .planChanged,
+        plan.steps.map { "\($0.status.rawValue): \($0.text)" },
+        [],
+        "Execution plan changed."
+      )
+    case .commandCompleted(let command):
+      let trigger: SupervisorCheckpointTrigger =
+        command.status == .failed
+        ? .commandFailed : .manual
+      return (
+        trigger,
+        [],
+        [
+          SupervisorCommandResult(
+            displayCommand: command.displayCommand,
+            exitCode: command.exitCode ?? -1
+          )
+        ],
+        "Command \(command.status.rawValue): \(command.itemID)."
+      )
+    case .fileChangeCompleted(let file):
+      return (
+        file.changeCount > 0 ? .firstFileModification : .manual,
+        [],
+        [],
+        "File-change item \(file.status.rawValue): \(file.itemID), changes: \(file.changeCount)."
+      )
+    }
+  }
+
   private func makeReport(
     scope: TaskEvidenceScope,
     task: TaskProjection,
@@ -522,12 +845,13 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     baseline: GitBaselineEvidence,
     final: GitFinalEvidence,
     verification: [PipelineVerificationEvidence],
-    supervisorDecision: SupervisorDecision,
+    supervisorDecision: SupervisorDecision?,
     policy: PolicyEvidence,
+    userOverride: UserCompletionOverride?,
     startedAt: Date,
     completedAt: Date
   ) throws -> FinalReportDocument {
-    guard supervisorDecision.decision == .finalAccept else {
+    if let supervisorDecision, supervisorDecision.decision != .finalAccept {
       throw TaskPipelineOrchestratorError.supervisorRejected(supervisorDecision.decision)
     }
     return try ReportBuilder().build(
@@ -552,14 +876,17 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
           commit: final.status.headCommit
         ),
         verification: verification.map(\.reportingEvidence),
-        supervisor: SupervisorEvidence(
-          model: task.aggregate.submission.supervisor.model,
-          effort: task.aggregate.submission.supervisor.effort,
-          checks: 1,
-          steers: 0,
-          finalDecision: .finalAccept
-        ),
-        policy: policy
+        supervisor: supervisorDecision.map { _ in
+          SupervisorEvidence(
+            model: task.aggregate.submission.supervisor.model,
+            effort: task.aggregate.submission.supervisor.effort,
+            checks: 1,
+            steers: 0,
+            finalDecision: .finalAccept
+          )
+        },
+        policy: policy,
+        userOverride: userOverride
       )
     )
   }

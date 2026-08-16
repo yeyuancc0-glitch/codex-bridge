@@ -170,6 +170,27 @@ public actor TaskCoordinator {
     return projection
   }
 
+  public func indexMissingTerminalMetadata(limit: Int = 25) async throws -> Int {
+    guard (1...100).contains(limit) else {
+      throw TaskCoordinatorError.invalidRetentionLimit
+    }
+    let taskIDs = try await store.taskIDsMissingRetainedMetadata(limit: limit)
+    var indexed = 0
+    for taskID in taskIDs {
+      guard let projection = try await projectionIfPresent(taskID),
+        projection.aggregate.phase.isTerminal,
+        try await store.retainedMetadata(for: taskID) == nil
+      else { continue }
+      let metadata = try await makeRetainedMetadata(
+        for: projection,
+        completedAt: try await terminalDate(for: taskID, projection: projection)
+      )
+      _ = try await store.indexTerminalRetainedMetadata(metadata)
+      indexed += 1
+    }
+    return indexed
+  }
+
   public func resolveLocalApproval(taskID: TaskID, approved: Bool) async throws -> TaskProjection {
     let projection = try await appendDomain(
       .localApprovalResolved(approved: approved),
@@ -318,6 +339,7 @@ public actor TaskCoordinator {
     try await requestStop(
       taskID: taskID,
       expectedTurnID: nil,
+      expectedSequence: nil,
       outcome: .interrupt,
       reason: reason
     )
@@ -331,6 +353,22 @@ public actor TaskCoordinator {
     try await requestStop(
       taskID: taskID,
       expectedTurnID: expectedTurnID,
+      expectedSequence: nil,
+      outcome: .interrupt,
+      reason: reason
+    )
+  }
+
+  public func interruptWithResult(
+    taskID: TaskID,
+    expectedTurnID: TurnID,
+    expectedSequence: Int64,
+    reason: String? = nil
+  ) async throws -> TaskMutationResult {
+    try await requestStop(
+      taskID: taskID,
+      expectedTurnID: expectedTurnID,
+      expectedSequence: expectedSequence,
       outcome: .interrupt,
       reason: reason
     )
@@ -344,7 +382,12 @@ public actor TaskCoordinator {
     taskID: TaskID,
     prompt: String
   ) async throws -> TaskMutationResult {
-    try await steerWithResult(taskID: taskID, expectedTurnID: nil, prompt: prompt)
+    try await steerWithResult(
+      taskID: taskID,
+      expectedTurnID: nil,
+      expectedSequence: nil,
+      prompt: prompt
+    )
   }
 
   public func steerWithResult(
@@ -355,6 +398,21 @@ public actor TaskCoordinator {
     try await steerWithResult(
       taskID: taskID,
       expectedTurnID: Optional(expectedTurnID),
+      expectedSequence: nil,
+      prompt: prompt
+    )
+  }
+
+  public func steerWithResult(
+    taskID: TaskID,
+    expectedTurnID: TurnID,
+    expectedSequence: Int64,
+    prompt: String
+  ) async throws -> TaskMutationResult {
+    try await steerWithResult(
+      taskID: taskID,
+      expectedTurnID: Optional(expectedTurnID),
+      expectedSequence: expectedSequence,
       prompt: prompt
     )
   }
@@ -362,6 +420,7 @@ public actor TaskCoordinator {
   private func steerWithResult(
     taskID: TaskID,
     expectedTurnID: TurnID?,
+    expectedSequence: Int64?,
     prompt: String
   ) async throws -> TaskMutationResult {
     let normalized = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -377,6 +436,9 @@ public actor TaskCoordinator {
     guard expectedTurnID.map({ $0 == binding.turnID }) ?? true else {
       throw TaskCoordinatorTurnMismatchError()
     }
+    guard expectedSequence.map({ $0 == current.lastSequence }) ?? true else {
+      throw TaskCoordinatorEventSequenceMismatchError()
+    }
     let operationID = OperationID(rawValue: "op_\(Self.randomIdentifier())")
     let intent = TaskRuntimeIntentRecord(
       kind: "steer",
@@ -384,12 +446,18 @@ public actor TaskCoordinator {
       approved: nil,
       detail: normalized
     )
-    try await append(
-      .runtimeIntent(intent),
-      taskID: taskID,
-      expectedSequence: current.lastSequence,
-      projection: try advancedProjection(current)
-    )
+    do {
+      try await append(
+        .runtimeIntent(intent),
+        taskID: taskID,
+        expectedSequence: current.lastSequence,
+        projection: try advancedProjection(current)
+      )
+    } catch EventStoreError.optimisticConcurrencyConflict(let conflictedTaskID, _, _)
+      where conflictedTaskID == taskID && expectedSequence != nil
+    {
+      throw TaskCoordinatorEventSequenceMismatchError()
+    }
     do {
       try await runtime.steer(taskID: taskID, binding: binding, prompt: normalized)
       return TaskMutationResult(
@@ -406,9 +474,25 @@ public actor TaskCoordinator {
     try await requestStop(
       taskID: taskID,
       expectedTurnID: nil,
+      expectedSequence: nil,
       outcome: .suspend,
       reason: reason
     ).projection
+  }
+
+  public func suspendWithResult(
+    taskID: TaskID,
+    expectedTurnID: TurnID,
+    expectedSequence: Int64,
+    reason: String? = nil
+  ) async throws -> TaskMutationResult {
+    try await requestStop(
+      taskID: taskID,
+      expectedTurnID: expectedTurnID,
+      expectedSequence: expectedSequence,
+      outcome: .suspend,
+      reason: reason
+    )
   }
 
   public func resume(taskID: TaskID) async throws -> TaskProjection {
@@ -430,6 +514,7 @@ public actor TaskCoordinator {
   private func requestStop(
     taskID: TaskID,
     expectedTurnID: TurnID?,
+    expectedSequence: Int64?,
     outcome: StopIntent.Outcome,
     reason: String?
   ) async throws -> TaskMutationResult {
@@ -439,6 +524,9 @@ public actor TaskCoordinator {
     }
     guard expectedTurnID.map({ $0 == binding.turnID }) ?? true else {
       throw TaskCoordinatorTurnMismatchError()
+    }
+    guard expectedSequence.map({ $0 == current.lastSequence }) ?? true else {
+      throw TaskCoordinatorEventSequenceMismatchError()
     }
     let intent = StopIntent(
       operationID: OperationID(rawValue: "op_\(Self.randomIdentifier())"),
@@ -450,12 +538,18 @@ public actor TaskCoordinator {
       aggregate: aggregate,
       lastSequence: try Self.nextSequence(after: current.lastSequence, taskID: taskID)
     )
-    try await append(
-      .domain(.stopRequested(intent)),
-      taskID: taskID,
-      expectedSequence: current.lastSequence,
-      projection: projection
-    )
+    do {
+      try await append(
+        .domain(.stopRequested(intent)),
+        taskID: taskID,
+        expectedSequence: current.lastSequence,
+        projection: projection
+      )
+    } catch EventStoreError.optimisticConcurrencyConflict(let conflictedTaskID, _, _)
+      where conflictedTaskID == taskID && expectedSequence != nil
+    {
+      throw TaskCoordinatorEventSequenceMismatchError()
+    }
     do {
       try await runtime.interrupt(taskID: taskID, binding: binding)
       return TaskMutationResult(projection: projection, operationID: intent.operationID)
@@ -602,7 +696,8 @@ public actor TaskCoordinator {
     try await store.appendBatchReleasingOwnedLocks(
       events,
       expectedLastSequence: reservation.reservationSequence,
-      snapshot: try stateSnapshot(for: completed)
+      snapshot: try stateSnapshot(for: completed),
+      terminalMetadata: try await terminalMetadata(for: completed, completedAt: date)
     )
     pendingStarts.remove(reservation.taskID)
     workers[reservation.taskID]?.cancel()
@@ -757,17 +852,20 @@ public actor TaskCoordinator {
     }
     let projection = TaskProjection(aggregate: aggregate, lastSequence: sequence)
     let snapshot = try stateSnapshot(for: projection)
+    let retainedMetadata = try await terminalMetadata(for: projection, completedAt: createdAt)
     if releasesOwnedLocks {
       try await store.appendBatchReleasingOwnedLocks(
         envelopes,
         expectedLastSequence: current.lastSequence,
-        snapshot: snapshot
+        snapshot: snapshot,
+        terminalMetadata: retainedMetadata
       )
     } else {
       try await store.appendBatch(
         envelopes,
         expectedLastSequence: current.lastSequence,
-        snapshot: snapshot
+        snapshot: snapshot,
+        terminalMetadata: retainedMetadata
       )
     }
     return projection
@@ -1264,21 +1362,71 @@ public actor TaskCoordinator {
     projection: TaskProjection? = nil
   ) async throws {
     let sequence = try Self.nextSequence(after: expectedSequence, taskID: taskID)
-    let event = try envelope(record, taskID: taskID, sequence: sequence, createdAt: Date())
+    let createdAt = Date()
+    let event = try envelope(record, taskID: taskID, sequence: sequence, createdAt: createdAt)
     let snapshot = try projection.map(stateSnapshot)
+    let retainedMetadata: TaskRetainedMetadata?
+    if let projection {
+      retainedMetadata = try await terminalMetadata(for: projection, completedAt: createdAt)
+    } else {
+      retainedMetadata = nil
+    }
     if releasesOwnedLocks {
       try await store.appendReleasingOwnedLocks(
         event,
         expectedLastSequence: expectedSequence,
-        snapshot: snapshot
+        snapshot: snapshot,
+        terminalMetadata: retainedMetadata
       )
       return
     }
     try await store.append(
       event,
       expectedLastSequence: expectedSequence,
-      snapshot: snapshot
+      snapshot: snapshot,
+      terminalMetadata: retainedMetadata
     )
+  }
+
+  private func terminalMetadata(
+    for projection: TaskProjection,
+    completedAt: Date
+  ) async throws -> TaskRetainedMetadata? {
+    guard TaskRetentionTerminalPhase(rawValue: projection.aggregate.phase.rawValue) != nil
+    else { return nil }
+    return try await makeRetainedMetadata(for: projection, completedAt: completedAt)
+  }
+
+  private func makeRetainedMetadata(
+    for projection: TaskProjection,
+    completedAt: Date
+  ) async throws -> TaskRetainedMetadata {
+    guard let phase = TaskRetentionTerminalPhase(rawValue: projection.aggregate.phase.rawValue),
+      let timeline = try await store.taskRetentionTimeline(for: projection.aggregate.id)
+    else { throw TaskCoordinatorError.corruptTask(projection.aggregate.id) }
+    return try TaskRetainedMetadata(
+      taskID: projection.aggregate.id,
+      terminalPhase: phase,
+      createdAt: timeline.createdAt,
+      startedAt: timeline.startedAt,
+      completedAt: completedAt,
+      lastEventSequence: projection.lastSequence,
+      projectionSchemaVersion: 1,
+      projectionPayload: try stateSnapshot(for: projection).payload,
+      indexedAt: completedAt
+    )
+  }
+
+  private func terminalDate(
+    for taskID: TaskID,
+    projection: TaskProjection
+  ) async throws -> Date {
+    guard let timeline = try await store.taskRetentionTimeline(for: taskID) else {
+      throw TaskCoordinatorError.corruptTask(taskID)
+    }
+    return timeline.lastEventSequence == projection.lastSequence
+      ? timeline.lastEventAt
+      : Date()
   }
 
   private func envelope(
@@ -1365,6 +1513,19 @@ public actor TaskCoordinator {
           guard aggregate != nil else { throw TaskCoordinatorError.corruptTask(taskID) }
         }
       }
+    }
+    if aggregate == nil && !readEvent,
+      let retained = try await store.retainedMetadata(for: taskID),
+      retained.historyState != .full
+    {
+      guard retained.projectionSchemaVersion == 1 else {
+        throw TaskCoordinatorError.corruptTask(taskID)
+      }
+      let archived = try decoder.decode(StoredProjection.self, from: retained.projectionPayload)
+      guard archived.aggregate.id == taskID,
+        archived.lastSequence == retained.lastEventSequence
+      else { throw TaskCoordinatorError.corruptTask(taskID) }
+      return TaskProjection(aggregate: archived.aggregate, lastSequence: archived.lastSequence)
     }
     guard aggregate != nil || readEvent else { return nil }
     guard let aggregate else { throw TaskCoordinatorError.corruptTask(taskID) }

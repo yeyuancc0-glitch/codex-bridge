@@ -2,6 +2,7 @@ import BridgeCoordinator
 import BridgeDomain
 import BridgeGit
 import BridgePipeline
+import BridgePresentation
 import BridgeReporting
 import BridgeRepositories
 import BridgeSecurity
@@ -23,19 +24,22 @@ struct DesktopTaskEvidenceValues: Equatable, Sendable {
   let diffSummary: String?
   let supervisionSummary: String?
   let verificationSummary: String?
+  let ambiguousSupervisorActions: [SupervisorActionPresentation]
 
   init(
     commands: [String] = [],
     changedFiles: [String] = [],
     diffSummary: String? = nil,
     supervisionSummary: String? = nil,
-    verificationSummary: String? = nil
+    verificationSummary: String? = nil,
+    ambiguousSupervisorActions: [SupervisorActionPresentation] = []
   ) {
     self.commands = commands
     self.changedFiles = changedFiles
     self.diffSummary = diffSummary
     self.supervisionSummary = supervisionSummary
     self.verificationSummary = verificationSummary
+    self.ambiguousSupervisorActions = ambiguousSupervisorActions
   }
 }
 
@@ -68,6 +72,21 @@ struct DesktopTaskEvidenceProjection: Sendable {
   let patches: GitPatchStore
   let reports: any FinalReportStore
   let coordinator: TaskCoordinator
+  let supervision: DurableSupervisionLedger?
+
+  init(
+    artifacts: PipelineArtifactStore,
+    patches: GitPatchStore,
+    reports: any FinalReportStore,
+    coordinator: TaskCoordinator,
+    supervision: DurableSupervisionLedger? = nil
+  ) {
+    self.artifacts = artifacts
+    self.patches = patches
+    self.reports = reports
+    self.coordinator = coordinator
+    self.supervision = supervision
+  }
 
   func project(
     taskID: TaskID,
@@ -100,6 +119,7 @@ struct DesktopTaskEvidenceProjection: Sendable {
     let git = try await gitValues(scope: scope)
     let verification = try await verificationSummary(scope: scope, records: records)
     let supervisor = try await supervisorSummary(scope: scope, records: records)
+    let ambiguousActions = try await ambiguousSupervisorActions(scope: scope)
     let commands = try await commandValues(scope: scope, task: task)
     try Self.checkDeadline(deadline)
     let finalTask = try await coordinator.task(taskID)
@@ -111,7 +131,8 @@ struct DesktopTaskEvidenceProjection: Sendable {
         changedFiles: git.changedFiles,
         diffSummary: git.summary,
         supervisionSummary: supervisor,
-        verificationSummary: verification
+        verificationSummary: verification,
+        ambiguousSupervisorActions: ambiguousActions
       )
     )
   }
@@ -195,6 +216,40 @@ struct DesktopTaskEvidenceProjection: Sendable {
       "\(decision.decision.rawValue) · 风险 \(decision.risk.rawValue) · "
       + "置信度 \(confidence)% · \(decision.summary)"
     return Self.safeText(value, maximumBytes: Self.maximumSummaryBytes)
+  }
+
+  private func ambiguousSupervisorActions(
+    scope: TaskEvidenceScope
+  ) async throws -> [SupervisorActionPresentation] {
+    guard let supervision,
+      let generation = Int64(exactly: scope.generation)
+    else { return [] }
+    let durableScope = try DurableSupervisionScope(
+      taskID: scope.taskID,
+      projectID: scope.projectID,
+      threadID: scope.threadID,
+      turnID: scope.turnID,
+      generation: generation
+    )
+    let records = try await supervision.ambiguousActions(
+      limit: DurableSupervisionLedger.maximumQueryLimit
+    )
+    return
+      records
+      .filter { $0.scope == durableScope }
+      .sorted { lhs, rhs in
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.id < rhs.id
+      }
+      .map {
+        SupervisorActionPresentation(
+          id: $0.id,
+          kind: $0.kind.rawValue,
+          instruction: Self.safeText($0.instruction, maximumBytes: 4_096),
+          taskEventSequence: $0.taskEventSequence,
+          createdAt: $0.createdAt
+        )
+      }
   }
 
   private func commandValues(

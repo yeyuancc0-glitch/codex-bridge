@@ -20,7 +20,8 @@ struct DesktopPresentationProjection {
     operatorState: DesktopOperatorState = DesktopOperatorState(),
     canExportSupportBundle: Bool = false,
     lifecyclePreferences: LifecyclePreferences = .defaults,
-    launchAtLoginStatus: DesktopLaunchAtLoginStatus = .unavailable
+    launchAtLoginStatus: DesktopLaunchAtLoginStatus = .unavailable,
+    retentionPolicy: RetentionPolicyPresentation = .defaults
   ) -> BridgePresentationSnapshot {
     let projectsByID = Dictionary(uniqueKeysWithValues: projects.map { ($0.id, $0) })
     let taskRows = tasks.map { taskRow($0.0, projects: projectsByID, events: $0.1) }
@@ -102,7 +103,13 @@ struct DesktopPresentationProjection {
           canExport: canExportSupportBundle
         )
       ),
-      settings: .ready(settings(lifecyclePreferences, launchAtLoginStatus: launchAtLoginStatus))
+      settings: .ready(
+        settings(
+          lifecyclePreferences,
+          launchAtLoginStatus: launchAtLoginStatus,
+          retentionPolicy: retentionPolicy
+        )
+      )
     )
   }
 
@@ -257,14 +264,10 @@ struct DesktopPresentationProjection {
         !supervisors.contains(where: { $0.id == candidate.id })
       }
       let blocker: String?
-      if !DesktopSupervisorAvailability.productionReviewAvailable {
-        blocker = DesktopSupervisorAvailability.degradation
-      } else if projectOptions.isEmpty {
+      if projectOptions.isEmpty {
         blocker = "没有可读项目。"
       } else if executions.isEmpty {
         blocker = "当前 Codex 目录没有可用的 Execution 模型。"
-      } else if supervisors.isEmpty {
-        blocker = "当前 Codex 目录没有明确标识的 Luna 模型；Bridge 不会静默替换 Supervisor。"
       } else {
         blocker = nil
       }
@@ -276,6 +279,8 @@ struct DesktopPresentationProjection {
           threadID: value.threadID,
           executionModels: executions,
           supervisorModels: supervisors,
+          supervisorAvailable: DesktopSupervisorAvailability.productionReviewAvailable
+            && !supervisors.isEmpty,
           blocker: blocker,
           isSubmitting: value.isSubmitting
         )
@@ -393,8 +398,9 @@ struct DesktopPresentationProjection {
       model: aggregate.submission.execution.model,
       effort: aggregate.submission.execution.effort,
       status: status(aggregate.phase),
-      supervisorStatus: DesktopSupervisorAvailability.productionReviewAvailable
-        ? (aggregate.submission.supervisor.enabled ? .waiting : .paused) : .blocked,
+      supervisorStatus: aggregate.submission.supervisor.enabled
+        ? (DesktopSupervisorAvailability.productionReviewAvailable ? .waiting : .blocked)
+        : .paused,
       startedAt: events.first(where: { $0.kind == "task.turnStarted" })?.createdAt,
       plan: aggregate.submission.contract.requirements,
       currentStep: aggregate.phase.label,
@@ -405,6 +411,7 @@ struct DesktopPresentationProjection {
       changedFiles: evidence.changedFiles,
       diffSummary: evidence.diffSummary,
       supervisionSummary: evidence.supervisionSummary,
+      ambiguousSupervisorActions: evidence.ambiguousSupervisorActions,
       verificationSummary: evidence.verificationSummary,
       verificationCommands: projects[aggregate.submission.projectID]?.verificationCommands.map(
         command
@@ -622,7 +629,8 @@ struct DesktopPresentationProjection {
 
   private static func settings(
     _ preferences: LifecyclePreferences,
-    launchAtLoginStatus: DesktopLaunchAtLoginStatus
+    launchAtLoginStatus: DesktopLaunchAtLoginStatus,
+    retentionPolicy: RetentionPolicyPresentation
   ) -> SettingsPagePresentation {
     SettingsPagePresentation(
       general: [
@@ -660,7 +668,8 @@ struct DesktopPresentationProjection {
           isEnabled: false
         ),
       ],
-      retentionSummary: "任务事件持久保存；支持包仅导出脱敏结构化事实"
+      retentionSummary: "事件 (retentionPolicy.eventDays) 天；元数据 (retentionPolicy.metadataDays) 天",
+      retentionPolicy: retentionPolicy
     )
   }
 

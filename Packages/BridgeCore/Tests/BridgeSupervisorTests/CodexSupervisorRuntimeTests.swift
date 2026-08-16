@@ -30,6 +30,37 @@ final class CodexSupervisorRuntimeTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
   }
 
+  func testProductionConfigurationRunsThroughEvidenceOnlyHome() async throws {
+    let root = try temporaryRoot()
+    let registered = try RegisteredRoot(capturing: root)
+    let home = root.deletingLastPathComponent().appending(
+      path: "supervisor-home-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+    addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+    let runtime = CodexSupervisorRuntime(
+      configuration: CodexSupervisorRuntimeConfiguration(
+        appServer: AppServerConfiguration(
+          executableURL: URL(fileURLWithPath: "/bin/sh"),
+          arguments: ["-c", supervisorScript(root: registered.canonicalPath)],
+          environment: ["PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"]
+        ),
+        clientInfo: .bridge(version: "supervisor-tests"),
+        requestTimeoutNanoseconds: 1_000_000_000,
+        reviewTimeoutNanoseconds: 1_000_000_000,
+        evidenceOnlyHomeURL: home
+      )
+    )
+    addTeardownBlock { await runtime.shutdown() }
+
+    let result = try await runtime.review(
+      try checkpoint(sequence: 1, stage: .progress),
+      root: registered
+    )
+    XCTAssertEqual(result.decision, .continue)
+  }
+
   func testReusesOneReadOnlyThreadAndDecodesStrictDecisions() async throws {
     let root = try temporaryRoot()
     let registered = try RegisteredRoot(capturing: root)

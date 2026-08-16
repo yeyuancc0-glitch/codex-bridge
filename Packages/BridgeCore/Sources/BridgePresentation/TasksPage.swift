@@ -59,6 +59,7 @@ private struct ReadOnlyTaskComposer: View {
   @State private var criteria = ""
   @State private var executionModel: String
   @State private var executionEffort: String
+  @State private var useSemanticSupervision: Bool
   @State private var supervisorModel: String
   @State private var supervisorEffort: String
 
@@ -72,6 +73,7 @@ private struct ReadOnlyTaskComposer: View {
     _projectID = State(initialValue: composer.initialProjectID)
     _executionModel = State(initialValue: execution?.id ?? "")
     _executionEffort = State(initialValue: execution?.efforts.first ?? "")
+    _useSemanticSupervision = State(initialValue: composer.supervisorAvailable)
     _supervisorModel = State(initialValue: supervisor?.id ?? "")
     _supervisorEffort = State(initialValue: supervisor?.efforts.first ?? "")
   }
@@ -82,7 +84,7 @@ private struct ReadOnlyTaskComposer: View {
         VStack(alignment: .leading, spacing: BridgeTheme.spacingTight) {
           Text("本机只读任务")
             .font(.headline)
-          Text("只读 · 禁止网络 · Luna 监督；提交后进入现有持久化任务流水线")
+          Text("只读 · 禁止网络 · 提交后进入现有持久化任务流水线")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -101,6 +103,14 @@ private struct ReadOnlyTaskComposer: View {
         Label(blocker, systemImage: "hand.raised.fill")
           .foregroundStyle(.orange)
           .accessibilityLabel("安全阻断：\(blocker)")
+      }
+      if !composer.supervisorAvailable {
+        Label(
+          "Luna 当前不可用；关闭语义监督后将使用确定性 Policy Engine，最终报告会标注用户选择。",
+          systemImage: "exclamationmark.triangle"
+        )
+        .foregroundStyle(.orange)
+        .accessibilityLabel("监督降级：Luna 当前不可用，将使用确定性 Policy Engine")
       }
       HStack(alignment: .top, spacing: BridgeTheme.spacingSection) {
         VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
@@ -137,16 +147,20 @@ private struct ReadOnlyTaskComposer: View {
               Text(effort).tag(effort)
             }
           }
+          Toggle("启用语义监督", isOn: $useSemanticSupervision)
+            .disabled(!composer.supervisorAvailable)
           Picker("Luna Supervisor", selection: supervisorModelBinding) {
             ForEach(composer.supervisorModels) { model in
               Text(model.displayName).tag(model.id)
             }
           }
+          .disabled(!useSemanticSupervision)
           Picker("Supervisor effort", selection: $supervisorEffort) {
             ForEach(supervisorEfforts, id: \.self) { effort in
               Text(effort).tag(effort)
             }
           }
+          .disabled(!useSemanticSupervision)
           MetadataRow(label: "权限", value: "read-only（固定）")
           MetadataRow(label: "网络", value: "关闭（固定）")
         }
@@ -202,7 +216,7 @@ private struct ReadOnlyTaskComposer: View {
       && composer.projects.contains(where: { $0.id == projectID })
       && (composer.threadID == nil || projectID == composer.initialProjectID)
       && executionEfforts.contains(executionEffort)
-      && supervisorEfforts.contains(supervisorEffort)
+      && (!useSemanticSupervision || supervisorEfforts.contains(supervisorEffort))
   }
 
   private func submit() async {
@@ -216,6 +230,7 @@ private struct ReadOnlyTaskComposer: View {
           acceptanceCriteria: acceptanceCriteria,
           executionModel: executionModel,
           executionEffort: executionEffort,
+          supervisorEnabled: useSemanticSupervision,
           supervisorModel: supervisorModel,
           supervisorEffort: supervisorEffort
         )
@@ -280,6 +295,7 @@ private struct TaskDetailView: View {
   @ObservedObject var store: BridgePresentationStore
   @State private var presentsVerificationAuthorization = false
   @State private var presentsRecoverySuspension = false
+  @State private var supervisorActionToResolve: SupervisorActionPresentation?
 
   var body: some View {
     VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
@@ -316,6 +332,28 @@ private struct TaskDetailView: View {
       Button("取消", role: .cancel) {}
     } message: {
       Text("这会释放当前 Thread 与工作区锁，但不会恢复旧进程、启动新 Turn 或修改项目文件。")
+    }
+    .confirmationDialog(
+      "确认 Supervisor 动作已经生效？",
+      isPresented: supervisorActionResolutionPresented,
+      titleVisibility: .visible
+    ) {
+      Button("标记为已应用") {
+        guard let action = supervisorActionToResolve else { return }
+        Task {
+          await store.perform(
+            .markSupervisorActionApplied(taskID: task.id, actionID: action.id)
+          )
+        }
+        supervisorActionToResolve = nil
+      }
+      Button("取消", role: .cancel) {
+        supervisorActionToResolve = nil
+      }
+    } message: {
+      if let action = supervisorActionToResolve {
+        Text("请先在 Codex 中核对“\(action.kind)”动作已生效。Bridge 不会重试该动作，也不会替你执行外部操作。")
+      }
     }
     .task(id: "\(task.id):\(task.status.rawValue)") {
       _ = await store.perform(.loadTaskEvidence(task.id))
@@ -447,11 +485,17 @@ private struct TaskDetailView: View {
     case .diff:
       EvidenceSummary(title: "Diff", summary: task.diffSummary, emptyMessage: "暂无可显示的 Diff")
     case .supervision:
-      EvidenceSummary(
-        title: "Luna Supervisor",
-        summary: task.supervisionSummary,
-        emptyMessage: "尚未产生监督结论"
-      )
+      VStack(alignment: .leading, spacing: BridgeTheme.spacingSection) {
+        EvidenceSummary(
+          title: "Luna Supervisor",
+          summary: task.supervisionSummary,
+          emptyMessage: "尚未产生监督结论"
+        )
+        SupervisorActionResolutionView(
+          actions: task.ambiguousSupervisorActions,
+          resolve: { supervisorActionToResolve = $0 }
+        )
+      }
     case .verification:
       TaskVerificationEvidence(
         task: task,
@@ -468,6 +512,15 @@ private struct TaskDetailView: View {
 
   private var canInterrupt: Bool {
     task.canRequestInterrupt
+  }
+
+  private var supervisorActionResolutionPresented: Binding<Bool> {
+    Binding(
+      get: { supervisorActionToResolve != nil },
+      set: { presented in
+        if !presented { supervisorActionToResolve = nil }
+      }
+    )
   }
 }
 

@@ -19,6 +19,7 @@ public actor EventStore {
 
     var configuration = Configuration()
     configuration.busyMode = .timeout(5)
+    configuration.foreignKeysEnabled = true
     let database = try DatabaseQueue(path: path, configuration: configuration)
     try EventStoreSchema.migrate(database)
     self.database = database
@@ -44,39 +45,45 @@ public actor EventStore {
   public func append(
     _ event: TaskEventEnvelope,
     expectedLastSequence: Int64,
-    snapshot: TaskStateSnapshot? = nil
+    snapshot: TaskStateSnapshot? = nil,
+    terminalMetadata: TaskRetainedMetadata? = nil
   ) throws {
     try persist(
       [event],
       expectedLastSequence: expectedLastSequence,
       lockMutation: .none,
-      snapshot: snapshot
+      snapshot: snapshot,
+      terminalMetadata: terminalMetadata
     )
   }
 
   public func appendBatch(
     _ events: [TaskEventEnvelope],
     expectedLastSequence: Int64,
-    snapshot: TaskStateSnapshot
+    snapshot: TaskStateSnapshot,
+    terminalMetadata: TaskRetainedMetadata? = nil
   ) throws {
     try persist(
       events,
       expectedLastSequence: expectedLastSequence,
       lockMutation: .none,
-      snapshot: snapshot
+      snapshot: snapshot,
+      terminalMetadata: terminalMetadata
     )
   }
 
   public func appendReleasingOwnedLocks(
     _ event: TaskEventEnvelope,
     expectedLastSequence: Int64,
-    snapshot: TaskStateSnapshot? = nil
+    snapshot: TaskStateSnapshot? = nil,
+    terminalMetadata: TaskRetainedMetadata? = nil
   ) throws {
     try persist(
       [event],
       expectedLastSequence: expectedLastSequence,
       lockMutation: .releaseOwned,
-      snapshot: snapshot
+      snapshot: snapshot,
+      terminalMetadata: terminalMetadata
     )
   }
 
@@ -99,20 +106,23 @@ public actor EventStore {
       [event],
       expectedLastSequence: expectedLastSequence,
       lockMutation: .rekeyOwned(from: current, to: replacement),
-      snapshot: snapshot
+      snapshot: snapshot,
+      terminalMetadata: nil
     )
   }
 
   public func appendBatchReleasingOwnedLocks(
     _ events: [TaskEventEnvelope],
     expectedLastSequence: Int64,
-    snapshot: TaskStateSnapshot
+    snapshot: TaskStateSnapshot,
+    terminalMetadata: TaskRetainedMetadata? = nil
   ) throws {
     try persist(
       events,
       expectedLastSequence: expectedLastSequence,
       lockMutation: .releaseOwned,
-      snapshot: snapshot
+      snapshot: snapshot,
+      terminalMetadata: terminalMetadata
     )
   }
 
@@ -120,7 +130,8 @@ public actor EventStore {
     _ events: [TaskEventEnvelope],
     expectedLastSequence: Int64,
     lockMutation: LockMutation,
-    snapshot: TaskStateSnapshot?
+    snapshot: TaskStateSnapshot?,
+    terminalMetadata: TaskRetainedMetadata?
   ) throws {
     guard expectedLastSequence >= 0 else {
       throw EventStoreError.invalidArgument("expectedLastSequence")
@@ -142,6 +153,14 @@ public actor EventStore {
       expectedSequence = event.sequence
     }
     try Self.validate(snapshot: snapshot, event: last)
+    if let terminalMetadata {
+      try Self.validateTerminalMetadata(
+        terminalMetadata,
+        taskID: first.taskID,
+        expectedLastSequence: last.sequence,
+        terminalEventDate: last.createdAt
+      )
+    }
 
     try database.write { db in
       try Self.ensureTask(first.taskID, createdAt: first.createdAt, in: db)
@@ -179,6 +198,16 @@ public actor EventStore {
 
       if let snapshot {
         try Self.upsert(snapshot, in: db)
+      }
+
+      if let terminalMetadata {
+        if let existing = try Self.fetchRetainedMetadata(taskID: first.taskID, in: db) {
+          guard Self.sameImmutableMetadata(existing, terminalMetadata) else {
+            throw EventStoreError.retainedMetadataConflict(first.taskID)
+          }
+        } else {
+          try Self.insert(terminalMetadata, in: db)
+        }
       }
 
       switch lockMutation {

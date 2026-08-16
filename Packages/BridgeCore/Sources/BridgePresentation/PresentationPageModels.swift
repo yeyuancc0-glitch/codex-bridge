@@ -125,6 +125,28 @@ public struct TaskEvidenceEventPresentation: Identifiable, Equatable, Sendable {
   }
 }
 
+public struct SupervisorActionPresentation: Identifiable, Equatable, Sendable {
+  public let id: String
+  public let kind: String
+  public let instruction: String
+  public let taskEventSequence: Int64
+  public let createdAt: Date
+
+  public init(
+    id: String,
+    kind: String,
+    instruction: String,
+    taskEventSequence: Int64,
+    createdAt: Date
+  ) {
+    self.id = id
+    self.kind = kind
+    self.instruction = instruction
+    self.taskEventSequence = taskEventSequence
+    self.createdAt = createdAt
+  }
+}
+
 public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
   public let id: String
   public let title: String
@@ -145,6 +167,7 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
   public let changedFiles: [String]
   public let diffSummary: String?
   public let supervisionSummary: String?
+  public let ambiguousSupervisorActions: [SupervisorActionPresentation]
   public let verificationSummary: String?
   public let verificationCommands: [String]
   public let canAuthorizeVerification: Bool
@@ -174,6 +197,7 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     changedFiles: [String] = [],
     diffSummary: String? = nil,
     supervisionSummary: String? = nil,
+    ambiguousSupervisorActions: [SupervisorActionPresentation] = [],
     verificationSummary: String? = nil,
     verificationCommands: [String] = [],
     canAuthorizeVerification: Bool = false,
@@ -202,6 +226,7 @@ public struct TaskDetailPresentation: Identifiable, Equatable, Sendable {
     self.changedFiles = changedFiles
     self.diffSummary = diffSummary
     self.supervisionSummary = supervisionSummary
+    self.ambiguousSupervisorActions = ambiguousSupervisorActions
     self.verificationSummary = verificationSummary
     self.verificationCommands = verificationCommands
     self.canAuthorizeVerification = canAuthorizeVerification
@@ -267,6 +292,7 @@ public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
   public let threadID: String?
   public let executionModels: [LocalTaskModelOptionPresentation]
   public let supervisorModels: [LocalTaskModelOptionPresentation]
+  public let supervisorAvailable: Bool
   public let blocker: String?
   public let isSubmitting: Bool
 
@@ -277,6 +303,7 @@ public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
     threadID: String? = nil,
     executionModels: [LocalTaskModelOptionPresentation],
     supervisorModels: [LocalTaskModelOptionPresentation],
+    supervisorAvailable: Bool = true,
     blocker: String? = nil,
     isSubmitting: Bool = false
   ) {
@@ -286,6 +313,7 @@ public struct ReadOnlyTaskComposerPresentation: Equatable, Sendable {
     self.threadID = threadID
     self.executionModels = executionModels
     self.supervisorModels = supervisorModels
+    self.supervisorAvailable = supervisorAvailable
     self.blocker = blocker
     self.isSubmitting = isSubmitting
   }
@@ -299,6 +327,7 @@ public struct ReadOnlyTaskDraftPresentation: Equatable, Sendable {
   public let acceptanceCriteria: [String]
   public let executionModel: String
   public let executionEffort: String
+  public let supervisorEnabled: Bool
   public let supervisorModel: String
   public let supervisorEffort: String
 
@@ -310,6 +339,7 @@ public struct ReadOnlyTaskDraftPresentation: Equatable, Sendable {
     acceptanceCriteria: [String],
     executionModel: String,
     executionEffort: String,
+    supervisorEnabled: Bool = true,
     supervisorModel: String,
     supervisorEffort: String
   ) {
@@ -320,6 +350,7 @@ public struct ReadOnlyTaskDraftPresentation: Equatable, Sendable {
     self.acceptanceCriteria = acceptanceCriteria
     self.executionModel = executionModel
     self.executionEffort = executionEffort
+    self.supervisorEnabled = supervisorEnabled
     self.supervisorModel = supervisorModel
     self.supervisorEffort = supervisorEffort
   }

@@ -511,9 +511,13 @@ public actor BridgeApplicationService:
     deadline: ContinuousClock.Instant
   ) async throws {
     guard submission.execution.permissionMode == "read-only",
-      !submission.execution.networkAccess,
-      submission.supervisor.enabled
+      !submission.execution.networkAccess
     else { throw BridgeMCPQueryError.contractRejected }
+    if !submission.supervisor.enabled {
+      guard submission.supervisor.deterministicFallbackAuthorized else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+    }
     let project = try await requireReadableProject(submission.projectID.rawValue)
     if case .existing(let threadID) = submission.thread {
       try Self.validateOutboundIdentifier(threadID.rawValue, maximum: 1_024)
@@ -529,14 +533,18 @@ public actor BridgeApplicationService:
     let models = try await validatedCatalogModels(deadline: deadline)
     guard
       let execution = models.first(where: { $0.id == submission.execution.model }),
-      execution.reasoningEfforts.contains(submission.execution.effort),
-      let supervisor = models.first(where: { $0.id == submission.supervisor.model }),
-      LocalReadOnlyTaskPolicy.isLunaModel(
-        id: supervisor.id,
-        displayName: supervisor.displayName
-      ),
-      supervisor.reasoningEfforts.contains(submission.supervisor.effort)
+      execution.reasoningEfforts.contains(submission.execution.effort)
     else { throw BridgeMCPQueryError.contractRejected }
+    if submission.supervisor.enabled {
+      guard
+        let supervisor = models.first(where: { $0.id == submission.supervisor.model }),
+        LocalReadOnlyTaskPolicy.isLunaModel(
+          id: supervisor.id,
+          displayName: supervisor.displayName
+        ),
+        supervisor.reasoningEfforts.contains(submission.supervisor.effort)
+      else { throw BridgeMCPQueryError.contractRejected }
+    }
   }
 
   private func validatedCatalogModels(
@@ -881,6 +889,9 @@ public actor BridgeApplicationService:
     if error is CancellationError { return CancellationError() }
     if let query = error as? BridgeMCPQueryError { return query }
     if error is TaskCoordinatorTurnMismatchError { return BridgeMCPQueryError.turnMismatch }
+    if error is TaskCoordinatorEventSequenceMismatchError {
+      return BridgeMCPQueryError.eventSequenceMismatch
+    }
     if let store = error as? EventStoreError {
       if case .idempotencyMismatch = store { return BridgeMCPQueryError.idempotencyConflict }
       return BridgeMCPQueryError.unavailable

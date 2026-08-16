@@ -390,7 +390,8 @@ final class LiveBridgeAppBackendTests: XCTestCase {
     else { return XCTFail("Expected a read-only task composer") }
     XCTAssertEqual(composer.executionModels.map(\.id), ["execution-model"])
     XCTAssertEqual(composer.supervisorModels.map(\.id), ["gpt-5.6-luna"])
-    XCTAssertEqual(composer.blocker, DesktopSupervisorAvailability.degradation)
+    XCTAssertNil(composer.blocker)
+    XCTAssertFalse(composer.supervisorAvailable)
     let submission = try LiveBridgeAppBackend.readOnlySubmission(
       ReadOnlyTaskDraftPresentation(
         requestID: composer.requestID,

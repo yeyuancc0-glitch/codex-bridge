@@ -96,6 +96,36 @@ final class DurableSupervisionLedgerTests: XCTestCase {
     }
   }
 
+  func testReviewPersistsTaskEventSequenceIndependentlyFromCheckpointSequence() async throws {
+    let ledger = try DurableSupervisionLedger.inMemory()
+    let scope = try makeScope()
+    _ = try await ledger.begin(scope: scope, configuration: configuration())
+    _ = try await ledger.appendCheckpoint(
+      scope: scope,
+      checkpoint: makeCheckpoint(scope: scope, sequence: 7)
+    )
+    let position = SupervisorReviewPosition(checkpointSequence: 7, attempt: 0)
+    let review = try await ledger.appendReview(
+      scope: scope,
+      position: position,
+      result: .decision(try steerDecision()),
+      taskEventSequence: 42
+    )
+    XCTAssertEqual(review.action?.position.checkpointSequence, 7)
+    XCTAssertEqual(review.action?.taskEventSequence, 42)
+
+    await assertThrowsErrorAsync(
+      try await ledger.appendReview(
+        scope: scope,
+        position: position,
+        result: .decision(try steerDecision()),
+        taskEventSequence: 43
+      )
+    ) { error in
+      XCTAssertEqual(error as? DurableSupervisionLedgerError, .reviewConflict(position))
+    }
+  }
+
   func testGenerationCannotMixAndReplacementRequiresTerminalOlderScope() async throws {
     let ledger = try DurableSupervisionLedger.inMemory()
     let first = try makeScope(generation: 1)
@@ -232,6 +262,40 @@ final class DurableSupervisionLedgerTests: XCTestCase {
     XCTAssertThrowsError(try DurableSupervisionLedger(path: location.database.path)) { error in
       XCTAssertEqual(error as? DurableSupervisionLedgerError, .corruptRecord)
     }
+  }
+
+  func testRetentionDiscardRemovesOnlyTerminalTaskAndRestoresAppendOnlyTriggers() async throws {
+    let location = try temporaryDatabase()
+    defer { try? FileManager.default.removeItem(at: location.directory) }
+    let retainedTask = try makeScope(taskID: "task-retained")
+    let survivorTask = try makeScope(taskID: "task-survivor")
+    let ledger = try DurableSupervisionLedger(path: location.database.path)
+    _ = try await ledger.begin(scope: retainedTask, configuration: configuration())
+    _ = try await ledger.begin(scope: survivorTask, configuration: configuration())
+    _ = try await ledger.appendCheckpoint(
+      scope: survivorTask,
+      checkpoint: makeCheckpoint(scope: survivorTask, sequence: 1)
+    )
+    _ = try await ledger.close(scope: retainedTask)
+
+    let removal = try await ledger.discardForRetention(taskID: retainedTask.taskID)
+    XCTAssertEqual(removal, .removed(1))
+    let removedState = try await ledger.state(for: retainedTask)
+    let survivorCheckpoints = try await ledger.checkpoints(for: survivorTask)
+    XCTAssertNil(removedState)
+    XCTAssertEqual(survivorCheckpoints.count, 1)
+
+    let database = try DatabaseQueue(path: location.database.path)
+    await assertThrowsErrorAsync(
+      try await database.write { db in
+        try db.execute(
+          sql: "DELETE FROM bridge_supervision_checkpoints WHERE task_id = ?",
+          arguments: [survivorTask.taskID.rawValue]
+        )
+      }
+    ) { _ in }
+    let repeatedRemoval = try await ledger.discardForRetention(taskID: retainedTask.taskID)
+    XCTAssertEqual(repeatedRemoval, .alreadyAbsent)
   }
 
   func testCheckpointCapacityAndQueryLimitsAreBounded() async throws {

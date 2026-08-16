@@ -229,6 +229,7 @@ extension DurableSupervisionLedger {
     guard let stored,
       stored.kind == expected.kind,
       stored.instruction == expected.instruction,
+      stored.taskEventSequence > 0,
       stored.id
         == (try actionID(
           scope: scope,

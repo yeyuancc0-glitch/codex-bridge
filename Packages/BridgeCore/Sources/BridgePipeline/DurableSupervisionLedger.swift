@@ -4,7 +4,7 @@ import CryptoKit
 import Foundation
 import GRDB
 
-public actor DurableSupervisionLedger {
+public actor DurableSupervisionLedger: DurableSupervisionRetentionStore {
   public static let maximumActiveScopes = 128
   public static let maximumCheckpointsPerActiveScope = 256
   public static let maximumReviewsPerActiveScope = 512
@@ -147,6 +147,7 @@ public actor DurableSupervisionLedger {
     scope: DurableSupervisionScope,
     position: SupervisorReviewPosition,
     result: DurableSupervisorReviewResult,
+    taskEventSequence: Int64? = nil,
     at date: Date = Date()
   ) throws -> DurableSupervisionReviewRecord {
     try Self.validate(date: date, field: "date")
@@ -154,6 +155,10 @@ public actor DurableSupervisionLedger {
     guard position.checkpointSequence > 0,
       position.checkpointSequence <= UInt64(Int64.max)
     else { throw DurableSupervisionLedgerError.invalidArgument("position") }
+    let resolvedTaskEventSequence = taskEventSequence ?? Int64(position.checkpointSequence)
+    guard resolvedTaskEventSequence > 0 else {
+      throw DurableSupervisionLedgerError.invalidArgument("taskEventSequence")
+    }
     let resultJSON = try Self.canonicalJSON(result)
     return try database.write { db in
       let scopeRecord = try Self.requireActiveCurrentScope(scope, in: db)
@@ -170,7 +175,14 @@ public actor DurableSupervisionLedger {
         guard stored.resultPayload == resultJSON else {
           throw DurableSupervisionLedgerError.reviewConflict(position)
         }
-        return try Self.makeReviewRecord(stored, scope: scope, in: db)
+        let record = try Self.makeReviewRecord(stored, scope: scope, in: db)
+        guard
+          record.action?.taskEventSequence == nil
+            || record.action?.taskEventSequence == resolvedTaskEventSequence
+        else {
+          throw DurableSupervisionLedgerError.reviewConflict(position)
+        }
+        return record
       }
       try Self.requireNew(position: position, after: scopeRecord.state.lastReviewPosition)
       try Self.requireCapacity(
@@ -186,6 +198,7 @@ public actor DurableSupervisionLedger {
         result: result,
         resultJSON: resultJSON,
         checkpoint: checkpoint.record.checkpoint,
+        taskEventSequence: resolvedTaskEventSequence,
         at: date,
         in: db
       )
@@ -323,6 +336,64 @@ public actor DurableSupervisionLedger {
     try transitionScope(scope, to: .superseded, at: date)
   }
 
+  public func discardForRetention(
+    taskID: TaskID
+  ) throws -> DurableSupervisionRetentionRemoval {
+    try database.write { db in
+      let generations =
+        try Int.fetchOne(
+          db,
+          sql: "SELECT COUNT(*) FROM bridge_supervision_scopes WHERE task_id = ?",
+          arguments: [taskID.rawValue]
+        ) ?? 0
+      guard generations > 0 else { return .alreadyAbsent }
+      let active =
+        try Bool.fetchOne(
+          db,
+          sql: """
+            SELECT EXISTS (
+              SELECT 1 FROM bridge_supervision_scopes
+              WHERE task_id = ? AND status = 'active'
+            )
+            """,
+          arguments: [taskID.rawValue]
+        ) ?? false
+      guard !active else { throw DurableSupervisionLedgerError.retentionBlocked(taskID) }
+      try db.execute(sql: "DROP TRIGGER bridge_supervision_checkpoints_no_delete")
+      try db.execute(sql: "DROP TRIGGER bridge_supervision_decisions_no_delete")
+      try db.execute(
+        sql: "DELETE FROM bridge_supervision_actions WHERE task_id = ?",
+        arguments: [taskID.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_supervision_decisions WHERE task_id = ?",
+        arguments: [taskID.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_supervision_checkpoints WHERE task_id = ?",
+        arguments: [taskID.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_supervision_current_scopes WHERE task_id = ?",
+        arguments: [taskID.rawValue]
+      )
+      try db.execute(
+        sql: "DELETE FROM bridge_supervision_scopes WHERE task_id = ?",
+        arguments: [taskID.rawValue]
+      )
+      try db.execute(
+        sql: """
+          CREATE TRIGGER bridge_supervision_checkpoints_no_delete
+          BEFORE DELETE ON bridge_supervision_checkpoints
+          BEGIN SELECT RAISE(ABORT, 'supervision checkpoints are append-only'); END;
+          CREATE TRIGGER bridge_supervision_decisions_no_delete
+          BEFORE DELETE ON bridge_supervision_decisions
+          BEGIN SELECT RAISE(ABORT, 'supervision decisions are append-only'); END;
+          """)
+      return .removed(generations)
+    }
+  }
+
   private func actions(
     state: DurableSupervisorActionState,
     limit: Int
@@ -382,6 +453,7 @@ public actor DurableSupervisionLedger {
         id: current.id,
         scope: current.scope,
         position: current.position,
+        taskEventSequence: current.taskEventSequence,
         kind: current.kind,
         instruction: current.instruction,
         state: target,

@@ -12,6 +12,8 @@ struct DesktopDataStore: Sendable {
   let directoryURL: URL
   let eventStoreURL: URL
   let applicationRepositoryURL: URL
+  let supervisionLedgerURL: URL
+  let supervisorHomeURL: URL
   let pipelinePreflightURL: URL
   let verificationAuthorizationURL: URL
   let gitPatchDirectoryURL: URL
@@ -28,10 +30,20 @@ struct DesktopDataStore: Sendable {
       "application.sqlite", isDirectory: false)
     try prepareDatabaseFile(eventStoreURL)
     try prepareDatabaseFile(repositoryURL)
+    let supervisionURL = directoryURL.appendingPathComponent(
+      "supervision-ledger.sqlite", isDirectory: false
+    )
+    try prepareDatabaseFile(supervisionURL)
+    let supervisorHomeURL = directoryURL.appendingPathComponent(
+      "supervisor-home", isDirectory: true
+    )
+    try prepareDirectory(supervisorHomeURL)
     return DesktopDataStore(
       directoryURL: directoryURL,
       eventStoreURL: eventStoreURL,
       applicationRepositoryURL: repositoryURL,
+      supervisionLedgerURL: supervisionURL,
+      supervisorHomeURL: supervisorHomeURL,
       pipelinePreflightURL: directoryURL.appendingPathComponent(
         "pipeline-preflight.json",
         isDirectory: false

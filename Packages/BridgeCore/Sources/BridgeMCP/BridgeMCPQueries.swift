@@ -36,6 +36,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case taskNotFound
   case idempotencyConflict
   case turnMismatch
+  case eventSequenceMismatch
   case invalidTaskState
   case contractRejected
   case busy

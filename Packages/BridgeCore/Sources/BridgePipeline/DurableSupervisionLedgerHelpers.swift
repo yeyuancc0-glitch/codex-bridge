@@ -125,6 +125,7 @@ extension DurableSupervisionLedger {
     result: DurableSupervisorReviewResult,
     resultJSON: Data,
     checkpoint: SupervisorCheckpoint,
+    taskEventSequence: Int64,
     at date: Date,
     in db: Database
   ) throws -> DurableSupervisionReviewRecord {
@@ -168,6 +169,7 @@ extension DurableSupervisionLedger {
       action,
       scope: scope,
       position: position,
+      taskEventSequence: taskEventSequence,
       at: date,
       in: db
     )
@@ -210,6 +212,7 @@ extension DurableSupervisionLedger {
     _ action: SupervisorAction,
     scope: DurableSupervisionScope,
     position: SupervisorReviewPosition,
+    taskEventSequence: Int64,
     at date: Date,
     in db: Database
   ) throws -> DurableSupervisorActionRecord? {
@@ -231,13 +234,14 @@ extension DurableSupervisionLedger {
     try db.execute(
       sql: """
         INSERT INTO bridge_supervision_actions (
-          action_id, task_id, generation, checkpoint_sequence, attempt, kind,
+          action_id, task_id, generation, checkpoint_sequence, task_event_sequence, attempt, kind,
           instruction, instruction_sha256, state, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         """,
       arguments: [
         id, scope.taskID.rawValue, scope.generation, Int64(position.checkpointSequence),
-        Int(position.attempt), command.kind.rawValue, command.instruction,
+        taskEventSequence, Int(position.attempt), command.kind.rawValue,
+        command.instruction,
         digest(instructionData), date.timeIntervalSince1970, date.timeIntervalSince1970,
       ]
     )
@@ -245,6 +249,7 @@ extension DurableSupervisionLedger {
       id: id,
       scope: scope,
       position: position,
+      taskEventSequence: taskEventSequence,
       kind: command.kind,
       instruction: command.instruction,
       state: .pending,
@@ -755,8 +760,11 @@ extension DurableSupervisionLedger {
       throw DurableSupervisionLedgerError.corruptRecord
     }
     let sequence: Int64 = row["checkpoint_sequence"]
+    let taskEventSequence: Int64 = row["task_event_sequence"]
     let attempt: Int = row["attempt"]
-    guard sequence > 0, let exactAttempt = UInt16(exactly: attempt) else {
+    guard sequence > 0, taskEventSequence > 0,
+      let exactAttempt = UInt16(exactly: attempt)
+    else {
       throw DurableSupervisionLedgerError.corruptRecord
     }
     let dates = try decodeDates(created: row["created_at"], updated: row["updated_at"])
@@ -767,6 +775,7 @@ extension DurableSupervisionLedger {
         checkpointSequence: UInt64(sequence),
         attempt: exactAttempt
       ),
+      taskEventSequence: taskEventSequence,
       kind: kind,
       instruction: instruction,
       state: state,

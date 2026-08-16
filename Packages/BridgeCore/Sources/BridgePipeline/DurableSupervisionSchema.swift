@@ -2,11 +2,12 @@ import BridgePersistence
 import GRDB
 
 enum DurableSupervisionSchema {
-  static let version: Int64 = 1
+  static let version: Int64 = 2
   static let migrationPrefix = "BridgeSupervision."
   static let migrationV1 = "BridgeSupervision.v1"
-  static let knownMigrations: Set<String> = [migrationV1]
-  static let migrationIdentifiers = [migrationV1]
+  static let migrationV2 = "BridgeSupervision.v2ActionEventSequence"
+  static let knownMigrations: Set<String> = [migrationV1, migrationV2]
+  static let migrationIdentifiers = [migrationV1, migrationV2]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
@@ -30,6 +31,17 @@ enum DurableSupervisionSchema {
     var migrator = DatabaseMigrator()
     migrator.registerMigration(migrationV1) { db in
       try createVersionOne(in: db)
+    }
+    migrator.registerMigration(migrationV2) { db in
+      try db.execute(
+        sql: """
+          ALTER TABLE bridge_supervision_actions
+            ADD COLUMN task_event_sequence INTEGER NOT NULL DEFAULT 1
+            CHECK (task_event_sequence > 0);
+          UPDATE bridge_supervision_actions
+          SET task_event_sequence = checkpoint_sequence;
+          UPDATE bridge_supervision_meta SET schema_version = 2 WHERE singleton = 1;
+          """)
     }
     return migrator
   }
@@ -60,7 +72,7 @@ enum DurableSupervisionSchema {
         sql: "SELECT schema_version FROM bridge_supervision_meta WHERE singleton = 1"
       )
       guard versions.count == 1 else { throw DurableSupervisionLedgerError.corruptSchema }
-      guard versions[0] == version else {
+      guard (1...version).contains(versions[0]) else {
         throw DurableSupervisionLedgerError.unsupportedSchemaVersion(versions[0])
       }
     }
@@ -207,8 +219,9 @@ enum DurableSupervisionSchema {
           "result_sha256", "reducer_state_json", "reducer_state_sha256", "created_at",
         ],
         "bridge_supervision_actions": [
-          "action_id", "task_id", "generation", "checkpoint_sequence", "attempt", "kind",
-          "instruction", "instruction_sha256", "state", "created_at", "updated_at",
+          "action_id", "task_id", "generation", "checkpoint_sequence", "task_event_sequence",
+          "attempt", "kind", "instruction", "instruction_sha256", "state", "created_at",
+          "updated_at",
         ],
       ]
       for (table, columns) in expected {

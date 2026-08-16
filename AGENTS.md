@@ -91,7 +91,8 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - 高风险删除、系统写、凭证读取、生产迁移直接拒绝。
 - 同一 Thread 同时最多一个 Bridge active turn；写任务持有项目工作树锁。
 - 幂等键必须阻止重复任务、重复 Thread、重复 turn 和重复审批弹窗。
-- 远程 steer 的 `expected_turn_id` 必须在 `TaskCoordinator` 当前 binding 与事件序号 CAS 的同一持久化意图边界内校验，不能在 Application actor 预检后调用无条件 mutation。
+- 远程 steer、suspend、interrupt 的 Supervisor action 必须在 `TaskCoordinator` 当前 binding 与事件序号 CAS 的同一持久化意图边界内校验，不能在 Application actor 预检后调用无条件 mutation；durable action 必须持久化 task event sequence，先从 `pending` 进入 `ambiguous`，仅在 CAS 意图和 Runtime RPC 都成功后标记 `applied`，不确定失败禁止自动重试。
+- Supervisor checkpoint sequence 与 task event sequence 是两个独立字段；action 创建必须由当前 task projection 显式传入事件序号，不能从 checkpoint position 推导。
 
 ## 项目结构记忆
 
@@ -103,7 +104,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - `BridgePersistence`：SQLite/GRDB 事件存储与迁移。
 - `BridgeProjects` / `BridgeGit` / `BridgeSecurity`：项目白名单、Git 证据与确定性策略。
 - `BridgeMCP`：本地 Streamable HTTP MCP 与工具适配。
-- `BridgeSupervisor`：检查点、结构化判断、防循环与纠偏。
+- `BridgeSupervisor`：检查点、结构化判断、防循环与纠偏；`EvidenceOnlyProcessBoundary` 用 macOS Seatbelt 将可选 Supervisor app-server 限制在隔离 HOME，并拒绝 `/Users` 与注册项目根的读写，当前仅完成恶意读取本机回归，未因认证配置缺口打开生产 admission。
 - `BridgeRuntime`：每任务隔离的 Execution app-server 会话、审批关联、generation、steer/interrupt 和终态观察。
 - `BridgeRepositories`：项目配置、Thread 绑定和最终报告的 GRDB 持久仓库。
 - `BridgeApplication`：把项目、Thread、模型、任务、报告和文件能力组合成 MCP/Application API；对外 DTO 必须脱敏且不得暴露规范化绝对根路径。
@@ -113,6 +114,7 @@ AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Ada
 - `BridgeTunnel`：官方 helper 校验、启动、健康和恢复。
 - `BridgeReporting`：结构化最终报告和脱敏支持包。
 - `BridgePipeline`：按不可变执行作用域持久化 Git、验证、Supervisor 与报告元数据，并维护可恢复的 finalization saga；普通查询不返回原始证据 payload。
+- Retention 由 `EventStore` 的 policy/CAS/job 记录和 `DesktopTaskRetentionCoordinator` 驱动，是有界、可恢复的 saga：必须先把终态 metadata 变为 archive-authoritative，再按活动锁、通知 lease、验证授权和外部清理结果推进 pipeline、supervision、事件历史与 payload 清理，metadata purge 只能最后执行；pipeline patch physical release 使用持久 manifest，supervision 删除终态记录后必须恢复 append-only triggers。
 - `Prototypes/AppServerProbe`：阶段 0 可行性验证；稳定后能力进入 `BridgeCodexRPC`。
 - `Tests/`：真实集成、安全、UI 和隔离 Fixture；任务结束清理无长期价值的产物。
 - `UITests/`：Xcode 原生 App 自动化与无障碍验收；必须使用隔离用户目录，不能读取真实 Application Support 数据。

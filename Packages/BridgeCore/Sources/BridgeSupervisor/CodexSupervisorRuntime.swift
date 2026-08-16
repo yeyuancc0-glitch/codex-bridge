@@ -9,6 +9,9 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
   public let reviewTimeoutNanoseconds: UInt64
   public let eventBufferLimit: Int
   public let maximumConcurrentTasks: Int
+  /// A private HOME/CODEX_HOME prepared by the desktop host for evidence-only
+  /// Supervisor sessions. The project root is denied per session.
+  public let evidenceOnlyHomeURL: URL?
   package let permitsUnconfinedProjectReadForProtocolTesting: Bool
 
   public init(
@@ -17,7 +20,8 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     requestTimeoutNanoseconds: UInt64 = 180_000_000_000,
     reviewTimeoutNanoseconds: UInt64 = 180_000_000_000,
     eventBufferLimit: Int = 128,
-    maximumConcurrentTasks: Int = 2
+    maximumConcurrentTasks: Int = 2,
+    evidenceOnlyHomeURL: URL? = nil
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
@@ -25,6 +29,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     self.reviewTimeoutNanoseconds = max(1, reviewTimeoutNanoseconds)
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.maximumConcurrentTasks = max(1, maximumConcurrentTasks)
+    self.evidenceOnlyHomeURL = evidenceOnlyHomeURL
     permitsUnconfinedProjectReadForProtocolTesting = false
   }
 
@@ -34,7 +39,8 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     requestTimeoutNanoseconds: UInt64 = 180_000_000_000,
     reviewTimeoutNanoseconds: UInt64 = 180_000_000_000,
     eventBufferLimit: Int = 128,
-    maximumConcurrentTasks: Int = 2
+    maximumConcurrentTasks: Int = 2,
+    evidenceOnlyHomeURL: URL? = nil
   ) -> Self {
     Self(
       appServer: appServer,
@@ -43,6 +49,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
       reviewTimeoutNanoseconds: reviewTimeoutNanoseconds,
       eventBufferLimit: eventBufferLimit,
       maximumConcurrentTasks: maximumConcurrentTasks,
+      evidenceOnlyHomeURL: evidenceOnlyHomeURL,
       permitsUnconfinedProjectReadForProtocolTesting: true
     )
   }
@@ -54,6 +61,7 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     reviewTimeoutNanoseconds: UInt64,
     eventBufferLimit: Int,
     maximumConcurrentTasks: Int,
+    evidenceOnlyHomeURL: URL?,
     permitsUnconfinedProjectReadForProtocolTesting: Bool
   ) {
     self.appServer = appServer
@@ -62,8 +70,30 @@ public struct CodexSupervisorRuntimeConfiguration: Sendable {
     self.reviewTimeoutNanoseconds = max(1, reviewTimeoutNanoseconds)
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.maximumConcurrentTasks = max(1, maximumConcurrentTasks)
+    self.evidenceOnlyHomeURL = evidenceOnlyHomeURL
     self.permitsUnconfinedProjectReadForProtocolTesting =
       permitsUnconfinedProjectReadForProtocolTesting
+  }
+
+  fileprivate func withEvidenceOnlyProcessBoundary(
+    home: URL,
+    deniedRoot: RegisteredRoot
+  ) throws -> Self {
+    let wrappedAppServer = try EvidenceOnlyProcessBoundary.configuration(
+      wrapping: appServer,
+      isolatedHomeURL: home,
+      deniedReadRoots: [URL(fileURLWithPath: deniedRoot.canonicalPath, isDirectory: true)]
+    )
+    return Self(
+      appServer: wrappedAppServer,
+      clientInfo: clientInfo,
+      requestTimeoutNanoseconds: requestTimeoutNanoseconds,
+      reviewTimeoutNanoseconds: reviewTimeoutNanoseconds,
+      eventBufferLimit: eventBufferLimit,
+      maximumConcurrentTasks: maximumConcurrentTasks,
+      evidenceOnlyHomeURL: evidenceOnlyHomeURL,
+      permitsUnconfinedProjectReadForProtocolTesting: permitsUnconfinedProjectReadForProtocolTesting
+    )
   }
 }
 
@@ -102,7 +132,10 @@ public actor CodexSupervisorRuntime {
     model: String = "gpt-5.6-luna",
     effort: String = "medium"
   ) async throws -> SupervisorDecision {
-    guard configuration.permitsUnconfinedProjectReadForProtocolTesting else {
+    guard
+      configuration.permitsUnconfinedProjectReadForProtocolTesting
+        || configuration.evidenceOnlyHomeURL != nil
+    else {
       throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
     }
     try Self.validate(checkpoint: checkpoint, root: root, model: model, effort: effort)
@@ -175,13 +208,29 @@ public actor CodexSupervisorRuntime {
     guard sessions.count + creating.count < configuration.maximumConcurrentTasks else {
       throw CodexSupervisorRuntimeError.taskLimitReached
     }
+    let sessionConfiguration: CodexSupervisorRuntimeConfiguration
+    if configuration.permitsUnconfinedProjectReadForProtocolTesting {
+      sessionConfiguration = configuration
+    } else {
+      guard let home = configuration.evidenceOnlyHomeURL else {
+        throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
+      }
+      do {
+        sessionConfiguration = try configuration.withEvidenceOnlyProcessBoundary(
+          home: home,
+          deniedRoot: root
+        )
+      } catch {
+        throw CodexSupervisorRuntimeError.evidenceIsolationUnavailable
+      }
+    }
     creating.insert(taskID)
     let session = CodexSupervisorSession(
       taskID: taskID,
       root: root,
       model: model,
       effort: effort,
-      configuration: configuration
+      configuration: sessionConfiguration
     )
     do {
       try await session.start()

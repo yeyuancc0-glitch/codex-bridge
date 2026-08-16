@@ -192,6 +192,12 @@ public struct MCPToolDispatcher: Sendable {
         message: "The expected turn is no longer the task's active turn.",
         retryable: false
       )
+    case .eventSequenceMismatch:
+      description = .init(
+        code: "event_sequence_mismatch",
+        message: "The task changed before this operation could be applied.",
+        retryable: false
+      )
     case .invalidTaskState:
       description = .init(
         code: "invalid_task_state",

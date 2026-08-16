@@ -20,6 +20,17 @@ public enum DurableSupervisionLedgerError: Error, Equatable, Sendable {
     to: DurableSupervisorActionState
   )
   case pendingActions
+  case retentionBlocked(TaskID)
+}
+
+public enum DurableSupervisionRetentionRemoval: Equatable, Sendable {
+  case removed(Int)
+  case alreadyAbsent
+}
+
+public protocol DurableSupervisionRetentionStore: Sendable {
+  func discardForRetention(taskID: TaskID) async throws
+    -> DurableSupervisionRetentionRemoval
 }
 
 public struct DurableSupervisionScope: Codable, Equatable, Hashable, Sendable {
@@ -105,6 +116,8 @@ public struct DurableSupervisorActionRecord: Codable, Equatable, Sendable {
   public let id: String
   public let scope: DurableSupervisionScope
   public let position: SupervisorReviewPosition
+  /// Task event sequence observed by the review that created this action.
+  public let taskEventSequence: Int64
   public let kind: DurableSupervisorActionKind
   public let instruction: String
   public let state: DurableSupervisorActionState

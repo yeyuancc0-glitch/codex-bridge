@@ -22,6 +22,7 @@ public actor GitPatchStore {
   private let persistentDirectory: URL?
   private let directoryDescriptor: Int32?
   private let lockDescriptor: Int32?
+  private let committedRemovalHook: (@Sendable (URL, [String]) -> Void)?
   private var documents: [String: Document]
   private var storedBytes: Int
 
@@ -36,6 +37,7 @@ public actor GitPatchStore {
     persistentDirectory = nil
     directoryDescriptor = nil
     lockDescriptor = nil
+    committedRemovalHook = nil
     documents = [:]
     storedBytes = 0
   }
@@ -45,6 +47,22 @@ public actor GitPatchStore {
     maximumDocumentCount: Int = 64,
     maximumStoredBytes: Int = 64 * 1_024 * 1_024,
     maximumPageBytes: Int = 200 * 1_024
+  ) throws {
+    try self.init(
+      persistentDirectory: persistentDirectory,
+      maximumDocumentCount: maximumDocumentCount,
+      maximumStoredBytes: maximumStoredBytes,
+      maximumPageBytes: maximumPageBytes,
+      committedRemovalHook: nil
+    )
+  }
+
+  init(
+    persistentDirectory: URL,
+    maximumDocumentCount: Int,
+    maximumStoredBytes: Int,
+    maximumPageBytes: Int,
+    committedRemovalHook: (@Sendable (URL, [String]) -> Void)?
   ) throws {
     let documentLimit = max(1, maximumDocumentCount)
     let storedBytesLimit = max(1, maximumStoredBytes)
@@ -70,6 +88,7 @@ public actor GitPatchStore {
       self.persistentDirectory = persistentDirectory
       directoryDescriptor = descriptor
       lockDescriptor = lock
+      self.committedRemovalHook = committedRemovalHook
       documents = bounded
       storedBytes = try Self.totalBytes(in: bounded)
     } catch {
@@ -181,19 +200,54 @@ public actor GitPatchStore {
   }
 
   public func discard(_ handle: GitPatchHandle) {
-    do {
-      try withStoreLock {
-        try reloadPersistentDocuments()
-        try removeLocked(handle.rawValue)
+    _ = try? remove(handle)
+  }
+
+  @discardableResult
+  public func remove(_ handle: GitPatchHandle) throws -> Bool {
+    try Self.validate(handle)
+    return try withStoreLock {
+      try reloadPersistentDocuments()
+      guard let document = documents[handle.rawValue] else { return false }
+      guard document.byteCount == handle.totalBytes else {
+        throw GitEvidenceError.patchNotFound
       }
-    } catch {}
+      if let directoryDescriptor {
+        try Self.validateRemovable(
+          [(handle.rawValue, document)],
+          descriptor: directoryDescriptor
+        )
+        let hook: (([String]) -> Void)?
+        if let committedRemovalHook, let persistentDirectory {
+          hook = { temporaryNames in
+            committedRemovalHook(persistentDirectory, temporaryNames)
+          }
+        } else {
+          hook = nil
+        }
+        try Self.removeTransaction(
+          [handle.rawValue],
+          descriptor: directoryDescriptor,
+          committedRemovalHook: hook
+        )
+      }
+      documents[handle.rawValue] = nil
+      storedBytes -= document.byteCount
+      return true
+    }
   }
 
   public func discardAll() {
     do {
       try withStoreLock {
         try reloadPersistentDocuments()
-        for identifier in Array(documents.keys) { try removeLocked(identifier) }
+        let victims = Array(documents)
+        if let directoryDescriptor, !victims.isEmpty {
+          try Self.validateRemovable(victims, descriptor: directoryDescriptor)
+          try Self.removeTransaction(victims.map(\.key), descriptor: directoryDescriptor)
+        }
+        documents.removeAll(keepingCapacity: false)
+        storedBytes = 0
       }
     } catch {}
   }
@@ -254,17 +308,6 @@ public actor GitPatchStore {
     guard let directoryDescriptor else { return }
     _ = unlinkat(directoryDescriptor, identifier, 0)
     _ = fsync(directoryDescriptor)
-  }
-
-  private func removeLocked(_ identifier: String) throws {
-    guard let removed = documents[identifier] else { return }
-    if let directoryDescriptor {
-      guard unlinkat(directoryDescriptor, identifier, 0) == 0 || errno == ENOENT,
-        fsync(directoryDescriptor) == 0
-      else { throw GitEvidenceError.patchStoreCapacityExceeded }
-    }
-    documents[identifier] = nil
-    storedBytes -= removed.byteCount
   }
 
   private func withStoreLock<Result>(_ body: () throws -> Result) throws -> Result {
@@ -366,7 +409,11 @@ public actor GitPatchStore {
     }
   }
 
-  private static func removeTransaction(_ identifiers: [String], descriptor: Int32) throws {
+  private static func removeTransaction(
+    _ identifiers: [String],
+    descriptor: Int32,
+    committedRemovalHook: (([String]) -> Void)? = nil
+  ) throws {
     let transaction = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     var staged: [(original: String, temporary: String)] = []
     do {
@@ -383,6 +430,7 @@ public actor GitPatchStore {
       restoreStaged(staged, descriptor: descriptor)
       throw error
     }
+    committedRemovalHook?(staged.map(\.temporary))
     _ = cleanupCommittedTransaction(transaction, staged: staged, descriptor: descriptor)
   }
 
@@ -452,6 +500,12 @@ public actor GitPatchStore {
     else { return false }
     return parts.dropFirst().joined().unicodeScalars.allSatisfy {
       CharacterSet(charactersIn: "0123456789abcdef").contains($0)
+    }
+  }
+
+  package static func validate(_ handle: GitPatchHandle) throws {
+    guard validIdentifier(handle.rawValue), handle.totalBytes >= 0 else {
+      throw GitEvidenceError.patchNotFound
     }
   }
 

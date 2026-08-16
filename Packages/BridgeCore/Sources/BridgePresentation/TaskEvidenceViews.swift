@@ -81,3 +81,42 @@ struct EvidenceSummary: View {
     }
   }
 }
+
+struct SupervisorActionResolutionView: View {
+  let actions: [SupervisorActionPresentation]
+  let resolve: (SupervisorActionPresentation) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: BridgeTheme.spacingRegular) {
+      SectionHeading(
+        "待操作员确认的 Supervisor 动作",
+        detail: "RPC 结果不确定时不会自动重试；只有核对 Codex 当前状态后才能标记为已应用。"
+      )
+      if actions.isEmpty {
+        Text("没有待确认的动作")
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(actions) { action in
+          VStack(alignment: .leading, spacing: BridgeTheme.spacingTight) {
+            HStack(alignment: .firstTextBaseline) {
+              Label(action.kind, systemImage: "questionmark.circle")
+                .font(.subheadline.weight(.semibold))
+              Spacer()
+              Button("确认已应用", systemImage: "checkmark.shield") {
+                resolve(action)
+              }
+              .help("核对 Codex 当前状态后，将这个不确定动作标记为已应用")
+            }
+            Text(action.instruction)
+              .textSelection(.enabled)
+            Text("任务事件序号 (action.taskEventSequence) · (action.createdAt.bridgeFormatted)")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, BridgeTheme.spacingTight)
+          Divider()
+        }
+      }
+    }
+  }
+}

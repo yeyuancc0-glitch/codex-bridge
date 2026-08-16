@@ -15,6 +15,145 @@ import XCTest
 @testable import BridgePipeline
 
 final class TaskPipelineOrchestratorTests: XCTestCase {
+  func testSemanticObservationPersistsScopedProgressCheckpoint() async throws {
+    let fixture = try await makeFixture(
+      decision: continueDecision(),
+      withSupervision: true
+    )
+    let running = try await fixture.coordinator.task(fixture.taskID)
+    let binding = try XCTUnwrap(running.aggregate.binding)
+    let observation = try TaskSemanticExecutionObservation(
+      sourceID: "plan-1",
+      evidence: .planChanged(
+        try TaskPlanSnapshot(
+          steps: [
+            try TaskPlanStepSnapshot(text: "Persist progress evidence", status: .inProgress)
+          ],
+          explanation: "A bounded progress update."
+        )
+      )
+    )
+
+    await fixture.runtime.emit(.semantic(observation), taskID: fixture.taskID)
+    let scope = try DurableSupervisionScope(
+      taskID: fixture.taskID,
+      projectID: running.aggregate.submission.projectID,
+      threadID: binding.threadID,
+      turnID: binding.turnID,
+      generation: Int64(binding.turnGeneration)
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    var checkpoints: [DurableSupervisorCheckpointRecord] = []
+    while ContinuousClock.now < deadline {
+      checkpoints = try await fixture.supervision.checkpoints(for: scope)
+      if !checkpoints.isEmpty { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let checkpoint = try XCTUnwrap(checkpoints.first)
+    XCTAssertEqual(checkpoint.scope, scope)
+    XCTAssertEqual(checkpoint.checkpoint.stage, .progress)
+    XCTAssertEqual(checkpoint.checkpoint.sequence, UInt64(running.lastSequence + 1))
+    XCTAssertEqual(checkpoint.checkpoint.triggers, [.planChanged])
+    XCTAssertEqual(
+      checkpoint.checkpoint.content.currentPlan,
+      ["inProgress: Persist progress evidence"]
+    )
+    let summary = try await fixture.supervision.evidenceSummary(for: scope)
+    XCTAssertEqual(summary.reviewCount, 1)
+  }
+
+  func testSemanticObservationMapsFailureAndFileTriggers() async throws {
+    let fixture = try await makeFixture(
+      decision: continueDecision(),
+      withSupervision: true
+    )
+    let command = try TaskSemanticExecutionObservation(
+      sourceID: "command-1",
+      evidence: .commandCompleted(
+        try TaskCommandCompletion(
+          itemID: "item-command",
+          displayCommand: "swift test",
+          exitCode: nil,
+          status: .failed
+        )
+      )
+    )
+    let file = try TaskSemanticExecutionObservation(
+      sourceID: "file-1",
+      evidence: .fileChangeCompleted(
+        try TaskFileChangeCompletion(
+          itemID: "item-file",
+          changeCount: 2,
+          status: .completed
+        )
+      )
+    )
+    await fixture.runtime.emit(.semantic(command), taskID: fixture.taskID)
+    await fixture.runtime.emit(.semantic(file), taskID: fixture.taskID)
+
+    let running = try await fixture.coordinator.task(fixture.taskID)
+    let binding = try XCTUnwrap(running.aggregate.binding)
+    let scope = try DurableSupervisionScope(
+      taskID: fixture.taskID,
+      projectID: running.aggregate.submission.projectID,
+      threadID: binding.threadID,
+      turnID: binding.turnID,
+      generation: Int64(binding.turnGeneration)
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    var checkpoints: [DurableSupervisorCheckpointRecord] = []
+    while ContinuousClock.now < deadline {
+      checkpoints = try await fixture.supervision.checkpoints(for: scope)
+      if checkpoints.count == 2 { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(
+      checkpoints.map(\.checkpoint.triggers), [[.commandFailed], [.firstFileModification]])
+  }
+
+  func testProgressSupervisorSteerUsesBoundSequenceAndMarksActionApplied() async throws {
+    let fixture = try await makeFixture(
+      decision: steerDecision(),
+      withSupervision: true
+    )
+    let before = try await fixture.coordinator.task(fixture.taskID)
+    let binding = try XCTUnwrap(before.aggregate.binding)
+    let observation = try TaskSemanticExecutionObservation(
+      sourceID: "plan-steer-1",
+      evidence: .planChanged(
+        try TaskPlanSnapshot(
+          steps: [try TaskPlanStepSnapshot(text: "Run verification", status: .inProgress)],
+          explanation: "The supervisor requested a bounded correction."
+        )
+      )
+    )
+
+    await fixture.runtime.emit(.semantic(observation), taskID: fixture.taskID)
+    let scope = try DurableSupervisionScope(
+      taskID: fixture.taskID,
+      projectID: before.aggregate.submission.projectID,
+      threadID: binding.threadID,
+      turnID: binding.turnID,
+      generation: Int64(binding.turnGeneration)
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    var review: DurableSupervisionReviewRecord?
+    while ContinuousClock.now < deadline {
+      review = try await fixture.supervision.reviews(for: scope).first
+      if review?.action?.state == .applied { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let storedReview = try XCTUnwrap(review)
+    let action = try XCTUnwrap(storedReview.action)
+    XCTAssertEqual(action.state, .applied)
+    XCTAssertEqual(action.taskEventSequence, Int64(before.lastSequence + 1))
+    XCTAssertEqual(action.position.checkpointSequence, UInt64(action.taskEventSequence))
+    let steerPrompts = await fixture.runtime.steerPrompts(for: fixture.taskID)
+    XCTAssertEqual(steerPrompts, ["Run the registered verification before completion."])
+    let after = try await fixture.coordinator.task(fixture.taskID)
+    XCTAssertEqual(after.lastSequence, before.lastSequence + 2)
+  }
+
   func testNoVerificationCommandsProduceUnavailableEvidenceAndComplete() async throws {
     let fixture = try await makeFixture(decision: finalAcceptDecision())
 
@@ -40,6 +179,43 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
     XCTAssertEqual(saga?.stage, .completed)
     let locks = try await fixture.store.lockKeysOwned(by: fixture.taskID)
     XCTAssertTrue(locks.isEmpty)
+  }
+
+  func testDeterministicPolicyFallbackCompletesWithoutSupervisorFinalAccept() async throws {
+    let fixture = try await makeFixture(
+      decision: finalAcceptDecision(),
+      supervisorEnabled: false,
+      deterministicFallbackAuthorized: true
+    )
+
+    await fixture.runtime.emit(.turnCompleted, taskID: fixture.taskID)
+    let completed = try await waitForPhase(
+      .completed,
+      taskID: fixture.taskID,
+      coordinator: fixture.coordinator
+    )
+
+    XCTAssertNotNil(completed.aggregate.reportReference)
+    let stored = try await fixture.reports.finalReport(for: fixture.taskID)
+    let document = try ReportBuilder().restore(canonicalJSON: XCTUnwrap(stored?.json))
+    XCTAssertNil(document.report.supervisor)
+    XCTAssertEqual(document.report.evidence.completionAuthority, .userOverride)
+    XCTAssertEqual(
+      document.report.evidence.userOverride?.reason,
+      "用户已选择在语义监督不可用时使用确定性 Policy Engine。"
+    )
+    let binding = try XCTUnwrap(completed.aggregate.binding)
+    let scope = try TaskEvidenceScope(
+      taskID: fixture.taskID,
+      projectID: completed.aggregate.submission.projectID,
+      threadID: binding.threadID,
+      turnID: binding.turnID,
+      generation: Int64(binding.turnGeneration),
+      eventSequence: completed.lastSequence - 3
+    )
+    let completion = try await fixture.artifacts.completionEvidence(for: scope)
+    XCTAssertNil(completion?.supervisor)
+    XCTAssertNotNil(completion?.deterministicPolicy)
   }
 
   func testSupervisorFinalRejectNeverStoresReportOrCompletesTask() async throws {
@@ -218,6 +394,7 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
     let preflight: PipelinePreflightStore
     let artifacts: PipelineArtifactStore
     let reports: ApplicationRepository
+    let supervision: DurableSupervisionLedger
     let orchestrator: TaskPipelineOrchestrator
     let taskID: TaskID
     let directory: URL
@@ -228,7 +405,10 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
   private func makeFixture(
     decision: SupervisorDecision,
     installLifecycle: Bool = true,
-    persistentStores: Bool = false
+    persistentStores: Bool = false,
+    withSupervision: Bool = false,
+    supervisorEnabled: Bool = true,
+    deterministicFallbackAuthorized: Bool = false
   ) async throws -> Fixture {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "bridge-pipeline-orchestrator-\(UUID().uuidString)",
@@ -272,6 +452,7 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
       try artifactStoreURL.map { try PipelineArtifactStore(path: $0.path) }
       ?? PipelineArtifactStore.inMemory()
     let reports = try ApplicationRepository.inMemory()
+    let supervision = try DurableSupervisionLedger.inMemory()
     let preflight =
       try preflightStoreURL.map { try PipelinePreflightStore(path: $0.path) }
       ?? PipelinePreflightStore.inMemory()
@@ -310,12 +491,17 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
       supervisor: FixedSupervisorReviewer(decision: decision),
       policy: ClosureTaskPipelinePolicyEvaluator { _ in
         PolicyEvidence(evaluationCompleted: true)
-      }
+      },
+      supervision: withSupervision ? supervision : nil
     )
     if installLifecycle { try await relay.install(orchestrator) }
     let submitted = try await coordinator.submit(
       origin: "test",
-      submission: submission(projectID: projectID)
+      submission: submission(
+        projectID: projectID,
+        supervisorEnabled: supervisorEnabled,
+        deterministicFallbackAuthorized: deterministicFallbackAuthorized
+      )
     )
     let running = try await waitForPhase(
       .running,
@@ -350,6 +536,7 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
       preflight: preflight,
       artifacts: artifacts,
       reports: reports,
+      supervision: supervision,
       orchestrator: orchestrator,
       taskID: submitted.aggregate.id,
       directory: directory,
@@ -358,7 +545,11 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
     )
   }
 
-  private func submission(projectID: ProjectID) -> TaskSubmission {
+  private func submission(
+    projectID: ProjectID,
+    supervisorEnabled: Bool = true,
+    deterministicFallbackAuthorized: Bool = false
+  ) -> TaskSubmission {
     TaskSubmission(
       idempotencyKey: IdempotencyKey(rawValue: "orchestrator-\(UUID().uuidString)"),
       projectID: projectID,
@@ -369,7 +560,12 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
         permissionMode: "read-only",
         networkAccess: false
       ),
-      supervisor: SupervisorOptions(enabled: true, model: "luna", effort: "medium"),
+      supervisor: SupervisorOptions(
+        enabled: supervisorEnabled,
+        model: "luna",
+        effort: "medium",
+        deterministicFallbackAuthorized: deterministicFallbackAuthorized
+      ),
       contract: TaskContract(
         goal: "Complete a bounded pipeline task",
         acceptanceCriteria: ["Persist a final report"]
@@ -384,6 +580,28 @@ final class TaskPipelineOrchestratorTests: XCTestCase {
       summary: "The final evidence satisfies the task contract.",
       evidence: ["The turn completed and deterministic checks finished."],
       confidence: 0.99
+    )
+  }
+
+  private func continueDecision() throws -> SupervisorDecision {
+    try SupervisorDecision(
+      decision: .continue,
+      risk: .low,
+      summary: "The progress checkpoint remains within the task contract.",
+      evidence: ["The observed execution fact is bounded."],
+      confidence: 0.99
+    )
+  }
+
+  private func steerDecision() throws -> SupervisorDecision {
+    try SupervisorDecision(
+      decision: .steer,
+      risk: .medium,
+      summary: "The progress checkpoint needs a bounded correction.",
+      evidence: ["Verification has not run yet."],
+      instruction: "Run the registered verification before completion.",
+      confidence: 0.96,
+      issueID: "verification.missing"
     )
   }
 
@@ -445,6 +663,7 @@ private struct FixedSupervisorReviewer: TaskPipelineSupervisorReviewing {
 private actor OrchestratorRuntime: DurableTaskExecutionRuntime {
   private var continuations: [TaskID: AsyncStream<TaskExecutionObservation>.Continuation] = [:]
   private var bindings: [TaskID: ExecutionBinding] = [:]
+  private var recordedSteers: [TaskID: [String]] = [:]
 
   func lockKeys(
     for submission: TaskSubmission,
@@ -509,7 +728,18 @@ private actor OrchestratorRuntime: DurableTaskExecutionRuntime {
   }
 
   func resolveApproval(taskID _: TaskID, approvalID _: ApprovalID, approved _: Bool) {}
+  func steer(taskID: TaskID, binding: ExecutionBinding, prompt: String) throws {
+    guard bindings[taskID] == binding else {
+      throw OrchestratorRuntimeError.bindingMismatch
+    }
+    recordedSteers[taskID, default: []].append(prompt)
+  }
+
   func interrupt(taskID _: TaskID, binding _: ExecutionBinding) {}
+
+  func steerPrompts(for taskID: TaskID) -> [String] {
+    recordedSteers[taskID] ?? []
+  }
 
   func abortSession(taskID: TaskID, binding: ExecutionBinding) throws {
     guard bindings[taskID] == binding else {

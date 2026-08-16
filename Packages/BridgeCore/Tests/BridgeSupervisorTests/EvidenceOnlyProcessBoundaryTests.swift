@@ -1,0 +1,82 @@
+import BridgeCodexRPC
+import Foundation
+import XCTest
+
+@testable import BridgeSupervisor
+
+final class EvidenceOnlyProcessBoundaryTests: XCTestCase {
+  func testWrappedProcessCannotReadProjectOrUserDirectory() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-evidence-boundary-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    let home = directory.appending(path: "home", directoryHint: .isDirectory)
+    let project = directory.appending(path: "project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    try Data("project-secret".utf8).write(to: project.appendingPathComponent("secret.txt"))
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+
+    let script = """
+      test ! -r \"\(project.path)/secret.txt\" || exit 41
+      test ! -r \"/Users/\(NSUserName())/.zprofile\" || exit 42
+      test ! -w \"\(project.path)\" || exit 43
+      test ! -w \"/Users/\(NSUserName())/.zprofile\" || exit 44
+      exit 0
+      """
+    let configuration = try EvidenceOnlyProcessBoundary.configuration(
+      wrapping: AppServerConfiguration(
+        executableURL: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", script]
+      ),
+      isolatedHomeURL: home,
+      deniedReadRoots: [project]
+    )
+    let process = Process()
+    process.executableURL = configuration.executableURL
+    process.arguments = configuration.arguments
+    process.currentDirectoryURL = configuration.currentDirectoryURL
+    process.environment = configuration.environment
+    try process.run()
+    process.waitUntilExit()
+
+    XCTAssertEqual(process.terminationStatus, 0)
+  }
+
+  func testRejectsProfilePathInjection() {
+    XCTAssertThrowsError(
+      try EvidenceOnlyProcessBoundary.configuration(
+        wrapping: AppServerConfiguration(
+          executableURL: URL(fileURLWithPath: "/bin/sh"), arguments: []),
+        isolatedHomeURL: URL(fileURLWithPath: "/tmp/bridge\"home"),
+        deniedReadRoots: []
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? EvidenceOnlyProcessBoundaryError,
+        .invalidPath("isolatedHome")
+      )
+    }
+  }
+
+  func testProfileDeniesNetworkAccess() throws {
+    let home = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-evidence-home-(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+
+    let configuration = try EvidenceOnlyProcessBoundary.configuration(
+      wrapping: AppServerConfiguration(
+        executableURL: URL(fileURLWithPath: "/bin/sh"),
+        arguments: []
+      ),
+      isolatedHomeURL: home,
+      deniedReadRoots: []
+    )
+    let profile = configuration.arguments[1]
+    XCTAssertTrue(profile.contains("(deny network*)"))
+    XCTAssertFalse(profile.contains("(allow network*)"))
+  }
+}

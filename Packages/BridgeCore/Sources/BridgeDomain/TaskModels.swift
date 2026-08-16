@@ -56,11 +56,38 @@ public struct SupervisorOptions: Codable, Equatable, Sendable {
   public let enabled: Bool
   public let model: String
   public let effort: String
+  public let deterministicFallbackAuthorized: Bool
 
-  public init(enabled: Bool, model: String, effort: String) {
+  public init(
+    enabled: Bool,
+    model: String,
+    effort: String,
+    deterministicFallbackAuthorized: Bool = false
+  ) {
     self.enabled = enabled
     self.model = model
     self.effort = effort
+    self.deterministicFallbackAuthorized = deterministicFallbackAuthorized
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case enabled
+    case model
+    case effort
+    case deterministicFallbackAuthorized
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      enabled: try container.decode(Bool.self, forKey: .enabled),
+      model: try container.decode(String.self, forKey: .model),
+      effort: try container.decode(String.self, forKey: .effort),
+      deterministicFallbackAuthorized: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .deterministicFallbackAuthorized
+      ) ?? false
+    )
   }
 }
 

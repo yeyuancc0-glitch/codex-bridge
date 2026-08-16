@@ -1,4 +1,5 @@
 import BridgeDomain
+import BridgeGit
 import Foundation
 
 public enum PipelineArtifactStoreError: Error, Equatable, Sendable {
@@ -11,6 +12,11 @@ public enum PipelineArtifactStoreError: Error, Equatable, Sendable {
   case corruptRecord
   case scopeConflict(TaskID)
   case artifactConflict(TaskID, PipelineArtifactKind)
+  case patchReferenceConflict(TaskID)
+  case patchReleasePending(String)
+  case retentionInProgress(TaskID)
+  case retentionRequiresTerminalScopes(TaskID)
+  case retentionManifestConflict(TaskID)
   case invalidStageTransition(from: PipelineStage, to: PipelineStage)
   case missingPrerequisite(PipelineArtifactKind)
 }
@@ -201,6 +207,19 @@ public struct PipelineArtifactRecord: Codable, Equatable, Sendable {
   }
 }
 
+public struct PipelineCompletionEvidenceRecord: Sendable {
+  public let supervisor: PipelineSupervisorFinalEvidence?
+  public let deterministicPolicy: PipelineDeterministicPolicyFinalEvidence?
+
+  public init(
+    supervisor: PipelineSupervisorFinalEvidence?,
+    deterministicPolicy: PipelineDeterministicPolicyFinalEvidence?
+  ) {
+    self.supervisor = supervisor
+    self.deterministicPolicy = deterministicPolicy
+  }
+}
+
 public struct PipelineFinalizationRecord: Codable, Equatable, Sendable {
   public let scope: TaskEvidenceScope
   public let stage: PipelineStage
@@ -218,4 +237,11 @@ public struct PipelineFinalizationRecord: Codable, Equatable, Sendable {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
   }
+}
+
+public struct PipelinePatchReleaseManifest: Codable, Equatable, Sendable {
+  public let taskID: TaskID
+  public let patches: [GitPatchHandle]
+  public let createdAt: Date
+  public let sha256: String
 }

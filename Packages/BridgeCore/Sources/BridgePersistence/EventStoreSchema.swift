@@ -9,6 +9,7 @@ enum EventStoreSchema {
     "addTaskNotificationLeases",
     "addLifecyclePreferences",
     "addTaskChangeHeadState",
+    "addTaskRetentionFoundation",
   ]
 
   static func migrate(_ database: DatabaseQueue) throws {
@@ -220,6 +221,110 @@ enum EventStoreSchema {
             SET head_change_id = last_insert_rowid()
             WHERE singleton_id = 1;
           END
+          """)
+    }
+    migrator.registerMigration(migrationIdentifiers[7]) { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE task_retention_policy (
+              singleton_id INTEGER PRIMARY KEY NOT NULL CHECK (singleton_id = 1),
+              revision INTEGER NOT NULL CHECK (revision > 0),
+              event_days INTEGER NOT NULL CHECK (event_days BETWEEN 1 AND 3650),
+              metadata_days INTEGER NOT NULL
+                CHECK (metadata_days BETWEEN event_days AND 3650),
+              recent_task_limit INTEGER
+                CHECK (recent_task_limit IS NULL OR recent_task_limit BETWEEN 1 AND 10000),
+              updated_at REAL NOT NULL CHECK (typeof(updated_at) IN ('integer', 'real'))
+          );
+
+          INSERT INTO task_retention_policy (
+              singleton_id, revision, event_days, metadata_days, recent_task_limit, updated_at
+          ) VALUES (1, 1, 30, 90, NULL, 0);
+
+          CREATE TABLE task_retained_metadata (
+              task_id TEXT PRIMARY KEY NOT NULL,
+              terminal_phase TEXT NOT NULL CHECK (terminal_phase IN (
+                'completed', 'failed', 'interrupted', 'rejected'
+              )),
+              created_at REAL NOT NULL CHECK (typeof(created_at) IN ('integer', 'real')),
+              started_at REAL CHECK (
+                started_at IS NULL OR typeof(started_at) IN ('integer', 'real')
+              ),
+              completed_at REAL NOT NULL CHECK (typeof(completed_at) IN ('integer', 'real')),
+              last_event_seq INTEGER NOT NULL CHECK (last_event_seq > 0),
+              projection_schema_version INTEGER NOT NULL
+                CHECK (projection_schema_version BETWEEN 1 AND 65535),
+              projection_payload BLOB NOT NULL CHECK (
+                typeof(projection_payload) = 'blob'
+                AND length(projection_payload) BETWEEN 1 AND 262144
+              ),
+              projection_sha256 BLOB NOT NULL CHECK (
+                typeof(projection_sha256) = 'blob' AND length(projection_sha256) = 32
+              ),
+              history_state TEXT NOT NULL CHECK (history_state IN (
+                'full', 'archive_authoritative', 'payloads_pruned'
+              )),
+              payloads_pruned_at REAL CHECK (
+                payloads_pruned_at IS NULL
+                OR typeof(payloads_pruned_at) IN ('integer', 'real')
+              ),
+              indexed_at REAL NOT NULL CHECK (typeof(indexed_at) IN ('integer', 'real')),
+              FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE RESTRICT,
+              CHECK (created_at <= completed_at),
+              CHECK (started_at IS NULL OR (started_at >= created_at AND started_at <= completed_at)),
+              CHECK (
+                (history_state = 'payloads_pruned' AND payloads_pruned_at IS NOT NULL)
+                OR (history_state != 'payloads_pruned' AND payloads_pruned_at IS NULL)
+              )
+          );
+
+          CREATE INDEX task_retention_terminal_order
+          ON task_retained_metadata(completed_at DESC, task_id DESC);
+
+          CREATE INDEX task_events_task_kind_created
+          ON task_events(task_id, kind, created_at);
+
+          CREATE TABLE task_retention_jobs (
+              task_id TEXT PRIMARY KEY NOT NULL,
+              target_tier TEXT NOT NULL CHECK (target_tier IN ('payloads', 'all')),
+              expected_last_event_seq INTEGER NOT NULL CHECK (expected_last_event_seq > 0),
+              expected_projection_sha256 BLOB NOT NULL CHECK (
+                typeof(expected_projection_sha256) = 'blob'
+                AND length(expected_projection_sha256) = 32
+              ),
+              policy_revision INTEGER NOT NULL CHECK (policy_revision > 0),
+              state TEXT NOT NULL CHECK (state IN (
+                'prepared', 'pipeline_pruning', 'pipeline_pruned',
+                'supervision_pruning', 'supervision_pruned', 'archive_authoritative',
+                'event_history_pruning', 'event_history_pruned',
+                'external_payloads_pruning', 'payloads_complete',
+                'metadata_pruning', 'metadata_pruned', 'complete'
+              )),
+              event_cursor INTEGER NOT NULL DEFAULT 0 CHECK (event_cursor >= 0),
+              pipeline_cursor INTEGER NOT NULL DEFAULT 0 CHECK (pipeline_cursor >= 0),
+              supervision_cursor INTEGER NOT NULL DEFAULT 0 CHECK (supervision_cursor >= 0),
+              attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+              lease_owner TEXT,
+              lease_until REAL NOT NULL DEFAULT 0
+                CHECK (typeof(lease_until) IN ('integer', 'real')),
+              next_attempt_at REAL NOT NULL DEFAULT 0
+                CHECK (typeof(next_attempt_at) IN ('integer', 'real')),
+              last_error_code TEXT,
+              planned_at REAL NOT NULL CHECK (typeof(planned_at) IN ('integer', 'real')),
+              updated_at REAL NOT NULL CHECK (typeof(updated_at) IN ('integer', 'real')),
+              CHECK (lease_owner IS NULL OR length(CAST(lease_owner AS BLOB)) BETWEEN 1 AND 128),
+              CHECK (
+                last_error_code IS NULL
+                OR length(CAST(last_error_code AS BLOB)) BETWEEN 1 AND 128
+              )
+          );
+
+          CREATE INDEX task_retention_runnable
+          ON task_retention_jobs(state, next_attempt_at, lease_until, updated_at, task_id);
+
+          CREATE TRIGGER task_events_no_update
+          BEFORE UPDATE ON task_events
+          BEGIN SELECT RAISE(ABORT, 'task events are append-only'); END;
           """)
     }
     return migrator

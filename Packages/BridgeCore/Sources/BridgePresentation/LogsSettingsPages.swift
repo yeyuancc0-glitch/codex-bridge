@@ -110,6 +110,20 @@ private struct SettingsForm: View {
       settingSection("安全", settings: page.security)
       Section("保留策略") {
         LabeledContent("当前策略", value: page.retentionSummary)
+        Stepper(
+          "事件保留 \(page.retentionPolicy.eventDays) 天",
+          value: eventDaysBinding,
+          in: 1...3_650
+        )
+        Stepper(
+          "元数据保留 \(page.retentionPolicy.metadataDays) 天",
+          value: metadataDaysBinding,
+          in: max(page.retentionPolicy.eventDays, 1)...3_650
+        )
+        LabeledContent(
+          "最近任务",
+          value: page.retentionPolicy.recentTaskLimit.map(String.init) ?? "不额外限制"
+        )
       }
     }
     .formStyle(.grouped)
@@ -139,5 +153,43 @@ private struct SettingsForm: View {
         .disabled(!setting.isEnabled)
       }
     }
+  }
+
+  private var eventDaysBinding: Binding<Int> {
+    Binding(
+      get: { page.retentionPolicy.eventDays },
+      set: { value in
+        let policy = page.retentionPolicy
+        Task {
+          await store.perform(
+            .updateRetentionPolicy(
+              eventDays: min(max(value, 1), 3_650),
+              metadataDays: max(policy.metadataDays, min(max(value, 1), 3_650)),
+              recentTaskLimit: policy.recentTaskLimit,
+              expectedRevision: policy.revision
+            )
+          )
+        }
+      }
+    )
+  }
+
+  private var metadataDaysBinding: Binding<Int> {
+    Binding(
+      get: { page.retentionPolicy.metadataDays },
+      set: { value in
+        let policy = page.retentionPolicy
+        Task {
+          await store.perform(
+            .updateRetentionPolicy(
+              eventDays: policy.eventDays,
+              metadataDays: min(max(value, policy.eventDays), 3_650),
+              recentTaskLimit: policy.recentTaskLimit,
+              expectedRevision: policy.revision
+            )
+          )
+        }
+      }
+    )
   }
 }

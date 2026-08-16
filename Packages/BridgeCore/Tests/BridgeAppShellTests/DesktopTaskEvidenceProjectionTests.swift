@@ -187,6 +187,7 @@ final class DesktopTaskEvidenceProjectionTests: XCTestCase {
       + [values.diffSummary, values.supervisionSummary, values.verificationSummary].compactMap {
         $0
       }
+      + values.ambiguousSupervisorActions.map(\.instruction)
     XCTAssertTrue(text.allSatisfy(OutboundContentSecurity.isSafe))
     XCTAssertFalse(text.contains { $0.contains("/Users/") || $0.contains("/Volumes/") })
   }

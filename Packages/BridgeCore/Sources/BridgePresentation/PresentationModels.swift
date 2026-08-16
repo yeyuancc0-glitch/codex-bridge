@@ -166,11 +166,18 @@ public enum PresentationAction: Equatable, Sendable {
   case submitReadOnlyTask(ReadOnlyTaskDraftPresentation)
   case interruptTask(String)
   case suspendAmbiguousTask(String)
+  case markSupervisorActionApplied(taskID: String, actionID: String)
   case authorizeTaskVerification(String)
   case testConnection
   case setReceivingPaused(Bool)
   case exportSupportBundle
   case updateSetting(key: String, enabled: Bool)
+  case updateRetentionPolicy(
+    eventDays: Int,
+    metadataDays: Int,
+    recentTaskLimit: Int?,
+    expectedRevision: Int64
+  )
   case decideTask(
     requestID: String,
     decision: PresentationTaskDecision,

@@ -125,17 +125,41 @@ public struct SettingsPagePresentation: Equatable, Sendable {
   public let notifications: [SettingTogglePresentation]
   public let security: [SettingTogglePresentation]
   public let retentionSummary: String
+  public let retentionPolicy: RetentionPolicyPresentation
 
   public init(
     general: [SettingTogglePresentation],
     notifications: [SettingTogglePresentation],
     security: [SettingTogglePresentation],
-    retentionSummary: String
+    retentionSummary: String,
+    retentionPolicy: RetentionPolicyPresentation = .defaults
   ) {
     self.general = general
     self.notifications = notifications
     self.security = security
     self.retentionSummary = retentionSummary
+    self.retentionPolicy = retentionPolicy
+  }
+}
+
+public struct RetentionPolicyPresentation: Equatable, Sendable {
+  public static let defaults = RetentionPolicyPresentation(
+    eventDays: 30,
+    metadataDays: 90,
+    recentTaskLimit: nil,
+    revision: 1
+  )
+
+  public let eventDays: Int
+  public let metadataDays: Int
+  public let recentTaskLimit: Int?
+  public let revision: Int64
+
+  public init(eventDays: Int, metadataDays: Int, recentTaskLimit: Int?, revision: Int64) {
+    self.eventDays = eventDays
+    self.metadataDays = metadataDays
+    self.recentTaskLimit = recentTaskLimit
+    self.revision = revision
   }
 }
 

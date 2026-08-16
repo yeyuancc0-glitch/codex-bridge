@@ -7,6 +7,7 @@ import Foundation
 
 public enum PipelineTypedEvidenceError: Error, Equatable, Sendable {
   case invalidSupervisorFinalDecision
+  case invalidDeterministicPolicyDecision
   case invalidVerificationEvidence(String)
   case invalidReportMetadata(String)
 }
@@ -205,6 +206,59 @@ public struct PipelineSupervisorFinalEvidence: Codable, Equatable, Sendable {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     return SHA256.hash(data: try decision.encodedData(using: encoder)).hexString
+  }
+}
+
+public struct PipelineDeterministicPolicyFinalEvidence: Codable, Equatable, Sendable {
+  public let scope: TaskEvidenceScope
+  public let policy: PolicyEvidence
+  public let userOverride: UserCompletionOverride
+  public let decisionDigest: String
+
+  public init(
+    scope: TaskEvidenceScope,
+    policy: PolicyEvidence,
+    userOverride: UserCompletionOverride
+  ) throws {
+    guard policy.evaluationCompleted, policy.unresolvedBlockers.isEmpty,
+      !userOverride.decisionID.isEmpty,
+      !userOverride.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+      throw PipelineTypedEvidenceError.invalidDeterministicPolicyDecision
+    }
+    self.scope = scope
+    self.policy = policy
+    self.userOverride = userOverride
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    decisionDigest =
+      SHA256.hash(
+        data: try encoder.encode(StableDigestInput(policy: policy, userOverride: userOverride))
+      ).hexString
+  }
+
+  private struct StableDigestInput: Codable {
+    let policy: PolicyEvidence
+    let userOverride: UserCompletionOverride
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case scope
+    case policy
+    case userOverride
+    case decisionDigest
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    try self.init(
+      scope: container.decode(TaskEvidenceScope.self, forKey: .scope),
+      policy: container.decode(PolicyEvidence.self, forKey: .policy),
+      userOverride: container.decode(UserCompletionOverride.self, forKey: .userOverride)
+    )
+    guard decisionDigest == (try container.decode(String.self, forKey: .decisionDigest)) else {
+      throw PipelineTypedEvidenceError.invalidDeterministicPolicyDecision
+    }
   }
 }
 
