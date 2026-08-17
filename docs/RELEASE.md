@@ -4,7 +4,7 @@ Public distribution is a credentialed operation. Repository automation can build
 
 ## 1. Prepare and verify the pinned helper
 
-Use a new output directory. The script downloads only the pinned OpenAI v0.0.11 archives, verifies their external SHA-256 values, produces a Universal 2 helper and records its unsigned digest.
+Use a new output directory. The script downloads only the pinned OpenAI v0.0.10 archives, verifies their external SHA-256 values, produces a Universal 2 helper and records its unsigned digest. Before every public release, recheck the OpenAI Platform Tunnels page because control-plane support may move beyond this repository pin.
 
 ```bash
 helper_root="$(mktemp -d)"
@@ -62,10 +62,11 @@ Recompute published checksums after stapling. Save notary output, `codesign` ver
 Test both Apple Silicon and Intel when available:
 
 - drag-install, launch, quit and relaunch;
-- nine-step onboarding and Keychain permission behavior;
-- local-only project registration and read-only task;
+- three-step Service, connection and project setup plus Keychain permission behavior;
+- background Service registration, App quit/relaunch and XPC reconnection without task shutdown;
+- local project registration, Thread reads, read-only tools and a locally approved write task;
 - signed helper identity and Secure Tunnel connection with user-provided credentials;
-- sleep/wake, notification deep link, recovery and uninstall;
+- sleep/wake, Tunnel reconnect, explicit background-Service disable and uninstall;
 - Gatekeeper assessment with no quarantine bypass.
 
 No public release is complete until these checks and the credentialed ChatGPT/Tunnel flow pass.
