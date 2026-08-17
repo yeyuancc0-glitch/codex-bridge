@@ -29,6 +29,7 @@ let package = Package(
         .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
         .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
+        .library(name: "BridgeLegacyImport", targets: ["BridgeLegacyImport"]),
         .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
         .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
         .library(name: "BridgeIPC", targets: ["BridgeIPC"]),
@@ -222,6 +223,16 @@ let package = Package(
             ]
         ),
         .target(
+            name: "BridgeLegacyImport",
+            dependencies: [
+                "BridgeDomain",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .target(
             name: "BridgeCodexService",
             dependencies: [
                 "BridgeCodexRPC",
@@ -258,6 +269,7 @@ let package = Package(
                 "BridgeCodexRPC",
                 "BridgeCodexService",
                 "BridgeDomain",
+                "BridgeLegacyImport",
                 "BridgeIPC",
                 "BridgeMCP",
                 "BridgeProjects",
@@ -470,6 +482,17 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "BridgeLegacyImportTests",
+            dependencies: [
+                "BridgeDomain",
+                "BridgeLegacyImport",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ]
+        ),
+        .testTarget(
             name: "BridgeCodexServiceTests",
             dependencies: [
                 "BridgeCodexRPC",
@@ -499,12 +522,17 @@ let package = Package(
             name: "BridgeServiceHostTests",
             dependencies: [
                 "BridgeCodexRPC",
+                "BridgeDomain",
                 "BridgeIPC",
+                "BridgeLegacyImport",
                 "BridgeMCP",
+                "BridgeProjects",
                 "BridgeSecurity",
+                "BridgeServiceApplication",
                 "BridgeServiceHost",
                 "BridgeServiceCore",
                 "BridgeTunnel",
+                .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "MCP", package: "swift-sdk"),
             ]
         ),

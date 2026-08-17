@@ -1,6 +1,7 @@
 import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDomain
+import BridgeLegacyImport
 import BridgeMCP
 import BridgeSecurity
 import BridgeServiceApplication
@@ -17,6 +18,7 @@ public struct ServiceCompositionConfiguration: Sendable {
   public let clientInfo: CodexClientInfo
   public let mcpPort: Int
   public let appBundleURL: URL?
+  public let legacyDataRootURL: URL?
 
   public init(
     appVersion: String,
@@ -26,7 +28,8 @@ public struct ServiceCompositionConfiguration: Sendable {
     catalogAppServer: AppServerConfiguration = .codex(),
     clientInfo: CodexClientInfo,
     mcpPort: Int = 0,
-    appBundleURL: URL? = ServiceBundleLocator.currentAppBundleURL()
+    appBundleURL: URL? = ServiceBundleLocator.currentAppBundleURL(),
+    legacyDataRootURL: URL? = nil
   ) {
     precondition(!appVersion.isEmpty)
     precondition((0...65_535).contains(mcpPort))
@@ -38,6 +41,7 @@ public struct ServiceCompositionConfiguration: Sendable {
     self.clientInfo = clientInfo
     self.mcpPort = mcpPort
     self.appBundleURL = appBundleURL?.standardizedFileURL
+    self.legacyDataRootURL = legacyDataRootURL?.standardizedFileURL
   }
 }
 
@@ -54,6 +58,7 @@ public actor ServiceComposition {
   public let runtimeStatus: ServiceRuntimeStatus
   public let application: BridgeServiceApplication
   public let tunnel: ServiceTunnelController
+  public let legacyImportReport: LegacyImportReport?
 
   private let configuration: ServiceCompositionConfiguration
   private let secretProvider: ServiceMCPSecretProvider
@@ -77,6 +82,10 @@ public actor ServiceComposition {
   ) async throws -> ServiceComposition {
     let paths = try ServiceDataPaths.prepare(at: configuration.dataRootURL)
     let store = try SimpleServiceStore(path: paths.databaseURL.path)
+    let legacyImport = await Self.importLegacyConfiguration(
+      from: configuration.legacyDataRootURL,
+      into: store
+    )
     _ = try await store.markIncompleteTasksUnknown(at: Date())
     let projects = ServiceProjectService(store: store)
     let tasks = ServiceTaskManager(store: store)
@@ -109,7 +118,8 @@ public actor ServiceComposition {
     let runtimeStatus = ServiceRuntimeStatus(
       initial: ServiceRuntimeStatusSnapshot(
         mcpState: "stopped",
-        tunnelState: "stopped"
+        tunnelState: "stopped",
+        degradations: legacyImport.degradations
       )
     )
     let application = BridgeServiceApplication(
@@ -148,6 +158,7 @@ public actor ServiceComposition {
       runtimeStatus: runtimeStatus,
       application: application,
       tunnel: tunnel,
+      legacyImportReport: legacyImport.report,
       secretProvider: ServiceMCPSecretProvider(
         store: secretStore,
         randomBytes: randomBytes
@@ -169,6 +180,7 @@ public actor ServiceComposition {
     runtimeStatus: ServiceRuntimeStatus,
     application: BridgeServiceApplication,
     tunnel: ServiceTunnelController,
+    legacyImportReport: LegacyImportReport?,
     secretProvider: ServiceMCPSecretProvider
   ) {
     self.configuration = configuration
@@ -184,6 +196,7 @@ public actor ServiceComposition {
     self.runtimeStatus = runtimeStatus
     self.application = application
     self.tunnel = tunnel
+    self.legacyImportReport = legacyImportReport
     self.secretProvider = secretProvider
   }
 
@@ -290,6 +303,25 @@ public actor ServiceComposition {
     await server?.stop()
   }
 
+  private static func importLegacyConfiguration(
+    from rootURL: URL?,
+    into store: SimpleServiceStore
+  ) async -> LegacyConfigurationImportBootstrap {
+    guard let rootURL else { return .disabled }
+    do {
+      let report = try await LegacyConfigurationImporter(
+        legacyRootURL: rootURL,
+        store: store
+      ).importIfNeeded()
+      return LegacyConfigurationImportBootstrap(
+        report: report,
+        degradations: []
+      )
+    } catch {
+      return .failed
+    }
+  }
+
   private static func mcpExposureMode(
     _ mode: ServiceMCPExposureMode
   ) -> MCPServiceExposureMode {
@@ -307,4 +339,20 @@ public actor ServiceComposition {
     case .full: .full
     }
   }
+}
+
+private struct LegacyConfigurationImportBootstrap: Sendable {
+  static let disabled = LegacyConfigurationImportBootstrap(
+    report: nil,
+    degradations: []
+  )
+  static let failed = LegacyConfigurationImportBootstrap(
+    report: nil,
+    degradations: [
+      "Migration: Legacy configuration import failed; existing Service data was left unchanged."
+    ]
+  )
+
+  let report: LegacyImportReport?
+  let degradations: [String]
 }
