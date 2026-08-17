@@ -8,6 +8,7 @@ All notable changes will be documented here. The project has not published a rel
 - Added `BridgeServiceCore`, a single-database project/task foundation with direct task state, display-only events, typed settings and project-level active write-task enforcement.
 - Added real SQLite persistence, restart, transaction rollback, idempotency and cross-connection concurrency tests for the new Service path.
 - Added `BridgeCodexService`, a standalone Codex execution path for new or existing Threads, Turn progress, exact steer/interrupt and local allow/deny approvals without the legacy Coordinator or Pipeline.
+- Added an independent, non-blocking Supervisor path with bounded observation queues, exact-turn automatic steer, hard steer limits, advisory attention states and fail-open degradation that never terminates Codex execution.
 - Added the product, architecture, design-system and phase-accountability baselines.
 - Added a versioned Codex app-server schema snapshot for CLI 0.147.0-alpha.6.5.
 - Added a Swift 6 Stage 0 process/JSONL probe with real initialize and model-catalog verification.

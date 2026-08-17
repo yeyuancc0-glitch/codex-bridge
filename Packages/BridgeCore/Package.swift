@@ -224,6 +224,7 @@ let package = Package(
                 "BridgeProjects",
                 "BridgeSecurity",
                 "BridgeServiceCore",
+                "BridgeSupervisor",
             ]
         ),
         .executableTarget(
@@ -426,6 +427,7 @@ let package = Package(
                 "BridgeProjects",
                 "BridgeSecurity",
                 "BridgeServiceCore",
+                "BridgeSupervisor",
             ]
         ),
     ]

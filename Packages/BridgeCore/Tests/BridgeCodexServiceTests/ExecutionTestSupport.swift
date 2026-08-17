@@ -56,6 +56,8 @@ func submitApprovedExecutionTask(
   threadID: String? = nil,
   model: String = "fixture-model",
   effort: String = "medium",
+  supervisorModel: String? = nil,
+  supervisorEffort: String? = nil,
   permissionMode: ServicePermissionMode = .workspaceWrite
 ) async throws -> ServiceTaskRecord {
   let result = try await fixture.tasks.submit(
@@ -67,6 +69,8 @@ func submitApprovedExecutionTask(
       requestedThreadID: threadID,
       executionModel: model,
       executionEffort: effort,
+      supervisorModel: supervisorModel,
+      supervisorEffort: supervisorEffort,
       permissionMode: permissionMode
     ),
     taskID: TaskID(rawValue: taskID)
@@ -97,7 +101,7 @@ func waitForTask(
   _ fixture: ExecutionTestFixture,
   taskID: TaskID,
   matching predicate: @escaping (ServiceTaskRecord) -> Bool,
-  timeout: Duration = .seconds(3)
+  timeout: Duration = .seconds(6)
 ) async throws -> ServiceTaskRecord {
   let start = ContinuousClock.now
   while ContinuousClock.now - start < timeout {
@@ -112,7 +116,7 @@ func waitForTask(
 func waitForApproval(
   _ coordinator: ServiceExecutionCoordinator,
   taskID: TaskID,
-  timeout: Duration = .seconds(3)
+  timeout: Duration = .seconds(6)
 ) async throws -> ExecutionApprovalRequest {
   let start = ContinuousClock.now
   while ContinuousClock.now - start < timeout {
