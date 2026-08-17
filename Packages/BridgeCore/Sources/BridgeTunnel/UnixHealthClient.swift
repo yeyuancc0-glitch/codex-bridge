@@ -6,52 +6,74 @@ struct TunnelHealthSnapshot: Equatable, Sendable {
   let pollTimestamp: TimeInterval?
 }
 
-struct UnixHealthClient: Sendable {
+struct LoopbackHealthClient: Sendable {
+  static let urlFileName = "health.url"
+
   private let maximumResponseBytes = 64 * 1024
 
-  func snapshot(socketPath: String, expectedPeerPID: pid_t) throws -> TunnelHealthSnapshot {
-    let ready = try request(
-      path: "/readyz",
-      socketPath: socketPath,
-      expectedPeerPID: expectedPeerPID
-    )
-    let metrics = try request(
-      path: "/metrics",
-      socketPath: socketPath,
-      expectedPeerPID: expectedPeerPID
-    )
+  func snapshot(
+    urlFileDirectory: TunnelDirectoryHandle,
+    expectedPeerPID: pid_t
+  ) throws -> TunnelHealthSnapshot {
+    let baseURL = try healthBaseURL(in: urlFileDirectory)
+    guard Self.process(expectedPeerPID, ownsListeningPort: baseURL.port!) else {
+      throw TunnelHealthError.unexpectedPeer
+    }
+    let ready = try request(path: "/readyz", baseURL: baseURL)
+    let metrics = try request(path: "/metrics", baseURL: baseURL)
     return TunnelHealthSnapshot(
       isReady: ready.status == 200 && ready.body == Data("ready".utf8),
       pollTimestamp: metrics.status == 200 ? Self.pollTimestamp(in: metrics.body) : nil
     )
   }
 
-  private func request(
-    path: String,
-    socketPath: String,
-    expectedPeerPID: pid_t
-  ) throws -> HTTPResponse {
-    let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+  private func healthBaseURL(in directory: TunnelDirectoryHandle) throws -> URL {
+    let data = try directory.readRegularFile(
+      name: Self.urlFileName,
+      maximumBytes: 2_048
+    )
+    guard let rawValue = String(data: data, encoding: .utf8) else {
+      throw TunnelHealthError.invalidURLFile
+    }
+    let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty,
+      value.utf8.count <= 2_048,
+      value.rangeOfCharacter(from: .controlCharacters) == nil,
+      let components = URLComponents(string: value),
+      components.scheme == "http",
+      components.host == "127.0.0.1",
+      components.user == nil,
+      components.password == nil,
+      components.query == nil,
+      components.fragment == nil,
+      components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/",
+      let port = components.port,
+      (1...65_535).contains(port)
+    else {
+      throw TunnelHealthError.invalidURLFile
+    }
+    var normalized = URLComponents()
+    normalized.scheme = "http"
+    normalized.host = "127.0.0.1"
+    normalized.port = port
+    guard let url = normalized.url else {
+      throw TunnelHealthError.invalidURLFile
+    }
+    return url
+  }
+
+  private func request(path: String, baseURL: URL) throws -> HTTPResponse {
+    guard let port = baseURL.port else { throw TunnelHealthError.invalidURLFile }
+    let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
     guard descriptor >= 0 else { throw TunnelHealthError.unavailable }
     defer { Darwin.close(descriptor) }
     try setTimeout(descriptor)
-    try connect(descriptor, path: socketPath)
-    try verifyPeer(descriptor, expectedPID: expectedPeerPID)
-    let request = Data("GET \(path) HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".utf8)
+    try connect(descriptor, port: port)
+    let request = Data(
+      "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nConnection: close\r\n\r\n".utf8
+    )
     try write(request, to: descriptor)
     return try readResponse(from: descriptor)
-  }
-
-  private func verifyPeer(_ descriptor: Int32, expectedPID: pid_t) throws {
-    var peerPID: pid_t = 0
-    var length = socklen_t(MemoryLayout<pid_t>.size)
-    guard
-      getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERPID, &peerPID, &length) == 0,
-      length == MemoryLayout<pid_t>.size,
-      peerPID == expectedPID
-    else {
-      throw TunnelHealthError.unexpectedPeer
-    }
   }
 
   private func setTimeout(_ descriptor: Int32) throws {
@@ -64,26 +86,15 @@ struct UnixHealthClient: Sendable {
     }
   }
 
-  private func connect(_ descriptor: Int32, path: String) throws {
-    let bytes = Array(path.utf8CString)
-    guard bytes.count <= MemoryLayout.size(ofValue: sockaddr_un().sun_path) else {
-      throw TunnelHealthError.invalidSocketPath
-    }
-    var address = sockaddr_un()
-    address.sun_family = sa_family_t(AF_UNIX)
-    _ = withUnsafeMutablePointer(to: &address.sun_path) { pointer in
-      pointer.withMemoryRebound(to: CChar.self, capacity: bytes.count) { destination in
-        bytes.withUnsafeBytes { source in
-          memcpy(destination, source.baseAddress!, bytes.count)
-        }
-      }
-    }
-    let pathOffset = MemoryLayout.offset(of: \sockaddr_un.sun_path)!
-    let length = socklen_t(pathOffset + bytes.count)
-    address.sun_len = UInt8(length)
+  private func connect(_ descriptor: Int32, port: Int) throws {
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = in_port_t(UInt16(port).bigEndian)
+    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
     let status = withUnsafePointer(to: &address) { pointer in
       pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(descriptor, $0, length)
+        Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
       }
     }
     guard status == 0 else { throw TunnelHealthError.unavailable }
@@ -108,14 +119,16 @@ struct UnixHealthClient: Sendable {
 
   private func readResponse(from descriptor: Int32) throws -> HTTPResponse {
     var response = Data()
-    var chunk = [UInt8](repeating: 0, count: 4096)
+    var chunk = [UInt8](repeating: 0, count: 4_096)
     while response.count <= maximumResponseBytes {
       let count = Darwin.recv(descriptor, &chunk, chunk.count, 0)
       if count == 0 { break }
       guard count > 0 else { throw TunnelHealthError.unavailable }
       response.append(chunk, count: count)
     }
-    guard response.count <= maximumResponseBytes else { throw TunnelHealthError.responseTooLarge }
+    guard response.count <= maximumResponseBytes else {
+      throw TunnelHealthError.responseTooLarge
+    }
     return try HTTPResponse(data: response)
   }
 
@@ -136,6 +149,51 @@ struct UnixHealthClient: Sendable {
     }
     return nil
   }
+
+  private static func process(_ processID: pid_t, ownsListeningPort port: Int) -> Bool {
+    let requiredBytes = proc_pidinfo(processID, PROC_PIDLISTFDS, 0, nil, 0)
+    guard requiredBytes > 0 else { return false }
+    let stride = MemoryLayout<proc_fdinfo>.stride
+    var descriptors = [
+      proc_fdinfo
+    ](repeating: proc_fdinfo(), count: Int(requiredBytes) / stride + 16)
+    let returnedBytes = descriptors.withUnsafeMutableBytes { buffer in
+      proc_pidinfo(
+        processID,
+        PROC_PIDLISTFDS,
+        0,
+        buffer.baseAddress,
+        Int32(buffer.count)
+      )
+    }
+    guard returnedBytes > 0 else { return false }
+    let count = min(Int(returnedBytes) / stride, descriptors.count)
+    return descriptors.prefix(count).contains { descriptor in
+      guard descriptor.proc_fdtype == PROX_FDTYPE_SOCKET else { return false }
+      var socket = socket_fdinfo()
+      let bytes = withUnsafeMutablePointer(to: &socket) { pointer in
+        proc_pidfdinfo(
+          processID,
+          descriptor.proc_fd,
+          PROC_PIDFDSOCKETINFO,
+          pointer,
+          Int32(MemoryLayout<socket_fdinfo>.size)
+        )
+      }
+      guard bytes == MemoryLayout<socket_fdinfo>.size,
+        socket.psi.soi_family == AF_INET,
+        socket.psi.soi_kind == SOCKINFO_TCP,
+        socket.psi.soi_proto.pri_tcp.tcpsi_state == TSI_S_LISTEN
+      else {
+        return false
+      }
+      let localPort = Int(
+        UInt16(
+          bigEndian: UInt16(truncatingIfNeeded: socket.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport))
+      )
+      return localPort == port
+    }
+  }
 }
 
 package struct HTTPResponse {
@@ -144,7 +202,9 @@ package struct HTTPResponse {
 
   init(data: Data) throws {
     let delimiter = Data("\r\n\r\n".utf8)
-    guard let split = data.range(of: delimiter) else { throw TunnelHealthError.invalidResponse }
+    guard let split = data.range(of: delimiter) else {
+      throw TunnelHealthError.invalidResponse
+    }
     let head = String(decoding: data[..<split.lowerBound], as: UTF8.self)
     guard let firstLine = head.split(separator: "\r\n").first else {
       throw TunnelHealthError.invalidResponse
@@ -191,7 +251,7 @@ package struct HTTPResponse {
 
 enum TunnelHealthError: Error, Equatable, Sendable {
   case unavailable
-  case invalidSocketPath
+  case invalidURLFile
   case invalidResponse
   case responseTooLarge
   case unexpectedPeer

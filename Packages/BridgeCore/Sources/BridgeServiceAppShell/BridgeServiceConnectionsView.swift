@@ -1,9 +1,12 @@
 import AppKit
+import BridgeIPC
 import BridgeMCP
 import SwiftUI
 
 struct BridgeServiceConnectionsView: View {
   @ObservedObject var model: BridgeServiceAppModel
+  @State private var tunnelID = ""
+  @State private var runtimeKey = ""
 
   var body: some View {
     ScrollView {
@@ -72,9 +75,11 @@ struct BridgeServiceConnectionsView: View {
             .font(.caption.monospaced())
             .textSelection(.enabled)
         }
-        Text("这个地址只供本机诊断，ChatGPT 网页不能直接访问 localhost。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(
+          "这个地址只供本机诊断，调用时还需要 X-Codex-Bridge-Token Header；本界面不会显示认证 Secret。"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
 
       Picker(
@@ -102,18 +107,89 @@ struct BridgeServiceConnectionsView: View {
 
   private var tunnelSection: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("远程 Tunnel")
+      Text("Secure MCP Tunnel")
         .font(.headline)
+      LabeledContent("状态", value: tunnelStatus.lifecycle)
+      LabeledContent("Helper", value: tunnelStatus.helperAvailable ? "可用" : "未打包")
       LabeledContent(
-        "状态",
-        value: model.serviceStatus?.status.tunnelState ?? "未配置"
+        "远程任务",
+        value: tunnelStatus.acceptsRemoteSubmissions ? "可接收" : "关闭"
       )
+      if let configuredID = tunnelStatus.tunnelID {
+        LabeledContent("Tunnel ID") {
+          Text(configuredID)
+            .font(.caption.monospaced())
+            .textSelection(.enabled)
+        }
+      }
+
+      if !tunnelStatus.helperAvailable {
+        Label(
+          "当前 App 构建没有已签名的 tunnel-client helper；本机 MCP 仍可用，但 ChatGPT 无法远程连接。",
+          systemImage: "exclamationmark.triangle.fill"
+        )
+        .foregroundStyle(.orange)
+      }
+      if tunnelStatus.actionRequired {
+        Label(
+          "Tunnel 需要本机处理。请核对 Tunnel ID、Runtime Key 和工作区权限。",
+          systemImage: "exclamationmark.shield.fill"
+        )
+        .foregroundStyle(.orange)
+      }
+
+      TextField("tunnel_…", text: $tunnelID)
+        .textFieldStyle(.roundedBorder)
+        .frame(maxWidth: 520)
+      SecureField("Runtime API Key", text: $runtimeKey)
+        .textFieldStyle(.roundedBorder)
+        .frame(maxWidth: 520)
+
+      HStack {
+        Button("保存并连接") {
+          let key = runtimeKey
+          runtimeKey = ""
+          model.configureTunnel(tunnelID: tunnelID, runtimeKey: key)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(tunnelID.isEmpty || runtimeKey.isEmpty || !tunnelStatus.helperAvailable)
+
+        if tunnelStatus.configured {
+          Button(tunnelStatus.enabled ? "断开" : "重新连接") {
+            if tunnelStatus.enabled {
+              model.disconnectTunnel()
+            } else {
+              model.connectTunnel()
+            }
+          }
+          Button("清除配置", role: .destructive) {
+            model.clearTunnel()
+            tunnelID = ""
+            runtimeKey = ""
+          }
+        }
+      }
+
       Text(
-        "Secure MCP Tunnel 仍需迁入后台 Service。完成后，这里会显示远程地址、健康状态和认证配置。"
+        "Runtime Key 只通过本机 XPC 发送一次并写入 Keychain，不进入 SQLite、日志或状态快照。"
       )
+      .font(.caption)
       .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
     }
+    .onAppear {
+      if tunnelID.isEmpty {
+        tunnelID = tunnelStatus.tunnelID ?? ""
+      }
+    }
+    .onChange(of: tunnelStatus.tunnelID) { _, value in
+      if runtimeKey.isEmpty {
+        tunnelID = value ?? tunnelID
+      }
+    }
+  }
+
+  private var tunnelStatus: IPCTunnelStatus {
+    model.serviceStatus?.tunnel ?? .unconfigured
   }
 
   private var registrationLabel: String {

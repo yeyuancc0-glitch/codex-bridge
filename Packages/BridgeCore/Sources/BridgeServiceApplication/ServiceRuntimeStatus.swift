@@ -36,4 +36,43 @@ public actor ServiceRuntimeStatus {
   public func update(_ snapshot: ServiceRuntimeStatusSnapshot) {
     self.snapshot = snapshot
   }
+
+  public func updateMCP(state: String, degradation: String? = nil) {
+    snapshot = replacing(
+      mcpState: state,
+      tunnelState: snapshot.tunnelState,
+      degradationPrefix: "MCP:",
+      degradation: degradation
+    )
+  }
+
+  public func updateTunnel(state: String, degradation: String? = nil) {
+    snapshot = replacing(
+      mcpState: snapshot.mcpState,
+      tunnelState: state,
+      degradationPrefix: "Tunnel:",
+      degradation: degradation
+    )
+  }
+
+  private func replacing(
+    mcpState: String,
+    tunnelState: String,
+    degradationPrefix: String,
+    degradation: String?
+  ) -> ServiceRuntimeStatusSnapshot {
+    var degradations = snapshot.degradations.filter {
+      !$0.hasPrefix(degradationPrefix)
+    }
+    if let degradation {
+      degradations.append("\(degradationPrefix) \(degradation)")
+    }
+    return ServiceRuntimeStatusSnapshot(
+      mcpState: mcpState,
+      tunnelState: tunnelState,
+      codexVersion: snapshot.codexVersion,
+      loginMode: snapshot.loginMode,
+      degradations: degradations
+    )
+  }
 }

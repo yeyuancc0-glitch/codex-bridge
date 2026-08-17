@@ -148,7 +148,7 @@ public final class BridgeServiceAppModel: ObservableObject {
       let host = components.host
     else { return nil }
     let port = components.port.map { ":\($0)" } ?? ""
-    return "\(components.scheme ?? "http")://\(host)\(port)/mcp/<本机认证 Secret>"
+    return "\(components.scheme ?? "http")://\(host)\(port)/mcp"
   }
 
   public func start() {

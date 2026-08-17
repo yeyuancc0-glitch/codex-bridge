@@ -4,6 +4,7 @@ import BridgeIPC
 import BridgeMCP
 import BridgeProjects
 import BridgeServiceCore
+import BridgeTunnel
 import Foundation
 
 public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCProtocol,
@@ -47,12 +48,14 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         )
         let endpoint = await composition.endpoint()?.localURL.absoluteString
         let exposureMode = try await composition.settings.exposureMode()
+        let tunnel = await composition.tunnelStatus()
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
           payload: IPCServiceStatusResponse(
             status: status,
             localMCPURL: endpoint,
-            exposureMode: mcpExposureMode(exposureMode)
+            exposureMode: mcpExposureMode(exposureMode),
+            tunnel: tunnelStatus(tunnel)
           )
         )
 
@@ -271,6 +274,35 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         )
         _ = try await composition.setExposureMode(payload.exposureMode)
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+
+      case .configureTunnel:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCTunnelConfigurationRequest.self,
+          from: request
+        )
+        let status = try await composition.configureTunnel(
+          tunnelID: payload.tunnelID,
+          runtimeKey: payload.runtimeKey
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: tunnelStatus(status)
+        )
+
+      case .connectTunnel:
+        let status = try await composition.connectTunnel()
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: tunnelStatus(status)
+        )
+
+      case .disconnectTunnel:
+        try await composition.disconnectTunnel()
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+
+      case .clearTunnel:
+        try await composition.clearTunnelConfiguration()
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
       }
     } catch {
       let mapped = map(error)
@@ -281,6 +313,20 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         retryable: mapped.retryable
       )
     }
+  }
+
+  private static func tunnelStatus(
+    _ snapshot: ServiceTunnelSnapshot
+  ) -> IPCTunnelStatus {
+    IPCTunnelStatus(
+      configured: snapshot.configured,
+      enabled: snapshot.enabled,
+      helperAvailable: snapshot.helperAvailable,
+      tunnelID: snapshot.tunnelID,
+      lifecycle: snapshot.lifecycle.rawValue,
+      acceptsRemoteSubmissions: snapshot.acceptsRemoteSubmissions,
+      actionRequired: snapshot.actionRequired
+    )
   }
 
   private static func mcpExposureMode(
@@ -408,6 +454,30 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(
           code: "invalid_state",
           message: "The operation was rejected by local policy."
+        )
+      }
+    }
+    if error is TunnelConfigurationError {
+      return .init(
+        code: "invalid_tunnel_configuration",
+        message: "The Tunnel configuration is invalid."
+      )
+    }
+    if let error = error as? ServiceTunnelError {
+      switch error {
+      case .invalidRuntimeKey, .invalidStoredConfiguration:
+        return .init(code: "invalid_tunnel_configuration", message: error.localizedDescription)
+      case .notConfigured:
+        return .init(code: "tunnel_not_configured", message: error.localizedDescription)
+      case .helperUnavailable:
+        return .init(code: "tunnel_helper_unavailable", message: error.localizedDescription)
+      case .secretStoreUnavailable:
+        return .init(code: "keychain_unavailable", message: error.localizedDescription)
+      case .localMCPUnavailable, .serviceStopped, .startFailed:
+        return .init(
+          code: "tunnel_unavailable",
+          message: error.localizedDescription,
+          retryable: true
         )
       }
     }

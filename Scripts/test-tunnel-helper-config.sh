@@ -9,11 +9,11 @@ fi
 
 readonly script_directory="${0:A:h}"
 readonly repository_root="${script_directory:h}"
-readonly helper_version="0.0.11"
+readonly helper_version="0.0.10"
 readonly arm64_archive_name="tunnel-client-v${helper_version}-darwin-arm64.zip"
 readonly arm64_archive_url="https://github.com/openai/tunnel-client/releases/download/v${helper_version}/${arm64_archive_name}"
-readonly arm64_archive_sha256="3685443b057614ff932d2d477dab94be2082e60bcf4e8b4e378bebc89121b714"
-readonly arm64_helper_sha256="a916406d4fd5506aab9a593808ebd10ab23aa7d11e1675d33612632b9ead7e51"
+readonly arm64_archive_sha256="288accc7fd20cfee1d495adb933773af9e19ebc0cdef3173f7fb544afa5065b2"
+readonly arm64_helper_sha256="5870da52ada51e96b32375a04fa112f3c0de7238cd76e8d1ed19b06fed6acbf2"
 [[ "$(/usr/bin/uname -m)" == "arm64" ]] || {
   print -u2 "The signed official-helper compatibility gate currently requires Apple Silicon."
   exit 69
@@ -101,7 +101,7 @@ archive_digest="$(/usr/bin/shasum -a 256 "${helper_archive}")"
   exit 65
 }
 readonly archive_members="$(/usr/bin/unzip -Z1 "${helper_archive}")"
-[[ "${archive_members}" == $'tunnel-client\ncloudflared\ncloudflared-manifest.json\nLICENSE' ]] || {
+[[ "${archive_members}" == "tunnel-client" ]] || {
   print -u2 "Official arm64 Tunnel helper archive has unexpected members."
   exit 65
 }

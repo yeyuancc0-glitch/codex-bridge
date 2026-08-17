@@ -94,6 +94,41 @@ package final class TunnelDirectoryHandle: @unchecked Sendable {
     }
   }
 
+  package func readRegularFile(name: String, maximumBytes: Int) throws -> Data {
+    guard Self.isSafeName(name), maximumBytes > 0, matchesPath() else {
+      throw TunnelHealthError.invalidURLFile
+    }
+    let file = openat(descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    guard file >= 0 else { throw TunnelHealthError.unavailable }
+    defer { Darwin.close(file) }
+
+    var metadata = stat()
+    guard
+      fstat(file, &metadata) == 0,
+      metadata.st_mode & S_IFMT == S_IFREG,
+      metadata.st_uid == geteuid(),
+      metadata.st_nlink == 1,
+      metadata.st_mode & 0o077 == 0,
+      metadata.st_size > 0,
+      metadata.st_size <= maximumBytes
+    else {
+      throw TunnelHealthError.invalidURLFile
+    }
+
+    var result = Data()
+    var buffer = [UInt8](repeating: 0, count: min(1_024, maximumBytes))
+    while result.count <= maximumBytes {
+      let count = Darwin.read(file, &buffer, buffer.count)
+      if count == 0 { break }
+      guard count > 0 else { throw TunnelHealthError.unavailable }
+      result.append(buffer, count: count)
+    }
+    guard result.count <= maximumBytes else {
+      throw TunnelHealthError.invalidURLFile
+    }
+    return result
+  }
+
   package func removeEntry(name: String, directory: Bool = false) throws {
     guard Self.isSafeName(name) else { throw TunnelManagerError.cleanupFailed }
     let flags = directory ? AT_REMOVEDIR : 0

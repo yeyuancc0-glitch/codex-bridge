@@ -106,6 +106,45 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
   }
 
+  func testTunnelActionsRouteWithoutRetainingRuntimeKeyInViewState() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    let tunnelID = "tunnel_" + String(repeating: "a", count: 32)
+    let runtimeKey = "runtime_key_test_only_123"
+    model.configureTunnel(tunnelID: tunnelID, runtimeKey: runtimeKey)
+
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.configuredTunnelIDs == [tunnelID]
+    }
+    XCTAssertEqual(model.serviceStatus?.tunnel.tunnelID, tunnelID)
+    XCTAssertFalse(String(describing: model.serviceStatus).contains(runtimeKey))
+    XCTAssertFalse((model.errorMessage ?? "").contains(runtimeKey))
+
+    model.disconnectTunnel()
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.tunnelDisconnectCount == 1
+    }
+    XCTAssertFalse(model.serviceStatus?.tunnel.enabled ?? true)
+
+    model.clearTunnel()
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.tunnelClearCount == 1
+    }
+    XCTAssertFalse(model.serviceStatus?.tunnel.configured ?? true)
+  }
+
   func testDisableExplicitlyUnregistersService() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -185,12 +224,19 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   struct MutationSnapshot: Sendable {
     let approvedTaskIDs: [String]
     let approvalDecisions: [String]
+    let configuredTunnelIDs: [String]
+    let tunnelDisconnectCount: Int
+    let tunnelClearCount: Int
   }
 
   private var closes = 0
   private var approvedTaskIDs: [String] = []
   private var approvalDecisions: [String] = []
   private var exposureMode = MCPServiceExposureMode.readOnly
+  private var tunnelStatus = IPCTunnelStatus.unconfigured
+  private var configuredTunnelIDs: [String] = []
+  private var tunnelDisconnectCount = 0
+  private var tunnelClearCount = 0
 
   func status() async throws -> IPCServiceStatusResponse {
     IPCServiceStatusResponse(
@@ -202,8 +248,9 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
         supervisorState: "ready",
         pendingApprovalCount: 1
       ),
-      localMCPURL: "http://127.0.0.1:1234/mcp/test",
-      exposureMode: exposureMode
+      localMCPURL: "http://127.0.0.1:1234/mcp",
+      exposureMode: exposureMode,
+      tunnel: tunnelStatus
     )
   }
 
@@ -325,6 +372,53 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     exposureMode = mode
   }
 
+  func configureTunnel(
+    _ request: IPCTunnelConfigurationRequest
+  ) async throws -> IPCTunnelStatus {
+    configuredTunnelIDs.append(request.tunnelID)
+    tunnelStatus = IPCTunnelStatus(
+      configured: true,
+      enabled: true,
+      helperAvailable: true,
+      tunnelID: request.tunnelID,
+      lifecycle: "ready",
+      acceptsRemoteSubmissions: true,
+      actionRequired: false
+    )
+    return tunnelStatus
+  }
+
+  func connectTunnel() async throws -> IPCTunnelStatus {
+    tunnelStatus = IPCTunnelStatus(
+      configured: tunnelStatus.configured,
+      enabled: true,
+      helperAvailable: tunnelStatus.helperAvailable,
+      tunnelID: tunnelStatus.tunnelID,
+      lifecycle: "ready",
+      acceptsRemoteSubmissions: true,
+      actionRequired: false
+    )
+    return tunnelStatus
+  }
+
+  func disconnectTunnel() async throws {
+    tunnelDisconnectCount += 1
+    tunnelStatus = IPCTunnelStatus(
+      configured: tunnelStatus.configured,
+      enabled: false,
+      helperAvailable: tunnelStatus.helperAvailable,
+      tunnelID: tunnelStatus.tunnelID,
+      lifecycle: "stopped",
+      acceptsRemoteSubmissions: false,
+      actionRequired: false
+    )
+  }
+
+  func clearTunnel() async throws {
+    tunnelClearCount += 1
+    tunnelStatus = .unconfigured
+  }
+
   func close() async {
     closes += 1
   }
@@ -336,7 +430,10 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func mutationSnapshot() -> MutationSnapshot {
     MutationSnapshot(
       approvedTaskIDs: approvedTaskIDs,
-      approvalDecisions: approvalDecisions
+      approvalDecisions: approvalDecisions,
+      configuredTunnelIDs: configuredTunnelIDs,
+      tunnelDisconnectCount: tunnelDisconnectCount,
+      tunnelClearCount: tunnelClearCount
     )
   }
 

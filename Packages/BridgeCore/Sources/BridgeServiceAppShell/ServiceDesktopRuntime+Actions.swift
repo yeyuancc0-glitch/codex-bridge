@@ -121,6 +121,43 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func configureTunnel(tunnelID: String, runtimeKey: String) {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      _ = try await client.configureTunnel(
+        IPCTunnelConfigurationRequest(
+          tunnelID: tunnelID,
+          runtimeKey: runtimeKey
+        )
+      )
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
+  public func connectTunnel() {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      _ = try await client.connectTunnel()
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
+  public func disconnectTunnel() {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      try await client.disconnectTunnel()
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
+  public func clearTunnel() {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      try await client.clearTunnel()
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
   func loadThreads(projectID: String) async {
     do {
       let client = try currentClient()

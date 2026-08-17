@@ -18,6 +18,41 @@ final class TunnelManagerTests: XCTestCase {
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: harness.runtime.path), [])
   }
 
+  func testStartAcceptsKnownNoAuthMetadata404DoctorCompatibility() async throws {
+    let harness = try Harness(
+      tunnelSuffix: "noauthdoctor" + String(repeating: "n", count: 20)
+    )
+    defer { harness.cleanup() }
+    let manager = try harness.manager()
+
+    try await manager.start()
+
+    let state = await manager.state()
+    let acceptsRemote = await manager.acceptsRemoteSubmissions()
+    XCTAssertEqual(state, .ready)
+    XCTAssertTrue(acceptsRemote)
+    await manager.stop()
+  }
+
+  func testDoctorCompatibilityDoesNotIgnoreAdditionalFailures() async throws {
+    let harness = try Harness(
+      tunnelSuffix: "multifaildoctor" + String(repeating: "m", count: 17)
+    )
+    defer { harness.cleanup() }
+    let manager = try harness.manager()
+
+    do {
+      _ = try await manager.doctor()
+      XCTFail("Expected an additional doctor failure to remain fatal")
+    } catch let error as TunnelManagerError {
+      guard case .doctorFailed(let code, let diagnostics) = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+      XCTAssertEqual(code, 2)
+      XCTAssertTrue(diagnostics.contains("health_listener"))
+    }
+  }
+
   func testCancellingDoctorTerminatesAndReapsChild() async throws {
     let harness = try Harness(
       tunnelSuffix: "slowdoctor" + String(repeating: "e", count: 22)

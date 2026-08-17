@@ -22,6 +22,7 @@ final class BridgeServiceHostTests: XCTestCase {
     let paths = try ServiceDataPaths.prepare(at: privateRoot)
     XCTAssertEqual(try fileMode(paths.rootURL), 0o700)
     XCTAssertEqual(try fileMode(paths.supervisorScratchURL), 0o700)
+    XCTAssertEqual(try fileMode(paths.tunnelRuntimeURL), 0o700)
     XCTAssertEqual(paths.databaseURL.lastPathComponent, "service.sqlite")
 
     let permissive = parent.appending(path: "permissive", directoryHint: .isDirectory)
@@ -75,7 +76,12 @@ final class BridgeServiceHostTests: XCTestCase {
     let fixture = try await makeServiceHostFixture(self, startMCP: true)
     let storedReadOnlyEndpoint = await fixture.composition.endpoint()
     let readOnlyEndpoint = try XCTUnwrap(storedReadOnlyEndpoint)
-    let readOnlyClient = try await connectMCP(endpoint: readOnlyEndpoint.localURL)
+    let storedSecret = try fixture.secrets.load(ServiceMCPSecretProvider.reference)
+    let secret = try XCTUnwrap(String(data: storedSecret, encoding: .utf8))
+    let readOnlyClient = try await connectMCP(
+      endpoint: readOnlyEndpoint.localURL,
+      secret: secret
+    )
     defer { Task { await readOnlyClient.disconnect() } }
 
     let readOnlyTools = try await readOnlyClient.listTools()
@@ -87,7 +93,10 @@ final class BridgeServiceHostTests: XCTestCase {
     )
 
     let fullEndpoint = try await fixture.composition.setExposureMode(.full)
-    let fullClient = try await connectMCP(endpoint: fullEndpoint.localURL)
+    let fullClient = try await connectMCP(
+      endpoint: fullEndpoint.localURL,
+      secret: secret
+    )
     defer { Task { await fullClient.disconnect() } }
     let fullTools = try await fullClient.listTools()
     XCTAssertEqual(fullTools.tools.count, 12)
@@ -97,8 +106,7 @@ final class BridgeServiceHostTests: XCTestCase {
       })
     )
 
-    let storedSecret = try fixture.secrets.load(ServiceMCPSecretProvider.reference)
-    XCTAssertEqual(String(data: storedSecret, encoding: .utf8)?.utf8.count, 43)
+    XCTAssertEqual(secret.utf8.count, 43)
   }
 
   func testCompositionRestartMarksInFlightTaskUnknown() async throws {
@@ -198,7 +206,9 @@ final class BridgeServiceHostTests: XCTestCase {
     try await client.setExposureMode(.full)
     let storedEndpoint = await fixture.composition.endpoint()
     let endpoint = try XCTUnwrap(storedEndpoint)
-    let mcpClient = try await connectMCP(endpoint: endpoint.localURL)
+    let secretData = try fixture.secrets.load(ServiceMCPSecretProvider.reference)
+    let secret = try XCTUnwrap(String(data: secretData, encoding: .utf8))
+    let mcpClient = try await connectMCP(endpoint: endpoint.localURL, secret: secret)
     defer { Task { await mcpClient.disconnect() } }
     let tools = try await mcpClient.listTools()
     XCTAssertEqual(tools.tools.count, 12)
@@ -250,7 +260,7 @@ final class BridgeServiceHostTests: XCTestCase {
     }
   }
 
-  private func connectMCP(endpoint: URL) async throws -> Client {
+  private func connectMCP(endpoint: URL, secret: String) async throws -> Client {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 5
     configuration.timeoutIntervalForResource = 5
@@ -258,7 +268,15 @@ final class BridgeServiceHostTests: XCTestCase {
       endpoint: endpoint,
       configuration: configuration,
       streaming: false,
-      sseInitializationTimeout: 1
+      sseInitializationTimeout: 1,
+      requestModifier: { request in
+        var request = request
+        request.setValue(
+          secret,
+          forHTTPHeaderField: MCPHTTPConfiguration.tunnelAuthenticationHeader
+        )
+        return request
+      }
     )
     let client = Client(
       name: "service-host-tests",

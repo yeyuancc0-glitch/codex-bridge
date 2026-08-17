@@ -147,6 +147,33 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func configureTunnel(
+    _ request: IPCTunnelConfigurationRequest
+  ) async throws -> IPCTunnelStatus {
+    try await call(operation: .configureTunnel, payload: request)
+  }
+
+  public func connectTunnel() async throws -> IPCTunnelStatus {
+    try await call(
+      operation: .connectTunnel,
+      payload: Optional<IPCMutationResponse>.none
+    )
+  }
+
+  public func disconnectTunnel() async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .disconnectTunnel,
+      payload: Optional<IPCMutationResponse>.none
+    )
+  }
+
+  public func clearTunnel() async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .clearTunnel,
+      payload: Optional<IPCMutationResponse>.none
+    )
+  }
+
   private func call<Payload: Encodable, Response: Decodable>(
     operation: BridgeServiceIPCOperation,
     payload: Payload?

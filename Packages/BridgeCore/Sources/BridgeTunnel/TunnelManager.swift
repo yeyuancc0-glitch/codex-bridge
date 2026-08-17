@@ -11,7 +11,7 @@ public actor TunnelManager {
     let root: TunnelDirectoryHandle
     let run: TunnelDirectoryHandle
     let directory: URL
-    let socket: URL
+    let healthURLFile: URL
 
     var hasExpectedIdentity: Bool {
       root.contains(name: name, directory: run)
@@ -22,7 +22,7 @@ public actor TunnelManager {
   private let secretStore: any SecretStore
   private let helperVerifier: TunnelHelperVerifier
   private let launcher = TunnelProcessLauncher()
-  private let healthClient = UnixHealthClient()
+  private let healthClient = LoopbackHealthClient()
   private let now: Now
   private let outputLimit = 128 * 1024
   private var lifecycle: TunnelLifecycle = .stopped
@@ -97,7 +97,13 @@ public actor TunnelManager {
       throw error
     }
     let diagnostics = diagnostics(for: child)
-    guard exit.code == 0 else {
+    guard
+      exit.code == 0
+        || Self.acceptsNoAuthDoctorCompatibility(
+          exitCode: exit.code,
+          standardOutput: diagnostics.standardOutput
+        )
+    else {
       throw TunnelManagerError.doctorFailed(
         exitCode: exit.code,
         diagnostics: Self.combinedDiagnostics(diagnostics)
@@ -197,7 +203,13 @@ public actor TunnelManager {
     }
     if process === child { process = nil }
     let output = diagnostics(for: child)
-    guard exit.code == 0 else {
+    guard
+      exit.code == 0
+        || Self.acceptsNoAuthDoctorCompatibility(
+          exitCode: exit.code,
+          standardOutput: output.standardOutput
+        )
+    else {
       throw TunnelManagerError.doctorFailed(
         exitCode: exit.code,
         diagnostics: Self.combinedDiagnostics(output)
@@ -278,7 +290,7 @@ public actor TunnelManager {
     guard let context = runContext, context.hasExpectedIdentity else { return (false, false) }
     guard
       let snapshot = try? healthClient.snapshot(
-        socketPath: context.socket.path,
+        urlFileDirectory: context.run,
         expectedPeerPID: child.pid
       )
     else {
@@ -295,12 +307,16 @@ public actor TunnelManager {
     guard let keyText = String(data: key, encoding: .utf8) else {
       throw TunnelManagerError.invalidRuntimeKey
     }
-    let trimmed = keyText.trimmingCharacters(in: .whitespacesAndNewlines)
-    let bytes = Array(trimmed.utf8)
-    guard !bytes.isEmpty, bytes.count <= 16 * 1024, bytes.allSatisfy(Self.isKeyByte) else {
+    let bytes = Array(keyText.utf8)
+    guard
+      keyText == keyText.trimmingCharacters(in: .whitespacesAndNewlines),
+      !bytes.isEmpty,
+      bytes.count <= 16 * 1024,
+      bytes.allSatisfy({ (0x21...0x7E).contains($0) })
+    else {
       throw TunnelManagerError.invalidRuntimeKey
     }
-    return Data(bytes)
+    return key
   }
 
   private func prepareRunContext() throws -> RunContext {
@@ -309,30 +325,27 @@ public actor TunnelManager {
     let name = "r-\(id.uuidString.prefix(12))"
     let run = try TunnelDirectoryHandle(creating: name, in: root)
     let directory = URL(fileURLWithPath: run.path, isDirectory: true)
-    let socket = directory.appendingPathComponent("health.sock")
+    let healthURLFile = directory.appendingPathComponent(LoopbackHealthClient.urlFileName)
     let context = RunContext(
       id: id,
       name: name,
       root: root,
       run: run,
       directory: directory,
-      socket: socket
+      healthURLFile: healthURLFile
     )
     var succeeded = false
     defer {
       if !succeeded { _ = cleanup(context) }
     }
     try run.createDirectory(name: "codex-home")
-    guard socket.path.utf8CString.count <= MemoryLayout.size(ofValue: sockaddr_un().sun_path) else {
-      throw TunnelManagerError.launchFailed
-    }
     succeeded = true
     return context
   }
 
   private func helperArguments(command: String, context: RunContext) -> [String] {
     let directory = context.directory
-    let urlFile = directory.appendingPathComponent("health.url").path
+    let urlFile = context.healthURLFile.path
     let pidFile = directory.appendingPathComponent("tunnel.pid").path
     return [
       command,
@@ -340,7 +353,7 @@ public actor TunnelManager {
       "--control-plane.api-key=file:/dev/fd/3",
       "--mcp.server-url", configuration.helperMCPURL.absoluteString,
       "--mcp.extra-headers", "X-Codex-Bridge-Token: file:/dev/fd/4",
-      "--health.unix-socket", context.socket.path,
+      "--health.listen-addr", "127.0.0.1:0",
       "--health.url-file", urlFile,
       "--pid.file", pidFile,
       "--allow-remote-ui=false",
@@ -377,7 +390,7 @@ public actor TunnelManager {
     guard context.hasExpectedIdentity else { return false }
     do {
       for name in [
-        "observed.json", "health.sock", "health.url", "tunnel.pid",
+        "observed.json", LoopbackHealthClient.urlFileName, "tunnel.pid",
       ] {
         try context.run.removeEntry(name: name)
       }
@@ -457,11 +470,100 @@ public actor TunnelManager {
       .joined(separator: "\n")
   }
 
-  private static func isKeyByte(_ byte: UInt8) -> Bool {
-    (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(byte)
-      || (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte)
-      || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
-      || byte == UInt8(ascii: "_") || byte == UInt8(ascii: "-")
+  private static func acceptsNoAuthDoctorCompatibility(
+    exitCode: Int32,
+    standardOutput: String
+  ) -> Bool {
+    guard exitCode == 2 else { return false }
+    guard
+      let data = firstJSONObjectData(in: standardOutput),
+      let report = try? JSONDecoder().decode(TunnelDoctorCompatibilityReport.self, from: data),
+      report.result == "fail",
+      report.failedChecks == ["oauth_metadata"]
+    else {
+      return false
+    }
+
+    var checksByID: [String: TunnelDoctorCompatibilityCheck] = [:]
+    for check in report.checks {
+      guard checksByID.updateValue(check, forKey: check.id) == nil else { return false }
+      if check.id == "oauth_metadata" {
+        guard check.status == "FAIL", check.containsHTTP404 else { return false }
+      } else if check.status != "PASS", check.status != "SKIP" {
+        return false
+      }
+    }
+
+    guard checksByID["oauth_metadata"] != nil else { return false }
+    for required in [
+      "tunnel_id", "control_plane_api_key", "mcp_server_reachable", "health_listener",
+    ] {
+      guard checksByID[required]?.status == "PASS" else { return false }
+    }
+    return true
+  }
+
+  private static func firstJSONObjectData(in text: String) -> Data? {
+    guard let start = text.firstIndex(of: "{") else { return nil }
+    var depth = 0
+    var isInsideString = false
+    var isEscaped = false
+    var index = start
+
+    while index < text.endIndex {
+      let character = text[index]
+      if isInsideString {
+        if isEscaped {
+          isEscaped = false
+        } else if character == "\\" {
+          isEscaped = true
+        } else if character == "\"" {
+          isInsideString = false
+        }
+      } else {
+        switch character {
+        case "\"":
+          isInsideString = true
+        case "{":
+          depth += 1
+        case "}":
+          depth -= 1
+          guard depth >= 0 else { return nil }
+          if depth == 0 {
+            let end = text.index(after: index)
+            return Data(text[start..<end].utf8)
+          }
+        default:
+          break
+        }
+      }
+      index = text.index(after: index)
+    }
+    return nil
+  }
+}
+
+private struct TunnelDoctorCompatibilityReport: Decodable {
+  let result: String
+  let failedChecks: [String]
+  let checks: [TunnelDoctorCompatibilityCheck]
+
+  private enum CodingKeys: String, CodingKey {
+    case result
+    case failedChecks = "failed_checks"
+    case checks
+  }
+}
+
+private struct TunnelDoctorCompatibilityCheck: Decodable {
+  let id: String
+  let status: String
+  let summary: String?
+  let evidence: [String]?
+
+  var containsHTTP404: Bool {
+    let values = [summary].compactMap { $0 } + (evidence ?? [])
+    return values.contains { $0.localizedCaseInsensitiveContains("HTTP 404") }
   }
 }
 

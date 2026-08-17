@@ -1,15 +1,17 @@
 #!/bin/zsh
 set -euo pipefail
 
-readonly TUNNEL_CLIENT_VERSION="0.0.11"
-readonly TUNNEL_CLIENT_COMMIT="8d55683eeef80bc5e360d95abf4692454fafc615"
+readonly TUNNEL_CLIENT_VERSION="0.0.10"
+readonly TUNNEL_CLIENT_COMMIT="105e17a79a36e4e5c897fd698ed2b8dbf935b144"
 readonly AMD64_ARCHIVE_NAME="tunnel-client-v${TUNNEL_CLIENT_VERSION}-darwin-amd64.zip"
 readonly ARM64_ARCHIVE_NAME="tunnel-client-v${TUNNEL_CLIENT_VERSION}-darwin-arm64.zip"
 readonly RELEASE_BASE_URL="https://github.com/openai/tunnel-client/releases/download/v${TUNNEL_CLIENT_VERSION}"
-readonly AMD64_ARCHIVE_SHA256="a48c8a37983d9bf9442309cb661cd2f14d7321cfacf72375d7fa31a6a7420db0"
-readonly ARM64_ARCHIVE_SHA256="3685443b057614ff932d2d477dab94be2082e60bcf4e8b4e378bebc89121b714"
+readonly AMD64_ARCHIVE_SHA256="1a48616e584484f8bef4c1128d515ac96cf44d0d9609c1462abccc1793f4b847"
+readonly ARM64_ARCHIVE_SHA256="288accc7fd20cfee1d495adb933773af9e19ebc0cdef3173f7fb544afa5065b2"
+readonly LICENSE_URL="https://raw.githubusercontent.com/openai/tunnel-client/${TUNNEL_CLIENT_COMMIT}/LICENSE"
+readonly LICENSE_SHA256="f4c1d7ba32ef5bcf5cf03e2eefec5825ebafedf50fa330a36700a49c605c1ef4"
 readonly NOTICE_SHA256="1364c020d86ecf948b78b7c655175032068203d13aece70fb0bfe112d7802dc2"
-readonly MANIFEST_LINE_COUNT=18
+readonly MANIFEST_LINE_COUNT=19
 
 if (( $# != 2 )); then
   print -u2 "Usage: ${0:t} HELPER_DIRECTORY TRUSTED_UNSIGNED_SHA256"
@@ -97,22 +99,17 @@ expect_manifest_value derived.file tunnel-client
 expect_manifest_value derived.architectures x86_64,arm64
 expect_manifest_value derived.unsigned.sha256 "${trusted_unsigned_sha256}"
 expect_manifest_value license.file LICENSE
+expect_manifest_value license.url "${LICENSE_URL}"
+expect_manifest_value license.sha256 "${LICENSE_SHA256}"
 expect_manifest_value notice.file NOTICE
 expect_manifest_value notice.source.commit "${TUNNEL_CLIENT_COMMIT}"
 expect_manifest_value notice.sha256 "${NOTICE_SHA256}"
 
-readonly expected_license_sha256="$(manifest_value license.sha256)"
-for digest in "${expected_license_sha256}"; do
-  (( ${#digest} == 64 )) && [[ "${digest}" != *[^0-9a-f]* ]] || {
-    print -u2 "Manifest contains an invalid SHA-256 value."
-    exit 65
-  }
-done
 [[ "$(sha256 "${helper}")" == "${trusted_unsigned_sha256}" ]] || {
   print -u2 "Derived tunnel helper SHA-256 mismatch."
   exit 65
 }
-[[ "$(sha256 "${license}")" == "${expected_license_sha256}" ]] || {
+[[ "$(sha256 "${license}")" == "${LICENSE_SHA256}" ]] || {
   print -u2 "Tunnel helper license SHA-256 mismatch."
   exit 65
 }

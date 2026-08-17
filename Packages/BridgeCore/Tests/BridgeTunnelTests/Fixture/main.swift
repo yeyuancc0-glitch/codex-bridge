@@ -30,27 +30,35 @@ func record(directory: URL, key: String, mcpSecret: String, configuredURL: Strin
   try! data.write(to: directory.appendingPathComponent("observed.json"))
 }
 
-func serve(socketPath: String, tunnelID: String) -> Never {
-  let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-  var address = sockaddr_un()
-  address.sun_family = sa_family_t(AF_UNIX)
-  let bytes = Array(socketPath.utf8CString)
-  guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { exit(13) }
-  _ = withUnsafeMutablePointer(to: &address.sun_path) { pointer in
-    pointer.withMemoryRebound(to: CChar.self, capacity: bytes.count) { destination in
-      bytes.withUnsafeBytes { memcpy(destination, $0.baseAddress!, bytes.count) }
-    }
-  }
-  let pathOffset = MemoryLayout.offset(of: \sockaddr_un.sun_path)!
-  let length = socklen_t(pathOffset + bytes.count)
-  address.sun_len = UInt8(length)
-  unlink(socketPath)
+func serve(healthURLFile: String, tunnelID: String) -> Never {
+  let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+  guard descriptor >= 0 else { exit(11) }
+  var address = sockaddr_in()
+  address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+  address.sin_family = sa_family_t(AF_INET)
+  address.sin_port = 0
+  address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
   let bindStatus = withUnsafePointer(to: &address) { pointer in
     pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-      bind(descriptor, $0, length)
+      bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
     }
   }
   guard bindStatus == 0, listen(descriptor, 8) == 0 else { exit(12) }
+
+  var bound = sockaddr_in()
+  var boundLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+  let nameStatus = withUnsafeMutablePointer(to: &bound) { pointer in
+    pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+      getsockname(descriptor, $0, &boundLength)
+    }
+  }
+  guard nameStatus == 0 else { exit(13) }
+  let port = UInt16(bigEndian: bound.sin_port)
+  writePrivateFile(
+    path: healthURLFile,
+    data: Data("http://127.0.0.1:\(port)".utf8)
+  )
+
   var accepted = 0
   while true {
     let client = accept(descriptor, nil, nil)
@@ -74,9 +82,26 @@ func serve(socketPath: String, tunnelID: String) -> Never {
   }
 }
 
+func writePrivateFile(path: String, data: Data) {
+  let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+  guard descriptor >= 0 else { exit(14) }
+  defer { close(descriptor) }
+  let succeeded = data.withUnsafeBytes { bytes -> Bool in
+    guard let baseAddress = bytes.baseAddress else { return true }
+    var offset = 0
+    while offset < bytes.count {
+      let count = Darwin.write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
+      guard count > 0 else { return false }
+      offset += count
+    }
+    return true
+  }
+  guard succeeded else { exit(15) }
+}
+
 func readAllRequest(_ descriptor: Int32) -> Data {
   var data = Data()
-  var bytes = [UInt8](repeating: 0, count: 1024)
+  var bytes = [UInt8](repeating: 0, count: 1_024)
   while !data.contains(Data("\r\n\r\n".utf8)) {
     let count = recv(descriptor, &bytes, bytes.count, 0)
     guard count > 0 else { break }
@@ -85,12 +110,50 @@ func readAllRequest(_ descriptor: Int32) -> Data {
   return data
 }
 
+func writeNoAuthDoctorFailure(additionalFailure: Bool) {
+  var checks: [[String: Any]] = [
+    ["id": "tunnel_id", "status": "PASS", "summary": "fixture tunnel"],
+    [
+      "id": "control_plane_api_key",
+      "status": "PASS",
+      "summary": "file:/dev/fd/3",
+    ],
+    [
+      "id": "mcp_server_reachable",
+      "status": "PASS",
+      "summary": "HTTP 404 from fixture",
+    ],
+    [
+      "id": "oauth_metadata",
+      "status": "FAIL",
+      "summary": "HTTP 404 from http://127.0.0.1/.well-known/oauth-protected-resource/mcp",
+      "evidence": ["HTTP 404"],
+    ],
+    ["id": "health_listener", "status": "PASS", "summary": "loopback ready"],
+    ["id": "codex_plugin", "status": "SKIP", "summary": "not installed"],
+  ]
+  var failedChecks = ["oauth_metadata"]
+  if additionalFailure {
+    checks[4] = ["id": "health_listener", "status": "FAIL", "summary": "bind failed"]
+    failedChecks.append("health_listener")
+  }
+  let report: [String: Any] = [
+    "result": "fail",
+    "failed_checks": failedChecks,
+    "checks": checks,
+  ]
+  let data = try! JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+  FileHandle.standardOutput.write(data)
+  FileHandle.standardOutput.write(Data([0x0A]))
+}
+
 let arguments = CommandLine.arguments
 guard
   let runtimePath = ProcessInfo.processInfo.environment["TMPDIR"],
   let configuredURL = argumentValue("--mcp.server-url", in: arguments),
   let tunnelID = argumentValue("--control-plane.tunnel-id", in: arguments),
-  let socketPath = argumentValue("--health.unix-socket", in: arguments),
+  let healthURLFile = argumentValue("--health.url-file", in: arguments),
+  argumentValue("--health.listen-addr", in: arguments) == "127.0.0.1:0",
   argumentValue("--control-plane.api-key", in: arguments) == "file:/dev/fd/3",
   argumentValue("--mcp.extra-headers", in: arguments)
     == "X-Codex-Bridge-Token: file:/dev/fd/4"
@@ -111,6 +174,14 @@ if tunnelID.contains("authfail") {
   FileHandle.standardOutput.write(Data("{\"status_code\": 401}\n".utf8))
 }
 if arguments.contains("doctor") {
+  if tunnelID.contains("multifaildoctor") {
+    writeNoAuthDoctorFailure(additionalFailure: true)
+    exit(2)
+  }
+  if tunnelID.contains("noauthdoctor") {
+    writeNoAuthDoctorFailure(additionalFailure: false)
+    exit(2)
+  }
   if tunnelID.contains("doctorfail") { exit(2) }
   if tunnelID.contains("slowdoctor") {
     while true { pause() }
@@ -120,4 +191,4 @@ if arguments.contains("doctor") {
 }
 if tunnelID.contains("ignoreterm") { signal(SIGTERM, SIG_IGN) }
 if tunnelID.contains("exit"), !tunnelID.contains("laterexit") { exit(7) }
-serve(socketPath: socketPath, tunnelID: tunnelID)
+serve(healthURLFile: healthURLFile, tunnelID: tunnelID)

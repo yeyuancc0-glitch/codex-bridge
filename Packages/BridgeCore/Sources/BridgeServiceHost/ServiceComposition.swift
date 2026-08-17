@@ -16,6 +16,7 @@ public struct ServiceCompositionConfiguration: Sendable {
   public let catalogAppServer: AppServerConfiguration
   public let clientInfo: CodexClientInfo
   public let mcpPort: Int
+  public let appBundleURL: URL?
 
   public init(
     appVersion: String,
@@ -24,7 +25,8 @@ public struct ServiceCompositionConfiguration: Sendable {
     supervisorAppServer: AppServerConfiguration = .codex(),
     catalogAppServer: AppServerConfiguration = .codex(),
     clientInfo: CodexClientInfo,
-    mcpPort: Int = 0
+    mcpPort: Int = 0,
+    appBundleURL: URL? = ServiceBundleLocator.currentAppBundleURL()
   ) {
     precondition(!appVersion.isEmpty)
     precondition((0...65_535).contains(mcpPort))
@@ -35,6 +37,7 @@ public struct ServiceCompositionConfiguration: Sendable {
     self.catalogAppServer = catalogAppServer
     self.clientInfo = clientInfo
     self.mcpPort = mcpPort
+    self.appBundleURL = appBundleURL?.standardizedFileURL
   }
 }
 
@@ -50,12 +53,14 @@ public actor ServiceComposition {
   public let catalog: ServiceCodexCatalog
   public let runtimeStatus: ServiceRuntimeStatus
   public let application: BridgeServiceApplication
+  public let tunnel: ServiceTunnelController
 
   private let configuration: ServiceCompositionConfiguration
   private let secretProvider: ServiceMCPSecretProvider
   private var mcpServer: MCPBridgeServer?
   private var mcpEndpoint: MCPBridgeEndpoint?
   private var exposureMode: MCPServiceExposureMode?
+  private var tunnelBootstrapped = false
   private var isShutdown = false
 
   public static func make(
@@ -67,7 +72,8 @@ public actor ServiceComposition {
         throw ServiceMCPSecretError.randomGenerationFailed
       }
       return Data(bytes)
-    }
+    },
+    tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
     let paths = try ServiceDataPaths.prepare(at: configuration.dataRootURL)
     let store = try SimpleServiceStore(path: paths.databaseURL.path)
@@ -115,6 +121,19 @@ public actor ServiceComposition {
       catalog: catalog,
       runtimeStatus: runtimeStatus
     )
+    let resolvedTunnelFactory =
+      tunnelFactory
+      ?? BundledServiceTunnelManagerFactory(
+        appBundleURL: configuration.appBundleURL ?? URL(fileURLWithPath: "/"),
+        runtimeDirectory: paths.tunnelRuntimeURL,
+        secretStore: secretStore
+      )
+    let tunnel = ServiceTunnelController(
+      settings: settings,
+      runtimeStatus: runtimeStatus,
+      secretStore: secretStore,
+      factory: resolvedTunnelFactory
+    )
     return ServiceComposition(
       configuration: configuration,
       paths: paths,
@@ -128,6 +147,7 @@ public actor ServiceComposition {
       catalog: catalog,
       runtimeStatus: runtimeStatus,
       application: application,
+      tunnel: tunnel,
       secretProvider: ServiceMCPSecretProvider(
         store: secretStore,
         randomBytes: randomBytes
@@ -148,6 +168,7 @@ public actor ServiceComposition {
     catalog: ServiceCodexCatalog,
     runtimeStatus: ServiceRuntimeStatus,
     application: BridgeServiceApplication,
+    tunnel: ServiceTunnelController,
     secretProvider: ServiceMCPSecretProvider
   ) {
     self.configuration = configuration
@@ -162,6 +183,7 @@ public actor ServiceComposition {
     self.catalog = catalog
     self.runtimeStatus = runtimeStatus
     self.application = application
+    self.tunnel = tunnel
     self.secretProvider = secretProvider
   }
 
@@ -171,6 +193,7 @@ public actor ServiceComposition {
     let requestedMode = try await settings.exposureMode()
     let mode = Self.mcpExposureMode(requestedMode)
     if exposureMode == mode, let mcpEndpoint { return mcpEndpoint }
+    await tunnel.pauseForMCPRestart()
     await stopMCP()
     let secret = try await secretProvider.secret()
     let server = MCPBridgeServer(
@@ -178,7 +201,7 @@ public actor ServiceComposition {
       service: application,
       exposureMode: mode,
       httpConfiguration: try MCPHTTPConfiguration(
-        pathSecret: secret,
+        headerSecret: secret,
         port: configuration.mcpPort
       )
     )
@@ -191,20 +214,24 @@ public actor ServiceComposition {
       mcpServer = server
       mcpEndpoint = endpoint
       exposureMode = mode
-      await runtimeStatus.update(
-        ServiceRuntimeStatusSnapshot(
-          mcpState: "ready",
-          tunnelState: "stopped"
+      await runtimeStatus.updateMCP(state: "ready")
+      if tunnelBootstrapped {
+        await tunnel.localMCPDidChange(
+          endpoint.localURL,
+          localMCPHeaderSecret: secret
         )
-      )
+      } else {
+        tunnelBootstrapped = true
+        await tunnel.bootstrap(
+          localMCPURL: endpoint.localURL,
+          localMCPHeaderSecret: secret
+        )
+      }
       return endpoint
     } catch {
-      await runtimeStatus.update(
-        ServiceRuntimeStatusSnapshot(
-          mcpState: "failed",
-          tunnelState: "stopped",
-          degradations: ["Local MCP could not start."]
-        )
+      await runtimeStatus.updateMCP(
+        state: "failed",
+        degradation: "Local MCP could not start."
       )
       throw error
     }
@@ -219,6 +246,29 @@ public actor ServiceComposition {
     return try await startLocalMCP()
   }
 
+  public func configureTunnel(
+    tunnelID: String,
+    runtimeKey: String
+  ) async throws -> ServiceTunnelSnapshot {
+    try await tunnel.configure(tunnelID: tunnelID, runtimeKey: runtimeKey)
+  }
+
+  public func connectTunnel() async throws -> ServiceTunnelSnapshot {
+    try await tunnel.connect()
+  }
+
+  public func disconnectTunnel() async throws {
+    try await tunnel.disconnect()
+  }
+
+  public func clearTunnelConfiguration() async throws {
+    try await tunnel.clearConfiguration()
+  }
+
+  public func tunnelStatus() async -> ServiceTunnelSnapshot {
+    await tunnel.status()
+  }
+
   public func endpoint() -> MCPBridgeEndpoint? {
     mcpEndpoint
   }
@@ -226,14 +276,10 @@ public actor ServiceComposition {
   public func shutdown() async {
     guard !isShutdown else { return }
     isShutdown = true
+    await tunnel.shutdown()
     await stopMCP()
     await coordinator.shutdown()
-    await runtimeStatus.update(
-      ServiceRuntimeStatusSnapshot(
-        mcpState: "stopped",
-        tunnelState: "stopped"
-      )
-    )
+    await runtimeStatus.updateMCP(state: "stopped")
   }
 
   private func stopMCP() async {

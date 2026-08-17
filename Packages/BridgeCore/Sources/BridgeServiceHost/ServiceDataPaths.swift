@@ -11,11 +11,18 @@ public struct ServiceDataPaths: Sendable {
   public let rootURL: URL
   public let databaseURL: URL
   public let supervisorScratchURL: URL
+  public let tunnelRuntimeURL: URL
 
-  public init(rootURL: URL, databaseURL: URL, supervisorScratchURL: URL) {
+  public init(
+    rootURL: URL,
+    databaseURL: URL,
+    supervisorScratchURL: URL,
+    tunnelRuntimeURL: URL
+  ) {
     self.rootURL = rootURL
     self.databaseURL = databaseURL
     self.supervisorScratchURL = supervisorScratchURL
+    self.tunnelRuntimeURL = tunnelRuntimeURL
   }
 
   public static func prepare(at requestedRoot: URL) throws -> ServiceDataPaths {
@@ -29,10 +36,16 @@ public struct ServiceDataPaths: Sendable {
       directoryHint: .isDirectory
     )
     try preparePrivateDirectory(scratch, createParents: false)
+    let tunnelRuntime = root.appending(
+      path: "TunnelRuntime",
+      directoryHint: .isDirectory
+    )
+    try preparePrivateDirectory(tunnelRuntime, createParents: false)
     return ServiceDataPaths(
       rootURL: root,
       databaseURL: root.appending(path: "service.sqlite"),
-      supervisorScratchURL: scratch
+      supervisorScratchURL: scratch,
+      tunnelRuntimeURL: tunnelRuntime
     )
   }
 

@@ -19,6 +19,10 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws
+  func configureTunnel(_ request: IPCTunnelConfigurationRequest) async throws -> IPCTunnelStatus
+  func connectTunnel() async throws -> IPCTunnelStatus
+  func disconnectTunnel() async throws
+  func clearTunnel() async throws
   func close() async
 }
 

@@ -264,6 +264,7 @@ let package = Package(
                 "BridgeSecurity",
                 "BridgeServiceApplication",
                 "BridgeServiceCore",
+                "BridgeTunnel",
             ]
         ),
         .target(
@@ -503,6 +504,7 @@ let package = Package(
                 "BridgeSecurity",
                 "BridgeServiceHost",
                 "BridgeServiceCore",
+                "BridgeTunnel",
                 .product(name: "MCP", package: "swift-sdk"),
             ]
         ),

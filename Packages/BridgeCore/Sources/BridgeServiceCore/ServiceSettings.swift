@@ -11,6 +11,8 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case defaultExecutionEffort = "models.execution.effort"
   case defaultSupervisorModel = "models.supervisor.default"
   case defaultSupervisorEffort = "models.supervisor.effort"
+  case tunnelID = "tunnel.id"
+  case tunnelEnabled = "tunnel.enabled"
 }
 
 public actor ServiceSettings {
