@@ -334,6 +334,37 @@ struct StrictToolArguments {
     return value
   }
 
+  func optionalIdentifier(_ key: String, maximumUTF8Bytes: Int) throws -> String? {
+    guard let value = try optionalString(key, maximumUTF8Bytes: maximumUTF8Bytes) else {
+      return nil
+    }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard value == trimmed, !value.isEmpty else {
+      throw MCPError.invalidParams("Argument '\(key)' is invalid.")
+    }
+    return value
+  }
+
+  func optionalStringArray(
+    _ key: String,
+    maximumCount: Int,
+    maximumElementUTF8Bytes: Int
+  ) throws -> [String] {
+    guard let value = values[key], value != .null else { return [] }
+    guard case .array(let rawValues) = value, rawValues.count <= maximumCount else {
+      throw MCPError.invalidParams("Argument '\(key)' must be a bounded string array.")
+    }
+    return try rawValues.map { raw in
+      guard case .string(let text) = raw,
+        text.utf8.count <= maximumElementUTF8Bytes,
+        text.rangeOfCharacter(from: .controlCharacters.subtracting(.newlines)) == nil
+      else {
+        throw MCPError.invalidParams("Argument '\(key)' must contain bounded text.")
+      }
+      return text
+    }
+  }
+
   func limit() throws -> Int {
     try limit(maximum: 100)
   }

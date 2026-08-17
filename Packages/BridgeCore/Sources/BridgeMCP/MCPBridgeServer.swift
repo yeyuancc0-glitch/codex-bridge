@@ -32,10 +32,7 @@ public actor MCPBridgeServer {
     )
   }
 
-  private let appVersion: String
-  private let queries: any BridgeMCPQueries
-  private let taskOperations: (any BridgeMCPTaskOperations)?
-  private let projectOperations: (any BridgeMCPProjectOperations)?
+  private let makeServer: @Sendable () async -> Server
   private let httpConfiguration: MCPHTTPConfiguration
   private let sessionLimits: MCPSessionRegistry.Limits
   private var lifecycle = Lifecycle.stopped
@@ -51,10 +48,31 @@ public actor MCPBridgeServer {
     sessionLimits: MCPSessionRegistry.Limits = .init()
   ) {
     precondition(!appVersion.isEmpty)
-    self.appVersion = appVersion
-    self.queries = queries
-    self.taskOperations = taskOperations
-    self.projectOperations = projectOperations
+    let factory = MCPServerFactory(
+      appVersion: appVersion,
+      queries: queries,
+      taskOperations: taskOperations,
+      projectOperations: projectOperations
+    )
+    makeServer = { await factory.makeServer() }
+    self.httpConfiguration = httpConfiguration
+    self.sessionLimits = sessionLimits
+  }
+
+  public init(
+    appVersion: String,
+    service: any BridgeMCPServiceAPI,
+    exposureMode: MCPServiceExposureMode,
+    httpConfiguration: MCPHTTPConfiguration,
+    sessionLimits: MCPSessionRegistry.Limits = .init()
+  ) {
+    precondition(!appVersion.isEmpty)
+    let factory = MCPServiceServerFactory(
+      appVersion: appVersion,
+      service: service,
+      exposureMode: exposureMode
+    )
+    makeServer = { await factory.makeServer() }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
   }
@@ -88,17 +106,12 @@ public actor MCPBridgeServer {
         throw MCPBridgeServerError.startCancelled
       }
 
-      let factory = MCPServerFactory(
-        appVersion: appVersion,
-        queries: queries,
-        taskOperations: taskOperations,
-        projectOperations: projectOperations
-      )
+      let makeServer = makeServer
       let registry = MCPSessionRegistry(
         boundPort: bound.port,
         limits: sessionLimits
       ) { _ in
-        await factory.makeServer()
+        await makeServer()
       }
       await router.install(registry)
 

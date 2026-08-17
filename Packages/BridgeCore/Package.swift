@@ -30,6 +30,7 @@ let package = Package(
         .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
         .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
         .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
+        .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
         .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
         .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
@@ -225,6 +226,19 @@ let package = Package(
                 "BridgeSecurity",
                 "BridgeServiceCore",
                 "BridgeSupervisor",
+            ]
+        ),
+        .target(
+            name: "BridgeServiceApplication",
+            dependencies: [
+                "BridgeCodexRPC",
+                "BridgeCodexService",
+                "BridgeDomain",
+                "BridgeFiles",
+                "BridgeMCP",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceCore",
             ]
         ),
         .executableTarget(
@@ -428,6 +442,20 @@ let package = Package(
                 "BridgeSecurity",
                 "BridgeServiceCore",
                 "BridgeSupervisor",
+            ]
+        ),
+        .testTarget(
+            name: "BridgeServiceApplicationTests",
+            dependencies: [
+                "BridgeCodexRPC",
+                "BridgeCodexService",
+                "BridgeDomain",
+                "BridgeMCP",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceApplication",
+                "BridgeServiceCore",
+                .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
     ]
