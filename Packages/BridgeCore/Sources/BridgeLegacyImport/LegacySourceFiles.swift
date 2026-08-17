@@ -10,7 +10,7 @@ struct LegacySourceFiles {
   let rootURL: URL
 
   func openDirectory() throws -> LegacyVerifiedSourceDirectory? {
-    let path = rootURL.path
+    let path = rootURL.path(percentEncoded: false)
     guard rootURL.isFileURL,
       path.hasPrefix("/"),
       path.utf8.count <= 16_384,

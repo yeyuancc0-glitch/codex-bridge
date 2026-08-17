@@ -281,6 +281,24 @@ final class LegacyConfigurationImporterTests: XCTestCase {
     XCTAssertFalse(markerAfterEmpty)
   }
 
+  func testLegacyRootRejectsAmbiguousOrExcessivePaths() {
+    let unsafePaths = [
+      "/tmp/CodexBridge\0replacement",
+      "/tmp/CodexBridge\nreplacement",
+      "/" + String(repeating: "a", count: 16_384),
+    ]
+
+    for path in unsafePaths {
+      XCTAssertThrowsError(
+        try LegacySourceFiles(
+          rootURL: URL(fileURLWithPath: path, isDirectory: true)
+        ).openDirectory()
+      ) { error in
+        XCTAssertEqual(error as? LegacyImportError, .insecureSourceDirectory)
+      }
+    }
+  }
+
   func testInsecureLegacyFileIsRejectedWithoutACompletionMarker() async throws {
     let fixture = try LegacyImportFixture(testCase: self)
     try fixture.writeOnboarding(
