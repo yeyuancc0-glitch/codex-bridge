@@ -45,9 +45,15 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         let status = try await composition.application.serviceStatus(
           deadline: deadline()
         )
+        let endpoint = await composition.endpoint()?.localURL.absoluteString
+        let exposureMode = try await composition.settings.exposureMode()
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
-          payload: status
+          payload: IPCServiceStatusResponse(
+            status: status,
+            localMCPURL: endpoint,
+            exposureMode: mcpExposureMode(exposureMode)
+          )
         )
 
       case .listProjects:
@@ -274,6 +280,15 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         message: mapped.message,
         retryable: mapped.retryable
       )
+    }
+  }
+
+  private static func mcpExposureMode(
+    _ mode: ServiceMCPExposureMode
+  ) -> MCPServiceExposureMode {
+    switch mode {
+    case .readOnly: .readOnly
+    case .full: .full
     }
   }
 

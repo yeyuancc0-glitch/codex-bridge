@@ -275,6 +275,28 @@ public struct IPCExposureModeRequest: Codable, Equatable, Sendable {
   }
 }
 
+public struct IPCServiceStatusResponse: Codable, Equatable, Sendable {
+  public let status: BridgeStatusSnapshot
+  public let localMCPURL: String?
+  public let exposureMode: MCPServiceExposureMode
+
+  public init(
+    status: BridgeStatusSnapshot,
+    localMCPURL: String?,
+    exposureMode: MCPServiceExposureMode
+  ) {
+    self.status = status
+    self.localMCPURL = localMCPURL
+    self.exposureMode = exposureMode
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case status
+    case localMCPURL = "local_mcp_url"
+    case exposureMode = "exposure_mode"
+  }
+}
+
 public struct IPCProjectListResponse: Codable, Equatable, Sendable {
   public let projects: [MCPProjectSummary]
 

@@ -45,7 +45,7 @@ public actor BridgeServiceClient {
     connection.invalidate()
   }
 
-  public func status() async throws -> BridgeStatusSnapshot {
+  public func status() async throws -> IPCServiceStatusResponse {
     try await call(operation: .status, payload: Optional<IPCMutationResponse>.none)
   }
 
@@ -167,21 +167,16 @@ public actor BridgeServiceClient {
   }
 
   private func perform(_ data: Data) async throws -> Data {
-    let proxy: CodexBridgeServiceXPCProtocol
-    do {
-      guard
-        let value = connection.remoteObjectProxyWithErrorHandler({ _ in })
-          as? CodexBridgeServiceXPCProtocol
-      else {
-        throw BridgeServiceClientError.invalidRemoteProxy
-      }
-      proxy = value
-    } catch {
-      throw BridgeServiceClientError.invalidRemoteProxy
-    }
-
-    return try await withCheckedThrowingContinuation { continuation in
+    try await withCheckedThrowingContinuation { continuation in
       let completion = XPCClientCompletion(continuation)
+      guard
+        let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in
+          completion.resume(throwing: BridgeServiceClientError.unavailable)
+        }) as? CodexBridgeServiceXPCProtocol
+      else {
+        completion.resume(throwing: BridgeServiceClientError.invalidRemoteProxy)
+        return
+      }
       proxy.perform(data) { response in
         completion.resume(returning: response)
       }
@@ -198,10 +193,21 @@ private final class XPCClientCompletion: @unchecked Sendable {
   }
 
   func resume(returning data: Data) {
+    resolve { $0.resume(returning: data) }
+  }
+
+  func resume(throwing error: any Error) {
+    resolve { $0.resume(throwing: error) }
+  }
+
+  private func resolve(
+    _ body: (CheckedContinuation<Data, any Error>) -> Void
+  ) {
     lock.lock()
     let continuation = continuation
     self.continuation = nil
     lock.unlock()
-    continuation?.resume(returning: data)
+    guard let continuation else { return }
+    body(continuation)
   }
 }

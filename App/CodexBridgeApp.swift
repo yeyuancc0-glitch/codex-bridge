@@ -1,27 +1,26 @@
 import AppKit
-import BridgeAppShell
+import BridgeServiceAppShell
 import SwiftUI
-@preconcurrency import UserNotifications
 
 @main
 struct CodexBridgeApp: App {
   @NSApplicationDelegateAdaptor(CodexBridgeAppDelegate.self) private var appDelegate
-  @StateObject private var runtime: BridgeDesktopRuntime
+  @StateObject private var model: BridgeServiceAppModel
 
   init() {
-    let runtime = BridgeDesktopRuntime()
-    _runtime = StateObject(wrappedValue: runtime)
-    appDelegate.install(runtime)
+    let model = BridgeServiceAppModel()
+    _model = StateObject(wrappedValue: model)
+    appDelegate.install(model)
   }
 
   var body: some Scene {
     WindowGroup("Codex Bridge") {
-      BridgeDesktopRootView(runtime: runtime)
+      BridgeServiceRootView(model: model)
     }
     .defaultSize(width: 1180, height: 760)
 
     MenuBarExtra {
-      BridgeMenuBarView(runtime: runtime)
+      BridgeServiceMenuBarView(model: model)
     } label: {
       Label("Codex Bridge", systemImage: "link")
         .accessibilityLabel("Codex Bridge")
@@ -31,56 +30,23 @@ struct CodexBridgeApp: App {
 
 @MainActor
 private final class CodexBridgeAppDelegate: NSObject, NSApplicationDelegate {
-  private weak var runtime: BridgeDesktopRuntime?
-  private var isShuttingDown = false
+  private weak var model: BridgeServiceAppModel?
+  private var isClosingClient = false
   private var canTerminate = false
 
-  override init() {
-    super.init()
-    UNUserNotificationCenter.current().delegate = self
-  }
-
-  func install(_ runtime: BridgeDesktopRuntime) {
-    self.runtime = runtime
+  func install(_ model: BridgeServiceAppModel) {
+    self.model = model
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if canTerminate { return .terminateNow }
-    guard !isShuttingDown, let runtime else { return .terminateNow }
-    isShuttingDown = true
+    guard !isClosingClient, let model else { return .terminateNow }
+    isClosingClient = true
     Task {
-      await runtime.shutdown()
+      await model.shutdownUI()
       canTerminate = true
       sender.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
-  }
-}
-
-extension CodexBridgeAppDelegate: UNUserNotificationCenterDelegate {
-  nonisolated func userNotificationCenter(
-    _ center: UNUserNotificationCenter,
-    willPresent notification: UNNotification,
-    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-  ) {
-    _ = center
-    _ = notification
-    completionHandler([.banner, .sound])
-  }
-
-  nonisolated func userNotificationCenter(
-    _ center: UNUserNotificationCenter,
-    didReceive response: UNNotificationResponse,
-    withCompletionHandler completionHandler: @escaping () -> Void
-  ) {
-    _ = center
-    let route = DesktopTaskNotificationRoute(
-      userInfo: response.notification.request.content.userInfo
-    )
-    completionHandler()
-    guard let route else { return }
-    Task { @MainActor [weak self] in
-      self?.runtime?.openTaskFromNotification(route.taskID)
-    }
   }
 }

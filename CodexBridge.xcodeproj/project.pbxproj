@@ -9,7 +9,7 @@
 /* Begin PBXBuildFile section */
 		01A000000000000000000001 /* CodexBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000001 /* CodexBridgeApp.swift */; };
 		01A000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000002 /* Assets.xcassets */; };
-		01A000000000000000000003 /* BridgeAppShell in Frameworks */ = {isa = PBXBuildFile; productRef = 01F000000000000000000001 /* BridgeAppShell */; };
+		01A000000000000000000003 /* BridgeServiceAppShell in Frameworks */ = {isa = PBXBuildFile; productRef = 01F000000000000000000001 /* BridgeServiceAppShell */; };
 		03A000000000000000000001 /* CodexBridgeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B000000000000000000001 /* CodexBridgeUITests.swift */; };
 		05A000000000000000000001 /* CodexBridgeServiceMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000001 /* CodexBridgeServiceMain.swift */; };
 		05A000000000000000000002 /* BridgeServiceHost in Frameworks */ = {isa = PBXBuildFile; productRef = 05G000000000000000000001 /* BridgeServiceHost */; };
@@ -80,7 +80,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				01A000000000000000000003 /* BridgeAppShell in Frameworks */,
+				01A000000000000000000003 /* BridgeServiceAppShell in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,7 +191,7 @@
 			);
 			name = CodexBridge;
 			packageProductDependencies = (
-				01F000000000000000000001 /* BridgeAppShell */,
+				01F000000000000000000001 /* BridgeServiceAppShell */,
 			);
 			productName = CodexBridge;
 			productReference = 01B000000000000000000008 /* CodexBridge.app */;
@@ -546,10 +546,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		01F000000000000000000001 /* BridgeAppShell */ = {
+		01F000000000000000000001 /* BridgeServiceAppShell */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */;
-			productName = BridgeAppShell;
+			productName = BridgeServiceAppShell;
 		};
 		05G000000000000000000001 /* BridgeServiceHost */ = {
 			isa = XCSwiftPackageProductDependency;

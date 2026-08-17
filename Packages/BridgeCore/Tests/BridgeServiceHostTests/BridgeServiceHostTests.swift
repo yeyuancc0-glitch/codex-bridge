@@ -174,8 +174,10 @@ final class BridgeServiceHostTests: XCTestCase {
     }
 
     let status = try await client.status()
-    XCTAssertEqual(status.mcpState, "ready")
-    XCTAssertEqual(status.tunnelState, "stopped")
+    XCTAssertEqual(status.status.mcpState, "ready")
+    XCTAssertEqual(status.status.tunnelState, "stopped")
+    XCTAssertEqual(status.exposureMode, .readOnly)
+    XCTAssertNotNil(status.localMCPURL)
 
     let projectRoot = fixture.root.appending(path: "XPCProject", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
