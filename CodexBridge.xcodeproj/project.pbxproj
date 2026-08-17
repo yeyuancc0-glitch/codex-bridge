@@ -11,6 +11,10 @@
 		01A000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000002 /* Assets.xcassets */; };
 		01A000000000000000000003 /* BridgeAppShell in Frameworks */ = {isa = PBXBuildFile; productRef = 01F000000000000000000001 /* BridgeAppShell */; };
 		03A000000000000000000001 /* CodexBridgeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B000000000000000000001 /* CodexBridgeUITests.swift */; };
+		05A000000000000000000001 /* CodexBridgeServiceMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000001 /* CodexBridgeServiceMain.swift */; };
+		05A000000000000000000002 /* BridgeServiceHost in Frameworks */ = {isa = PBXBuildFile; productRef = 05G000000000000000000001 /* BridgeServiceHost */; };
+		05A000000000000000000003 /* CodexBridgeService in Embed Service */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000003 /* CodexBridgeService */; };
+		05A000000000000000000004 /* org.codexbridge.service.plist in LaunchAgents */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000002 /* org.codexbridge.service.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -20,6 +24,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 01E000000000000000000001;
 			remoteInfo = CodexBridge;
+		};
+		05F000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01E000000000000000000003 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 05E000000000000000000001;
+			remoteInfo = CodexBridgeService;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -34,7 +45,35 @@
 		01B000000000000000000008 /* CodexBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		03B000000000000000000001 /* CodexBridgeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexBridgeUITests.swift; sourceTree = "<group>"; };
 		03B000000000000000000002 /* CodexBridgeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexBridgeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		05B000000000000000000001 /* CodexBridgeServiceMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexBridgeServiceMain.swift; sourceTree = "<group>"; };
+		05B000000000000000000002 /* org.codexbridge.service.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = org.codexbridge.service.plist; sourceTree = "<group>"; };
+		05B000000000000000000003 /* CodexBridgeService */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = CodexBridgeService; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		05C000000000000000000001 /* Embed Service */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				05A000000000000000000003 /* CodexBridgeService in Embed Service */,
+			);
+			name = "Embed Service";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		05C000000000000000000002 /* Copy LaunchAgent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				05A000000000000000000004 /* org.codexbridge.service.plist in LaunchAgents */,
+			);
+			name = "Copy LaunchAgent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		01C000000000000000000001 /* Frameworks */ = {
@@ -52,6 +91,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		05C000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05A000000000000000000002 /* BridgeServiceHost in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -59,6 +106,7 @@
 			isa = PBXGroup;
 			children = (
 				01D000000000000000000002 /* App */,
+				05D000000000000000000001 /* Service */,
 				03D000000000000000000001 /* UITests */,
 				01D000000000000000000004 /* Config */,
 				01D000000000000000000005 /* Products */,
@@ -79,6 +127,7 @@
 			isa = PBXGroup;
 			children = (
 				01B000000000000000000002 /* Assets.xcassets */,
+				05B000000000000000000002 /* org.codexbridge.service.plist */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -98,9 +147,18 @@
 			isa = PBXGroup;
 			children = (
 				01B000000000000000000008 /* CodexBridge.app */,
+				05B000000000000000000003 /* CodexBridgeService */,
 				03B000000000000000000002 /* CodexBridgeUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		05D000000000000000000001 /* Service */ = {
+			isa = PBXGroup;
+			children = (
+				05B000000000000000000001 /* CodexBridgeServiceMain.swift */,
+			);
+			path = Service;
 			sourceTree = "<group>";
 		};
 		03D000000000000000000001 /* UITests */ = {
@@ -121,11 +179,15 @@
 				01C000000000000000000002 /* Sources */,
 				01C000000000000000000001 /* Frameworks */,
 				01C000000000000000000003 /* Resources */,
+				05C000000000000000000001 /* Embed Service */,
+				05C000000000000000000002 /* Copy LaunchAgent */,
+				05C000000000000000000006 /* Sign Embedded Service */,
 				01C000000000000000000004 /* Stage Tunnel Helper */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				05F000000000000000000002 /* PBXTargetDependency */,
 			);
 			name = CodexBridge;
 			packageProductDependencies = (
@@ -134,6 +196,26 @@
 			productName = CodexBridge;
 			productReference = 01B000000000000000000008 /* CodexBridge.app */;
 			productType = "com.apple.product-type.application";
+		};
+		05E000000000000000000001 /* CodexBridgeService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 05E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridgeService" */;
+			buildPhases = (
+				05C000000000000000000003 /* Sources */,
+				05C000000000000000000004 /* Frameworks */,
+				05C000000000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexBridgeService;
+			packageProductDependencies = (
+				05G000000000000000000001 /* BridgeServiceHost */,
+			);
+			productName = CodexBridgeService;
+			productReference = 05B000000000000000000003 /* CodexBridgeService */;
+			productType = "com.apple.product-type.tool";
 		};
 		03E000000000000000000001 /* CodexBridgeUITests */ = {
 			isa = PBXNativeTarget;
@@ -168,6 +250,9 @@
 					01E000000000000000000001 = {
 						CreatedOnToolsVersion = 27.0;
 					};
+					05E000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					03E000000000000000000001 = {
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 01E000000000000000000001;
@@ -192,6 +277,7 @@
 			projectRoot = "";
 			targets = (
 				01E000000000000000000001 /* CodexBridge */,
+				05E000000000000000000001 /* CodexBridgeService */,
 				03E000000000000000000001 /* CodexBridgeUITests */,
 			);
 		};
@@ -213,9 +299,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		05C000000000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		05C000000000000000000006 /* Sign Embedded Service */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CodexBridgeService",
+			);
+			name = "Sign Embedded Service";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"/bin/zsh\" \"$SRCROOT/Scripts/sign-embedded-service.sh\"\n";
+		};
 		01C000000000000000000004 /* Stage Tunnel Helper */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -255,6 +368,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		05C000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05A000000000000000000001 /* CodexBridgeServiceMain.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -262,6 +383,11 @@
 			isa = PBXTargetDependency;
 			target = 01E000000000000000000001 /* CodexBridge */;
 			targetProxy = 03F000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		05F000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 05E000000000000000000001 /* CodexBridgeService */;
+			targetProxy = 05F000000000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -301,6 +427,37 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 01B000000000000000000006 /* Release.xcconfig */;
 			buildSettings = {
+			};
+			name = Release;
+		};
+		060000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_NAME = CodexBridgeService;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		060000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_NAME = CodexBridgeService;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -361,6 +518,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		05E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridgeService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				060000000000000000000001 /* Debug */,
+				060000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		03E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridgeUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -384,6 +550,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */;
 			productName = BridgeAppShell;
+		};
+		05G000000000000000000001 /* BridgeServiceHost */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */;
+			productName = BridgeServiceHost;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

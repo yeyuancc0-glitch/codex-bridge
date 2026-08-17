@@ -31,6 +31,9 @@ let package = Package(
         .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
         .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
         .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
+        .library(name: "BridgeIPC", targets: ["BridgeIPC"]),
+        .library(name: "BridgeServiceHost", targets: ["BridgeServiceHost"]),
+        .executable(name: "codex-bridge-service", targets: ["CodexBridgeServiceExecutable"]),
         .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
         .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
         .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
@@ -240,6 +243,31 @@ let package = Package(
                 "BridgeSecurity",
                 "BridgeServiceCore",
             ]
+        ),
+        .target(
+            name: "BridgeIPC",
+            dependencies: [
+                "BridgeMCP",
+                "BridgeServiceCore",
+            ]
+        ),
+        .target(
+            name: "BridgeServiceHost",
+            dependencies: [
+                "BridgeCodexRPC",
+                "BridgeCodexService",
+                "BridgeDomain",
+                "BridgeIPC",
+                "BridgeMCP",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceApplication",
+                "BridgeServiceCore",
+            ]
+        ),
+        .executableTarget(
+            name: "CodexBridgeServiceExecutable",
+            dependencies: ["BridgeServiceHost"]
         ),
         .executableTarget(
             name: "CodexRPCFixture",
@@ -454,6 +482,18 @@ let package = Package(
                 "BridgeProjects",
                 "BridgeSecurity",
                 "BridgeServiceApplication",
+                "BridgeServiceCore",
+                .product(name: "MCP", package: "swift-sdk"),
+            ]
+        ),
+        .testTarget(
+            name: "BridgeServiceHostTests",
+            dependencies: [
+                "BridgeCodexRPC",
+                "BridgeIPC",
+                "BridgeMCP",
+                "BridgeSecurity",
+                "BridgeServiceHost",
                 "BridgeServiceCore",
                 .product(name: "MCP", package: "swift-sdk"),
             ]
