@@ -25,6 +25,12 @@ public struct CodexApprovalItemKey: Equatable, Hashable, Sendable {
   public let threadID: String
   public let turnID: String
   public let itemID: String
+
+  public init(threadID: String, turnID: String, itemID: String) {
+    self.threadID = threadID
+    self.turnID = turnID
+    self.itemID = itemID
+  }
 }
 
 public struct CodexApprovalCorrelation: Equatable, Sendable {

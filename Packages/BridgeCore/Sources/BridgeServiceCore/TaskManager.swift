@@ -95,14 +95,29 @@ public actor ServiceTaskManager {
   }
 
   @discardableResult
-  public func recordChangedFiles(taskID: TaskID, relativePaths: [String]) async throws
-    -> ServiceTaskRecord
-  {
+  public func recordChangedFiles(
+    taskID: TaskID,
+    relativePaths: [String],
+    summary: String = "Codex reported project file changes."
+  ) async throws -> ServiceTaskRecord {
     try await mutate(
       taskID: taskID,
-      patch: StatePatch(changedFiles: relativePaths),
+      patch: StatePatch(changedFilesToAppend: relativePaths),
       eventKind: .fileChanged,
-      summary: "Codex reported project file changes."
+      summary: summary
+    )
+  }
+
+  @discardableResult
+  public func recordCommandCompletion(
+    taskID: TaskID,
+    summary: String
+  ) async throws -> ServiceTaskRecord {
+    try await mutate(
+      taskID: taskID,
+      patch: StatePatch(),
+      eventKind: .commandCompleted,
+      summary: summary
     )
   }
 
@@ -122,17 +137,13 @@ public actor ServiceTaskManager {
   public func resumeAfterCodexApproval(taskID: TaskID, approved: Bool) async throws
     -> ServiceTaskRecord
   {
-    let destination: ServiceTaskStatus = approved ? .running : .failed
-    return try await mutate(
+    try await mutate(
       taskID: taskID,
-      patch: StatePatch(
-        status: destination,
-        failureCode: approved ? .keep : .set("approval_denied")
-      ),
+      patch: StatePatch(status: .running),
       eventKind: .approvalResolved,
       summary: approved
         ? "The local user approved the Codex request."
-        : "The local user denied the Codex request."
+        : "The local user denied the Codex request; Codex may continue with a safer path."
     )
   }
 
@@ -280,7 +291,8 @@ public actor ServiceTaskManager {
       status: patch.status ?? current.status,
       supervisorStatus: patch.supervisorStatus ?? current.supervisorStatus,
       currentStep: patch.currentStep.applying(to: current.currentStep),
-      changedFiles: patch.changedFiles ?? current.changedFiles,
+      changedFiles: patch.changedFiles
+        ?? Array(Set(current.changedFiles + patch.changedFilesToAppend)).sorted(),
       resultSummary: patch.resultSummary.applying(to: current.resultSummary),
       supervisorSummary: patch.supervisorSummary.applying(to: current.supervisorSummary),
       failureCode: patch.failureCode.applying(to: current.failureCode)
@@ -295,6 +307,7 @@ private struct StatePatch: Sendable {
   var supervisorStatus: ServiceSupervisorStatus?
   var currentStep: OptionalUpdate<String> = .keep
   var changedFiles: [String]?
+  var changedFilesToAppend: [String] = []
   var resultSummary: OptionalUpdate<String> = .keep
   var supervisorSummary: OptionalUpdate<String> = .keep
   var failureCode: OptionalUpdate<String> = .keep
