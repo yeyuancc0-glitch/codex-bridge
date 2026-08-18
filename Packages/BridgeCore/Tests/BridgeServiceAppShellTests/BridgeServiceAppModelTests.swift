@@ -93,6 +93,32 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.modelPreferences?.supervisorEnabled, false)
   }
 
+  func testAccessModeAndFastModeReachServiceClient() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    XCTAssertEqual(model.modelPreferences?.accessMode, "request-approval")
+    XCTAssertEqual(model.modelPreferences?.fastModeEnabled, false)
+
+    model.setAccessMode("auto-review")
+    model.setFastMode(true)
+
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.modelPreferences.accessMode == "auto-review"
+        && snapshot.modelPreferences.fastModeEnabled == true
+    }
+    XCTAssertEqual(model.modelPreferences?.accessMode, "auto-review")
+    XCTAssertEqual(model.modelPreferences?.fastModeEnabled, true)
+  }
+
   func testShutdownClosesOnlyUIClientAndLeavesServiceRegistered() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -403,7 +429,9 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       executionEffort: modelPreferencesValue.executionEffort,
       supervisorModel: modelPreferencesValue.supervisorModel,
       supervisorEffort: modelPreferencesValue.supervisorEffort,
-      supervisorEnabled: enabled
+      supervisorEnabled: enabled,
+      accessMode: modelPreferencesValue.accessMode,
+      fastModeEnabled: modelPreferencesValue.fastModeEnabled
     )
   }
 

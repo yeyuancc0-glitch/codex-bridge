@@ -233,6 +233,18 @@ public actor ServiceCodexCatalog {
       throw BridgeMCPQueryError.unavailable
     }
     for effort in efforts { try validateIdentifier(effort, maximum: 64) }
+    var tiers: [String] = []
+    for tier in source.serviceTiers ?? [] {
+      try validateIdentifier(tier.id, maximum: 64)
+      guard !tiers.contains(tier.id) else { throw BridgeMCPQueryError.unavailable }
+      tiers.append(tier.id)
+    }
+    var speedTiers: [String] = []
+    for tier in source.additionalSpeedTiers ?? [] {
+      try validateIdentifier(tier, maximum: 64)
+      guard !speedTiers.contains(tier) else { throw BridgeMCPQueryError.unavailable }
+      speedTiers.append(tier)
+    }
     let defaultEffort: String?
     if source.defaultReasoningEffort.isEmpty {
       defaultEffort = nil
@@ -248,7 +260,9 @@ public actor ServiceCodexCatalog {
       displayName: displayName,
       isDefault: source.isDefault,
       reasoningEfforts: efforts,
-      defaultReasoningEffort: defaultEffort
+      defaultReasoningEffort: defaultEffort,
+      serviceTiers: tiers,
+      additionalSpeedTiers: speedTiers
     )
   }
 

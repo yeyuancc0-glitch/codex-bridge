@@ -285,6 +285,24 @@ struct BridgeServiceSettingsView: View {
             )
           }
 
+          if !supervisor {
+            Picker("访问权限", selection: accessModeBinding) {
+              accessModeOptions(selected: model.modelPreferences?.accessMode)
+            }
+
+            Text(accessModeDescription)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+
+            Toggle("Fast 模式", isOn: fastModeBinding)
+              .disabled(!fastModeSupported)
+            if !fastModeSupported {
+              Text("当前默认模型不支持 Fast。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
+
           Text(description)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -396,6 +414,49 @@ struct BridgeServiceSettingsView: View {
       get: { model.modelPreferences?.supervisorEnabled ?? true },
       set: { model.setSupervisorEnabled($0) }
     )
+  }
+
+  private var accessModeBinding: Binding<String> {
+    Binding(
+      get: { model.modelPreferences?.accessMode ?? "request-approval" },
+      set: { model.setAccessMode($0) }
+    )
+  }
+
+  private var fastModeBinding: Binding<Bool> {
+    Binding(
+      get: { model.modelPreferences?.fastModeEnabled ?? false },
+      set: { model.setFastMode($0) }
+    )
+  }
+
+  private var fastModeSupported: Bool {
+    let modelID = model.modelPreferences?.executionModel
+    return model.models.first(where: { $0.modelID == modelID })?
+      .supportsFastMode == true
+  }
+
+  @ViewBuilder
+  private func accessModeOptions(selected: String?) -> some View {
+    let known = ["request-approval", "auto-review", "full-access"]
+    if let selected, !known.contains(selected) {
+      Text("当前设置不可用 · \(selected)")
+        .tag(selected)
+    }
+    Text("请求批准").tag("request-approval")
+    Text("帮我批准").tag("auto-review")
+    Text("完全访问权限").tag("full-access")
+  }
+
+  private var accessModeDescription: String {
+    switch model.modelPreferences?.accessMode {
+    case "auto-review":
+      "仅对检测到的风险操作请求批准。"
+    case "full-access":
+      "可不受限制地访问互联网和您电脑上的任何文件。"
+    default:
+      "编辑外部文件和使用互联网时始终询问。"
+    }
   }
 
   private func reasoningTitle(_ effort: String) -> String {

@@ -175,7 +175,9 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
               executionEffort: catalog.preferences.executionEffort,
               supervisorModel: catalog.preferences.supervisorModel,
               supervisorEffort: catalog.preferences.supervisorEffort,
-              supervisorEnabled: try await composition.settings.isSupervisorEnabled()
+              supervisorEnabled: try await composition.settings.isSupervisorEnabled(),
+              accessMode: catalog.preferences.accessMode.rawValue,
+              fastModeEnabled: catalog.preferences.fastModeEnabled
             )
           )
         )
@@ -191,7 +193,9 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
             executionEffort: preferences.executionEffort,
             supervisorModel: preferences.supervisorModel,
             supervisorEffort: preferences.supervisorEffort,
-            supervisorEnabled: try await composition.settings.isSupervisorEnabled()
+            supervisorEnabled: try await composition.settings.isSupervisorEnabled(),
+            accessMode: preferences.accessMode.rawValue,
+            fastModeEnabled: preferences.fastModeEnabled
           )
         )
 
@@ -200,12 +204,17 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           IPCModelPreferences.self,
           from: request
         )
+        guard let accessMode = ServiceAccessMode(rawValue: payload.accessMode) else {
+          throw ServiceStoreError.invalidArgument("preferences.accessMode")
+        }
         try await composition.application.setServiceModelPreferences(
           ServiceModelPreferences(
             executionModel: payload.executionModel,
             executionEffort: payload.executionEffort,
             supervisorModel: payload.supervisorModel,
-            supervisorEffort: payload.supervisorEffort
+            supervisorEffort: payload.supervisorEffort,
+            accessMode: accessMode,
+            fastModeEnabled: payload.fastModeEnabled
           ),
           deadline: deadline()
         )

@@ -119,6 +119,18 @@ var serviceModelCatalogScript: String {
   """#
 }
 
+var serviceFastModelCatalogScript: String {
+  #"""
+  IFS= read -r initialize
+  printf '%s\n' '{"id":1,"result":{"userAgent":"fixture/1","codexHome":"/private/fixture","platformFamily":"unix","platformOs":"macos"}}'
+  IFS= read -r initialized
+  IFS= read -r request
+  case "$request" in *'"method":"model/list"'*) ;; *) exit 11 ;; esac
+  printf '%s\n' '{"id":2,"result":{"data":[{"id":"execution-model","model":"execution-model","displayName":"Execution","description":"Execution","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}],"defaultReasoningEffort":"high","isDefault":true,"additionalSpeedTiers":["fast"],"serviceTiers":[{"id":"priority","name":"Fast","description":"Fast"}],"defaultServiceTier":null},{"id":"gpt-5.6-luna","model":"gpt-5.6-luna","displayName":"Luna","description":"Supervisor","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":false}],"nextCursor":null}}'
+  sleep 1
+  """#
+}
+
 func serviceThreadListScript(root: String) -> String {
   let matching = serviceThreadJSON(id: "thread-matching", root: root, name: "Matching")
   return serviceCatalogHandshake
@@ -171,12 +183,15 @@ func serviceExecutionStartScript(root: String) -> String {
     case "$initialized" in *'"method":"initialized"'*) ;; *) exit 42 ;; esac
     IFS= read -r models
     case "$models" in *'"method":"model/list"'*) ;; *) exit 43 ;; esac
-    printf '%s\n' '{"id":2,"result":{"data":[{"id":"execution-model","model":"execution-model","displayName":"Execution","description":"Execution","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}],"defaultReasoningEffort":"high","isDefault":true},{"id":"gpt-5.6-luna","model":"gpt-5.6-luna","displayName":"Luna","description":"Supervisor","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":false}],"nextCursor":null}}'
+    printf '%s\n' '{"id":2,"result":{"data":[{"id":"execution-model","model":"execution-model","displayName":"Execution","description":"Execution","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}],"defaultReasoningEffort":"high","isDefault":true,"additionalSpeedTiers":["fast"],"serviceTiers":[{"id":"priority","name":"Fast","description":"Fast"}],"defaultServiceTier":null},{"id":"gpt-5.6-luna","model":"gpt-5.6-luna","displayName":"Luna","description":"Supervisor","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":false}],"nextCursor":null}}'
     IFS= read -r thread_start
     case "$thread_start" in *'"method":"thread/start"'*) ;; *) exit 44 ;; esac
     case "$thread_start" in *'"cwd":"__ROOT__"'*) ;; *) exit 44 ;; esac
     model=$(printf '%s\n' "$thread_start" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')
-    printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"'"$model"'","modelProvider":"fixture","reasoningEffort":"high","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+    reviewer=$(printf '%s\n' "$thread_start" | sed -n 's/.*"approvalsReviewer":"\([^"]*\)".*/\1/p')
+    tier=$(printf '%s\n' "$thread_start" | sed -n 's/.*"serviceTier":"\([^"]*\)".*/\1/p')
+    [ -n "$tier" ] || tier=null
+    printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"'"$model"'","modelProvider":"fixture","reasoningEffort":"high","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"'"$reviewer"'","serviceTier":"'"$tier"'"}}'
     IFS= read -r turn_start
     case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 45 ;; esac
     printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-execution","turn":__TURN__}}'

@@ -1,10 +1,11 @@
 import GRDB
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 1
+  static let version: Int64 = 2
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
-  static let knownMigrations: Set<String> = [migrationV1]
+  static let migrationV2 = "BridgeServiceCore.v2"
+  static let knownMigrations: Set<String> = [migrationV1, migrationV2]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
@@ -22,6 +23,9 @@ enum ServiceStoreSchema {
     var migrator = DatabaseMigrator()
     migrator.registerMigration(migrationV1) { db in
       try createVersionOne(in: db)
+    }
+    migrator.registerMigration(migrationV2) { db in
+      try createVersionTwo(in: db)
     }
     return migrator
   }
@@ -55,13 +59,27 @@ enum ServiceStoreSchema {
         sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
       )
       guard versions.count == 1 else { throw ServiceStoreError.corruptSchema }
-      guard versions[0] == version else {
+      guard (1...version).contains(versions[0]) else {
         throw ServiceStoreError.unsupportedSchemaVersion(versions[0])
       }
     }
   }
 
-  private static func createVersionOne(in db: Database) throws {
+  private static func createVersionTwo(in db: Database) throws {
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_tasks
+        ADD COLUMN access_mode TEXT NOT NULL DEFAULT 'request-approval'
+          CHECK (access_mode IN ('request-approval', 'auto-review', 'full-access'));
+
+        ALTER TABLE bridge_service_tasks
+        ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0 CHECK (fast_mode IN (0, 1));
+
+        UPDATE bridge_service_meta SET schema_version = 2 WHERE singleton = 1;
+        """)
+  }
+
+  static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
         CREATE TABLE bridge_service_meta (
@@ -227,7 +245,8 @@ enum ServiceStoreSchema {
           "task_id", "project_id", "source", "client_request_id", "prompt",
           "requested_thread_id", "codex_thread_id", "codex_turn_id", "status",
           "supervisor_status", "execution_model", "execution_effort", "supervisor_model",
-          "supervisor_effort", "permission_mode", "network_allowed", "current_step",
+          "supervisor_effort", "permission_mode", "network_allowed", "access_mode",
+          "fast_mode", "current_step",
           "changed_files_json", "result_summary", "supervisor_summary", "failure_code",
           "created_at", "updated_at",
         ],

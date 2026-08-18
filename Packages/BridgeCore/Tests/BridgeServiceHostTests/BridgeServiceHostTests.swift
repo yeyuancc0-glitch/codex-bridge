@@ -239,12 +239,16 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(preferences.supervisorModel, "gpt-5.6-luna")
     XCTAssertEqual(preferences.supervisorEffort, "medium")
     XCTAssertEqual(preferences.supervisorEnabled, true)
+    XCTAssertEqual(preferences.accessMode, "request-approval")
+    XCTAssertEqual(preferences.fastModeEnabled, false)
 
     let configured = IPCModelPreferences(
       executionModel: "gpt-5.6-luna",
       executionEffort: "medium",
       supervisorModel: "execution-model",
-      supervisorEffort: "high"
+      supervisorEffort: "high",
+      accessMode: "auto-review",
+      fastModeEnabled: true
     )
     try await client.setModelPreferences(configured)
     let reloaded = try await client.modelCatalog()

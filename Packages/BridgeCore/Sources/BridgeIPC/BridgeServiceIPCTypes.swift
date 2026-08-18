@@ -287,19 +287,25 @@ public struct IPCModelPreferences: Codable, Equatable, Sendable {
   public let supervisorModel: String
   public let supervisorEffort: String
   public let supervisorEnabled: Bool
+  public let accessMode: String
+  public let fastModeEnabled: Bool
 
   public init(
     executionModel: String,
     executionEffort: String,
     supervisorModel: String,
     supervisorEffort: String,
-    supervisorEnabled: Bool = true
+    supervisorEnabled: Bool = true,
+    accessMode: String = "request-approval",
+    fastModeEnabled: Bool = false
   ) {
     self.executionModel = executionModel
     self.executionEffort = executionEffort
     self.supervisorModel = supervisorModel
     self.supervisorEffort = supervisorEffort
     self.supervisorEnabled = supervisorEnabled
+    self.accessMode = accessMode
+    self.fastModeEnabled = fastModeEnabled
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -308,6 +314,8 @@ public struct IPCModelPreferences: Codable, Equatable, Sendable {
     case supervisorModel = "supervisor_model"
     case supervisorEffort = "supervisor_effort"
     case supervisorEnabled = "supervisor_enabled"
+    case accessMode = "access_mode"
+    case fastModeEnabled = "fast_mode_enabled"
   }
 
   public init(from decoder: Decoder) throws {
@@ -318,6 +326,10 @@ public struct IPCModelPreferences: Codable, Equatable, Sendable {
     self.supervisorEffort = try values.decode(String.self, forKey: .supervisorEffort)
     self.supervisorEnabled =
       try values.decodeIfPresent(Bool.self, forKey: .supervisorEnabled) ?? true
+    self.accessMode =
+      try values.decodeIfPresent(String.self, forKey: .accessMode) ?? "request-approval"
+    self.fastModeEnabled =
+      try values.decodeIfPresent(Bool.self, forKey: .fastModeEnabled) ?? false
   }
 }
 

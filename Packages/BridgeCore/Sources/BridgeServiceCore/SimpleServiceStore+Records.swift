@@ -15,10 +15,10 @@ extension SimpleServiceStore {
           task_id, project_id, source, client_request_id, prompt, requested_thread_id,
           codex_thread_id, codex_turn_id, status, supervisor_status, execution_model,
           execution_effort, supervisor_model, supervisor_effort, permission_mode,
-          network_allowed, current_step, changed_files_json, result_summary,
-          supervisor_summary, failure_code, created_at, updated_at
+          network_allowed, access_mode, fast_mode, current_step, changed_files_json,
+          result_summary, supervisor_summary, failure_code, created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
       arguments: Self.taskArguments(task, changedFiles: changedFiles)
@@ -165,6 +165,8 @@ extension SimpleServiceStore {
       task.supervisorEffort,
       task.permissionMode.rawValue,
       task.networkAllowed ? 1 : 0,
+      task.accessMode.rawValue,
+      task.fastMode ? 1 : 0,
       task.state.currentStep,
       changedFiles,
       task.state.resultSummary,
@@ -267,8 +269,13 @@ extension SimpleServiceStore {
     guard let source = ServiceTaskSource(rawValue: row["source"]),
       let status = ServiceTaskStatus(rawValue: row["status"]),
       let supervisorStatus = ServiceSupervisorStatus(rawValue: row["supervisor_status"]),
-      let permissionMode = ServicePermissionMode(rawValue: row["permission_mode"])
+      let permissionMode = ServicePermissionMode(rawValue: row["permission_mode"]),
+      let accessMode = ServiceAccessMode(rawValue: row["access_mode"])
     else {
+      throw ServiceStoreError.corruptRecord
+    }
+    let fastModeValue: Int = row["fast_mode"]
+    guard fastModeValue == 0 || fastModeValue == 1 else {
       throw ServiceStoreError.corruptRecord
     }
     let changedData: Data = row["changed_files_json"]
@@ -306,6 +313,8 @@ extension SimpleServiceStore {
       supervisorEffort: row["supervisor_effort"],
       permissionMode: permissionMode,
       networkAllowed: networkAllowedValue == 1,
+      accessMode: accessMode,
+      fastMode: fastModeValue == 1,
       state: state,
       createdAt: Date(timeIntervalSince1970: row["created_at"]),
       updatedAt: Date(timeIntervalSince1970: row["updated_at"])

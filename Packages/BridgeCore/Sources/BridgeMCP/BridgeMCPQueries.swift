@@ -246,19 +246,42 @@ public struct MCPModelSummary: Codable, Equatable, Sendable {
   public let isDefault: Bool
   public let reasoningEfforts: [String]
   public let defaultReasoningEffort: String?
+  public let serviceTiers: [String]
+  public let additionalSpeedTiers: [String]
+
+  public var supportsFastMode: Bool {
+    serviceTiers.contains("fast") || additionalSpeedTiers.contains("fast")
+  }
 
   public init(
     modelID: String,
     displayName: String,
     isDefault: Bool,
     reasoningEfforts: [String],
-    defaultReasoningEffort: String? = nil
+    defaultReasoningEffort: String? = nil,
+    serviceTiers: [String] = [],
+    additionalSpeedTiers: [String] = []
   ) {
     self.modelID = modelID
     self.displayName = displayName
     self.isDefault = isDefault
     self.reasoningEfforts = reasoningEfforts
     self.defaultReasoningEffort = defaultReasoningEffort
+    self.serviceTiers = serviceTiers
+    self.additionalSpeedTiers = additionalSpeedTiers
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    modelID = try values.decode(String.self, forKey: .modelID)
+    displayName = try values.decode(String.self, forKey: .displayName)
+    isDefault = try values.decode(Bool.self, forKey: .isDefault)
+    reasoningEfforts = try values.decode([String].self, forKey: .reasoningEfforts)
+    defaultReasoningEffort = try values.decodeIfPresent(
+      String.self, forKey: .defaultReasoningEffort)
+    serviceTiers = try values.decodeIfPresent([String].self, forKey: .serviceTiers) ?? []
+    additionalSpeedTiers =
+      try values.decodeIfPresent([String].self, forKey: .additionalSpeedTiers) ?? []
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -267,6 +290,8 @@ public struct MCPModelSummary: Codable, Equatable, Sendable {
     case isDefault = "is_default"
     case reasoningEfforts = "reasoning_efforts"
     case defaultReasoningEffort = "default_reasoning_effort"
+    case serviceTiers = "service_tiers"
+    case additionalSpeedTiers = "additional_speed_tiers"
   }
 }
 

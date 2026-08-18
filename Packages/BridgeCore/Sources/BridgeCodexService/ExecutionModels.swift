@@ -51,6 +51,7 @@ public enum ExecutionServiceError: Error, Equatable, LocalizedError, Sendable {
   case projectPermissionDenied(ProjectID)
   case modelUnavailable(String)
   case effortUnavailable(String)
+  case serviceTierUnavailable(String)
   case threadUnavailable(String)
   case threadMismatch(String)
   case turnUnavailable
@@ -82,6 +83,8 @@ public enum ExecutionServiceError: Error, Equatable, LocalizedError, Sendable {
       "The selected Codex model is unavailable: \(model)."
     case .effortUnavailable(let effort):
       "The selected reasoning effort is unavailable: \(effort)."
+    case .serviceTierUnavailable(let tier):
+      "The selected service tier is unavailable: \(tier)."
     case .threadUnavailable:
       "The requested Codex Thread is unavailable."
     case .threadMismatch:

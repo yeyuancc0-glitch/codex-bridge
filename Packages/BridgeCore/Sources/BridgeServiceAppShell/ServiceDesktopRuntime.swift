@@ -250,6 +250,8 @@ extension BridgeServiceAppModel {
       switch codec {
       case .requestMismatch:
         return "后台 Service 与本 App 的 IPC 版本不一致，请重新注册或重启后台 Service。"
+      case .unsupportedSchemaVersion:
+        return "后台 Service 与本 App 的 IPC 版本不一致，请重新注册或重启后台 Service。"
       default:
         break
       }

@@ -37,6 +37,8 @@ public actor ServiceTaskManager {
       supervisorEffort: request.supervisorEffort,
       permissionMode: request.permissionMode,
       networkAllowed: request.networkAllowed,
+      accessMode: request.accessMode,
+      fastMode: request.fastMode,
       state: state,
       createdAt: date,
       updatedAt: date

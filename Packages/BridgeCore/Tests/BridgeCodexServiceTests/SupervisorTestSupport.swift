@@ -161,7 +161,7 @@ func executionWaitForSupervisorSteerScript(root: String) -> String {
     status: "completed",
     items: #"[{"type":"agentMessage","text":"Completed after Supervisor steer."}]"#
   )
-  return executionCommonHandshake
+  return executionCommonHandshake()
     + "\n"
       + #"""
       IFS= read -r thread_start

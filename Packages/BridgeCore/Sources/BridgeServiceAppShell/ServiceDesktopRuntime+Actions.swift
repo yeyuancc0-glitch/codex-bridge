@@ -128,7 +128,9 @@ extension BridgeServiceAppModel {
       executionEffort: current.executionEffort,
       supervisorModel: current.supervisorModel,
       supervisorEffort: current.supervisorEffort,
-      supervisorEnabled: enabled
+      supervisorEnabled: enabled,
+      accessMode: current.accessMode,
+      fastModeEnabled: current.fastModeEnabled
     )
     runMutation { [weak self] client in
       guard let self else { return }
@@ -157,7 +159,10 @@ extension BridgeServiceAppModel {
         executionModel: modelID,
         executionEffort: effort,
         supervisorModel: current.supervisorModel,
-        supervisorEffort: current.supervisorEffort
+        supervisorEffort: current.supervisorEffort,
+        supervisorEnabled: current.supervisorEnabled,
+        accessMode: current.accessMode,
+        fastModeEnabled: current.fastModeEnabled
       )
     )
   }
@@ -172,7 +177,40 @@ extension BridgeServiceAppModel {
         executionModel: current.executionModel,
         executionEffort: effort,
         supervisorModel: current.supervisorModel,
-        supervisorEffort: current.supervisorEffort
+        supervisorEffort: current.supervisorEffort,
+        supervisorEnabled: current.supervisorEnabled,
+        accessMode: current.accessMode,
+        fastModeEnabled: current.fastModeEnabled
+      )
+    )
+  }
+
+  func setAccessMode(_ mode: String) {
+    guard let current = modelPreferences else { return }
+    setModelPreferences(
+      IPCModelPreferences(
+        executionModel: current.executionModel,
+        executionEffort: current.executionEffort,
+        supervisorModel: current.supervisorModel,
+        supervisorEffort: current.supervisorEffort,
+        supervisorEnabled: current.supervisorEnabled,
+        accessMode: mode,
+        fastModeEnabled: current.fastModeEnabled
+      )
+    )
+  }
+
+  func setFastMode(_ enabled: Bool) {
+    guard let current = modelPreferences else { return }
+    setModelPreferences(
+      IPCModelPreferences(
+        executionModel: current.executionModel,
+        executionEffort: current.executionEffort,
+        supervisorModel: current.supervisorModel,
+        supervisorEffort: current.supervisorEffort,
+        supervisorEnabled: current.supervisorEnabled,
+        accessMode: current.accessMode,
+        fastModeEnabled: enabled
       )
     )
   }
@@ -192,7 +230,10 @@ extension BridgeServiceAppModel {
         executionModel: current.executionModel,
         executionEffort: current.executionEffort,
         supervisorModel: modelID,
-        supervisorEffort: effort
+        supervisorEffort: effort,
+        supervisorEnabled: current.supervisorEnabled,
+        accessMode: current.accessMode,
+        fastModeEnabled: current.fastModeEnabled
       )
     )
   }
@@ -207,7 +248,10 @@ extension BridgeServiceAppModel {
         executionModel: current.executionModel,
         executionEffort: current.executionEffort,
         supervisorModel: current.supervisorModel,
-        supervisorEffort: effort
+        supervisorEffort: effort,
+        supervisorEnabled: current.supervisorEnabled,
+        accessMode: current.accessMode,
+        fastModeEnabled: current.fastModeEnabled
       )
     )
   }

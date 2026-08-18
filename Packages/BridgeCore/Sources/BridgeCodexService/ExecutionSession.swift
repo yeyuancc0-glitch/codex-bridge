@@ -81,18 +81,26 @@ package actor ExecutionSession {
     do {
       try await client.start()
       _ = try await client.initialize(clientInfo: configuration.clientInfo)
-      try await validateModel(
+      let fastTierID = try await validateModel(
         model: request.task.executionModel,
-        effort: request.task.executionEffort
+        effort: request.task.executionEffort,
+        fastMode: request.task.fastMode
       )
-      let threadID = try await prepareThread(request)
+      let posture = Self.posture(
+        for: request,
+        root: projectRoot,
+        fastServiceTierID: fastTierID
+      )
+      let threadID = try await prepareThread(request, posture: posture)
       expectedThreadID = threadID
       let turn = try await client.startTurn(
         TurnStartParams(
           threadId: threadID,
           text: request.task.prompt,
-          sandboxPolicy: sandboxPolicy(for: request.task, root: projectRoot),
-          approvalPolicy: .onRequest,
+          sandboxPolicy: posture.sandboxPolicy,
+          approvalPolicy: posture.approvalPolicy,
+          approvalsReviewer: posture.approvalsReviewer,
+          serviceTier: posture.serviceTier,
           model: request.task.executionModel,
           effort: request.task.executionEffort
         )
@@ -276,7 +284,11 @@ package actor ExecutionSession {
     }
   }
 
-  private func validateModel(model: String, effort: String) async throws {
+  private func validateModel(
+    model: String,
+    effort: String,
+    fastMode: Bool
+  ) async throws -> String? {
     var cursor: String?
     for _ in 0..<8 {
       let page: ModelListResponse
@@ -295,7 +307,10 @@ package actor ExecutionSession {
         else {
           throw ExecutionServiceError.effortUnavailable(effort)
         }
-        return
+        guard !fastMode || available.supportsFastMode else {
+          throw ExecutionServiceError.serviceTierUnavailable("fast")
+        }
+        return fastMode ? available.fastServiceTierID : nil
       }
       guard let next = page.nextCursor, !next.isEmpty, next != cursor else { break }
       cursor = next
@@ -303,17 +318,22 @@ package actor ExecutionSession {
     throw ExecutionServiceError.modelUnavailable(model)
   }
 
-  private func prepareThread(_ request: ExecutionRequest) async throws -> String {
+  private func prepareThread(
+    _ request: ExecutionRequest,
+    posture: ExecutionPosture
+  ) async throws -> String {
     if let threadID = request.task.requestedThreadID {
-      return try await resumeThread(threadID, request: request)
+      return try await resumeThread(threadID, request: request, posture: posture)
     }
     let response: ThreadStartResponse
     do {
       response = try await client.startThread(
         ThreadStartParams(
           cwd: projectRoot,
-          sandbox: threadSandbox(for: request.task),
-          approvalPolicy: .onRequest,
+          sandbox: posture.threadSandbox,
+          approvalPolicy: posture.approvalPolicy,
+          approvalsReviewer: posture.approvalsReviewer,
+          serviceTier: posture.serviceTier,
           ephemeral: false,
           model: request.task.executionModel
         )
@@ -321,13 +341,14 @@ package actor ExecutionSession {
     } catch {
       throw ExecutionServiceError.processUnavailable
     }
-    try validateThreadResponse(response, expectedThreadID: nil, task: request.task)
+    try validateThreadResponse(response, expectedThreadID: nil, posture: posture)
     return response.thread.id
   }
 
   private func resumeThread(
     _ threadID: String,
-    request: ExecutionRequest
+    request: ExecutionRequest,
+    posture: ExecutionPosture
   ) async throws -> String {
     guard Self.isSafeWireIdentifier(threadID) else {
       throw ExecutionServiceError.invalidRequest("threadID")
@@ -347,32 +368,34 @@ package actor ExecutionSession {
         ThreadResumeParams(
           threadId: threadID,
           cwd: projectRoot,
-          sandbox: threadSandbox(for: request.task),
-          approvalPolicy: .onRequest,
-          approvalsReviewer: "user",
+          sandbox: posture.threadSandbox,
+          approvalPolicy: posture.approvalPolicy,
+          approvalsReviewer: posture.approvalsReviewer,
+          serviceTier: posture.serviceTier,
           model: request.task.executionModel
         )
       )
     } catch {
       throw ExecutionServiceError.threadUnavailable(threadID)
     }
-    try validateThreadResponse(response, expectedThreadID: threadID, task: request.task)
+    try validateThreadResponse(response, expectedThreadID: threadID, posture: posture)
     return response.thread.id
   }
 
   private func validateThreadResponse(
     _ response: ThreadStartResponse,
     expectedThreadID: String?,
-    task: ServiceTaskRecord
+    posture: ExecutionPosture
   ) throws {
     guard Self.isSafeWireIdentifier(response.thread.id),
       expectedThreadID == nil || response.thread.id == expectedThreadID,
       response.thread.cwd == projectRoot,
       response.cwd == projectRoot,
       response.thread.ephemeral == false,
-      response.model == task.executionModel,
-      response.approvalPolicy == .onRequest,
-      response.sandbox == sandboxPolicy(for: task, root: projectRoot)
+      response.model == posture.model,
+      response.approvalPolicy == posture.approvalPolicy,
+      response.approvalsReviewer == posture.approvalsReviewer,
+      response.sandbox == posture.sandboxPolicy
     else {
       throw ExecutionServiceError.threadMismatch(response.thread.id)
     }
@@ -389,25 +412,55 @@ package actor ExecutionSession {
     return binding
   }
 
-  private func threadSandbox(for task: ServiceTaskRecord) -> ThreadSandboxMode {
-    switch task.permissionMode {
-    case .readOnly: .readOnly
-    case .workspaceWrite: .workspaceWrite
-    }
+  struct ExecutionPosture: Equatable, Sendable {
+    let model: String
+    let threadSandbox: ThreadSandboxMode
+    let sandboxPolicy: CodexSandboxPolicy
+    let approvalPolicy: CodexApprovalPolicy
+    let approvalsReviewer: String
+    let serviceTier: String?
   }
 
-  private func sandboxPolicy(for task: ServiceTaskRecord, root: String) -> CodexSandboxPolicy {
-    switch task.permissionMode {
-    case .readOnly:
-      .readOnly(networkAccess: task.networkAllowed)
-    case .workspaceWrite:
-      .workspaceWrite(
-        writableRoots: [root],
-        networkAccess: task.networkAllowed,
-        excludeSlashTmp: false,
-        excludeTmpdirEnvVar: false
-      )
+  static func posture(
+    for request: ExecutionRequest,
+    root: String,
+    fastServiceTierID: String?
+  ) -> ExecutionPosture {
+    let task = request.task
+    let projectPolicy = request.project.accessPolicy
+    let fullAccess =
+      task.accessMode == .fullAccess
+      && task.permissionMode == .workspaceWrite
+      && projectPolicy.write != .denied
+      && projectPolicy.network != .denied
+    let sandboxPolicy: CodexSandboxPolicy
+    let approvalPolicy: CodexApprovalPolicy
+    if fullAccess {
+      sandboxPolicy = .dangerFullAccess
+      approvalPolicy = .never
+    } else {
+      switch task.permissionMode {
+      case .readOnly:
+        sandboxPolicy = .readOnly(networkAccess: task.networkAllowed)
+      case .workspaceWrite:
+        sandboxPolicy = .workspaceWrite(
+          writableRoots: [root],
+          networkAccess: task.networkAllowed,
+          excludeSlashTmp: false,
+          excludeTmpdirEnvVar: false
+        )
+      }
+      approvalPolicy = .onRequest
     }
+    return ExecutionPosture(
+      model: task.executionModel,
+      threadSandbox: fullAccess
+        ? .dangerFullAccess : (task.permissionMode == .readOnly ? .readOnly : .workspaceWrite),
+      sandboxPolicy: sandboxPolicy,
+      approvalPolicy: approvalPolicy,
+      approvalsReviewer: task.accessMode == .autoReview ? "auto_review" : "user",
+      serviceTier: fastServiceTierID
+    )
   }
 
   static func isSafeWireIdentifier(_ value: String) -> Bool {

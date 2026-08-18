@@ -306,6 +306,11 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       submission.permissionMode,
       project: project
     )
+    let accessMode = try await settings.accessMode()
+    let fastMode =
+      try await settings.isFastModeEnabled()
+      && models.first(where: { $0.modelID == selections.execution.model })?
+        .supportsFastMode == true
     guard !submission.networkAccess || project.accessPolicy.network != .denied else {
       throw BridgeMCPQueryError.contractRejected
     }
@@ -326,7 +331,9 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
           supervisorModel: selections.supervisor?.model,
           supervisorEffort: selections.supervisor?.effort,
           permissionMode: permission,
-          networkAllowed: submission.networkAccess
+          networkAllowed: submission.networkAccess,
+          accessMode: accessMode,
+          fastMode: fastMode
         )
       )
     } catch let error as ServiceStoreError {

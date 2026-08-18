@@ -15,7 +15,14 @@ struct ExecutionTestFixture {
   let project: ServiceProjectRecord
 }
 
-func makeExecutionFixture(_ testCase: XCTestCase) async throws -> ExecutionTestFixture {
+func makeExecutionFixture(
+  _ testCase: XCTestCase,
+  accessPolicy: ProjectAccessPolicy = ProjectAccessPolicy(
+    read: .allowed,
+    write: .allowed,
+    network: .allowed
+  )
+) async throws -> ExecutionTestFixture {
   let root = FileManager.default.temporaryDirectory.appending(
     path: "bridge-codex-service-tests-\(UUID().uuidString)",
     directoryHint: .isDirectory
@@ -33,11 +40,7 @@ func makeExecutionFixture(_ testCase: XCTestCase) async throws -> ExecutionTestF
   let project = try await projects.register(
     name: "Execution Fixture",
     rootURL: root,
-    accessPolicy: ProjectAccessPolicy(
-      read: .allowed,
-      write: .allowed,
-      network: .allowed
-    ),
+    accessPolicy: accessPolicy,
     id: projectID
   )
   return ExecutionTestFixture(
@@ -58,7 +61,9 @@ func submitStartedExecutionTask(
   effort: String = "medium",
   supervisorModel: String? = nil,
   supervisorEffort: String? = nil,
-  permissionMode: ServicePermissionMode = .workspaceWrite
+  permissionMode: ServicePermissionMode = .workspaceWrite,
+  accessMode: ServiceAccessMode = .requestApproval,
+  fastMode: Bool = false
 ) async throws -> ServiceTaskRecord {
   let result = try await fixture.tasks.submit(
     ServiceTaskRequest(
@@ -71,7 +76,9 @@ func submitStartedExecutionTask(
       executionEffort: effort,
       supervisorModel: supervisorModel,
       supervisorEffort: supervisorEffort,
-      permissionMode: permissionMode
+      permissionMode: permissionMode,
+      accessMode: accessMode,
+      fastMode: fastMode
     ),
     taskID: TaskID(rawValue: taskID)
   )
@@ -148,7 +155,13 @@ func executionTurnJSON(
   """
 }
 
-var executionCommonHandshake: String {
+let executionStandardModelJSON =
+  #"{"id":"fixture-model","model":"fixture-model","displayName":"Fixture","description":"fixture","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":true}"#
+
+let executionFastModelJSON =
+  #"{"id":"fixture-model","model":"fixture-model","displayName":"Fixture","description":"fixture","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":true,"additionalSpeedTiers":["fast"],"serviceTiers":[{"id":"priority","name":"Fast","description":"Fast"}],"defaultServiceTier":null}"#
+
+func executionCommonHandshake(modelJSON: String = executionStandardModelJSON) -> String {
   #"""
   IFS= read -r initialize
   case "$initialize" in *'"method":"initialize"'*) ;; *) exit 11 ;; esac
@@ -157,8 +170,9 @@ var executionCommonHandshake: String {
   case "$initialized" in *'"method":"initialized"'*) ;; *) exit 12 ;; esac
   IFS= read -r models
   case "$models" in *'"method":"model/list"'*) ;; *) exit 13 ;; esac
-  printf '%s\n' '{"id":2,"result":{"data":[{"id":"fixture-model","model":"fixture-model","displayName":"Fixture","description":"fixture","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":true}],"nextCursor":null}}'
+  printf '%s\n' '{"id":2,"result":{"data":[__MODEL__],"nextCursor":null}}'
   """#
+  .replacingOccurrences(of: "__MODEL__", with: modelJSON)
 }
 
 func newThreadProgressScript(root: String) -> String {
@@ -170,7 +184,7 @@ func newThreadProgressScript(root: String) -> String {
     status: "completed",
     items: finalItems
   )
-  return executionCommonHandshake
+  return executionCommonHandshake()
     + "\n"
       + #"""
       IFS= read -r thread_start
@@ -195,6 +209,51 @@ func newThreadProgressScript(root: String) -> String {
     .replacingOccurrences(of: "__COMPLETED__", with: completed)
 }
 
+func postureExecutionScript(
+  root: String,
+  threadStartChecks: [String],
+  turnStartChecks: [String] = [],
+  sandboxJSON: String,
+  approvalPolicy: String,
+  approvalsReviewer: String,
+  modelJSON: String = executionStandardModelJSON
+) -> String {
+  let thread = executionThreadJSON(id: "thread-posture", root: root)
+  let turn = executionTurnJSON(id: "turn-posture", status: "inProgress")
+  let completed = executionTurnJSON(
+    id: "turn-posture",
+    status: "completed",
+    items: #"[{"type":"agentMessage","text":"The task completed under the configured posture."}]"#
+  )
+  let threadChecks = threadStartChecks.enumerated().map { index, check in
+    "case \"$thread_start\" in *'\(check)'*) ;; *) exit \(21 + index) ;; esac"
+  }.joined(separator: "\n")
+  let turnChecks = turnStartChecks.enumerated().map { index, check in
+    "case \"$turn_start\" in *'\(check)'*) ;; *) exit \(31 + index) ;; esac"
+  }.joined(separator: "\n")
+  let body = """
+    IFS= read -r thread_start
+    case "$thread_start" in *'"method":"thread/start"'*) ;; *) exit 20 ;; esac
+    \(threadChecks)
+    printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":__SANDBOX__,"approvalPolicy":"__APPROVAL__","approvalsReviewer":"__REVIEWER__","serviceTier":null}}'
+    IFS= read -r turn_start
+    case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 30 ;; esac
+    \(turnChecks)
+    printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-posture","turn":__TURN__}}'
+    printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+    printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-posture","turn":__COMPLETED__}}'
+    sleep 1
+    """
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+    .replacingOccurrences(of: "__COMPLETED__", with: completed)
+    .replacingOccurrences(of: "__SANDBOX__", with: sandboxJSON)
+    .replacingOccurrences(of: "__APPROVAL__", with: approvalPolicy)
+    .replacingOccurrences(of: "__REVIEWER__", with: approvalsReviewer)
+  return executionCommonHandshake(modelJSON: modelJSON) + "\n" + body
+}
+
 func commandApprovalScript(root: String, expectedDecision: String, finalMessage: String) -> String {
   let thread = executionThreadJSON(id: "thread-approval", root: root)
   let turn = executionTurnJSON(id: "turn-approval", status: "inProgress")
@@ -203,7 +262,7 @@ func commandApprovalScript(root: String, expectedDecision: String, finalMessage:
     status: "completed",
     items: "[{\"type\":\"agentMessage\",\"text\":\"\(finalMessage)\"}]"
   )
-  return executionCommonHandshake
+  return executionCommonHandshake()
     + "\n"
       + #"""
       IFS= read -r thread_start
@@ -230,7 +289,7 @@ func resumeSteerInterruptExecutionScript(root: String) -> String {
   let thread = executionThreadJSON(id: "thread-existing", root: root)
   let turn = executionTurnJSON(id: "turn-existing", status: "inProgress")
   let interrupted = executionTurnJSON(id: "turn-existing", status: "interrupted")
-  return executionCommonHandshake
+  return executionCommonHandshake()
     + "\n"
       + #"""
       IFS= read -r thread_read

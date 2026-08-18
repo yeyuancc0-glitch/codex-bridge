@@ -105,3 +105,17 @@ public struct ModelListResponse: Codable, Equatable, Sendable {
   public let data: [CodexModel]
   public let nextCursor: String?
 }
+
+extension CodexModel {
+  public var supportsFastMode: Bool {
+    additionalSpeedTiers?.contains("fast") == true
+      || serviceTiers?.contains(where: { $0.id == "fast" }) == true
+  }
+
+  public var fastServiceTierID: String? {
+    guard supportsFastMode else { return nil }
+    return serviceTiers?.first(where: { $0.id == "fast" })?.id
+      ?? serviceTiers?.first?.id
+      ?? "fast"
+  }
+}

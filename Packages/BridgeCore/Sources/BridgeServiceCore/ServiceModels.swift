@@ -148,6 +148,12 @@ public enum ServicePermissionMode: String, Codable, CaseIterable, Sendable {
   case workspaceWrite = "workspace-write"
 }
 
+public enum ServiceAccessMode: String, Codable, CaseIterable, Sendable {
+  case requestApproval = "request-approval"
+  case autoReview = "auto-review"
+  case fullAccess = "full-access"
+}
+
 public enum ServiceTaskStatus: String, Codable, CaseIterable, Sendable {
   case awaitingLocalApproval = "awaiting_local_approval"
   case starting
@@ -301,6 +307,8 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
   public let supervisorEffort: String?
   public let permissionMode: ServicePermissionMode
   public let networkAllowed: Bool
+  public let accessMode: ServiceAccessMode
+  public let fastMode: Bool
   public let state: ServiceTaskState
   public let createdAt: Date
   public let updatedAt: Date
@@ -318,6 +326,8 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     supervisorEffort: String? = nil,
     permissionMode: ServicePermissionMode,
     networkAllowed: Bool,
+    accessMode: ServiceAccessMode = .requestApproval,
+    fastMode: Bool = false,
     state: ServiceTaskState,
     createdAt: Date,
     updatedAt: Date
@@ -384,6 +394,8 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     self.supervisorEffort = supervisorEffort
     self.permissionMode = permissionMode
     self.networkAllowed = networkAllowed
+    self.accessMode = accessMode
+    self.fastMode = fastMode
     self.state = state
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -406,6 +418,8 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
       supervisorEffort: supervisorEffort,
       permissionMode: permissionMode,
       networkAllowed: networkAllowed,
+      accessMode: accessMode,
+      fastMode: fastMode,
       state: state,
       createdAt: createdAt,
       updatedAt: updatedAt
@@ -513,6 +527,8 @@ public struct ServiceTaskRequest: Equatable, Sendable {
   public let supervisorEffort: String?
   public let permissionMode: ServicePermissionMode
   public let networkAllowed: Bool
+  public let accessMode: ServiceAccessMode
+  public let fastMode: Bool
 
   public init(
     projectID: ProjectID,
@@ -525,7 +541,9 @@ public struct ServiceTaskRequest: Equatable, Sendable {
     supervisorModel: String? = nil,
     supervisorEffort: String? = nil,
     permissionMode: ServicePermissionMode,
-    networkAllowed: Bool = false
+    networkAllowed: Bool = false,
+    accessMode: ServiceAccessMode = .requestApproval,
+    fastMode: Bool = false
   ) {
     self.projectID = projectID
     self.source = source
@@ -538,5 +556,7 @@ public struct ServiceTaskRequest: Equatable, Sendable {
     self.supervisorEffort = supervisorEffort
     self.permissionMode = permissionMode
     self.networkAllowed = networkAllowed
+    self.accessMode = accessMode
+    self.fastMode = fastMode
   }
 }

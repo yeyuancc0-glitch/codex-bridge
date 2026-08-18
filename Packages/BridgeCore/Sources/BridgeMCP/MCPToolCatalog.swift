@@ -240,6 +240,8 @@ public struct MCPToolCatalog: Sendable {
       "is_default": ["type": "boolean"],
       "reasoning_efforts": arraySchema(items: stringSchema),
       "default_reasoning_effort": stringSchema,
+      "service_tiers": arraySchema(items: stringSchema),
+      "additional_speed_tiers": arraySchema(items: stringSchema),
     ],
     required: ["model_id", "display_name", "is_default", "reasoning_efforts"]
   )

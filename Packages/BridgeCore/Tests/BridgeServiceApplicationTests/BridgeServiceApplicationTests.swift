@@ -125,6 +125,76 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(task.supervisorEffort, configured.supervisorEffort)
   }
 
+  func testConfiguredAccessModeAndFastModeApplyToSubmittedTasks() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceFastModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    try await application.setServiceModelPreferences(
+      ServiceModelPreferences(
+        executionModel: "execution-model",
+        executionEffort: "high",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium",
+        accessMode: .autoReview,
+        fastModeEnabled: true
+      ),
+      deadline: deadline
+    )
+
+    let readBack = try await application.serviceModelPreferences(deadline: deadline)
+    XCTAssertEqual(readBack.accessMode, .autoReview)
+    XCTAssertTrue(readBack.fastModeEnabled)
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the configured execution posture."
+      ),
+      deadline: deadline
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.accessMode, .autoReview)
+    XCTAssertTrue(task.fastMode)
+  }
+
+  func testFastModeIsIgnoredWhenSelectedModelLacksFastTier() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    try await application.setServiceModelPreferences(
+      ServiceModelPreferences(
+        executionModel: "execution-model",
+        executionEffort: "high",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium",
+        accessMode: .fullAccess,
+        fastModeEnabled: true
+      ),
+      deadline: deadline
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Fast is configured but unsupported."
+      ),
+      deadline: deadline
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.accessMode, .fullAccess)
+    XCTAssertFalse(task.fastMode)
+  }
+
   func testDisabledSupervisorSkipsSupervisorForSubmittedTasks() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

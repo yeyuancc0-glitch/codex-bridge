@@ -153,6 +153,8 @@ public struct ThreadStartParams: Codable, Equatable, Sendable {
   public let cwd: String
   public let sandbox: ThreadSandboxMode
   public let approvalPolicy: CodexApprovalPolicy
+  public let approvalsReviewer: String?
+  public let serviceTier: String?
   public let ephemeral: Bool
   public let model: String?
   public let baseInstructions: String?
@@ -162,6 +164,8 @@ public struct ThreadStartParams: Codable, Equatable, Sendable {
     cwd: String,
     sandbox: ThreadSandboxMode,
     approvalPolicy: CodexApprovalPolicy,
+    approvalsReviewer: String? = nil,
+    serviceTier: String? = nil,
     ephemeral: Bool = true,
     model: String? = nil,
     baseInstructions: String? = nil,
@@ -170,6 +174,8 @@ public struct ThreadStartParams: Codable, Equatable, Sendable {
     self.cwd = cwd
     self.sandbox = sandbox
     self.approvalPolicy = approvalPolicy
+    self.approvalsReviewer = approvalsReviewer
+    self.serviceTier = serviceTier
     self.ephemeral = ephemeral
     self.model = model
     self.baseInstructions = baseInstructions
@@ -254,6 +260,7 @@ public struct ThreadResumeParams: Codable, Equatable, Sendable {
   public let sandbox: ThreadSandboxMode?
   public let approvalPolicy: CodexApprovalPolicy?
   public let approvalsReviewer: String?
+  public let serviceTier: String?
   public let model: String?
   public let baseInstructions: String?
   public let developerInstructions: String?
@@ -264,6 +271,7 @@ public struct ThreadResumeParams: Codable, Equatable, Sendable {
     sandbox: ThreadSandboxMode? = nil,
     approvalPolicy: CodexApprovalPolicy? = nil,
     approvalsReviewer: String? = nil,
+    serviceTier: String? = nil,
     model: String? = nil,
     baseInstructions: String? = nil,
     developerInstructions: String? = nil
@@ -273,6 +281,7 @@ public struct ThreadResumeParams: Codable, Equatable, Sendable {
     self.sandbox = sandbox
     self.approvalPolicy = approvalPolicy
     self.approvalsReviewer = approvalsReviewer
+    self.serviceTier = serviceTier
     self.model = model
     self.baseInstructions = baseInstructions
     self.developerInstructions = developerInstructions
@@ -284,6 +293,8 @@ public struct TurnStartParams: Codable, Equatable, Sendable {
   public let input: [CodexTextInput]
   public let sandboxPolicy: CodexSandboxPolicy
   public let approvalPolicy: CodexApprovalPolicy
+  public let approvalsReviewer: String?
+  public let serviceTier: String?
   public let model: String?
   public let effort: String?
   public let outputSchema: JSONValue?
@@ -293,6 +304,8 @@ public struct TurnStartParams: Codable, Equatable, Sendable {
     text: String,
     sandboxPolicy: CodexSandboxPolicy,
     approvalPolicy: CodexApprovalPolicy,
+    approvalsReviewer: String? = nil,
+    serviceTier: String? = nil,
     model: String? = nil,
     effort: String? = nil,
     outputSchema: JSONValue? = nil
@@ -301,6 +314,8 @@ public struct TurnStartParams: Codable, Equatable, Sendable {
     input = [CodexTextInput(text: text)]
     self.sandboxPolicy = sandboxPolicy
     self.approvalPolicy = approvalPolicy
+    self.approvalsReviewer = approvalsReviewer
+    self.serviceTier = serviceTier
     self.model = model
     self.effort = effort
     self.outputSchema = outputSchema

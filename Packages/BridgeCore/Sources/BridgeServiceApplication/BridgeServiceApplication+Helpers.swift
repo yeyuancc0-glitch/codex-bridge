@@ -126,7 +126,9 @@ extension BridgeServiceApplication {
       executionModel: execution.model,
       executionEffort: execution.effort,
       supervisorModel: supervisor.model,
-      supervisorEffort: supervisor.effort
+      supervisorEffort: supervisor.effort,
+      accessMode: try await settings.accessMode(),
+      fastModeEnabled: try await settings.isFastModeEnabled()
     )
   }
 
@@ -273,7 +275,7 @@ extension BridgeServiceApplication {
     case .sessionLimitReached, .activeSession:
       return .busy
     case .invalidRequest, .projectPermissionDenied, .modelUnavailable,
-      .effortUnavailable:
+      .effortUnavailable, .serviceTierUnavailable:
       return .contractRejected
     case .projectUnavailable:
       return .projectNotFound
