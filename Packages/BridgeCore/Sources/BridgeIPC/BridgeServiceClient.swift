@@ -146,20 +146,6 @@ public actor BridgeServiceClient {
     try await call(operation: .getTask, payload: request)
   }
 
-  public func approveTask(taskID: String) async throws {
-    let _: IPCMutationResponse = try await call(
-      operation: .approveTask,
-      payload: IPCTaskRequest(taskID: taskID)
-    )
-  }
-
-  public func rejectTask(taskID: String) async throws {
-    let _: IPCMutationResponse = try await call(
-      operation: .rejectTask,
-      payload: IPCTaskRequest(taskID: taskID)
-    )
-  }
-
   public func stopTask(taskID: String) async throws {
     let _: IPCMutationResponse = try await call(
       operation: .stopTask,

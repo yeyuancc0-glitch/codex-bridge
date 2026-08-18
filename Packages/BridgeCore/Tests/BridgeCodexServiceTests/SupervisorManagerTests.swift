@@ -6,7 +6,7 @@ import XCTest
 final class SupervisorManagerTests: XCTestCase {
   func testUnavailableSupervisorDegradesWithoutStoppingExecution() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-unavailable",
       supervisorModel: "supervisor-model",
@@ -35,7 +35,7 @@ final class SupervisorManagerTests: XCTestCase {
 
   func testSlowSupervisorDoesNotBlockCodexCompletion() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-slow",
       supervisorModel: "supervisor-model",
@@ -82,7 +82,7 @@ final class SupervisorManagerTests: XCTestCase {
 
   func testSupervisorSteerUsesExactActiveTurnAndExecutionCompletes() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-steer",
       supervisorModel: "supervisor-model",
@@ -123,7 +123,7 @@ final class SupervisorManagerTests: XCTestCase {
 
   func testSupervisorApprovalRequestDegradesOnlySupervisor() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-approval",
       supervisorModel: "supervisor-model",
@@ -162,7 +162,7 @@ final class SupervisorManagerTests: XCTestCase {
 
   func testAutomaticSteerLimitConvertsFurtherSuggestionsToAttention() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-limit",
       supervisorModel: "supervisor-model",
@@ -205,14 +205,14 @@ final class SupervisorManagerTests: XCTestCase {
 
   func testSeparateTasksUseIndependentSupervisorSessions() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let first = try await submitApprovedExecutionTask(
+    let first = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-first",
       supervisorModel: "supervisor-model",
       supervisorEffort: "medium",
       permissionMode: .readOnly
     )
-    let second = try await submitApprovedExecutionTask(
+    let second = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-supervisor-second",
       supervisorModel: "supervisor-model",

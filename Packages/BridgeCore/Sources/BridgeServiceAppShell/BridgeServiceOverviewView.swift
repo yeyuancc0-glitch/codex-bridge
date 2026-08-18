@@ -68,18 +68,12 @@ struct BridgeServiceOverviewView: View {
           model.openSystemSettings()
         }
       }
-      if model.pendingLocalTaskCount > 0 {
-        Button("有 \(model.pendingLocalTaskCount) 个任务等待本机批准") {
-          model.selection = .tasks
-        }
-      }
       if !model.approvals.isEmpty {
         Button("有 \(model.approvals.count) 个 Codex 操作等待决定") {
           model.selection = .tasks
         }
       }
       if model.registrationStatus != .requiresApproval,
-        model.pendingLocalTaskCount == 0,
         model.approvals.isEmpty
       {
         Label("当前没有待处理事项。", systemImage: "checkmark.circle")

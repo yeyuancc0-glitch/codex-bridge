@@ -155,7 +155,7 @@ final class BridgeServiceHostTests: XCTestCase {
         permissionMode: .workspaceWrite
       )
     )
-    _ = try await first.tasks.approve(taskID: submitted.task.id)
+    _ = try await first.tasks.begin(taskID: submitted.task.id)
     await first.shutdown()
 
     let reopened = try await ServiceComposition.make(

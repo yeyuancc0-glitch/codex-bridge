@@ -296,20 +296,6 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           payload: task
         )
 
-      case .approveTask:
-        let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
-        try await composition.application.approveTask(
-          taskID: TaskID(rawValue: payload.taskID)
-        )
-        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
-
-      case .rejectTask:
-        let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
-        try await composition.application.rejectTask(
-          taskID: TaskID(rawValue: payload.taskID)
-        )
-        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
-
       case .stopTask:
         let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
         await composition.coordinator.stop(taskID: TaskID(rawValue: payload.taskID))

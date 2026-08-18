@@ -60,9 +60,6 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     let taskList = try await tasks.tasks(limit: 500)
     let runtime = await runtimeStatus.current()
     let codexApprovals = await coordinator.pendingApprovals().count
-    let localTaskApprovals = taskList.count(where: {
-      $0.state.status == .awaitingLocalApproval
-    })
     return BridgeStatusSnapshot(
       appVersion: appVersion,
       mcpState: runtime.mcpState,
@@ -72,7 +69,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       executionState: Self.executionState(taskList),
       supervisorState: Self.supervisorState(taskList),
       degradations: runtime.degradations,
-      pendingApprovalCount: codexApprovals + localTaskApprovals
+      pendingApprovalCount: codexApprovals
     )
   }
 
@@ -335,11 +332,21 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     } catch let error as ServiceStoreError {
       throw Self.publicStoreError(error)
     }
+    if !result.reusedExistingTask {
+      let started = try await tasks.begin(taskID: result.task.id)
+      do {
+        try await coordinator.start(taskID: started.id)
+      } catch {
+        throw Self.publicExecutionError(error)
+      }
+    }
+    let task = try await tasks.task(id: result.task.id)
+    let latest = task ?? result.task
     return MCPServiceTaskSubmissionReceipt(
-      taskID: result.task.id.rawValue,
-      status: result.task.state.status.rawValue,
+      taskID: latest.id.rawValue,
+      status: latest.state.status.rawValue,
       reusedExistingTask: result.reusedExistingTask,
-      localApprovalRequired: result.task.state.status == .awaitingLocalApproval
+      localApprovalRequired: false
     )
   }
 
@@ -395,18 +402,6 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       taskID: taskID,
       status: task.state.status.rawValue,
       accepted: true
-    )
-  }
-
-  public func approveTask(taskID: TaskID) async throws {
-    let approved = try await tasks.approve(taskID: taskID)
-    _ = try await coordinator.start(taskID: approved.id)
-  }
-
-  public func rejectTask(taskID: TaskID) async throws {
-    _ = try await tasks.interrupt(
-      taskID: taskID,
-      summary: "The local user rejected the task before execution."
     )
   }
 

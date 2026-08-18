@@ -45,22 +45,22 @@ public actor ServiceTaskManager {
       task,
       event: ServiceTaskEventDraft(
         kind: .taskCreated,
-        summary: "The task was accepted and is waiting for local approval.",
+        summary: "The task was accepted.",
         createdAt: date
       )
     )
   }
 
   @discardableResult
-  public func approve(taskID: TaskID) async throws -> ServiceTaskRecord {
+  public func begin(taskID: TaskID) async throws -> ServiceTaskRecord {
     try await mutate(
       taskID: taskID,
       patch: StatePatch(
         status: .starting,
         supervisorStatus: try await supervisorStartStatus(taskID: taskID)
       ),
-      eventKind: .taskApproved,
-      summary: "The local user approved the task."
+      eventKind: .executionStarting,
+      summary: "The task was accepted and Codex execution is starting."
     )
   }
 

@@ -19,7 +19,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertFalse(full.contains("resolve_approval"))
   }
 
-  func testMinimalSubmissionUsesCatalogDefaultsAndRemainsLocallyPending() async throws {
+  func testMinimalSubmissionUsesCatalogDefaultsAndAutoStartsCodexExecution() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(
       fixture: fixture,
@@ -38,8 +38,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
 
     XCTAssertEqual(receipt.taskID, "tsk-service-app")
-    XCTAssertEqual(receipt.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
-    XCTAssertTrue(receipt.localApprovalRequired)
+    XCTAssertEqual(receipt.status, ServiceTaskStatus.running.rawValue)
+    XCTAssertFalse(receipt.localApprovalRequired)
     let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
     let task = try XCTUnwrap(storedTask)
     XCTAssertEqual(task.executionModel, "execution-model")
@@ -49,19 +49,28 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(task.permissionMode, .workspaceWrite)
     XCTAssertTrue(task.prompt.contains("Acceptance criteria:"))
     XCTAssertTrue(task.prompt.contains("The relevant tests pass."))
+    XCTAssertEqual(task.state.codexThreadID, "thread-execution")
+    XCTAssertEqual(task.state.codexTurnID, "turn-execution")
 
     let snapshot = try await application.serviceTask(
       taskID: receipt.taskID,
       recentEventLimit: 20,
       deadline: deadline
     )
-    XCTAssertEqual(snapshot.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
-    XCTAssertEqual(snapshot.recentEvents.map(\.kind), [ServiceTaskEventKind.taskCreated.rawValue])
-    XCTAssertTrue(snapshot.localApprovalRequired)
+    XCTAssertEqual(snapshot.status, ServiceTaskStatus.running.rawValue)
+    XCTAssertEqual(
+      snapshot.recentEvents.map(\.kind),
+      [
+        ServiceTaskEventKind.taskCreated.rawValue,
+        ServiceTaskEventKind.executionStarting.rawValue,
+        ServiceTaskEventKind.executionStarted.rawValue,
+      ]
+    )
+    XCTAssertFalse(snapshot.localApprovalRequired)
 
     let status = try await application.serviceStatus(deadline: deadline)
-    XCTAssertEqual(status.executionState, "pending")
-    XCTAssertEqual(status.pendingApprovalCount, 1)
+    XCTAssertEqual(status.executionState, "active")
+    XCTAssertEqual(status.pendingApprovalCount, 0)
   }
 
   func testModelPreferencesArePersistedAndUsedForNewTasks() async throws {
@@ -140,9 +149,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let task = try XCTUnwrap(storedTask)
     XCTAssertNil(task.supervisorModel)
     XCTAssertNil(task.supervisorEffort)
-
-    let approved = try await fixture.tasks.approve(taskID: task.id)
-    XCTAssertEqual(approved.state.supervisorStatus, .disabled)
+    XCTAssertEqual(task.state.supervisorStatus, .disabled)
 
     let snapshot = try await application.serviceTask(
       taskID: receipt.taskID,
@@ -376,11 +383,11 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(result.isError, false)
     XCTAssertEqual(
       result.structuredContent?.objectValue?["status"],
-      .string(ServiceTaskStatus.awaitingLocalApproval.rawValue)
+      .string(ServiceTaskStatus.running.rawValue)
     )
     XCTAssertEqual(
       result.structuredContent?.objectValue?["local_approval_required"],
-      .bool(true)
+      .bool(false)
     )
   }
 }

@@ -41,8 +41,8 @@ func makeServiceApplicationFixture(_ testCase: XCTestCase) async throws
   let execution = ExecutionManager(
     configuration: ExecutionManagerConfiguration(
       appServer: AppServerConfiguration(
-        executableURL: URL(fileURLWithPath: "/bin/false"),
-        arguments: []
+        executableURL: URL(fileURLWithPath: "/bin/sh"),
+        arguments: ["-c", serviceExecutionStartScript(root: root.path)]
       ),
       clientInfo: .bridge(version: "service-app-tests")
     )
@@ -158,6 +158,47 @@ func serviceThreadReadScript(root: String, returnedRoot: String? = nil) -> Strin
       sleep 1
       """#
     .replacingOccurrences(of: "__THREAD__", with: thread)
+}
+
+func serviceExecutionStartScript(root: String) -> String {
+  let thread = serviceThreadJSON(id: "thread-execution", root: root, name: "Execution")
+  let turn = serviceExecutionTurnJSON(id: "turn-execution")
+  return #"""
+    IFS= read -r initialize
+    case "$initialize" in *'"method":"initialize"'*) ;; *) exit 41 ;; esac
+    printf '%s\n' '{"id":1,"result":{"userAgent":"fixture/1","codexHome":"/private/fixture","platformFamily":"unix","platformOs":"macos"}}'
+    IFS= read -r initialized
+    case "$initialized" in *'"method":"initialized"'*) ;; *) exit 42 ;; esac
+    IFS= read -r models
+    case "$models" in *'"method":"model/list"'*) ;; *) exit 43 ;; esac
+    printf '%s\n' '{"id":2,"result":{"data":[{"id":"execution-model","model":"execution-model","displayName":"Execution","description":"Execution","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}],"defaultReasoningEffort":"high","isDefault":true},{"id":"gpt-5.6-luna","model":"gpt-5.6-luna","displayName":"Luna","description":"Supervisor","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":false}],"nextCursor":null}}'
+    IFS= read -r thread_start
+    case "$thread_start" in *'"method":"thread/start"'*) ;; *) exit 44 ;; esac
+    case "$thread_start" in *'"cwd":"__ROOT__"'*) ;; *) exit 44 ;; esac
+    model=$(printf '%s\n' "$thread_start" | sed -n 's/.*"model":"\([^"]*\)".*/\1/p')
+    printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"'"$model"'","modelProvider":"fixture","reasoningEffort":"high","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+    IFS= read -r turn_start
+    case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 45 ;; esac
+    printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-execution","turn":__TURN__}}'
+    printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+    sleep 30
+    """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+}
+
+func serviceExecutionTurnJSON(id: String) -> String {
+  serviceTestJSON([
+    "id": id,
+    "status": "inProgress",
+    "error": NSNull(),
+    "items": [],
+    "itemsView": "full",
+    "startedAt": 1,
+    "completedAt": NSNull(),
+    "durationMs": NSNull(),
+  ])
 }
 
 var serviceCatalogHandshake: String {

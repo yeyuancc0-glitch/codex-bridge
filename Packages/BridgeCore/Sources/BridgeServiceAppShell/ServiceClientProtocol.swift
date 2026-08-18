@@ -17,8 +17,6 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func readThread(_ request: IPCThreadReadRequest) async throws -> MCPThreadReadPage
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot]
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot
-  func approveTask(taskID: String) async throws
-  func rejectTask(taskID: String) async throws
   func stopTask(taskID: String) async throws
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws

@@ -127,10 +127,6 @@ public final class BridgeServiceAppModel: ObservableObject {
     pollingTask?.cancel()
   }
 
-  public var pendingLocalTaskCount: Int {
-    tasks.lazy.filter { $0.status == "awaiting_local_approval" }.count
-  }
-
   public var runningTaskCount: Int {
     tasks.lazy.filter(\.isRunning).count
   }

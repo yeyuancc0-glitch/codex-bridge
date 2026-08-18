@@ -50,7 +50,7 @@ func makeExecutionFixture(_ testCase: XCTestCase) async throws -> ExecutionTestF
   )
 }
 
-func submitApprovedExecutionTask(
+func submitStartedExecutionTask(
   fixture: ExecutionTestFixture,
   taskID: String,
   threadID: String? = nil,
@@ -75,7 +75,7 @@ func submitApprovedExecutionTask(
     ),
     taskID: TaskID(rawValue: taskID)
   )
-  return try await fixture.tasks.approve(taskID: result.task.id)
+  return try await fixture.tasks.begin(taskID: result.task.id)
 }
 
 func makeExecutionManager(

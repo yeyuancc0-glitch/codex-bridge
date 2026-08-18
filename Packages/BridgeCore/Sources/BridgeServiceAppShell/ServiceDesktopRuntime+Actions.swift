@@ -74,22 +74,6 @@ extension BridgeServiceAppModel {
     }
   }
 
-  public func approveTask(_ taskID: String) {
-    runMutation { [weak self] client in
-      guard let self else { return }
-      try await client.approveTask(taskID: taskID)
-      await self.refresh(silent: true, includeCatalog: false)
-    }
-  }
-
-  public func rejectTask(_ taskID: String) {
-    runMutation { [weak self] client in
-      guard let self else { return }
-      try await client.rejectTask(taskID: taskID)
-      await self.refresh(silent: true, includeCatalog: false)
-    }
-  }
-
   public func stopTask(_ taskID: String) {
     runMutation { [weak self] client in
       guard let self else { return }

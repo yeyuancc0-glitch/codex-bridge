@@ -6,7 +6,7 @@ import XCTest
 final class ExecutionManagerTests: XCTestCase {
   func testNewThreadUpdatesServiceTaskWithoutLegacyCoordinatorOrPipeline() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-progress"
     )
@@ -41,7 +41,7 @@ final class ExecutionManagerTests: XCTestCase {
 
   func testLocalApprovalAllowsCommandAndDeferredCompletionCommitsAfterTaskState() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-approval-allow"
     )
@@ -92,7 +92,7 @@ final class ExecutionManagerTests: XCTestCase {
 
   func testLocalApprovalDenialLetsCodexFinishWithASaferPath() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-approval-deny"
     )
@@ -133,7 +133,7 @@ final class ExecutionManagerTests: XCTestCase {
 
   func testExistingThreadCanBeSteeredAndInterruptedOnlyWithExactTurn() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-resume",
       threadID: "thread-existing"
@@ -176,7 +176,7 @@ final class ExecutionManagerTests: XCTestCase {
 
   func testUnavailableModelFailsTaskAndLeavesNoActiveSession() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-missing-model"
     )
@@ -205,7 +205,7 @@ final class ExecutionManagerTests: XCTestCase {
 
   func testWrongApprovalIdentifierDoesNotAlterWaitingTask() async throws {
     let fixture = try await makeExecutionFixture(self)
-    let task = try await submitApprovedExecutionTask(
+    let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-wrong-approval"
     )

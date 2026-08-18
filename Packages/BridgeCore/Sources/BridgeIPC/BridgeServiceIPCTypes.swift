@@ -16,8 +16,6 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case readThread = "read_thread"
   case listTasks = "list_tasks"
   case getTask = "get_task"
-  case approveTask = "approve_task"
-  case rejectTask = "reject_task"
   case stopTask = "stop_task"
   case listApprovals = "list_approvals"
   case resolveApproval = "resolve_approval"

@@ -130,17 +130,7 @@ private struct TaskRow: View {
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
 
-      if task.status == "awaiting_local_approval" {
-        HStack {
-          Button("拒绝任务", role: .destructive) {
-            model.rejectTask(task.taskID)
-          }
-          Button("批准并启动") {
-            model.approveTask(task.taskID)
-          }
-          .buttonStyle(.borderedProminent)
-        }
-      } else if isActive {
+      if isActive {
         Button("中断任务", role: .destructive) {
           model.stopTask(task.taskID)
         }

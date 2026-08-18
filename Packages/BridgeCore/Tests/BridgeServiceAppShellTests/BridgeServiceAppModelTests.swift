@@ -134,7 +134,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(registration.registerCount, 0)
   }
 
-  func testLocalTaskAndCodexApprovalsReachTheServiceClient() async throws {
+  func testCodexApprovalDecisionsReachTheServiceClient() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
     let model = BridgeServiceAppModel(
@@ -146,7 +146,6 @@ final class BridgeServiceAppModelTests: XCTestCase {
     )
     await model.startAsync()
 
-    model.approveTask("task-1")
     model.resolveApproval(
       IPCApprovalSummary(
         approvalID: "approval-1",
@@ -163,8 +162,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
 
     try await waitUntil {
       let snapshot = await client.mutationSnapshot()
-      return snapshot.approvedTaskIDs == ["task-1"]
-        && snapshot.approvalDecisions == ["approval-1:allow"]
+      return snapshot.approvalDecisions == ["approval-1:allow"]
     }
   }
 
@@ -284,7 +282,6 @@ private final class ClientFactoryRecorder {
 
 private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   struct MutationSnapshot: Sendable {
-    let approvedTaskIDs: [String]
     let approvalDecisions: [String]
     let configuredTunnelIDs: [String]
     let tunnelDisconnectCount: Int
@@ -293,7 +290,6 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   private var closes = 0
-  private var approvedTaskIDs: [String] = []
   private var approvalDecisions: [String] = []
   private var exposureMode = MCPServiceExposureMode.readOnly
   private var tunnelStatus = IPCTunnelStatus.unconfigured
@@ -445,11 +441,6 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     return taskSnapshot()
   }
 
-  func approveTask(taskID: String) async throws {
-    approvedTaskIDs.append(taskID)
-  }
-
-  func rejectTask(taskID _: String) async throws {}
   func stopTask(taskID _: String) async throws {}
 
   func approvals(taskID _: String?) async throws -> [IPCApprovalSummary] {
@@ -532,7 +523,6 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func mutationSnapshot() -> MutationSnapshot {
     MutationSnapshot(
-      approvedTaskIDs: approvedTaskIDs,
       approvalDecisions: approvalDecisions,
       configuredTunnelIDs: configuredTunnelIDs,
       tunnelDisconnectCount: tunnelDisconnectCount,

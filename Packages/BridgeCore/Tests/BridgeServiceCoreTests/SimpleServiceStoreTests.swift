@@ -38,7 +38,7 @@ final class SimpleServiceStoreTests: XCTestCase {
         permissionMode: .workspaceWrite
       )
     )
-    _ = try await tasks.approve(taskID: created.task.id)
+    _ = try await tasks.begin(taskID: created.task.id)
     _ = try await tasks.markExecutionStarted(
       taskID: created.task.id,
       threadID: "thr-persisted",
@@ -81,7 +81,7 @@ final class SimpleServiceStoreTests: XCTestCase {
       events.map(\.kind),
       [
         .taskCreated,
-        .taskApproved,
+        .executionStarting,
         .executionStarted,
         .planUpdated,
         .fileChanged,

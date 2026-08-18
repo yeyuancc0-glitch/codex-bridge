@@ -102,8 +102,8 @@ public struct BridgeServiceMenuBarView: View {
       if model.runningTaskCount > 0 {
         Text("正在运行 \(model.runningTaskCount) 个任务")
       }
-      if model.approvals.count > 0 || model.pendingLocalTaskCount > 0 {
-        Text("需要处理 \(model.approvals.count + model.pendingLocalTaskCount) 项")
+      if model.approvals.count > 0 {
+        Text("需要处理 \(model.approvals.count) 项")
       }
       Divider()
       Button("打开 Codex Bridge") {
