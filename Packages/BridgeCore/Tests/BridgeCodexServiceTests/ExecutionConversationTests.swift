@@ -81,6 +81,28 @@ final class ExecutionConversationTests: XCTestCase {
     }
   }
 
+  func testFailedTurnCarriesCodexErrorIntoTaskSummary() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(fixture: fixture, taskID: "tsk-turn-failed")
+    let manager = makeExecutionManager(script: failedTurnScript(root: fixture.root.path))
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    _ = try await coordinator.start(taskID: task.id)
+
+    let failed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .failed
+    }
+    XCTAssertEqual(failed.state.failureCode, "codex_turn_failed")
+    XCTAssertTrue(
+      failed.state.resultSummary?.contains("Selected model is at capacity") == true)
+    XCTAssertTrue(failed.state.resultSummary?.contains("server_overloaded") == true)
+  }
+
   private func waitUntil(
     timeout: Duration = .seconds(2),
     condition: @escaping @Sendable () async -> Bool
@@ -124,6 +146,30 @@ func agentDeltaScript(root: String) -> String {
     .replacingOccurrences(of: "__THREAD__", with: thread)
     .replacingOccurrences(of: "__TURN__", with: turn)
     .replacingOccurrences(of: "__COMPLETED__", with: completed)
+}
+
+func failedTurnScript(root: String) -> String {
+  let thread = executionThreadJSON(id: "thread-failed", root: root)
+  let turn = executionTurnJSON(id: "turn-failed", status: "inProgress")
+  let failed =
+    #"{"id":"turn-failed","status":"failed","error":{"message":"Selected model is at capacity. Please try a different model.","codex_error_info":"server_overloaded"},"items":[],"itemsView":"full","startedAt":1,"completedAt":null,"durationMs":null}"#
+  return executionCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r thread_start
+      case "$thread_start" in *'"method":"thread/start"'*) ;; *) exit 21 ;; esac
+      printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 22 ;; esac
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-failed","turn":__TURN__}}'
+      printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-failed","turn":__FAILED__}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+    .replacingOccurrences(of: "__FAILED__", with: failed)
 }
 
 actor ChangeCollector {

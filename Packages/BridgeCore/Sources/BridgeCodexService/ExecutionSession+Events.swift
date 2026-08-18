@@ -271,7 +271,7 @@ extension ExecutionSession {
       finish(
         with: .failed(
           code: "codex_turn_failed",
-          summary: "Codex reported that the Turn failed."
+          summary: Self.turnFailureSummary(completed.turn)
         )
       )
     default:
@@ -472,6 +472,17 @@ extension ExecutionSession {
       if messages.count >= 256 { break }
     }
     return messages
+  }
+
+  private static func turnFailureSummary(_ turn: CodexTurn) -> String {
+    let base = "Codex reported that the Turn failed."
+    guard let error = turn.error?.objectValue else { return base }
+    let message = error["message"]?.stringValue ?? ""
+    let info = error["codex_error_info"]?.stringValue ?? ""
+    if !message.isEmpty {
+      return info.isEmpty ? "\(base) \(message)" : "\(base) \(message) (\(info))"
+    }
+    return info.isEmpty ? base : "\(base) (\(info))"
   }
 
   private static func finalMessage(_ turn: CodexTurn) -> String {

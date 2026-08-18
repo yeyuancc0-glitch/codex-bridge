@@ -182,6 +182,7 @@ public actor ServiceTaskManager {
       patch: StatePatch(
         status: .failed,
         supervisorStatus: supervisorStatus,
+        resultSummary: .set(summary),
         failureCode: .set(failureCode)
       ),
       eventKind: .taskFailed,
