@@ -712,6 +712,55 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           operationID: detail.operationID,
           sessionID: detail.sessionID
         )
+      case .fileRevisionConflict:
+        return .init(
+          code: "file_revision_conflict",
+          message: "The file content does not match the expected revision.",
+          retryable: true
+        )
+      case .pathForbidden:
+        return .init(code: "path_forbidden", message: "The path is not allowed.")
+      case .pathChanged:
+        return .init(
+          code: "path_changed",
+          message: "The target changed after it was validated.",
+          retryable: true
+        )
+      case .writeNotAllowed:
+        return .init(code: "write_not_allowed", message: "The project does not allow remote writes.")
+      case .approvalRequired(let approvalID):
+        return .init(
+          code: "approval_required",
+          message: "The local user must approve this action.",
+          retryable: true,
+          operationID: approvalID
+        )
+      case .approvalExpired:
+        return .init(
+          code: "approval_expired",
+          message: "The local approval expired.",
+          retryable: true
+        )
+      case .invalidPatch:
+        return .init(code: "invalid_patch", message: "The patch could not be parsed or applied.")
+      case .notGitRepository:
+        return .init(code: "not_git_repository", message: "The project is not a Git repository.")
+      case .commandSessionNotFound:
+        return .init(
+          code: "command_session_not_found",
+          message: "The command session is unavailable."
+        )
+      case .commandTimeout:
+        return .init(
+          code: "command_timeout",
+          message: "The command exceeded its time limit.",
+          retryable: true
+        )
+      case .outputLimitExceeded:
+        return .init(
+          code: "output_limit_exceeded",
+          message: "The command output exceeded the bounded limit."
+        )
       }
     }
     if error is TunnelConfigurationError {

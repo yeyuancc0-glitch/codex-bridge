@@ -13,6 +13,11 @@ public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case submitTask = "submit_task"
   case steerTask = "steer_task"
   case interruptTask = "interrupt_task"
+  case getProjectChanges = "get_project_changes"
+  case directWriteProjectFile = "direct_write_project_file"
+  case directEditProjectFile = "direct_edit_project_file"
+  case directApplyProjectPatch = "direct_apply_project_patch"
+  case directManageProjectPath = "direct_manage_project_path"
 }
 
 public struct MCPServiceToolCatalog: Sendable {
@@ -29,9 +34,20 @@ public struct MCPServiceToolCatalog: Sendable {
       Self.readThread,
       Self.listModels,
       Self.getTask,
+      Self.getProjectChanges,
     ]
     if exposureMode == .full {
-      tools.append(contentsOf: [Self.submitTask, Self.steerTask, Self.interruptTask])
+      tools.append(
+        contentsOf: [
+          Self.submitTask,
+          Self.steerTask,
+          Self.interruptTask,
+          Self.directWriteProjectFile,
+          Self.directEditProjectFile,
+          Self.directApplyProjectPatch,
+          Self.directManageProjectPath,
+        ]
+      )
     }
     definitions = tools
   }
@@ -331,6 +347,202 @@ public struct MCPServiceToolCatalog: Sendable {
       "accepted": boolSchema,
     ],
     required: ["task_id", "status", "accepted"]
+  )
+
+  private static let directMutationOutputSchema = outputSchema(
+    properties: [
+      "relative_path": stringSchema,
+      "operation": stringSchema,
+      "old_sha256": stringSchema,
+      "new_sha256": stringSchema,
+      "byte_count": integerSchema(minimum: 0),
+      "bounded_diff": objectSchema(
+        properties: [
+          "removed_lines": arraySchema(stringSchema),
+          "added_lines": arraySchema(stringSchema),
+          "truncated": boolSchema,
+          "byte_count": integerSchema(minimum: 0),
+        ],
+        required: ["removed_lines", "added_lines", "truncated", "byte_count"]
+      ),
+    ],
+    required: ["relative_path", "operation", "byte_count", "bounded_diff"]
+  )
+
+  private static let directMutationReceiptSchema = objectSchema(
+    properties: [
+      "relative_path": stringSchema,
+      "operation": stringSchema,
+      "old_sha256": stringSchema,
+      "new_sha256": stringSchema,
+      "byte_count": integerSchema(minimum: 0),
+      "bounded_diff": objectSchema(
+        properties: [
+          "removed_lines": arraySchema(stringSchema),
+          "added_lines": arraySchema(stringSchema),
+          "truncated": boolSchema,
+          "byte_count": integerSchema(minimum: 0),
+        ],
+        required: ["removed_lines", "added_lines", "truncated", "byte_count"]
+      ),
+    ],
+    required: ["relative_path", "operation", "byte_count", "bounded_diff"]
+  )
+
+  private static let directManagePathOutputSchema = outputSchema(
+    properties: [
+      "relative_path": stringSchema,
+      "operation": stringSchema,
+      "old_sha256": stringSchema,
+      "new_sha256": stringSchema,
+      "byte_count": integerSchema(minimum: 0),
+    ],
+    required: ["relative_path", "operation", "byte_count"]
+  )
+
+  private static let getProjectChanges = Tool(
+    name: MCPServiceToolName.getProjectChanges.rawValue,
+    title: "Get project changes",
+    description: "Read bounded Git status and diff for an approved project. Observation only.",
+    inputSchema: projectIDInput,
+    annotations: readAnnotations,
+    outputSchema: outputSchema(
+      properties: [
+        "changed_files": arraySchema(stringSchema),
+        "diff": stringSchema,
+        "additions": integerSchema(minimum: 0),
+        "deletions": integerSchema(minimum: 0),
+        "truncated": boolSchema,
+        "not_git_repository": boolSchema,
+      ],
+      required: [
+        "changed_files", "diff", "additions", "deletions", "truncated", "not_git_repository",
+      ]
+    )
+  )
+
+  private static let directWriteProjectFile = Tool(
+    name: MCPServiceToolName.directWriteProjectFile.rawValue,
+    title: "Direct write project file",
+    description:
+      "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
+        + "to edit the local project without delegating the work to Codex. Creates a new file or "
+        + "atomically replaces an existing file inside the approved project root.",
+    inputSchema: objectSchema(
+      properties: [
+        "project_id": boundedStringSchema(maximum: 128),
+        "relative_path": boundedStringSchema(maximum: 1_024),
+        "mode": ["type": "string", "enum": ["create", "replace"]],
+        "content": boundedStringSchema(maximum: 256 * 1_024),
+        "expected_sha256": nullableStringSchema(maximum: 64),
+        "create_parents": boolSchema,
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["project_id", "relative_path", "mode", "content"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    ),
+    outputSchema: directMutationOutputSchema
+  )
+
+  private static let directEditProjectFile = Tool(
+    name: MCPServiceToolName.directEditProjectFile.rawValue,
+    title: "Direct edit project file",
+    description:
+      "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
+        + "to edit the local project without delegating the work to Codex. Applies an exact text "
+        + "replacement guarded by the file revision read earlier.",
+    inputSchema: objectSchema(
+      properties: [
+        "project_id": boundedStringSchema(maximum: 128),
+        "relative_path": boundedStringSchema(maximum: 1_024),
+        "expected_sha256": boundedStringSchema(maximum: 64),
+        "old_text": boundedStringSchema(maximum: 256 * 1_024),
+        "new_text": boundedStringSchema(maximum: 256 * 1_024),
+        "expected_replacements": integerSchema(minimum: 1, maximum: 1_000),
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["project_id", "relative_path", "expected_sha256", "old_text", "new_text"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: directMutationOutputSchema
+  )
+
+  private static let directApplyProjectPatch = Tool(
+    name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+    title: "Direct apply project patch",
+    description:
+      "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
+        + "to edit the local project without delegating the work to Codex. Applies a multi-file "
+        + "patch (*** Begin Patch / *** Add File / *** Update File) with per-file revision checks.",
+    inputSchema: objectSchema(
+      properties: [
+        "project_id": boundedStringSchema(maximum: 128),
+        "patch": boundedStringSchema(maximum: 256 * 1_024),
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["project_id", "patch"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: outputSchema(
+      properties: [
+        "operations": arraySchema(directMutationReceiptSchema),
+        "partial_commit": objectSchema(
+          properties: [
+            "changed_files": arraySchema(stringSchema),
+            "rollback_status": stringSchema,
+          ],
+          required: ["changed_files", "rollback_status"]
+        ),
+      ],
+      required: ["operations"]
+    )
+  )
+
+  private static let directManageProjectPath = Tool(
+    name: MCPServiceToolName.directManageProjectPath.rawValue,
+    title: "Direct manage project path",
+    description:
+      "Explicit Direct Workspace destructive action. Use only when the user explicitly asks "
+        + "ChatGPT itself to move or delete files. Deleting and moving require the current file "
+        + "revision read earlier.",
+    inputSchema: objectSchema(
+      properties: [
+        "project_id": boundedStringSchema(maximum: 128),
+        "action": [
+          "type": "string",
+          "enum": ["delete_file", "move_file", "create_directory", "delete_empty_directory"],
+        ],
+        "relative_path": boundedStringSchema(maximum: 1_024),
+        "expected_sha256": nullableStringSchema(maximum: 64),
+        "destination_relative_path": nullableStringSchema(maximum: 1_024),
+        "source_expected_sha256": nullableStringSchema(maximum: 64),
+        "destination_expected_absent": boolSchema,
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["project_id", "action", "relative_path"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: directManagePathOutputSchema
   )
 
   private static let projectIDInput = objectSchema(

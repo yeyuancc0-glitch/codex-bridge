@@ -295,6 +295,34 @@ extension BridgeServiceApplication {
     }
   }
 
+  static func publicMutationError(_ error: Error) -> BridgeMCPQueryError {
+    guard let value = error as? ProjectMutationError else { return .unavailable }
+    switch value {
+    case .unknownProject:
+      return .projectNotFound
+    case .readNotAllowed:
+      return .pathDenied
+    case .writeNotAllowed:
+      return .writeNotAllowed
+    case .forbiddenPath:
+      return .pathForbidden
+    case .invalidRequest, .pathExists, .pathMissing, .contentTooLarge:
+      return .contractRejected
+    case .revisionConflict:
+      return .fileRevisionConflict
+    case .pathChanged, .unsupportedHardLink, .unsafeFilesystemState:
+      return .pathChanged
+    case .binaryContent:
+      return .pathDenied
+    case .invalidPatch:
+      return .invalidPatch
+    case .partialCommit:
+      return .unavailable
+    case .notGitRepository:
+      return .notGitRepository
+    }
+  }
+
   static func checkDeadline(_ deadline: ContinuousClock.Instant) throws {
     guard ContinuousClock.now < deadline else { throw BridgeMCPQueryError.timeout }
   }

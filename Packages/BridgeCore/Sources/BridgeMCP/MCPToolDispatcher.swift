@@ -238,6 +238,73 @@ public struct MCPToolDispatcher: Sendable {
         message: "A required local Bridge component is unavailable.",
         retryable: true
       )
+    case .fileRevisionConflict:
+      description = .init(
+        code: "file_revision_conflict",
+        message: "The file content does not match the expected revision.",
+        retryable: true
+      )
+    case .pathForbidden:
+      description = .init(
+        code: "path_forbidden",
+        message: "The path is not allowed.",
+        retryable: false
+      )
+    case .pathChanged:
+      description = .init(
+        code: "path_changed",
+        message: "The target changed after it was validated.",
+        retryable: true
+      )
+    case .writeNotAllowed:
+      description = .init(
+        code: "write_not_allowed",
+        message: "The project does not allow remote writes.",
+        retryable: false
+      )
+    case .approvalRequired(let approvalID):
+      description = .init(
+        code: "approval_required",
+        message: "The local user must approve this action.",
+        retryable: true,
+        operationID: approvalID
+      )
+    case .approvalExpired:
+      description = .init(
+        code: "approval_expired",
+        message: "The local approval expired.",
+        retryable: true
+      )
+    case .invalidPatch:
+      description = .init(
+        code: "invalid_patch",
+        message: "The patch could not be parsed or applied.",
+        retryable: false
+      )
+    case .notGitRepository:
+      description = .init(
+        code: "not_git_repository",
+        message: "The project is not a Git repository.",
+        retryable: false
+      )
+    case .commandSessionNotFound:
+      description = .init(
+        code: "command_session_not_found",
+        message: "The command session is unavailable.",
+        retryable: false
+      )
+    case .commandTimeout:
+      description = .init(
+        code: "command_timeout",
+        message: "The command exceeded its time limit.",
+        retryable: true
+      )
+    case .outputLimitExceeded:
+      description = .init(
+        code: "output_limit_exceeded",
+        message: "The command output exceeded the bounded limit.",
+        retryable: false
+      )
     }
     return try resultEncoder.encode(MCPToolErrorOutput(error: description), isError: true)
   }

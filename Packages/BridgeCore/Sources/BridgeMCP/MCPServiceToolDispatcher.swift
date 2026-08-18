@@ -302,6 +302,51 @@ public struct MCPServiceToolDispatcher: Sendable {
         )
       }
       return try resultEncoder.encode(ServiceMutateTaskOutput(receipt: receipt))
+
+    case .getProjectChanges:
+      let values = try StrictToolArguments(
+        arguments,
+        allowed: ["project_id"],
+        required: ["project_id"]
+      )
+      let projectID = try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128)
+      let deadline = clock.now.advanced(by: deadlines.read)
+      let changes = try await withToolDeadline(until: deadline) {
+        try await service.serviceProjectChanges(projectID: projectID, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceProjectChangesOutput(changes: changes))
+
+    case .directWriteProjectFile:
+      let request = try parseDirectWrite(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectWriteFile(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectMutationOutput(receipt: receipt))
+
+    case .directEditProjectFile:
+      let request = try parseDirectEdit(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectEditFile(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectMutationOutput(receipt: receipt))
+
+    case .directApplyProjectPatch:
+      let request = try parseDirectPatch(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectApplyPatch(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectPatchOutput(receipt: receipt))
+
+    case .directManageProjectPath:
+      let request = try parseDirectManagePath(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectManagePath(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectManagePathOutput(receipt: receipt))
     }
   }
 
@@ -375,6 +420,141 @@ public struct MCPServiceToolDispatcher: Sendable {
     )
   }
 
+  private func parseDirectWrite(_ arguments: [String: Value]?) throws -> MCPDirectWriteRequest {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 512 * 1_024 else {
+      throw MCPError.invalidParams("The write request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: [
+        "project_id", "relative_path", "mode", "content", "expected_sha256", "create_parents",
+        "client_request_id",
+      ],
+      required: ["project_id", "relative_path", "mode", "content"]
+    )
+    let mode = try values.requiredIdentifier("mode", maximumUTF8Bytes: 16)
+    guard mode == "create" || mode == "replace" else {
+      throw MCPError.invalidParams("Argument 'mode' is invalid.")
+    }
+    let content = try values.requiredText("content", maximumUTF8Bytes: 256 * 1_024)
+    guard OutboundContentSecurity.isSafe(content) else {
+      throw MCPError.invalidParams("Write content contains restricted local data.")
+    }
+    let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
+    guard OutboundContentSecurity.isSafeRelativePath(path) else {
+      throw MCPError.invalidParams("Argument 'relative_path' must be a safe relative path.")
+    }
+    return MCPDirectWriteRequest(
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      relativePath: path,
+      mode: mode,
+      content: content,
+      expectedSHA256: try values.optionalIdentifier("expected_sha256", maximumUTF8Bytes: 64),
+      createParents: try values.optionalBoolean("create_parents") ?? false,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
+  private func parseDirectEdit(_ arguments: [String: Value]?) throws -> MCPDirectEditRequest {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 512 * 1_024 else {
+      throw MCPError.invalidParams("The edit request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: [
+        "project_id", "relative_path", "expected_sha256", "old_text", "new_text",
+        "expected_replacements", "client_request_id",
+      ],
+      required: ["project_id", "relative_path", "expected_sha256", "old_text", "new_text"]
+    )
+    let oldText = try values.requiredText("old_text", maximumUTF8Bytes: 256 * 1_024)
+    let newText = try values.requiredText("new_text", maximumUTF8Bytes: 256 * 1_024)
+    guard OutboundContentSecurity.isSafe(oldText), OutboundContentSecurity.isSafe(newText) else {
+      throw MCPError.invalidParams("Edit text contains restricted local data.")
+    }
+    let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
+    guard OutboundContentSecurity.isSafeRelativePath(path) else {
+      throw MCPError.invalidParams("Argument 'relative_path' must be a safe relative path.")
+    }
+    return MCPDirectEditRequest(
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      relativePath: path,
+      expectedSHA256: try values.requiredIdentifier("expected_sha256", maximumUTF8Bytes: 64),
+      oldText: oldText,
+      newText: newText,
+      expectedReplacements: try values.optionalPositiveInteger(
+        "expected_replacements", maximum: 1_000) ?? 1,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
+  private func parseDirectPatch(_ arguments: [String: Value]?) throws -> MCPDirectPatchRequest {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 512 * 1_024 else {
+      throw MCPError.invalidParams("The patch request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: ["project_id", "patch", "client_request_id"],
+      required: ["project_id", "patch"]
+    )
+    let patch = try values.requiredText("patch", maximumUTF8Bytes: 256 * 1_024)
+    guard OutboundContentSecurity.isSafe(patch) else {
+      throw MCPError.invalidParams("Patch text contains restricted local data.")
+    }
+    return MCPDirectPatchRequest(
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      patch: patch,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
+  private func parseDirectManagePath(_ arguments: [String: Value]?) throws
+    -> MCPDirectManagePathRequest
+  {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 128 * 1_024 else {
+      throw MCPError.invalidParams("The path request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: [
+        "project_id", "action", "relative_path", "expected_sha256",
+        "destination_relative_path", "source_expected_sha256", "destination_expected_absent",
+        "client_request_id",
+      ],
+      required: ["project_id", "action", "relative_path"]
+    )
+    let action = try values.requiredIdentifier("action", maximumUTF8Bytes: 32)
+    guard
+      ["delete_file", "move_file", "create_directory", "delete_empty_directory"].contains(action)
+    else {
+      throw MCPError.invalidParams("Argument 'action' is invalid.")
+    }
+    let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
+    guard OutboundContentSecurity.isSafeRelativePath(path) else {
+      throw MCPError.invalidParams("Argument 'relative_path' must be a safe relative path.")
+    }
+    let destination = try values.optionalIdentifier(
+      "destination_relative_path", maximumUTF8Bytes: 1_024)
+    if let destination, !OutboundContentSecurity.isSafeRelativePath(destination) {
+      throw MCPError.invalidParams(
+        "Argument 'destination_relative_path' must be a safe relative path.")
+    }
+    if action == "move_file", destination == nil {
+      throw MCPError.invalidParams("Argument 'destination_relative_path' is required for move.")
+    }
+    return MCPDirectManagePathRequest(
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      action: action,
+      relativePath: path,
+      expectedSHA256: try values.optionalIdentifier("expected_sha256", maximumUTF8Bytes: 64),
+      destinationRelativePath: destination,
+      sourceExpectedSHA256: try values.optionalIdentifier(
+        "source_expected_sha256", maximumUTF8Bytes: 64),
+      destinationExpectedAbsent: try values.optionalBoolean("destination_expected_absent") ?? true,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
   private func validate(
     _ snapshot: MCPServiceTaskSnapshot,
     requestedTaskID: String,
@@ -407,7 +587,9 @@ public struct MCPServiceToolDispatcher: Sendable {
   }
 
   private func isExposed(_ name: MCPServiceToolName) -> Bool {
-    exposureMode == .full || ![.submitTask, .steerTask, .interruptTask].contains(name)
+    exposureMode == .full
+      || ![.submitTask, .steerTask, .interruptTask, .directWriteProjectFile, .directEditProjectFile,
+        .directApplyProjectPatch, .directManageProjectPath].contains(name)
   }
 
   private func encodeQueryError(_ error: BridgeMCPQueryError) throws -> CallTool.Result {
@@ -470,6 +652,69 @@ public struct MCPServiceToolDispatcher: Sendable {
         code: "unavailable",
         message: "A local component is unavailable.",
         retryable: true
+      )
+    case .fileRevisionConflict:
+      dto = .init(
+        code: "file_revision_conflict",
+        message: "The file content does not match the expected revision. Read the file again.",
+        retryable: true
+      )
+    case .pathForbidden:
+      dto = .init(code: "path_forbidden", message: "The path is not allowed.", retryable: false)
+    case .pathChanged:
+      dto = .init(
+        code: "path_changed",
+        message: "The target changed after it was validated. Read the file again.",
+        retryable: true
+      )
+    case .writeNotAllowed:
+      dto = .init(
+        code: "write_not_allowed",
+        message: "The project does not allow remote writes.",
+        retryable: false
+      )
+    case .approvalRequired(let approvalID):
+      dto = .init(
+        code: "approval_required",
+        message: "The local user must approve this action (approval \(approvalID)).",
+        retryable: true,
+        operationID: approvalID
+      )
+    case .approvalExpired:
+      dto = .init(
+        code: "approval_expired",
+        message: "The local approval expired. Request a new approval.",
+        retryable: true
+      )
+    case .invalidPatch:
+      dto = .init(
+        code: "invalid_patch",
+        message: "The patch could not be parsed or applied.",
+        retryable: false
+      )
+    case .notGitRepository:
+      dto = .init(
+        code: "not_git_repository",
+        message: "The project is not a Git repository.",
+        retryable: false
+      )
+    case .commandSessionNotFound:
+      dto = .init(
+        code: "command_session_not_found",
+        message: "The command session is unavailable.",
+        retryable: false
+      )
+    case .commandTimeout:
+      dto = .init(
+        code: "command_timeout",
+        message: "The command exceeded its time limit.",
+        retryable: true
+      )
+    case .outputLimitExceeded:
+      dto = .init(
+        code: "output_limit_exceeded",
+        message: "The command output exceeded the bounded limit.",
+        retryable: false
       )
     }
     return try resultEncoder.encode(MCPToolErrorOutput(error: dto), isError: true)
@@ -629,5 +874,106 @@ private struct ServiceMutateTaskOutput: Codable, Sendable {
     case taskID = "task_id"
     case status
     case accepted
+  }
+}
+
+private struct ServiceProjectChangesOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let changedFiles: [String]
+  let diff: String
+  let additions: Int
+  let deletions: Int
+  let truncated: Bool
+  let notGitRepository: Bool
+
+  init(changes: MCPProjectChanges) {
+    changedFiles = changes.changedFiles
+    diff = changes.diff
+    additions = changes.additions
+    deletions = changes.deletions
+    truncated = changes.truncated
+    notGitRepository = changes.notGitRepository
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case changedFiles = "changed_files"
+    case diff
+    case additions
+    case deletions
+    case truncated
+    case notGitRepository = "not_git_repository"
+  }
+}
+
+private struct ServiceDirectMutationOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let relativePath: String
+  let operation: String
+  let oldSHA256: String?
+  let newSHA256: String?
+  let byteCount: Int
+  let boundedDiff: MCPBoundedDiff
+
+  init(receipt: MCPDirectWriteReceipt) {
+    relativePath = receipt.relativePath
+    operation = receipt.operation
+    oldSHA256 = receipt.oldSHA256
+    newSHA256 = receipt.newSHA256
+    byteCount = receipt.byteCount
+    boundedDiff = receipt.boundedDiff
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case relativePath = "relative_path"
+    case operation
+    case oldSHA256 = "old_sha256"
+    case newSHA256 = "new_sha256"
+    case byteCount = "byte_count"
+    case boundedDiff = "bounded_diff"
+  }
+}
+
+private struct ServiceDirectPatchOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let operations: [MCPDirectWriteReceipt]
+  let partialCommit: MCPPartialCommit?
+
+  init(receipt: MCPDirectPatchReceipt) {
+    operations = receipt.operations
+    partialCommit = receipt.partialCommit
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case operations
+    case partialCommit = "partial_commit"
+  }
+}
+
+private struct ServiceDirectManagePathOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let relativePath: String
+  let operation: String
+  let oldSHA256: String?
+  let newSHA256: String?
+  let byteCount: Int
+
+  init(receipt: MCPDirectManagePathReceipt) {
+    relativePath = receipt.relativePath
+    operation = receipt.operation
+    oldSHA256 = receipt.oldSHA256
+    newSHA256 = receipt.newSHA256
+    byteCount = receipt.byteCount
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case relativePath = "relative_path"
+    case operation
+    case oldSHA256 = "old_sha256"
+    case newSHA256 = "new_sha256"
+    case byteCount = "byte_count"
   }
 }

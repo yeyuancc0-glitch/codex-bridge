@@ -12,6 +12,12 @@ public enum PathSecurityError: Error, LocalizedError, Sendable, Equatable {
   case fileTooLarge(maximumBytes: Int)
   case binaryFileBlocked
   case readFailed(Int32)
+  case writeFailed(Int32)
+  case targetAlreadyExists
+  case targetNotRegularFile
+  case unsupportedHardLink
+  case revisionConflict
+  case pathChanged
 
   public var errorDescription: String? {
     switch self {
@@ -32,11 +38,23 @@ public enum PathSecurityError: Error, LocalizedError, Sendable, Equatable {
     case .unsupportedFileType:
       "Only regular files can be read."
     case .fileTooLarge(let maximumBytes):
-      "The file exceeds the \(maximumBytes)-byte read limit."
+      "The file exceeds the \(maximumBytes)-byte limit."
     case .binaryFileBlocked:
-      "Binary files cannot be returned through this text API."
+      "Binary files cannot be used through this text API."
     case .readFailed(let code):
       "The file could not be read (errno \(code))."
+    case .writeFailed(let code):
+      "The file could not be written (errno \(code))."
+    case .targetAlreadyExists:
+      "The target already exists."
+    case .targetNotRegularFile:
+      "The target is not a regular file."
+    case .unsupportedHardLink:
+      "The target has multiple hard links and cannot be replaced safely."
+    case .revisionConflict:
+      "The file content does not match the expected revision."
+    case .pathChanged:
+      "The target changed after it was validated."
     }
   }
 }

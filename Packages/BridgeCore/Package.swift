@@ -164,7 +164,7 @@ let package = Package(
         ),
         .target(
             name: "BridgeFiles",
-            dependencies: ["BridgeDomain", "BridgeSecurity", "BridgeProjects"]
+            dependencies: ["BridgeDomain", "BridgeGit", "BridgeSecurity", "BridgeProjects"]
         ),
         .target(name: "BridgePresentation"),
         .target(

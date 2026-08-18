@@ -43,6 +43,17 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case timeout
   case unavailable
   case projectBusy(WorkspaceBusyDetail)
+  case fileRevisionConflict
+  case pathForbidden
+  case pathChanged
+  case writeNotAllowed
+  case approvalRequired(approvalID: String)
+  case approvalExpired
+  case invalidPatch
+  case notGitRepository
+  case commandSessionNotFound
+  case commandTimeout
+  case outputLimitExceeded
 }
 
 public struct WorkspaceBusyDetail: Codable, Equatable, Sendable {

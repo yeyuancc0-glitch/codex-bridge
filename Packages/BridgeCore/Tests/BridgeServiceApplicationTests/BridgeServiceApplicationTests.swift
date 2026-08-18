@@ -10,12 +10,15 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let readOnly = MCPServiceToolCatalog(exposureMode: .readOnly).definitions.map(\.name)
     let full = MCPServiceToolCatalog(exposureMode: .full).definitions.map(\.name)
 
-    XCTAssertEqual(readOnly.count, 9)
-    XCTAssertEqual(full.count, 12)
+    XCTAssertEqual(readOnly.count, 10)
+    XCTAssertEqual(full.count, 17)
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.submitTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.steerTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.interruptTask.rawValue))
+    XCTAssertFalse(readOnly.contains(MCPServiceToolName.directWriteProjectFile.rawValue))
+    XCTAssertTrue(readOnly.contains(MCPServiceToolName.getProjectChanges.rawValue))
     XCTAssertTrue(full.contains(MCPServiceToolName.submitTask.rawValue))
+    XCTAssertTrue(full.contains(MCPServiceToolName.directWriteProjectFile.rawValue))
     XCTAssertFalse(full.contains("resolve_approval"))
   }
 

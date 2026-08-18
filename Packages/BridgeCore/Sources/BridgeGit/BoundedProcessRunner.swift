@@ -7,9 +7,9 @@ private func bridgeSpawnFileActionsAddFchdir(
   _ descriptor: Int32
 ) -> Int32
 
-final class OpenedWorkingDirectory: @unchecked Sendable {
-  let url: URL
-  let descriptor: Int32
+public final class OpenedWorkingDirectory: @unchecked Sendable {
+  public let url: URL
+  public let descriptor: Int32
   private let device: UInt64
   private let inode: UInt64
 
@@ -17,7 +17,7 @@ final class OpenedWorkingDirectory: @unchecked Sendable {
     GitRootIdentity(device: device, inode: inode)
   }
 
-  init(canonicalURL: URL) throws {
+  public init(canonicalURL: URL) throws {
     var information = stat()
     let opened = Darwin.open(canonicalURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
     guard opened >= 0, fstat(opened, &information) == 0,
@@ -36,7 +36,7 @@ final class OpenedWorkingDirectory: @unchecked Sendable {
     Darwin.close(descriptor)
   }
 
-  func validatePathIdentity() throws {
+  public func validatePathIdentity() throws {
     var information = stat()
     let result = url.path.withCString { Darwin.lstat($0, &information) }
     guard result == 0,
@@ -49,39 +49,61 @@ final class OpenedWorkingDirectory: @unchecked Sendable {
   }
 }
 
-enum BoundedProcessTermination: Equatable, Sendable {
+public enum BoundedProcessTermination: Equatable, Sendable {
   case exited(Int32)
   case outputLimit
 }
 
-struct BoundedProcessResult: Equatable, Sendable {
-  let termination: BoundedProcessTermination
-  let standardOutput: Data
-  let standardError: Data
-  let standardOutputTruncated: Bool
-  let standardErrorTruncated: Bool
+public struct BoundedProcessResult: Equatable, Sendable {
+  public let termination: BoundedProcessTermination
+  public let standardOutput: Data
+  public let standardError: Data
+  public let standardOutputTruncated: Bool
+  public let standardErrorTruncated: Bool
 }
 
-struct BoundedProcessConfiguration: Sendable {
-  let executableURL: URL
-  let arguments: [String]
-  let workingDirectory: OpenedWorkingDirectory
-  let environment: [String]
-  let timeout: Duration
-  let terminationGracePeriod: Duration
-  let maximumStandardOutputBytes: Int
-  let maximumStandardErrorBytes: Int
+public struct BoundedProcessConfiguration: Sendable {
+  public let executableURL: URL
+  public let arguments: [String]
+  public let workingDirectory: OpenedWorkingDirectory
+  public let environment: [String]
+  public let timeout: Duration
+  public let terminationGracePeriod: Duration
+  public let maximumStandardOutputBytes: Int
+  public let maximumStandardErrorBytes: Int
+
+  public init(
+    executableURL: URL,
+    arguments: [String],
+    workingDirectory: OpenedWorkingDirectory,
+    environment: [String],
+    timeout: Duration,
+    terminationGracePeriod: Duration,
+    maximumStandardOutputBytes: Int,
+    maximumStandardErrorBytes: Int
+  ) {
+    self.executableURL = executableURL
+    self.arguments = arguments
+    self.workingDirectory = workingDirectory
+    self.environment = environment
+    self.timeout = timeout
+    self.terminationGracePeriod = terminationGracePeriod
+    self.maximumStandardOutputBytes = maximumStandardOutputBytes
+    self.maximumStandardErrorBytes = maximumStandardErrorBytes
+  }
 }
 
-enum BoundedProcessError: Error, Equatable, Sendable {
+public enum BoundedProcessError: Error, Equatable, Sendable {
   case invalidConfiguration
   case launchFailed
   case timedOut
   case waitFailed
 }
 
-struct BoundedProcessRunner: Sendable {
-  func run(_ configuration: BoundedProcessConfiguration) async throws -> BoundedProcessResult {
+public struct BoundedProcessRunner: Sendable {
+  public init() {}
+
+  public func run(_ configuration: BoundedProcessConfiguration) async throws -> BoundedProcessResult {
     try Self.validate(configuration)
     var child = try spawn(configuration)
     do {
