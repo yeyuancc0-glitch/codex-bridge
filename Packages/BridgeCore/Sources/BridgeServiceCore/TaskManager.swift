@@ -246,6 +246,45 @@ public actor ServiceTaskManager {
     try await store.events(taskID: taskID, limit: limit)
   }
 
+  public func upsertTaskMessage(
+    taskID: TaskID,
+    key: String,
+    role: ServiceTaskMessageRole,
+    content: String
+  ) async throws {
+    try await store.upsertTaskMessage(
+      ServiceTaskMessageDraft(
+        key: key,
+        role: role,
+        content: content,
+        createdAt: now()
+      ),
+      taskID: taskID
+    )
+  }
+
+  public func messages(
+    taskID: TaskID,
+    beforeMessageID: Int64? = nil,
+    limit: Int = 200
+  ) async throws -> [ServiceTaskMessageRecord] {
+    try await store.taskMessages(
+      taskID: taskID,
+      beforeMessageID: beforeMessageID,
+      limit: limit
+    )
+  }
+
+  public func remove(taskID: TaskID) async throws {
+    guard let task = try await store.task(id: taskID) else {
+      throw ServiceStoreError.unknownTask(taskID)
+    }
+    guard task.state.status.isTerminal || task.state.status == .unknown else {
+      throw ServiceStoreError.invalidArgument("task.removeActive")
+    }
+    try await store.removeTask(id: taskID)
+  }
+
   public func activeWriteTask(projectID: ProjectID) async throws -> ServiceTaskRecord? {
     try await store.activeWriteTask(projectID: projectID)
   }

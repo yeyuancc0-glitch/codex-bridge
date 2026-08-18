@@ -10,14 +10,15 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
   }
 
   private let listener: NSXPCListener
-  private let controller: BridgeServiceXPCController
+  private let makeController: (CodexBridgeTaskStreamListener?) -> BridgeServiceXPCController
   private let lock = NSLock()
+  private var controllers: [NSXPCConnection: BridgeServiceXPCController] = [:]
   private var resumed = false
   private var invalidated = false
 
   public init(
     mode: Mode = .machService(BridgeServiceIPC.machServiceName),
-    controller: BridgeServiceXPCController
+    composition: ServiceComposition
   ) {
     switch mode {
     case .machService(let name):
@@ -26,7 +27,9 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
     case .anonymous:
       listener = NSXPCListener.anonymous()
     }
-    self.controller = controller
+    self.makeController = { streamProxy in
+      BridgeServiceXPCController(composition: composition, streamProxy: streamProxy)
+    }
     super.init()
     listener.delegate = self
   }
@@ -53,7 +56,12 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
       return
     }
     invalidated = true
+    let active = Array(controllers.values)
+    controllers.removeAll(keepingCapacity: false)
     lock.unlock()
+    for controller in active {
+      controller.stopStreaming()
+    }
     listener.invalidate()
   }
 
@@ -65,8 +73,27 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
     newConnection.exportedInterface = NSXPCInterface(
       with: CodexBridgeServiceXPCProtocol.self
     )
+    newConnection.remoteObjectInterface = NSXPCInterface(
+      with: CodexBridgeTaskStreamListener.self
+    )
+    let controller = makeController(
+      newConnection.remoteObjectProxy as? CodexBridgeTaskStreamListener
+    )
     newConnection.exportedObject = controller
+    lock.lock()
+    controllers[newConnection] = controller
+    lock.unlock()
+    newConnection.invalidationHandler = { [weak self] in
+      self?.remove(newConnection)
+    }
     newConnection.resume()
     return true
+  }
+
+  private func remove(_ connection: NSXPCConnection) {
+    lock.lock()
+    let controller = controllers.removeValue(forKey: connection)
+    lock.unlock()
+    controller?.stopStreaming()
   }
 }

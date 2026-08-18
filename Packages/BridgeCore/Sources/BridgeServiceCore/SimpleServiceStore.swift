@@ -347,6 +347,81 @@ public actor SimpleServiceStore {
   }
 
   @discardableResult
+  public func upsertTaskMessage(
+    _ message: ServiceTaskMessageDraft,
+    taskID: TaskID
+  ) throws -> ServiceTaskMessageRecord {
+    do {
+      return try database.write { db in
+        guard try Self.taskRow(id: taskID, in: db) != nil else {
+          throw ServiceStoreError.unknownTask(taskID)
+        }
+        try Self.upsertTaskMessage(message, taskID: taskID, in: db)
+        guard let row = try Self.taskMessageRow(taskID: taskID, key: message.key, in: db) else {
+          throw ServiceStoreError.corruptRecord
+        }
+        return try Self.decodeTaskMessage(row)
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
+  public func taskMessages(
+    taskID: TaskID,
+    beforeMessageID: Int64? = nil,
+    limit: Int = 200
+  ) throws -> [ServiceTaskMessageRecord] {
+    guard (1...500).contains(limit) else {
+      throw ServiceStoreError.invalidArgument("taskMessages.limit")
+    }
+    do {
+      return try database.read { db in
+        let rows = try Row.fetchAll(
+          db,
+          sql: """
+            SELECT * FROM (
+              SELECT * FROM bridge_service_task_messages
+              WHERE task_id = ?
+                AND (? IS NULL OR message_id < ?)
+              ORDER BY message_id DESC
+              LIMIT ?
+            )
+            ORDER BY message_id ASC
+            """,
+          arguments: [taskID.rawValue, beforeMessageID, beforeMessageID, limit]
+        )
+        return try rows.map(Self.decodeTaskMessage)
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
+  public func removeTask(id: TaskID) throws {
+    do {
+      try database.write { db in
+        guard try Self.taskRow(id: id, in: db) != nil else {
+          throw ServiceStoreError.unknownTask(id)
+        }
+        try db.execute(
+          sql: "DELETE FROM bridge_service_tasks WHERE task_id = ?",
+          arguments: [id.rawValue]
+        )
+        guard db.changesCount == 1 else { throw ServiceStoreError.storageFailure }
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
+  @discardableResult
   public func markIncompleteTasksUnknown(at date: Date) throws -> [ServiceTaskRecord] {
     try ServiceValidation.date(date, field: "recovery.date")
     do {

@@ -18,6 +18,14 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot]
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot
   func stopTask(taskID: String) async throws
+  func deleteTask(taskID: String) async throws
+  func taskConversation(_ request: IPCTaskConversationRequest) async throws
+    -> IPCTaskConversationPage
+  func subscribeTaskConversation(
+    taskID: String,
+    limit: Int
+  ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>)
+  func unsubscribeTaskConversation(taskID: String, subscriptionID: Int) async throws
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws

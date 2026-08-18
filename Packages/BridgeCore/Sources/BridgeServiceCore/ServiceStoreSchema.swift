@@ -1,11 +1,12 @@
 import GRDB
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 2
+  static let version: Int64 = 3
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
-  static let knownMigrations: Set<String> = [migrationV1, migrationV2]
+  static let migrationV3 = "BridgeServiceCore.v3"
+  static let knownMigrations: Set<String> = [migrationV1, migrationV2, migrationV3]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
@@ -26,6 +27,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV2) { db in
       try createVersionTwo(in: db)
+    }
+    migrator.registerMigration(migrationV3) { db in
+      try createVersionThree(in: db)
     }
     return migrator
   }
@@ -65,7 +69,7 @@ enum ServiceStoreSchema {
     }
   }
 
-  private static func createVersionTwo(in db: Database) throws {
+  static func createVersionTwo(in db: Database) throws {
     try db.execute(
       sql: """
         ALTER TABLE bridge_service_tasks
@@ -76,6 +80,31 @@ enum ServiceStoreSchema {
         ADD COLUMN fast_mode INTEGER NOT NULL DEFAULT 0 CHECK (fast_mode IN (0, 1));
 
         UPDATE bridge_service_meta SET schema_version = 2 WHERE singleton = 1;
+        """)
+  }
+
+  static func createVersionThree(in db: Database) throws {
+    try db.execute(
+      sql: """
+        CREATE TABLE bridge_service_task_messages (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            message_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
+            content TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY (task_id)
+              REFERENCES bridge_service_tasks(task_id) ON DELETE CASCADE,
+            UNIQUE (task_id, message_key),
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(message_key AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 262144)
+        );
+
+        CREATE INDEX bridge_service_task_messages_task
+        ON bridge_service_task_messages(task_id, message_id);
+
+        UPDATE bridge_service_meta SET schema_version = 3 WHERE singleton = 1;
         """)
   }
 
@@ -252,6 +281,9 @@ enum ServiceStoreSchema {
         ],
         "bridge_service_task_events": [
           "event_id", "task_id", "kind", "summary", "created_at",
+        ],
+        "bridge_service_task_messages": [
+          "message_id", "task_id", "message_key", "role", "content", "created_at",
         ],
       ]
       for (table, expected) in requiredColumns {

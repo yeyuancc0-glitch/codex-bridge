@@ -33,6 +33,8 @@ extension ExecutionSession {
       }
       guard item.type == "commandExecution" || item.type == "fileChange" else { return }
       await receiveSemanticNotification(notification)
+    case "item/agentMessage/delta":
+      await receiveAgentMessageDelta(notification)
     case "turn/completed":
       await receiveTurnCompleted(notification)
     default:
@@ -105,6 +107,28 @@ extension ExecutionSession {
       yield(event)
     } catch {
       await fail(code: "invalid_semantic_event", summary: "Codex emitted invalid task progress.")
+    }
+  }
+
+  private func receiveAgentMessageDelta(_ notification: RPCNotification) async {
+    do {
+      guard case .agentMessageDelta(let delta) = try notification.decodedCodexNotification()
+      else {
+        throw ExecutionServiceError.protocolViolation("agent message delta")
+      }
+      try requireActiveEvidence(threadID: delta.threadId, turnID: delta.turnId)
+      let event = try ExecutionAgentMessageDelta(
+        threadID: delta.threadId,
+        turnID: delta.turnId,
+        itemID: delta.itemId,
+        delta: delta.delta
+      )
+      yield(.agentMessageDelta(event))
+    } catch {
+      await fail(
+        code: "invalid_agent_delta",
+        summary: "Codex emitted an invalid agent message delta."
+      )
     }
   }
 
@@ -231,6 +255,11 @@ extension ExecutionSession {
       }
       deferredCompletion = completed
       return
+    }
+
+    let messages = Self.agentMessages(from: completed.turn)
+    if !messages.isEmpty {
+      yield(.turnCompleted(messages: messages))
     }
 
     switch completed.turn.status {
@@ -424,6 +453,25 @@ extension ExecutionSession {
     return SHA256.hash(data: try encoder.encode(source)).map {
       String(format: "%02x", $0)
     }.joined()
+  }
+
+  private static func agentMessages(from turn: CodexTurn) -> [ExecutionAgentMessage] {
+    var messages: [ExecutionAgentMessage] = []
+    for item in turn.items {
+      guard let object = item.objectValue,
+        object["type"]?.stringValue == "agentMessage",
+        let itemID = object["id"]?.stringValue,
+        let text = object["text"]?.stringValue,
+        let message = try? ExecutionAgentMessage(
+          key: "agent:" + itemID,
+          role: .agent,
+          content: OutboundContentSecurity.redacted(text, maximumUTF8Bytes: 256 * 1_024)
+        )
+      else { continue }
+      messages.append(message)
+      if messages.count >= 256 { break }
+    }
+    return messages
   }
 
   private static func finalMessage(_ turn: CodexTurn) -> String {

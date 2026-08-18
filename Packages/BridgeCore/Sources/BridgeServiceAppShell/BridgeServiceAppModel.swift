@@ -88,6 +88,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var selectedProjectID: String?
   @Published public internal(set) var isRefreshing = false
   @Published public internal(set) var lastRefreshAt: Date?
+  @Published public internal(set) var conversation: TaskConversationModel?
   @Published public var errorMessage: String?
 
   let registration: any BridgeServiceRegistrationManaging

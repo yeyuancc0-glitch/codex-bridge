@@ -1,3 +1,4 @@
+import BridgeMCP
 import SwiftUI
 
 struct BridgeServiceOverviewView: View {
@@ -5,95 +6,225 @@ struct BridgeServiceOverviewView: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
+      VStack(alignment: .leading, spacing: 20) {
         SectionHeader(
           "概览",
-          subtitle: "查看后台 Service、任务与本机审批是否需要处理。"
+          subtitle: "监控后台 Service、本地 MCP、Secure Tunnel 与任务执行状态。",
+          icon: "gauge.with.needle"
         )
 
-        statusSection
-        Divider()
         attentionSection
-        Divider()
-        activitySection
+
+        VStack(alignment: .leading, spacing: 12) {
+          Text("关键指标")
+            .font(.headline)
+            .foregroundStyle(.secondary)
+
+          metricsGrid
+        }
+
+        VStack(alignment: .leading, spacing: 12) {
+          Text("连接与服务状态")
+            .font(.headline)
+            .foregroundStyle(.secondary)
+
+          statusCard
+        }
+
+        if !model.tasks.isEmpty {
+          VStack(alignment: .leading, spacing: 12) {
+            HStack {
+              Text("最近任务")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+              Spacer()
+              Button("查看全部任务") {
+                model.selection = .tasks
+              }
+              .buttonStyle(.link)
+            }
+
+            recentTasksCard
+          }
+        }
       }
       .padding(24)
-      .frame(maxWidth: 900, alignment: .leading)
+      .frame(maxWidth: 960, alignment: .leading)
     }
     .navigationTitle("概览")
   }
 
-  private var statusSection: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("运行状态")
-        .font(.headline)
-      ServiceStatusLabel(
-        title: "后台 Service",
-        value: model.connectionState.label,
-        symbol: model.connectionState.symbol
-      )
-      ServiceStatusLabel(
-        title: "本地 MCP",
-        value: model.serviceStatus?.status.mcpState ?? "未知",
-        symbol: model.serviceStatus?.status.mcpState == "ready"
-          ? "checkmark.circle.fill"
-          : "circle.dashed"
-      )
-      ServiceStatusLabel(
-        title: "远程 Tunnel",
-        value: model.serviceStatus?.status.tunnelState ?? "未配置",
-        symbol: model.serviceStatus?.status.tunnelState == "ready"
-          ? "checkmark.circle.fill"
-          : "link.badge.plus"
-      )
-      ServiceStatusLabel(
-        title: "MCP 权限模式",
-        value: model.exposureMode.localizedTitle,
-        symbol: model.exposureMode == .full ? "wrench.and.screwdriver" : "eye"
-      )
-    }
-  }
-
+  @ViewBuilder
   private var attentionSection: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("需要处理")
-        .font(.headline)
-      if model.registrationStatus == .requiresApproval {
-        Label(
-          "macOS 正在等待你批准 Codex Bridge 后台项目。",
-          systemImage: "exclamationmark.triangle.fill"
-        )
-        .foregroundStyle(.orange)
-        Button("打开登录项设置") {
-          model.openSystemSettings()
-        }
+    if model.registrationStatus == .requiresApproval {
+      CalloutBanner(
+        title: "需要批准后台项目",
+        message: "macOS 正在等待你在系统设置中批准 Codex Bridge 后台 LaunchAgent 项目。",
+        symbol: "exclamationmark.triangle.fill",
+        tone: .warning,
+        actionTitle: "打开登录项设置"
+      ) {
+        model.openSystemSettings()
       }
-      if !model.approvals.isEmpty {
-        Button("有 \(model.approvals.count) 个 Codex 操作等待决定") {
-          model.selection = .tasks
-        }
-      }
-      if model.registrationStatus != .requiresApproval,
-        model.approvals.isEmpty
-      {
-        Label("当前没有待处理事项。", systemImage: "checkmark.circle")
-          .foregroundStyle(.secondary)
+    }
+
+    if !model.approvals.isEmpty {
+      CalloutBanner(
+        title: "待处理 Codex 审批",
+        message: "当前有 \(model.approvals.count) 个高风险 Codex 操作等待你本机确认或拒绝。",
+        symbol: "exclamationmark.shield.fill",
+        tone: .warning,
+        actionTitle: "立即处理"
+      ) {
+        model.selection = .tasks
       }
     }
   }
 
-  private var activitySection: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("当前活动")
-        .font(.headline)
-      LabeledContent("注册项目", value: "\(model.projects.count)")
-      LabeledContent("运行中任务", value: "\(model.runningTaskCount)")
-      LabeledContent("任务总数", value: "\(model.tasks.count)")
-      if let lastRefreshAt = model.lastRefreshAt {
-        LabeledContent("最近刷新") {
-          Text(lastRefreshAt, style: .relative)
+  private var metricsGrid: some View {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+      MetricCard(
+        title: "注册项目",
+        value: "\(model.projects.count)",
+        symbol: "folder.fill",
+        subtitle: "已授权本地目录",
+        tint: .blue
+      )
+
+      MetricCard(
+        title: "运行中任务",
+        value: "\(model.runningTaskCount)",
+        symbol: "bolt.fill",
+        subtitle: model.runningTaskCount > 0 ? "正在本机执行" : "当前空闲",
+        tint: model.runningTaskCount > 0 ? .green : .secondary
+      )
+
+      MetricCard(
+        title: "待审批项",
+        value: "\(model.approvals.count)",
+        symbol: "shield.lefthalf.filled",
+        subtitle: model.approvals.isEmpty ? "无阻断事项" : "等待本机决定",
+        tint: model.approvals.isEmpty ? .secondary : .orange
+      )
+
+      MetricCard(
+        title: "任务总数",
+        value: "\(model.tasks.count)",
+        symbol: "list.bullet.rectangle",
+        subtitle: lastRefreshSubtitle,
+        tint: .purple
+      )
+    }
+  }
+
+  private var statusCard: some View {
+    NativeCard {
+      VStack(spacing: 12) {
+        ServiceStatusLabel(
+          title: "后台 Service",
+          value: model.connectionState.label,
+          symbol: model.connectionState.symbol,
+          tone: serviceTone
+        )
+
+        Divider()
+
+        ServiceStatusLabel(
+          title: "本地 MCP",
+          value: model.serviceStatus?.status.mcpState ?? "未知",
+          symbol: model.serviceStatus?.status.mcpState == "ready"
+            ? "checkmark.circle.fill"
+            : "circle.dashed",
+          tone: model.serviceStatus?.status.mcpState == "ready" ? .success : .neutral
+        )
+
+        Divider()
+
+        ServiceStatusLabel(
+          title: "Secure Tunnel",
+          value: tunnelStatusLabel,
+          symbol: tunnelSymbol,
+          tone: tunnelTone
+        )
+
+        Divider()
+
+        ServiceStatusLabel(
+          title: "MCP 工具权限模式",
+          value: model.exposureMode.localizedTitle,
+          symbol: model.exposureMode == .full ? "wrench.and.screwdriver.fill" : "eye.fill",
+          tone: model.exposureMode == .full ? .info : .neutral
+        )
+      }
+    }
+  }
+
+  private var recentTasksCard: some View {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 10) {
+        ForEach(Array(model.tasks.prefix(3)), id: \.taskID) { task in
+          HStack(alignment: .center, spacing: 12) {
+            TaskStatusLabel(status: task.status)
+
+            VStack(alignment: .leading, spacing: 2) {
+              Text(task.currentStep ?? task.resultSummary ?? task.taskID)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+
+              Text(task.projectID)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text(task.updatedAt)
+              .font(.caption2.monospacedDigit())
+              .foregroundStyle(.secondary)
+          }
+          .padding(.vertical, 4)
+
+          if task.taskID != model.tasks.prefix(3).last?.taskID {
+            Divider()
+          }
         }
       }
     }
+  }
+
+  private var serviceTone: StatusTone {
+    switch model.connectionState {
+    case .connected: .success
+    case .registering, .connecting: .running
+    case .requiresApproval: .warning
+    case .idle, .unavailable: .error
+    }
+  }
+
+  private var tunnelStatusLabel: String {
+    guard let tunnel = model.serviceStatus?.tunnel else { return "未配置" }
+    return tunnel.lifecycle
+  }
+
+  private var tunnelTone: StatusTone {
+    guard let tunnel = model.serviceStatus?.tunnel else { return .neutral }
+    if tunnel.lifecycle == "ready" { return .success }
+    if tunnel.actionRequired { return .warning }
+    if tunnel.enabled { return .running }
+    return .neutral
+  }
+
+  private var tunnelSymbol: String {
+    guard let tunnel = model.serviceStatus?.tunnel else { return "link.badge.plus" }
+    if tunnel.lifecycle == "ready" { return "checkmark.circle.fill" }
+    if tunnel.actionRequired { return "exclamationmark.triangle.fill" }
+    return "link"
+  }
+
+  private var lastRefreshSubtitle: String {
+    if let last = model.lastRefreshAt {
+      return "更新于 " + last.formatted(date: .omitted, time: .standard)
+    }
+    return "尚未刷新"
   }
 }

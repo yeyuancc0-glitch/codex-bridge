@@ -82,6 +82,45 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func openConversation(taskID: String) {
+    guard let client, connectionState == .connected else {
+      errorMessage = "后台 Service 未连接，无法查看对话。"
+      return
+    }
+    closeConversation()
+    let conversation = TaskConversationModel(taskID: taskID, client: client)
+    self.conversation = conversation
+    Task {
+      await conversation.start()
+    }
+  }
+
+  public func closeConversation() {
+    guard let conversation else { return }
+    let taskID = conversation.taskID
+    let subscriptionID = conversation.subscriptionID
+    self.conversation = nil
+    conversation.cancel()
+    guard subscriptionID >= 0, let client, connectionState == .connected else { return }
+    Task {
+      try? await client.unsubscribeTaskConversation(
+        taskID: taskID,
+        subscriptionID: subscriptionID
+      )
+    }
+  }
+
+  public func deleteTask(_ taskID: String) {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      try await client.deleteTask(taskID: taskID)
+      if self.conversation?.taskID == taskID {
+        self.closeConversation()
+      }
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
   public func resolveApproval(_ approval: IPCApprovalSummary, allow: Bool) {
     runMutation { [weak self] client in
       guard let self else { return }

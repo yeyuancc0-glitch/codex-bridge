@@ -144,6 +144,45 @@ extension SimpleServiceStore {
     )
   }
 
+  static func upsertTaskMessage(
+    _ message: ServiceTaskMessageDraft,
+    taskID: TaskID,
+    in db: Database
+  ) throws {
+    try db.execute(
+      sql: """
+        INSERT INTO bridge_service_task_messages (
+          task_id, message_key, role, content, created_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(task_id, message_key) DO UPDATE SET
+          content = excluded.content,
+          created_at = excluded.created_at
+        """,
+      arguments: [
+        taskID.rawValue,
+        message.key,
+        message.role.rawValue,
+        message.content,
+        message.createdAt.timeIntervalSince1970,
+      ]
+    )
+  }
+
+  static func taskMessageRow(
+    taskID: TaskID,
+    key: String,
+    in db: Database
+  ) throws -> Row? {
+    try Row.fetchOne(
+      db,
+      sql: """
+        SELECT * FROM bridge_service_task_messages
+        WHERE task_id = ? AND message_key = ?
+        """,
+      arguments: [taskID.rawValue, key]
+    )
+  }
+
   static func taskArguments(
     _ task: ServiceTaskRecord,
     changedFiles: Data
@@ -330,6 +369,20 @@ extension SimpleServiceStore {
       taskID: TaskID(rawValue: row["task_id"]),
       kind: kind,
       summary: row["summary"],
+      createdAt: Date(timeIntervalSince1970: row["created_at"])
+    )
+  }
+
+  static func decodeTaskMessage(_ row: Row) throws -> ServiceTaskMessageRecord {
+    guard let role = ServiceTaskMessageRole(rawValue: row["role"]) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return try ServiceTaskMessageRecord(
+      id: row["message_id"],
+      taskID: TaskID(rawValue: row["task_id"]),
+      key: row["message_key"],
+      role: role,
+      content: row["content"],
       createdAt: Date(timeIntervalSince1970: row["created_at"])
     )
   }

@@ -26,6 +26,7 @@ extension BridgeServiceAppModel {
     started = false
     pollingTask?.cancel()
     pollingTask = nil
+    closeConversation()
     await closeClient()
     connectionState = .idle
   }
@@ -69,6 +70,7 @@ extension BridgeServiceAppModel {
     errorMessage = nil
     pollingTask?.cancel()
     pollingTask = nil
+    closeConversation()
     await closeClient()
     do {
       if registration.status != .notRegistered {

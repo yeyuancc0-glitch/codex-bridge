@@ -459,6 +459,58 @@ public struct ServiceTaskEventDraft: Codable, Equatable, Sendable {
   }
 }
 
+public enum ServiceTaskMessageRole: String, Codable, CaseIterable, Sendable {
+  case user
+  case agent
+}
+
+public struct ServiceTaskMessageDraft: Codable, Equatable, Sendable {
+  public let key: String
+  public let role: ServiceTaskMessageRole
+  public let content: String
+  public let createdAt: Date
+
+  public init(key: String, role: ServiceTaskMessageRole, content: String, createdAt: Date) throws {
+    try ServiceValidation.identifier(key, field: "taskMessage.key", maximumBytes: 256)
+    try ServiceValidation.text(content, field: "taskMessage.content", maximumBytes: 256 * 1_024)
+    try ServiceValidation.date(createdAt, field: "taskMessage.createdAt")
+    self.key = key
+    self.role = role
+    self.content = content
+    self.createdAt = createdAt
+  }
+}
+
+public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
+  public let id: Int64
+  public let taskID: TaskID
+  public let key: String
+  public let role: ServiceTaskMessageRole
+  public let content: String
+  public let createdAt: Date
+
+  public init(
+    id: Int64,
+    taskID: TaskID,
+    key: String,
+    role: ServiceTaskMessageRole,
+    content: String,
+    createdAt: Date
+  ) throws {
+    guard id > 0 else { throw ServiceStoreError.invalidArgument("taskMessage.id") }
+    try ServiceValidation.identifier(taskID.rawValue, field: "taskMessage.taskID", maximumBytes: 128)
+    try ServiceValidation.identifier(key, field: "taskMessage.key", maximumBytes: 256)
+    try ServiceValidation.text(content, field: "taskMessage.content", maximumBytes: 256 * 1_024)
+    try ServiceValidation.date(createdAt, field: "taskMessage.createdAt")
+    self.id = id
+    self.taskID = taskID
+    self.key = key
+    self.role = role
+    self.content = content
+    self.createdAt = createdAt
+  }
+}
+
 public struct ServiceTaskEventRecord: Codable, Equatable, Sendable {
   public let id: Int64
   public let taskID: TaskID

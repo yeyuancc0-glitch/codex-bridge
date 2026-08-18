@@ -11,12 +11,13 @@ public struct BridgeServiceRootView: View {
   public var body: some View {
     NavigationSplitView {
       List(BridgeServiceNavigation.allCases, id: \.self, selection: $model.selection) { item in
-        Label(item.title, systemImage: item.symbol)
-          .tag(item)
+        NavigationLink(value: item) {
+          sidebarRow(for: item)
+        }
       }
       .navigationTitle("Codex Bridge")
       .listStyle(.sidebar)
-      .frame(minWidth: 180)
+      .frame(minWidth: 200)
       .safeAreaInset(edge: .bottom) {
         connectionFooter
       }
@@ -28,7 +29,7 @@ public struct BridgeServiceRootView: View {
             Button {
               model.refresh()
             } label: {
-              Label("刷新", systemImage: "arrow.clockwise")
+              Label("刷新状态", systemImage: "arrow.clockwise")
             }
             .disabled(model.isRefreshing)
           }
@@ -55,6 +56,45 @@ public struct BridgeServiceRootView: View {
   }
 
   @ViewBuilder
+  private func sidebarRow(for item: BridgeServiceNavigation) -> some View {
+    HStack(spacing: 8) {
+      Label(item.title, systemImage: item.symbol)
+
+      Spacer(minLength: 4)
+
+      switch item {
+      case .tasks:
+        if !model.approvals.isEmpty {
+          Text("\(model.approvals.count)")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.orange)
+            .clipShape(Capsule())
+        } else if model.runningTaskCount > 0 {
+          Text("\(model.runningTaskCount)")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.green)
+            .clipShape(Capsule())
+        }
+      case .projects:
+        if !model.projects.isEmpty {
+          Text("\(model.projects.count)")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      default:
+        EmptyView()
+      }
+    }
+    .padding(.vertical, 2)
+  }
+
+  @ViewBuilder
   private var detail: some View {
     switch model.selection ?? .overview {
     case .overview:
@@ -72,20 +112,39 @@ public struct BridgeServiceRootView: View {
 
   private var connectionFooter: some View {
     HStack(spacing: 8) {
-      Image(systemName: model.connectionState.symbol)
-        .accessibilityHidden(true)
+      Circle()
+        .fill(footerStatusColor)
+        .frame(width: 8, height: 8)
+
       Text(model.connectionState.label)
         .font(.caption)
+        .foregroundStyle(.primary)
+
       Spacer(minLength: 0)
+
       if model.isRefreshing {
         ProgressView()
           .controlSize(.small)
       }
     }
-    .foregroundStyle(.secondary)
-    .padding(.horizontal, 12)
+    .padding(.horizontal, 14)
     .padding(.vertical, 10)
     .background(.bar)
+    .overlay(
+      Rectangle()
+        .frame(height: 0.5)
+        .foregroundStyle(Color(nsColor: .separatorColor).opacity(0.4)),
+      alignment: .top
+    )
+  }
+
+  private var footerStatusColor: Color {
+    switch model.connectionState {
+    case .connected: .green
+    case .registering, .connecting: .orange
+    case .requiresApproval: .orange
+    case .idle, .unavailable: .red
+    }
   }
 }
 
@@ -98,29 +157,55 @@ public struct BridgeServiceMenuBarView: View {
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label(model.connectionState.label, systemImage: model.connectionState.symbol)
+      HStack(spacing: 6) {
+        Circle()
+          .fill(menuStatusColor)
+          .frame(width: 8, height: 8)
+        Text("Codex Bridge · \(model.connectionState.label)")
+          .font(.subheadline.weight(.semibold))
+      }
+
       if model.runningTaskCount > 0 {
-        Text("正在运行 \(model.runningTaskCount) 个任务")
+        Label("正在运行 \(model.runningTaskCount) 个任务", systemImage: "bolt.fill")
+          .font(.caption)
+          .foregroundStyle(.green)
       }
+
       if model.approvals.count > 0 {
-        Text("需要处理 \(model.approvals.count) 项")
+        Label("等待处理 \(model.approvals.count) 项安全审批", systemImage: "exclamationmark.shield.fill")
+          .font(.caption)
+          .foregroundStyle(.orange)
       }
+
       Divider()
-      Button("打开 Codex Bridge") {
+
+      Button("打开主窗口") {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first(where: \.canBecomeMain)?.makeKeyAndOrderFront(nil)
       }
-      Button("刷新状态") {
+
+      Button("立即刷新状态") {
         model.refresh()
       }
+
       Divider()
-      Button("退出") {
+
+      Button("退出应用程序") {
         NSApp.terminate(nil)
       }
     }
-    .padding(8)
+    .padding(10)
     .task {
       model.start()
+    }
+  }
+
+  private var menuStatusColor: Color {
+    switch model.connectionState {
+    case .connected: .green
+    case .registering, .connecting: .orange
+    case .requiresApproval: .orange
+    case .idle, .unavailable: .red
     }
   }
 }

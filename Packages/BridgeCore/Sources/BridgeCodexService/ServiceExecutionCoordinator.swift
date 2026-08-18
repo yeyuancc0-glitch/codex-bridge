@@ -8,6 +8,7 @@ public actor ServiceExecutionCoordinator {
   private let projects: ServiceProjectService
   private let execution: ExecutionManager
   private let supervisor: SupervisorManager?
+  private let conversation: TaskConversationBuffer
   private var collectors: [TaskID: Task<Void, Never>] = [:]
   private var supervisorCollectors: [TaskID: Task<Void, Never>] = [:]
 
@@ -15,12 +16,14 @@ public actor ServiceExecutionCoordinator {
     tasks: ServiceTaskManager,
     projects: ServiceProjectService,
     execution: ExecutionManager,
-    supervisor: SupervisorManager? = nil
+    supervisor: SupervisorManager? = nil,
+    conversation: TaskConversationBuffer? = nil
   ) {
     self.tasks = tasks
     self.projects = projects
     self.execution = execution
     self.supervisor = supervisor
+    self.conversation = conversation ?? TaskConversationBuffer(tasks: tasks)
   }
 
   @discardableResult
@@ -44,9 +47,11 @@ public actor ServiceExecutionCoordinator {
         threadID: handle.binding.threadID,
         turnID: handle.binding.turnID
       )
+      await conversation.appendUserMessage(taskID: taskID, content: task.prompt)
     } catch {
       await execution.stop(taskID: taskID)
       await stopSupervisor(taskID: taskID)
+      await conversation.close(taskID: taskID)
       _ = try? await tasks.fail(
         taskID: taskID,
         failureCode: "execution_start_failed",
@@ -76,6 +81,7 @@ public actor ServiceExecutionCoordinator {
       expectedTurnID: expectedTurnID,
       text: text
     )
+    await conversation.appendUserMessage(taskID: taskID, content: text)
   }
 
   public func interrupt(
@@ -87,6 +93,69 @@ public actor ServiceExecutionCoordinator {
 
   public func pendingApprovals(taskID: TaskID? = nil) async -> [ExecutionApprovalRequest] {
     await execution.pendingApprovals(taskID: taskID)
+  }
+
+  public func subscribeConversation(
+    taskID: TaskID,
+    limit: Int = 200
+  ) async throws -> ConversationSubscription {
+    guard try await tasks.task(id: taskID) != nil else {
+      throw ServiceStoreError.unknownTask(taskID)
+    }
+    let inMemory = await conversation.entries(taskID: taskID)
+    let persistedLimit: Int
+    if inMemory.count >= limit {
+      persistedLimit = 0
+    } else {
+      persistedLimit = max(1, limit - inMemory.count)
+    }
+    let persisted = try await tasks.messages(taskID: taskID, limit: persistedLimit)
+    let memoryKeys = Set(inMemory.map(\.key))
+    var page = persisted
+      .filter { !memoryKeys.contains($0.key) }
+      .map {
+        TaskConversationBuffer.Entry(
+          key: $0.key,
+          role: $0.role,
+          content: $0.content,
+          isFinal: true
+        )
+      }
+    page.append(contentsOf: inMemory)
+    let subscription = await conversation.subscribe(taskID: taskID)
+    let merged = subscription.page.isEmpty
+      ? page
+      : page.filter { entry in
+        !subscription.page.contains(where: { $0.key == entry.key })
+      } + subscription.page
+    return ConversationSubscription(
+      subscriptionID: subscription.subscriptionID,
+      page: Array(merged.suffix(limit)),
+      updates: subscription.updates
+    )
+  }
+
+  public func unsubscribeConversation(taskID: TaskID, subscriptionID: Int) async {
+    await conversation.unsubscribe(taskID: taskID, subscriptionID: subscriptionID)
+  }
+
+  public func conversationPage(
+    taskID: TaskID,
+    beforeMessageID: Int64? = nil,
+    limit: Int = 200
+  ) async throws -> [ServiceTaskMessageRecord] {
+    guard try await tasks.task(id: taskID) != nil else {
+      throw ServiceStoreError.unknownTask(taskID)
+    }
+    return try await tasks.messages(
+      taskID: taskID,
+      beforeMessageID: beforeMessageID,
+      limit: limit
+    )
+  }
+
+  public func purgeConversation(taskID: TaskID) async {
+    await conversation.purge(taskID: taskID)
   }
 
   public func resolveApproval(
@@ -133,6 +202,7 @@ public actor ServiceExecutionCoordinator {
     collectors.removeValue(forKey: taskID)?.cancel()
     await execution.stop(taskID: taskID)
     await stopSupervisor(taskID: taskID)
+    await conversation.close(taskID: taskID)
     _ = try? await tasks.interrupt(taskID: taskID, summary: summary)
   }
 
@@ -145,6 +215,7 @@ public actor ServiceExecutionCoordinator {
     for task in supervisorTasks { task.cancel() }
     await execution.shutdown()
     await supervisor?.shutdown()
+    await conversation.closeAll()
   }
 
   private func consume(_ event: ExecutionEvent, taskID: TaskID) async {
@@ -186,6 +257,12 @@ public actor ServiceExecutionCoordinator {
           summary: "Codex requested local approval for \(approval.kind.rawValue)."
         )
 
+      case .agentMessageDelta(let delta):
+        await conversation.appendDelta(taskID: taskID, itemID: delta.itemID, delta: delta.delta)
+
+      case .turnCompleted(let messages):
+        await conversation.finalize(taskID: taskID, messages: messages)
+
       case .completed(let resultSummary):
         let current = try await requiredTask(taskID)
         let completed = try await tasks.complete(
@@ -198,6 +275,7 @@ public actor ServiceExecutionCoordinator {
           kind: .final,
           summary: "Codex completed the task."
         )
+        await conversation.close(taskID: taskID)
 
       case .interrupted:
         let interrupted = try await tasks.interrupt(
@@ -209,6 +287,7 @@ public actor ServiceExecutionCoordinator {
           kind: .final,
           summary: "Codex was interrupted before normal completion."
         )
+        await conversation.close(taskID: taskID)
 
       case .failed(let code, let summary):
         let failed = try await tasks.fail(
@@ -217,10 +296,12 @@ public actor ServiceExecutionCoordinator {
           summary: summary
         )
         await observeSupervisor(task: failed, kind: .final, summary: summary)
+        await conversation.close(taskID: taskID)
       }
     } catch {
       await execution.stop(taskID: taskID)
       await stopSupervisor(taskID: taskID)
+      await conversation.close(taskID: taskID)
       _ = try? await tasks.fail(
         taskID: taskID,
         failureCode: "execution_state_update_failed",
@@ -326,6 +407,7 @@ public actor ServiceExecutionCoordinator {
         expectedTurnID: turnID,
         text: instruction
       )
+      await conversation.appendUserMessage(taskID: taskID, content: instruction)
     } catch {
       _ = try? await tasks.updateSupervisor(
         taskID: taskID,

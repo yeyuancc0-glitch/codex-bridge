@@ -4,9 +4,13 @@ import Foundation
   func perform(_ request: Data, withReply reply: @escaping (Data) -> Void)
 }
 
+@objc public protocol CodexBridgeTaskStreamListener {
+  func push(_ payload: Data)
+}
+
 public enum BridgeServiceIPC {
   public static let machServiceName = "org.codexbridge.service"
   public static let launchAgentPlistName = "org.codexbridge.service.plist"
   public static let schemaVersion = 2
-  public static let maximumMessageBytes = 1 * 1_024 * 1_024
+  public static let maximumMessageBytes = 8 * 1_024 * 1_024
 }

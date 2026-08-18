@@ -85,7 +85,7 @@ func xpcClient(
 ) -> (BridgeServiceClient, BridgeServiceXPCListener) {
   let listener = BridgeServiceXPCListener(
     mode: .anonymous,
-    controller: BridgeServiceXPCController(composition: composition)
+    composition: composition
   )
   listener.resume()
   guard let endpoint = listener.endpoint else {

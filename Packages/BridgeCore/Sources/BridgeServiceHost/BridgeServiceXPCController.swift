@@ -12,13 +12,17 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
 {
   private let composition: ServiceComposition
   private let admission: XPCRequestAdmission
+  private let streamProxy: CodexBridgeTaskStreamListener?
+  private let streams = StreamRegistry()
 
   public init(
     composition: ServiceComposition,
+    streamProxy: CodexBridgeTaskStreamListener? = nil,
     maximumConcurrentRequests: Int = 8
   ) {
     precondition(maximumConcurrentRequests > 0)
     self.composition = composition
+    self.streamProxy = streamProxy
     self.admission = XPCRequestAdmission(
       maximumConcurrent: maximumConcurrentRequests
     )
@@ -51,22 +55,39 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       )
       return
     }
-    Task { [composition, admission] in
-      let response = await Self.handle(decoded, composition: composition)
-      admission.release()
+    Task { [weak self] in
+      let response = await self?.handle(decoded) ?? Self.fallbackFailure(
+        requestID: decoded.requestID,
+        code: "unavailable",
+        message: "The service is unavailable.",
+        retryable: true
+      )
+      self?.admission.release()
       replyBox.call(response)
     }
   }
 
-  private static func handle(
-    _ request: BridgeServiceIPCRequest,
-    composition: ServiceComposition
-  ) async -> Data {
+  public func stopStreaming() {
+    let (activeForwarders, activeSubscriptions) = streams.takeAll()
+    for task in activeForwarders.values {
+      task.cancel()
+    }
+    for (taskID, subscriptionID) in activeSubscriptions {
+      Task {
+        await composition.coordinator.unsubscribeConversation(
+          taskID: taskID,
+          subscriptionID: subscriptionID
+        )
+      }
+    }
+  }
+
+  private func handle(_ request: BridgeServiceIPCRequest) async -> Data {
     do {
       switch request.operation {
       case .status:
         let status = try await composition.application.serviceStatus(
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         let endpoint = await composition.endpoint()?.localURL.absoluteString
         let exposureMode = try await composition.settings.exposureMode()
@@ -76,8 +97,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           payload: IPCServiceStatusResponse(
             status: status,
             localMCPURL: endpoint,
-            exposureMode: mcpExposureMode(exposureMode),
-            tunnel: tunnelStatus(tunnel)
+            exposureMode: Self.mcpExposureMode(exposureMode),
+            tunnel: Self.tunnelStatus(tunnel)
           )
         )
 
@@ -85,7 +106,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         let page = try await composition.application.serviceProjects(
           cursor: nil,
           limit: 100,
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -97,19 +118,19 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           IPCProjectRegistrationRequest.self,
           from: request
         )
-        let policy = try projectPolicy(
+        let policy = try Self.projectPolicy(
           read: payload.readPermission,
           write: payload.writePermission,
           network: payload.networkPermission
         )
         let project = try await composition.projects.register(
           name: payload.name,
-          rootURL: try absoluteDirectoryURL(payload.absolutePath),
+          rootURL: try Self.absoluteDirectoryURL(payload.absolutePath),
           accessPolicy: policy
         )
         let detail = try await composition.application.serviceProject(
           projectID: project.id.rawValue,
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -122,7 +143,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           from: request
         )
         _ = try await composition.projects.updateAccessPolicy(
-          try projectPolicy(
+          try Self.projectPolicy(
             read: payload.readPermission,
             write: payload.writePermission,
             network: payload.networkPermission
@@ -131,7 +152,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         )
         let detail = try await composition.application.serviceProject(
           projectID: payload.projectID,
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -156,7 +177,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
 
       case .listModels:
-        let models = try await composition.application.serviceModels(deadline: deadline())
+        let models = try await composition.application.serviceModels(deadline: Self.deadline())
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
           payload: models
@@ -164,7 +185,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
 
       case .getModelCatalog:
         let catalog = try await composition.application.serviceModelCatalog(
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -184,7 +205,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
 
       case .getModelPreferences:
         let preferences = try await composition.application.serviceModelPreferences(
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -216,7 +237,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
             accessMode: accessMode,
             fastModeEnabled: payload.fastModeEnabled
           ),
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
 
@@ -238,7 +259,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           cursor: payload.cursor,
           limit: payload.limit,
           search: payload.search,
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -256,7 +277,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           detail: payload.detail,
           cursor: payload.cursor,
           limit: payload.limit,
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -284,7 +305,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
             try await composition.application.serviceTask(
               taskID: task.id.rawValue,
               recentEventLimit: 10,
-              deadline: deadline()
+              deadline: Self.deadline()
             )
           )
         }
@@ -298,7 +319,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         let task = try await composition.application.serviceTask(
           taskID: payload.taskID,
           recentEventLimit: payload.recentEventLimit,
-          deadline: deadline()
+          deadline: Self.deadline()
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
@@ -308,6 +329,106 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       case .stopTask:
         let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
         await composition.coordinator.stop(taskID: TaskID(rawValue: payload.taskID))
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+
+      case .deleteTask:
+        let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
+        let taskID = TaskID(rawValue: payload.taskID)
+        try await composition.tasks.remove(taskID: taskID)
+        await composition.coordinator.purgeConversation(taskID: taskID)
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+
+      case .getTaskConversation:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCTaskConversationRequest.self,
+          from: request
+        )
+        guard (1...500).contains(payload.limit) else {
+          throw ServiceStoreError.invalidArgument("conversation.limit")
+        }
+        let records = try await composition.coordinator.conversationPage(
+          taskID: TaskID(rawValue: payload.taskID),
+          beforeMessageID: payload.beforeMessageID,
+          limit: payload.limit
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: IPCTaskConversationPage(
+            taskID: payload.taskID,
+            messages: records.map { message in
+              IPCTaskConversationMessage(
+                messageID: message.id,
+                key: message.key,
+                role: message.role.rawValue,
+                content: message.content
+              )
+            }
+          )
+        )
+
+      case .subscribeTaskConversation:
+        guard let streamProxy else {
+          throw ServiceStoreError.invalidArgument("stream.unavailable")
+        }
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCTaskConversationRequest.self,
+          from: request
+        )
+        guard (1...500).contains(payload.limit) else {
+          throw ServiceStoreError.invalidArgument("conversation.limit")
+        }
+        let taskID = TaskID(rawValue: payload.taskID)
+        let previousForwarder = streams.takeForwarder(taskID)
+        let previousSubscription = streams.takeSubscription(taskID)
+        previousForwarder?.cancel()
+        if let previousSubscription {
+          await composition.coordinator.unsubscribeConversation(
+            taskID: taskID,
+            subscriptionID: previousSubscription
+          )
+        }
+        let subscription = try await composition.coordinator.subscribeConversation(
+          taskID: taskID,
+          limit: payload.limit
+        )
+        guard subscription.subscriptionID >= 0 else {
+          return try BridgeServiceIPCCodec.success(
+            requestID: request.requestID,
+            payload: IPCTaskConversationSubscription(
+              subscriptionID: -1,
+              page: Self.conversationPage(taskID: payload.taskID, entries: subscription.page)
+            )
+          )
+        }
+        let forwarder = Task { [weak self, streamProxy] in
+          for await change in subscription.updates {
+            guard let push = Self.encodePush(change) else { continue }
+            streamProxy.push(push)
+          }
+          await self?.removeForwarder(taskID: taskID)
+        }
+        streams.put(taskID: taskID, forwarder: forwarder, subscriptionID: subscription.subscriptionID)
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: IPCTaskConversationSubscription(
+            subscriptionID: subscription.subscriptionID,
+            page: Self.conversationPage(taskID: payload.taskID, entries: subscription.page)
+          )
+        )
+
+      case .unsubscribeTaskConversation:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCTaskConversationUnsubscribeRequest.self,
+          from: request
+        )
+        let taskID = TaskID(rawValue: payload.taskID)
+        let forwarder = streams.takeForwarder(taskID)
+        let subscriptionID = streams.takeSubscription(taskID)
+        forwarder?.cancel()
+        await composition.coordinator.unsubscribeConversation(
+          taskID: taskID,
+          subscriptionID: subscriptionID ?? payload.subscriptionID
+        )
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
 
       case .listApprovals:
@@ -322,7 +443,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
           payload: IPCApprovalListResponse(
-            approvals: approvals.map(approvalSummary)
+            approvals: approvals.map(Self.approvalSummary)
           )
         )
 
@@ -360,14 +481,14 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         )
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
-          payload: tunnelStatus(status)
+          payload: Self.tunnelStatus(status)
         )
 
       case .connectTunnel:
         let status = try await composition.connectTunnel()
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
-          payload: tunnelStatus(status)
+          payload: Self.tunnelStatus(status)
         )
 
       case .disconnectTunnel:
@@ -379,14 +500,54 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
       }
     } catch {
-      let mapped = map(error)
-      return fallbackFailure(
+      let mapped = Self.map(error)
+      return Self.fallbackFailure(
         requestID: request.requestID,
         code: mapped.code,
         message: mapped.message,
         retryable: mapped.retryable
       )
     }
+  }
+
+  private func removeForwarder(taskID: TaskID) async {
+    streams.removeForwarder(taskID)
+  }
+
+  private static func conversationPage(
+    taskID: String,
+    entries: [TaskConversationBuffer.Entry]
+  ) -> IPCTaskConversationPage {
+    IPCTaskConversationPage(
+      taskID: taskID,
+      messages: entries.map { entry in
+        IPCTaskConversationMessage(
+          messageID: nil,
+          key: entry.key,
+          role: entry.role.rawValue,
+          content: entry.content,
+          final: entry.isFinal
+        )
+      }
+    )
+  }
+
+  private static func encodePush(_ change: ConversationChange) -> Data? {
+    let push = IPCTaskConversationPush(
+      taskID: change.taskID.rawValue,
+      key: change.key,
+      role: change.role.rawValue,
+      delta: change.delta,
+      baseContentLength: change.baseContentLength,
+      fullContent: change.fullContent,
+      final: change.final
+    )
+    guard let data = try? JSONEncoder().encode(push),
+      data.count <= BridgeServiceIPC.maximumMessageBytes
+    else {
+      return nil
+    }
+    return data
   }
 
   private static func tunnelStatus(
@@ -589,6 +750,48 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       #"{"schema_version":1,"request_id":"invalid","payload":null,"error":{"#
       + #""code":"internal_error","message":"The service failed.","retryable":true}}"#
     return Data(fallback.utf8)
+  }
+}
+
+private final class StreamRegistry: @unchecked Sendable {
+  private let lock = NSLock()
+  private var forwarders: [TaskID: Task<Void, Never>] = [:]
+  private var subscriptionIDs: [TaskID: Int] = [:]
+
+  func takeForwarder(_ taskID: TaskID) -> Task<Void, Never>? {
+    lock.lock()
+    defer { lock.unlock() }
+    return forwarders.removeValue(forKey: taskID)
+  }
+
+  func takeSubscription(_ taskID: TaskID) -> Int? {
+    lock.lock()
+    defer { lock.unlock() }
+    return subscriptionIDs.removeValue(forKey: taskID)
+  }
+
+  func put(taskID: TaskID, forwarder: Task<Void, Never>, subscriptionID: Int) {
+    lock.lock()
+    forwarders[taskID] = forwarder
+    subscriptionIDs[taskID] = subscriptionID
+    lock.unlock()
+  }
+
+  func removeForwarder(_ taskID: TaskID) {
+    lock.lock()
+    forwarders.removeValue(forKey: taskID)
+    subscriptionIDs.removeValue(forKey: taskID)
+    lock.unlock()
+  }
+
+  func takeAll() -> ([TaskID: Task<Void, Never>], [TaskID: Int]) {
+    lock.lock()
+    defer { lock.unlock() }
+    let activeForwarders = forwarders
+    let activeSubscriptions = subscriptionIDs
+    forwarders.removeAll(keepingCapacity: false)
+    subscriptionIDs.removeAll(keepingCapacity: false)
+    return (activeForwarders, activeSubscriptions)
   }
 }
 

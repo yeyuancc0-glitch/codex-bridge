@@ -79,7 +79,6 @@ public enum ServiceProcessRunner {
       )
     )
     let endpoint = try await composition.startLocalMCP()
-    let controller = BridgeServiceXPCController(composition: composition)
     let listener: BridgeServiceXPCListener?
     if options.foreground {
       listener = nil
@@ -89,7 +88,7 @@ public enum ServiceProcessRunner {
     } else {
       let active = BridgeServiceXPCListener(
         mode: .machService(BridgeServiceIPC.machServiceName),
-        controller: controller
+        composition: composition
       )
       active.resume()
       listener = active

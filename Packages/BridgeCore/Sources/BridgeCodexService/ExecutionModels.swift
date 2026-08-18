@@ -204,6 +204,46 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
   }
 }
 
+public struct ExecutionAgentMessage: Codable, Equatable, Sendable {
+  public let key: String
+  public let role: ServiceTaskMessageRole
+  public let content: String
+
+  public init(key: String, role: ServiceTaskMessageRole, content: String) throws {
+    try ExecutionValidation.identifier(key, field: "agentMessage.key", maximumBytes: 256)
+    try ExecutionValidation.text(content, field: "agentMessage.content", maximumBytes: 256 * 1_024)
+    self.key = key
+    self.role = role
+    self.content = content
+  }
+}
+
+public struct ExecutionAgentMessageDelta: Codable, Equatable, Sendable {
+  public let threadID: String
+  public let turnID: String
+  public let itemID: String
+  public let delta: String
+
+  public init(threadID: String, turnID: String, itemID: String, delta: String) throws {
+    try ExecutionValidation.identifier(
+      threadID,
+      field: "agentMessageDelta.threadID",
+      maximumBytes: 1_024
+    )
+    try ExecutionValidation.identifier(
+      turnID,
+      field: "agentMessageDelta.turnID",
+      maximumBytes: 1_024
+    )
+    try ExecutionValidation.identifier(itemID, field: "agentMessageDelta.itemID", maximumBytes: 256)
+    try ExecutionValidation.text(delta, field: "agentMessageDelta.delta", maximumBytes: 64 * 1_024)
+    self.threadID = threadID
+    self.turnID = turnID
+    self.itemID = itemID
+    self.delta = delta
+  }
+}
+
 public enum ExecutionEvent: Equatable, Sendable {
   case planUpdated(currentStep: String, steps: [String])
   case commandCompleted(
@@ -213,6 +253,8 @@ public enum ExecutionEvent: Equatable, Sendable {
   )
   case filesChanged(relativePaths: [String], status: ExecutionFileChangeStatus)
   case approvalRequested(ExecutionApprovalRequest)
+  case agentMessageDelta(ExecutionAgentMessageDelta)
+  case turnCompleted(messages: [ExecutionAgentMessage])
   case completed(resultSummary: String)
   case interrupted
   case failed(code: String, summary: String)

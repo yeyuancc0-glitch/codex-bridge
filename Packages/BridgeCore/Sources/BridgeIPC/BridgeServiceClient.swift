@@ -20,22 +20,29 @@ public enum BridgeServiceClientError: Error, Equatable, LocalizedError, Sendable
 
 public actor BridgeServiceClient {
   private let connection: NSXPCConnection
+  private let streamHub = CodexBridgeTaskStreamHub()
   private var invalidated = false
 
   public init(machServiceName: String = BridgeServiceIPC.machServiceName) {
     precondition(!machServiceName.isEmpty)
-    connection = NSXPCConnection(machServiceName: machServiceName)
+    let connection = NSXPCConnection(machServiceName: machServiceName)
+    self.connection = connection
     connection.remoteObjectInterface = NSXPCInterface(
       with: CodexBridgeServiceXPCProtocol.self
     )
+    connection.exportedInterface = NSXPCInterface(with: CodexBridgeTaskStreamListener.self)
+    connection.exportedObject = CodexBridgeTaskStreamBridge(hub: streamHub)
     connection.resume()
   }
 
   public init(endpoint: NSXPCListenerEndpoint) {
-    connection = NSXPCConnection(listenerEndpoint: endpoint)
+    let connection = NSXPCConnection(listenerEndpoint: endpoint)
+    self.connection = connection
     connection.remoteObjectInterface = NSXPCInterface(
       with: CodexBridgeServiceXPCProtocol.self
     )
+    connection.exportedInterface = NSXPCInterface(with: CodexBridgeTaskStreamListener.self)
+    connection.exportedObject = CodexBridgeTaskStreamBridge(hub: streamHub)
     connection.resume()
   }
 
@@ -43,6 +50,7 @@ public actor BridgeServiceClient {
     guard !invalidated else { return }
     invalidated = true
     connection.invalidate()
+    streamHub.clear()
   }
 
   public func status() async throws -> IPCServiceStatusResponse {
@@ -151,6 +159,51 @@ public actor BridgeServiceClient {
       operation: .stopTask,
       payload: IPCTaskRequest(taskID: taskID)
     )
+  }
+
+  public func deleteTask(taskID: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .deleteTask,
+      payload: IPCTaskRequest(taskID: taskID)
+    )
+  }
+
+  public func taskConversation(
+    _ request: IPCTaskConversationRequest
+  ) async throws -> IPCTaskConversationPage {
+    try await call(operation: .getTaskConversation, payload: request)
+  }
+
+  public func subscribeTaskConversation(
+    taskID: String,
+    limit: Int = 200
+  ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>) {
+    guard !invalidated else { throw BridgeServiceClientError.unavailable }
+    let updates = await streamHub.register(taskID: taskID)
+    do {
+      let subscription: IPCTaskConversationSubscription = try await call(
+        operation: .subscribeTaskConversation,
+        payload: IPCTaskConversationRequest(taskID: taskID, limit: limit)
+      )
+      return (subscription, updates)
+    } catch {
+      streamHub.unregisterAll(taskID: taskID)
+      throw error
+    }
+  }
+
+  public func unsubscribeTaskConversation(
+    taskID: String,
+    subscriptionID: Int
+  ) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .unsubscribeTaskConversation,
+      payload: IPCTaskConversationUnsubscribeRequest(
+        taskID: taskID,
+        subscriptionID: subscriptionID
+      )
+    )
+    streamHub.unregisterAll(taskID: taskID)
   }
 
   public func approvals(taskID: String? = nil) async throws -> [IPCApprovalSummary] {
