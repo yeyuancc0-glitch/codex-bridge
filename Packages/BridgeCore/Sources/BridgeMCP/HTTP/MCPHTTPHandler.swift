@@ -35,6 +35,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   private var responseTask: Task<Void, Never>?
   private var activeResponseSessionID: String?
   private var connectionReleased = false
+  private var hasSeenRequestHead = false
 
   package init(
     configuration: MCPHTTPConfiguration,
@@ -94,8 +95,9 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   }
 
   private func receiveHead(_ head: HTTPRequestHead, context: ChannelHandlerContext) {
+    hasSeenRequestHead = true
     guard case .waiting = inputState else {
-      reject(status: .badRequest, context: context)
+      context.close(promise: nil)
       return
     }
     headerTimeout?.cancel()
@@ -105,17 +107,20 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       reject(status: .uriTooLong, context: context)
       return
     }
-    guard isExactRoute(head.uri) else {
-      reject(status: .notFound, context: context)
-      return
-    }
-    guard hasValidAuthenticationHeader(head.headers) else {
-      reject(status: .notFound, context: context)
-      return
-    }
-    guard isAllowedMethod(head.method) else {
-      reject(status: .methodNotAllowed, allow: "POST, GET, DELETE", context: context)
-      return
+    let isOAuth = head.method == .GET && isOAuthProtectedResourceRoute(head.uri)
+    if !isOAuth {
+      guard isExactRoute(head.uri) else {
+        reject(status: .notFound, context: context)
+        return
+      }
+      guard hasValidAuthenticationHeader(head.headers) else {
+        reject(status: .notFound, context: context)
+        return
+      }
+      guard isAllowedMethod(head.method) else {
+        reject(status: .methodNotAllowed, allow: "POST, GET, DELETE", context: context)
+        return
+      }
     }
     guard aggregateHeaderBytes(head.headers) <= configuration.maximumHeaderBytes else {
       reject(status: .requestHeaderFieldsTooLarge, context: context)
@@ -166,6 +171,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       bodyTimeout?.cancel()
       bodyTimeout = nil
       inputState = .responding
+      _ = context.channel.setOption(ChannelOptions.autoRead, value: false)
       let channel = context.channel
       let eventLoop = context.eventLoop
       activeResponseSessionID = request.sessionID
@@ -174,6 +180,10 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       requestLease = nil
       guard let lease else {
         reject(status: .badRequest, context: context)
+        return
+      }
+      if request.head.method == .GET && isOAuthProtectedResourceRoute(request.head.uri) {
+        serveOAuthProtectedResource(channel: channel, context: context, lease: lease)
         return
       }
       nonisolated(unsafe) let sendableContext = context
@@ -340,7 +350,16 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   }
 
   private func writeEnd(channel: any Channel) async throws {
+    guard !Task.isCancelled, channel.isActive else { return }
     try await channel.writeAndFlush(HTTPServerResponsePart.end(nil)).get()
+    nonisolated(unsafe) let sendableSelf = self
+    try await channel.eventLoop.submit {
+      sendableSelf.responseTimeout?.cancel()
+      sendableSelf.responseTimeout = nil
+      sendableSelf.activeResponseSessionID = nil
+      sendableSelf.inputState = .waiting
+      sendableSelf.responseTask = nil
+    }.get()
   }
 
   private func responseFinished(
@@ -350,22 +369,14 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     channel: any Channel
   ) async {
     guard keepAlive else {
-      try? await eventLoop.submit {
-        self.responseTimeout?.cancel()
-        self.responseTimeout = nil
-        self.activeResponseSessionID = nil
-      }.get()
       try? await channel.close().get()
       return
     }
     nonisolated(unsafe) let sendableContext = context
     try? await eventLoop.submit {
-      self.responseTimeout?.cancel()
-      self.responseTimeout = nil
-      self.activeResponseSessionID = nil
       guard sendableContext.channel.isActive else { return }
-      self.inputState = .waiting
-      self.responseTask = nil
+      _ = sendableContext.channel.setOption(ChannelOptions.autoRead, value: true)
+      sendableContext.read()
       self.scheduleHeaderTimeout(context: sendableContext)
     }.get()
   }
@@ -398,6 +409,10 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     cancelTimeouts()
     inputState = .rejecting
     releaseRequest()
+    guard hasSeenRequestHead else {
+      context.close(promise: nil)
+      return
+    }
     var head = HTTPResponseHead(version: .http1_1, status: status)
     head.headers.add(name: "Content-Length", value: "0")
     head.headers.add(name: "Connection", value: "close")
@@ -411,9 +426,49 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     }
   }
 
+  private func isOAuthProtectedResourceRoute(_ uri: String) -> Bool {
+    uri == "/.well-known/oauth-protected-resource/mcp"
+      || uri == "/.well-known/oauth-protected-resource"
+  }
+
+  private func serveOAuthProtectedResource(
+    channel: any Channel,
+    context: ChannelHandlerContext,
+    lease: MCPHTTPRequestLease
+  ) {
+    defer { lease.release() }
+    cancelTimeouts()
+    let port = channel.localAddress?.port ?? configuration.port
+    let body = """
+    {"resource":"http://127.0.0.1:\(port)/mcp","authorization_servers":[],"scopes_supported":["read","write"]}
+    """
+    let bodyData = Data(body.utf8)
+    var head = HTTPResponseHead(version: .http1_1, status: .ok)
+    head.headers.add(name: "Content-Type", value: "application/json")
+    head.headers.add(name: "Content-Length", value: "\(bodyData.count)")
+    head.headers.add(name: "Connection", value: "close")
+    var buffer = channel.allocator.buffer(capacity: bodyData.count)
+    buffer.writeBytes(bodyData)
+    context.write(wrapOutboundOut(.head(head)), promise: nil)
+    context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+    context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
+      channel.close(promise: nil)
+    }
+  }
+
   private func isExactRoute(_ target: String) -> Bool {
-    let candidate = Array(target.utf8)
-    guard !candidate.contains(37), !candidate.contains(63), !candidate.contains(35) else {
+    let candidate: [UInt8]
+    if configuration.usesHeaderAuthentication {
+      let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
+      let cleanPath = path.split(separator: "#", maxSplits: 1).first.map(String.init) ?? path
+      candidate = Array(cleanPath.utf8)
+    } else {
+      candidate = Array(target.utf8)
+      guard !candidate.contains(63), !candidate.contains(35) else {
+        return false
+      }
+    }
+    guard !candidate.contains(37) else {
       return false
     }
     return constantTimeEqual(candidate, routeBytes)
@@ -462,7 +517,9 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     nonisolated(unsafe) let sendableContext = context
     headerTimeout = context.eventLoop.scheduleTask(in: delay) { [weak self] in
       guard let self, case .waiting = self.inputState else { return }
-      self.reject(status: .requestTimeout, context: sendableContext)
+      self.cancelTimeouts()
+      self.releaseRequest()
+      sendableContext.close(promise: nil)
     }
   }
 

@@ -224,9 +224,31 @@ public actor ServiceExecutionCoordinator {
       _ = try? await tasks.fail(
         taskID: taskID,
         failureCode: "execution_state_update_failed",
-        summary: "The service could not persist Codex task progress."
+        summary: Self.persistenceFailureSummary(error)
       )
     }
+  }
+
+  private static func persistenceFailureSummary(_ error: Error) -> String {
+    let source = String(describing: error)
+    let characters = source.unicodeScalars.map { scalar -> Character in
+      switch scalar.value {
+      case 0x09, 0x0A, 0x0D:
+        Character(scalar)
+      case 0..<0x20, 0x7F:
+        " "
+      default:
+        Character(scalar)
+      }
+    }
+    let sanitized = String(characters)
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+    let detail = sanitized.prefix(512)
+    guard !detail.isEmpty else {
+      return "The service could not persist Codex task progress."
+    }
+    return "The service could not persist Codex task progress: \(detail)"
   }
 
   private func launchSupervisor(for task: ServiceTaskRecord) async {

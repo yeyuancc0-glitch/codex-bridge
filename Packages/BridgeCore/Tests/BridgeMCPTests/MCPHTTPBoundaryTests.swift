@@ -229,6 +229,50 @@ final class MCPHTTPBoundaryTests: XCTestCase {
     XCTAssertEqual(cleanedMetrics.activeRequests, 0)
   }
 
+  func testHeaderDeadlineOnIdleConnectionClosesChannelWithoutResponse() async throws {
+    let listener = MCPHTTPListener(
+      configuration: try MCPHTTPConfiguration(
+        pathSecret: secret,
+        headerDeadline: .milliseconds(120)
+      ),
+      handler: { _ in .ok() }
+    )
+    addTeardownBlock { await listener.stop() }
+    let endpoint = try await listener.start()
+
+    let received = try await Task.detached {
+      let descriptor = try openSocket(port: endpoint.port)
+      defer { Darwin.close(descriptor) }
+      var bytes = Data()
+      var buffer = [UInt8](repeating: 0, count: 4_096)
+      let clock = ContinuousClock()
+      let deadline = clock.now.advanced(by: .seconds(5))
+      while clock.now < deadline {
+        let count = Darwin.recv(descriptor, &buffer, buffer.count, 0)
+        if count == 0 { break }
+        guard count > 0 else {
+          if errno == EINTR { continue }
+          if errno == EAGAIN || errno == EWOULDBLOCK {
+            usleep(20_000)
+            continue
+          }
+          throw SocketTestError.receive(errno)
+        }
+        bytes.append(buffer, count: count)
+      }
+      return bytes
+    }.value
+
+    XCTAssertTrue(
+      received.isEmpty,
+      "an idle connection must be closed without an HTTP response"
+    )
+    try await waitForCleanup(listener)
+    let cleanedMetrics = await listener.metrics()
+    XCTAssertEqual(cleanedMetrics.activeConnections, 0)
+    XCTAssertEqual(cleanedMetrics.activeRequests, 0)
+  }
+
   func testResponseDeadlineTerminatesTheCorrelatedSession() async throws {
     let gate = RequestGate()
     let emissions = EmissionRecorder()

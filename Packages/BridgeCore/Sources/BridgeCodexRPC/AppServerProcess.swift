@@ -31,10 +31,38 @@ public struct AppServerConfiguration: Equatable, Sendable {
         arguments: ["app-server", "--stdio"]
       )
     }
+    if let discovered = defaultCodexExecutableURL() {
+      return AppServerConfiguration(
+        executableURL: discovered,
+        arguments: ["app-server", "--stdio"]
+      )
+    }
     return AppServerConfiguration(
       executableURL: URL(fileURLWithPath: "/usr/bin/env"),
       arguments: ["codex", "app-server", "--stdio"]
     )
+  }
+
+  public static func defaultCodexExecutableURL() -> URL? {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let candidates: [URL] = [
+      URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
+      home.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex"),
+      URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
+      URL(fileURLWithPath: "/usr/local/bin/codex"),
+      home.appendingPathComponent(".local/bin/codex"),
+      home.appendingPathComponent(".cargo/bin/codex"),
+      home.appendingPathComponent(".npm-global/bin/codex"),
+      home.appendingPathComponent(
+        "Library/Application Support/codex-plusplus/backup/Codex.app/Contents/Resources/codex"
+      ),
+    ]
+    for candidate in candidates {
+      if FileManager.default.isExecutableFile(atPath: candidate.path) {
+        return candidate
+      }
+    }
+    return nil
   }
 }
 

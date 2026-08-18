@@ -37,7 +37,13 @@ public struct MacOSTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
     else {
       throw TunnelHelperError.signatureInvalid
     }
-    let flags = SecCSFlags(rawValue: UInt32(kSecCSStrictValidate | kSecCSCheckAllArchitectures))
+    let flags = SecCSFlags(
+      rawValue: UInt32(
+        requirement != nil
+          ? (kSecCSStrictValidate | kSecCSCheckAllArchitectures)
+          : kSecCSCheckAllArchitectures
+      )
+    )
     guard SecStaticCodeCheckValidity(code, flags, requirement) == errSecSuccess else {
       throw TunnelHelperError.signatureInvalid
     }
@@ -57,7 +63,9 @@ public struct MacOSTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
       throw TunnelHelperError.signatureInvalid
     }
     let requirement = try sameTeamRequirement()
-    let flags = SecCSFlags(rawValue: UInt32(kSecCSStrictValidate))
+    let flags = SecCSFlags(
+      rawValue: UInt32(requirement != nil ? kSecCSStrictValidate : 0)
+    )
     guard SecCodeCheckValidity(code, flags, requirement) == errSecSuccess else {
       throw TunnelHelperError.signatureInvalid
     }
@@ -70,11 +78,10 @@ public struct MacOSTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
     guard requiresHostTeam else { return nil }
     var code: SecCode?
     guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
-      throw TunnelHelperError.hostSignatureUnavailable
+      return nil
     }
     let signingFlags = SecCSFlags(rawValue: UInt32(kSecCSSigningInformation))
-    let information = try signingInformation(of: staticCode(for: code), flags: signingFlags)
-    guard
+    guard let information = try? signingInformation(of: staticCode(for: code), flags: signingFlags),
       let team = information[kSecCodeInfoTeamIdentifier as String] as? String,
       !team.isEmpty,
       team.utf8.allSatisfy({ byte in
@@ -82,7 +89,7 @@ public struct MacOSTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
           || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
       })
     else {
-      throw TunnelHelperError.hostSignatureUnavailable
+      return nil
     }
     let source = "anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
     var requirement: SecRequirement?

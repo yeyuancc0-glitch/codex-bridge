@@ -55,6 +55,10 @@ extension BridgeServiceApplication {
       models: models
     )
 
+    guard try await settings.isSupervisorEnabled() else {
+      return ModelSelections(execution: execution, supervisor: nil)
+    }
+
     let explicitSupervisor =
       submission.supervisorModel != nil
       || submission.supervisorEffort != nil
@@ -86,6 +90,44 @@ extension BridgeServiceApplication {
       )
     }
     return ModelSelections(execution: execution, supervisor: supervisor)
+  }
+
+  func resolvedDefaultModelPreferences(
+    models: [MCPModelSummary]
+  ) async throws -> ServiceModelPreferences {
+    guard !models.isEmpty else { throw BridgeMCPQueryError.unavailable }
+
+    let configuredExecutionModel = try await settings.string(for: .defaultExecutionModel)
+    let configuredExecutionEffort = try await settings.string(for: .defaultExecutionEffort)
+    let executionModelID =
+      configuredExecutionModel
+      ?? models.first(where: \.isDefault)?.modelID
+      ?? models[0].modelID
+    let execution = try Self.select(
+      modelID: executionModelID,
+      effort: configuredExecutionEffort,
+      models: models
+    )
+
+    let configuredSupervisorModel = try await settings.string(for: .defaultSupervisorModel)
+    let configuredSupervisorEffort = try await settings.string(for: .defaultSupervisorEffort)
+    let supervisorModelID =
+      configuredSupervisorModel
+      ?? models.first(where: { $0.modelID == "gpt-5.6-luna" })?.modelID
+      ?? models.first(where: \.isDefault)?.modelID
+      ?? models[0].modelID
+    let supervisor = try Self.select(
+      modelID: supervisorModelID,
+      effort: configuredSupervisorEffort,
+      models: models
+    )
+
+    return ServiceModelPreferences(
+      executionModel: execution.model,
+      executionEffort: execution.effort,
+      supervisorModel: supervisor.model,
+      supervisorEffort: supervisor.effort
+    )
   }
 
   static func select(

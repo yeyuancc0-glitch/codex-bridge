@@ -141,6 +141,53 @@ final class MCPSessionLifecycleTests: XCTestCase {
     XCTAssertEqual(activeCount, 0)
   }
 
+  func testServerDiscoverAnswersOpenAIClientProbeAndInitializationStillWorks() async throws {
+    let registry = makeRegistry(port: 19_327)
+    addTeardownBlock { await registry.stop() }
+
+    let discoverBody = Data(
+      """
+      {"jsonrpc":"2.0","id":"openai-mcp-discover","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"openai-mcp","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{"experimental":{"openai/visibility":{"enabled":true}},"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}}}}
+      """.utf8
+    )
+    let discovered = await registry.handle(
+      HTTPRequest(
+        method: "POST",
+        headers: [
+          HTTPHeaderName.host: "127.0.0.1:19327",
+          HTTPHeaderName.accept: "application/json, text/event-stream",
+          HTTPHeaderName.contentType: "application/json",
+          "Mcp-Protocol-Version": "2026-07-28",
+          "Mcp-Method": "server/discover",
+        ],
+        body: discoverBody,
+        path: "/mcp"
+      )
+    )
+    XCTAssertEqual(discovered.statusCode, 200)
+    let payload = try XCTUnwrap(
+      discovered.bodyData,
+      "discover response must carry a JSON-RPC body"
+    )
+    let object = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: payload) as? [String: Any],
+      "discover response must be valid JSON"
+    )
+    XCTAssertEqual(object["id"] as? String, "openai-mcp-discover")
+    let result = try XCTUnwrap(object["result"] as? [String: Any])
+    XCTAssertEqual(result["resultType"] as? String, "complete")
+    let versions = try XCTUnwrap(result["supportedVersions"] as? [String])
+    XCTAssertEqual(versions, ["2026-07-28", Version.latest])
+    XCTAssertNotNil(result["capabilities"])
+    XCTAssertNotNil(result["_meta"])
+    let countAfterDiscover = await registry.activeSessionCount
+    XCTAssertEqual(countAfterDiscover, 0, "discovery must not create a session")
+
+    let initialized = await registry.handle(initializeRequest(port: 19_327))
+    XCTAssertEqual(initialized.statusCode, 200)
+    XCTAssertNotNil(initialized.headers[HTTPHeaderName.sessionID])
+  }
+
   private func makeRegistry(
     port: Int,
     limits: MCPSessionRegistry.Limits = .init()

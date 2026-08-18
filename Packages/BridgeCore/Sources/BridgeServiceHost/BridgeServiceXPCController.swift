@@ -11,35 +11,57 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
   @unchecked Sendable
 {
   private let composition: ServiceComposition
+  private let admission: XPCRequestAdmission
 
-  public init(composition: ServiceComposition) {
+  public init(
+    composition: ServiceComposition,
+    maximumConcurrentRequests: Int = 8
+  ) {
+    precondition(maximumConcurrentRequests > 0)
     self.composition = composition
+    self.admission = XPCRequestAdmission(
+      maximumConcurrent: maximumConcurrentRequests
+    )
     super.init()
   }
 
   public func perform(_ request: Data, withReply reply: @escaping (Data) -> Void) {
     let replyBox = XPCReplyBox(reply)
-    Task { [composition] in
-      let response = await Self.handle(request, composition: composition)
+    let decoded: BridgeServiceIPCRequest
+    do {
+      decoded = try BridgeServiceIPCCodec.decodeRequest(request)
+    } catch {
+      replyBox.call(
+        Self.fallbackFailure(
+          requestID: "invalid",
+          code: "invalid_request",
+          message: "The XPC request is invalid."
+        )
+      )
+      return
+    }
+    guard admission.acquire() else {
+      replyBox.call(
+        Self.fallbackFailure(
+          requestID: decoded.requestID,
+          code: "busy",
+          message: "The service is busy.",
+          retryable: true
+        )
+      )
+      return
+    }
+    Task { [composition, admission] in
+      let response = await Self.handle(decoded, composition: composition)
+      admission.release()
       replyBox.call(response)
     }
   }
 
   private static func handle(
-    _ data: Data,
+    _ request: BridgeServiceIPCRequest,
     composition: ServiceComposition
   ) async -> Data {
-    let request: BridgeServiceIPCRequest
-    do {
-      request = try BridgeServiceIPCCodec.decodeRequest(data)
-    } catch {
-      return fallbackFailure(
-        requestID: "invalid",
-        code: "invalid_request",
-        message: "The XPC request is invalid."
-      )
-    }
-
     do {
       switch request.operation {
       case .status:
@@ -139,6 +161,63 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           requestID: request.requestID,
           payload: models
         )
+
+      case .getModelCatalog:
+        let catalog = try await composition.application.serviceModelCatalog(
+          deadline: deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: IPCModelCatalogResponse(
+            models: catalog.models.models,
+            preferences: IPCModelPreferences(
+              executionModel: catalog.preferences.executionModel,
+              executionEffort: catalog.preferences.executionEffort,
+              supervisorModel: catalog.preferences.supervisorModel,
+              supervisorEffort: catalog.preferences.supervisorEffort,
+              supervisorEnabled: try await composition.settings.isSupervisorEnabled()
+            )
+          )
+        )
+
+      case .getModelPreferences:
+        let preferences = try await composition.application.serviceModelPreferences(
+          deadline: deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: IPCModelPreferences(
+            executionModel: preferences.executionModel,
+            executionEffort: preferences.executionEffort,
+            supervisorModel: preferences.supervisorModel,
+            supervisorEffort: preferences.supervisorEffort,
+            supervisorEnabled: try await composition.settings.isSupervisorEnabled()
+          )
+        )
+
+      case .setModelPreferences:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCModelPreferences.self,
+          from: request
+        )
+        try await composition.application.setServiceModelPreferences(
+          ServiceModelPreferences(
+            executionModel: payload.executionModel,
+            executionEffort: payload.executionEffort,
+            supervisorModel: payload.supervisorModel,
+            supervisorEffort: payload.supervisorEffort
+          ),
+          deadline: deadline()
+        )
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+
+      case .setSupervisorEnabled:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCSupervisorEnabledRequest.self,
+          from: request
+        )
+        try await composition.application.setSupervisorEnabled(payload.enabled)
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
 
       case .listThreads:
         let payload = try BridgeServiceIPCCodec.payload(
@@ -515,6 +594,31 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       #"{"schema_version":1,"request_id":"invalid","payload":null,"error":{"#
       + #""code":"internal_error","message":"The service failed.","retryable":true}}"#
     return Data(fallback.utf8)
+  }
+}
+
+private final class XPCRequestAdmission: @unchecked Sendable {
+  private let lock = NSLock()
+  private let maximumConcurrent: Int
+  private var active = 0
+
+  init(maximumConcurrent: Int) {
+    precondition(maximumConcurrent > 0)
+    self.maximumConcurrent = maximumConcurrent
+  }
+
+  func acquire() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard active < maximumConcurrent else { return false }
+    active += 1
+    return true
+  }
+
+  func release() {
+    lock.lock()
+    defer { lock.unlock() }
+    active -= 1
   }
 }
 

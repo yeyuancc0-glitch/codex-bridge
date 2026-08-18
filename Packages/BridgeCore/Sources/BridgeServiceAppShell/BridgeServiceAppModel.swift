@@ -81,6 +81,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var tasks: [MCPServiceTaskSnapshot] = []
   @Published public internal(set) var approvals: [IPCApprovalSummary] = []
   @Published public internal(set) var models: [MCPModelSummary] = []
+  @Published public internal(set) var modelPreferences: IPCModelPreferences?
+  @Published public internal(set) var modelCatalogError: String?
   @Published public internal(set) var threads: [MCPThreadSummary] = []
   @Published public internal(set) var selectedThread: MCPThreadReadPage?
   @Published public internal(set) var selectedProjectID: String?

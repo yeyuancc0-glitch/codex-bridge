@@ -8,6 +8,10 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case updateProjectPolicy = "update_project_policy"
   case removeProject = "remove_project"
   case listModels = "list_models"
+  case getModelCatalog = "get_model_catalog"
+  case getModelPreferences = "get_model_preferences"
+  case setModelPreferences = "set_model_preferences"
+  case setSupervisorEnabled = "set_supervisor_enabled"
   case listThreads = "list_threads"
   case readThread = "read_thread"
   case listTasks = "list_tasks"
@@ -276,6 +280,64 @@ public struct IPCExposureModeRequest: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case exposureMode = "exposure_mode"
+  }
+}
+
+public struct IPCModelPreferences: Codable, Equatable, Sendable {
+  public let executionModel: String
+  public let executionEffort: String
+  public let supervisorModel: String
+  public let supervisorEffort: String
+  public let supervisorEnabled: Bool
+
+  public init(
+    executionModel: String,
+    executionEffort: String,
+    supervisorModel: String,
+    supervisorEffort: String,
+    supervisorEnabled: Bool = true
+  ) {
+    self.executionModel = executionModel
+    self.executionEffort = executionEffort
+    self.supervisorModel = supervisorModel
+    self.supervisorEffort = supervisorEffort
+    self.supervisorEnabled = supervisorEnabled
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case executionModel = "execution_model"
+    case executionEffort = "execution_effort"
+    case supervisorModel = "supervisor_model"
+    case supervisorEffort = "supervisor_effort"
+    case supervisorEnabled = "supervisor_enabled"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.executionModel = try values.decode(String.self, forKey: .executionModel)
+    self.executionEffort = try values.decode(String.self, forKey: .executionEffort)
+    self.supervisorModel = try values.decode(String.self, forKey: .supervisorModel)
+    self.supervisorEffort = try values.decode(String.self, forKey: .supervisorEffort)
+    self.supervisorEnabled =
+      try values.decodeIfPresent(Bool.self, forKey: .supervisorEnabled) ?? true
+  }
+}
+
+public struct IPCSupervisorEnabledRequest: Codable, Equatable, Sendable {
+  public let enabled: Bool
+
+  public init(enabled: Bool) {
+    self.enabled = enabled
+  }
+}
+
+public struct IPCModelCatalogResponse: Codable, Equatable, Sendable {
+  public let models: [MCPModelSummary]
+  public let preferences: IPCModelPreferences
+
+  public init(models: [MCPModelSummary], preferences: IPCModelPreferences) {
+    self.models = models
+    self.preferences = preferences
   }
 }
 

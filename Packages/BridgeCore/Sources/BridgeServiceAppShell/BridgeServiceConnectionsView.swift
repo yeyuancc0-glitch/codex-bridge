@@ -207,24 +207,16 @@ struct BridgeServiceSettingsView: View {
 
   var body: some View {
     Form {
-      Section("模型目录") {
-        if model.models.isEmpty {
-          Text("尚未读取到 Codex 模型目录。")
-            .foregroundStyle(.secondary)
-        } else {
-          ForEach(model.models, id: \.modelID) { item in
-            LabeledContent(item.displayName) {
-              VStack(alignment: .trailing, spacing: 2) {
-                Text(item.modelID)
-                  .font(.caption.monospaced())
-                Text(item.reasoningEfforts.joined(separator: ", "))
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            }
-          }
-        }
-      }
+      modelDefaultsSection(
+        title: "执行任务",
+        description: "ChatGPT 提交的新任务会使用这里的默认值。"
+      )
+      modelDefaultsSection(
+        title: "Supervisor 监督",
+        description: "启用后，ChatGPT 提交的新任务会自动启动 Supervisor 只读监督；Supervisor 不会替你批准 Codex 操作。",
+        supervisor: true
+      )
+      modelCatalogSection
 
       Section("后台运行") {
         LabeledContent("注册状态", value: registrationLabel)
@@ -250,6 +242,171 @@ struct BridgeServiceSettingsView: View {
     .formStyle(.grouped)
     .padding(20)
     .navigationTitle("设置")
+  }
+
+  @ViewBuilder
+  private func modelDefaultsSection(
+    title: String,
+    description: String,
+    supervisor: Bool = false
+  ) -> some View {
+    Section {
+      if supervisor {
+        Toggle("启用 Supervisor 监督", isOn: supervisorEnabledBinding)
+      }
+      if model.models.isEmpty {
+        modelCatalogStatus
+      } else if model.modelPreferences == nil {
+        ProgressView("正在读取当前默认值…")
+      } else {
+        VStack(alignment: .leading, spacing: 12) {
+          Picker(
+            "默认模型",
+            selection: supervisor ? supervisorModelBinding : executionModelBinding
+          ) {
+            modelOptions(
+              selectedID: supervisor
+                ? model.modelPreferences?.supervisorModel
+                : model.modelPreferences?.executionModel
+            )
+          }
+
+          Picker(
+            "推理强度",
+            selection: supervisor ? supervisorEffortBinding : executionEffortBinding
+          ) {
+            effortOptions(
+              modelID: supervisor
+                ? model.modelPreferences?.supervisorModel
+                : model.modelPreferences?.executionModel,
+              selectedEffort: supervisor
+                ? model.modelPreferences?.supervisorEffort
+                : model.modelPreferences?.executionEffort
+            )
+          }
+
+          Text(description)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .disabled(supervisor && !(model.modelPreferences?.supervisorEnabled ?? true))
+      }
+    } header: {
+      Text(title)
+    }
+    .disabled(model.models.isEmpty || model.modelPreferences == nil)
+  }
+
+  @ViewBuilder
+  private var modelCatalogStatus: some View {
+    if let error = model.modelCatalogError {
+      VStack(alignment: .leading, spacing: 8) {
+        Label("模型目录读取失败", systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.orange)
+        Text(error)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Button("重试") {
+          model.refresh()
+        }
+      }
+    } else {
+      Text("尚未读取到 Codex 模型目录。")
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var modelCatalogSection: some View {
+    Section("模型目录") {
+      if model.models.isEmpty {
+        modelCatalogStatus
+      } else {
+        ForEach(model.models, id: \.modelID) { item in
+          LabeledContent(item.displayName) {
+            VStack(alignment: .trailing, spacing: 2) {
+              Text(item.modelID)
+                .font(.caption.monospaced())
+              Text("支持推理强度：" + item.reasoningEfforts.map(reasoningTitle).joined(separator: "、"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func modelOptions(selectedID: String?) -> some View {
+    if let selectedID,
+      !model.models.contains(where: { $0.modelID == selectedID })
+    {
+      Text("当前设置不可用 · \(selectedID)")
+        .tag(selectedID)
+    }
+    ForEach(model.models, id: \.modelID) { item in
+      Text("\(item.displayName) · \(item.modelID)")
+        .tag(item.modelID)
+    }
+  }
+
+  @ViewBuilder
+  private func effortOptions(modelID: String?, selectedEffort: String?) -> some View {
+    let efforts = model.models.first(where: { $0.modelID == modelID })?.reasoningEfforts ?? []
+    if let selectedEffort, !efforts.contains(selectedEffort) {
+      Text("当前设置不可用 · \(selectedEffort)")
+        .tag(selectedEffort)
+    }
+    ForEach(efforts, id: \.self) { effort in
+      Text("\(reasoningTitle(effort)) · \(effort)")
+        .tag(effort)
+    }
+  }
+
+  private var executionModelBinding: Binding<String> {
+    Binding(
+      get: { model.modelPreferences?.executionModel ?? "" },
+      set: { model.setExecutionModel($0) }
+    )
+  }
+
+  private var executionEffortBinding: Binding<String> {
+    Binding(
+      get: { model.modelPreferences?.executionEffort ?? "" },
+      set: { model.setExecutionEffort($0) }
+    )
+  }
+
+  private var supervisorModelBinding: Binding<String> {
+    Binding(
+      get: { model.modelPreferences?.supervisorModel ?? "" },
+      set: { model.setSupervisorModel($0) }
+    )
+  }
+
+  private var supervisorEffortBinding: Binding<String> {
+    Binding(
+      get: { model.modelPreferences?.supervisorEffort ?? "" },
+      set: { model.setSupervisorEffort($0) }
+    )
+  }
+
+  private var supervisorEnabledBinding: Binding<Bool> {
+    Binding(
+      get: { model.modelPreferences?.supervisorEnabled ?? true },
+      set: { model.setSupervisorEnabled($0) }
+    )
+  }
+
+  private func reasoningTitle(_ effort: String) -> String {
+    switch effort.lowercased() {
+    case "minimal": "最低"
+    case "low": "低"
+    case "medium": "中"
+    case "high": "高"
+    case "xhigh", "extra_high": "极高"
+    default: effort
+    }
   }
 
   private var registrationLabel: String {

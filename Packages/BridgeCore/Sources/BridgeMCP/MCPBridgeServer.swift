@@ -109,10 +109,14 @@ public actor MCPBridgeServer {
       let makeServer = makeServer
       let registry = MCPSessionRegistry(
         boundPort: bound.port,
-        limits: sessionLimits
-      ) { _ in
-        await makeServer()
-      }
+        limits: sessionLimits,
+        serverFactory: { _ in
+          await makeServer()
+        },
+        statelessServerFactory: {
+          await makeServer()
+        }
+      )
       await router.install(registry)
 
       guard isStarting(identifier) else {

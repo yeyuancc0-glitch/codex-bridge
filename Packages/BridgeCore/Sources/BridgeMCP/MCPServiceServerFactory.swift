@@ -33,10 +33,10 @@ public struct MCPServiceServerFactory: Sendable {
         + "Threads and models before submitting work. Task submission never grants local "
         + "approval; the user must approve execution in the macOS App.",
       capabilities: .init(tools: .init(listChanged: false)),
-      configuration: .strict
+      configuration: .default
     )
     await server.withMethodHandler(ListTools.self) { parameters in
-      guard parameters.cursor == nil else {
+      guard parameters.cursor == nil || parameters.cursor?.isEmpty == true else {
         throw MCPError.invalidParams("The tool catalog does not use cursors.")
       }
       return ListTools.Result(tools: definitions)

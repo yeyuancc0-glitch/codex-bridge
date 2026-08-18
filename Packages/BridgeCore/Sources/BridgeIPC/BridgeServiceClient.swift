@@ -80,6 +80,50 @@ public actor BridgeServiceClient {
     try await call(operation: .listModels, payload: Optional<IPCMutationResponse>.none)
   }
 
+  public func modelCatalog() async throws -> IPCModelCatalogResponse {
+    do {
+      return try await call(
+        operation: .getModelCatalog,
+        payload: Optional<IPCMutationResponse>.none
+      )
+    } catch let error as BridgeServiceIPCCodecError {
+      let shouldFallback: Bool
+      switch error {
+      case .requestMismatch:
+        shouldFallback = true
+      case .remoteError(let remote):
+        shouldFallback = remote.code == "invalid_request"
+      default:
+        shouldFallback = false
+      }
+      guard shouldFallback else { throw error }
+      let models = try await models()
+      let preferences = try await modelPreferences()
+      return IPCModelCatalogResponse(models: models.models, preferences: preferences)
+    }
+  }
+
+  public func modelPreferences() async throws -> IPCModelPreferences {
+    try await call(
+      operation: .getModelPreferences,
+      payload: Optional<IPCMutationResponse>.none
+    )
+  }
+
+  public func setModelPreferences(_ preferences: IPCModelPreferences) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setModelPreferences,
+      payload: preferences
+    )
+  }
+
+  public func setSupervisorEnabled(_ enabled: Bool) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setSupervisorEnabled,
+      payload: IPCSupervisorEnabledRequest(enabled: enabled)
+    )
+  }
+
   public func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage {
     try await call(operation: .listThreads, payload: request)
   }

@@ -175,6 +175,10 @@ public struct MCPHTTPConfiguration: Equatable, Sendable {
     self.maximumActiveRequests = maximumActiveRequests
   }
 
+  package var usesHeaderAuthentication: Bool {
+    headerSecret != nil
+  }
+
   package var routeBytes: [UInt8] {
     if headerSecret == nil {
       return Array("/mcp/\(pathSecret)".utf8)

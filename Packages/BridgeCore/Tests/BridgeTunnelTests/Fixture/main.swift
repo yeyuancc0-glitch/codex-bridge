@@ -69,7 +69,7 @@ func serve(healthURLFile: String, tunnelID: String) -> Never {
     if request.hasPrefix("GET /readyz ") {
       body = tunnelID.contains("notready") ? "no" : "ready"
     } else if tunnelID.contains("stale") {
-      body = "commands_poll_last_successful_timestamp_seconds 0 \(Int(now * 1_000))\n"
+      body = "commands_poll_last_successful_timestamp_seconds 12345 \(Int(now * 1_000))\n"
     } else {
       body = "commands_poll_last_successful_timestamp_seconds \(now) \(Int(now * 1_000))\n"
     }

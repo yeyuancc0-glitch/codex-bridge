@@ -132,14 +132,18 @@ public actor ServiceTunnelController {
     localMCPHeaderSecret: String
   ) async {
     guard !isShutdown else { return }
+    let changed =
+      self.localMCPURL != localMCPURL || self.localMCPHeaderSecret != localMCPHeaderSecret
     self.localMCPURL = localMCPURL
     self.localMCPHeaderSecret = localMCPHeaderSecret
     guard enabled, snapshot.configured else {
       await publish(snapshot)
       return
     }
-    Task { [weak self] in
-      try? await self?.startConfigured()
+    if changed || snapshot.lifecycle == .stopped || snapshot.lifecycle == .failed {
+      Task { [weak self] in
+        try? await self?.startConfigured()
+      }
     }
   }
 
@@ -172,6 +176,26 @@ public actor ServiceTunnelController {
     guard let tunnelID else { throw ServiceTunnelError.notConfigured }
     guard let localMCPURL, let localMCPHeaderSecret else {
       throw ServiceTunnelError.localMCPUnavailable
+    }
+    if let current = manager {
+      let state = await current.state()
+      if state == .ready {
+        return
+      }
+      if state == .starting || state == .authenticating || state == .connecting {
+        for _ in 0..<150 {
+          try await Task.sleep(for: .milliseconds(200))
+          guard !isShutdown, let active = manager else { break }
+          let activeState = await active.state()
+          if activeState == .ready {
+            await refresh(manager: active, scheduleRestart: true)
+            return
+          }
+          if activeState == .failed || activeState == .stopped {
+            break
+          }
+        }
+      }
     }
     guard factory.helperAvailable() else {
       let failure = ServiceTunnelSnapshot(
@@ -224,11 +248,26 @@ public actor ServiceTunnelController {
       await refresh(manager: candidate, scheduleRestart: true)
       beginMonitor(generation: runGeneration)
     } catch let error as ServiceTunnelError {
+      NSLog(
+        "[ServiceTunnelController] Tunnel start failed with ServiceTunnelError: %@",
+        String(describing: error)
+      )
       if runGeneration == generation {
         await failStart(candidate: manager, error: error)
       }
       throw error
     } catch {
+      NSLog(
+        "[ServiceTunnelController] Tunnel start failed with error: %@",
+        String(describing: error)
+      )
+      if let diag = await manager?.diagnostics() {
+        NSLog(
+          "[ServiceTunnelController] Diagnostics: stdout=%@, stderr=%@",
+          diag.standardOutput,
+          diag.standardError
+        )
+      }
       if runGeneration == generation {
         await failStart(candidate: manager, error: error)
       }
@@ -260,6 +299,9 @@ public actor ServiceTunnelController {
         ? "Secure MCP Tunnel requires local action."
         : "Secure MCP Tunnel could not start."
     )
+    if !actionRequired, enabled, !isShutdown, !restartDelays.isEmpty {
+      beginRestart(generation: generation)
+    }
   }
 
   private func beginMonitor(generation: UInt64) {

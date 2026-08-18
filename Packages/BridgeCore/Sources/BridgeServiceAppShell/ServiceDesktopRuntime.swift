@@ -81,6 +81,8 @@ extension BridgeServiceAppModel {
       tasks = []
       approvals = []
       models = []
+      modelPreferences = nil
+      modelCatalogError = nil
       threads = []
       selectedThread = nil
       selectedProjectID = nil
@@ -194,8 +196,17 @@ extension BridgeServiceAppModel {
     if let value = await approvalResult {
       approvals = value
     }
-    if includeCatalog, let value = try? await client.models() {
-      models = value.models
+    if includeCatalog {
+      do {
+        let catalog = try await client.modelCatalog()
+        models = catalog.models
+        modelPreferences = catalog.preferences
+        modelCatalogError = nil
+      } catch {
+        models = []
+        modelPreferences = nil
+        modelCatalogError = Self.message(error)
+      }
     }
   }
 
@@ -234,6 +245,14 @@ extension BridgeServiceAppModel {
   static func message(_ error: any Error) -> String {
     if case .remoteError(let remote) = error as? BridgeServiceIPCCodecError {
       return remote.message
+    }
+    if let codec = error as? BridgeServiceIPCCodecError {
+      switch codec {
+      case .requestMismatch:
+        return "后台 Service 与本 App 的 IPC 版本不一致，请重新注册或重启后台 Service。"
+      default:
+        break
+      }
     }
     if let localized = error as? LocalizedError,
       let description = localized.errorDescription

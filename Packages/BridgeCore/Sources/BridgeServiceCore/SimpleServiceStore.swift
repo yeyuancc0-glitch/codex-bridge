@@ -135,18 +135,24 @@ public actor SimpleServiceStore {
   }
 
   public func setSetting(_ setting: ServiceSettingRecord) throws {
+    try setSettings([setting])
+  }
+
+  func setSettings(_ settings: [ServiceSettingRecord]) throws {
     do {
       try database.write { db in
-        try db.execute(
-          sql: """
-            INSERT INTO bridge_service_settings (setting_key, setting_value, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(setting_key) DO UPDATE SET
-              setting_value = excluded.setting_value,
-              updated_at = excluded.updated_at
-            """,
-          arguments: [setting.key, setting.value, setting.updatedAt.timeIntervalSince1970]
-        )
+        for setting in settings {
+          try db.execute(
+            sql: """
+              INSERT INTO bridge_service_settings (setting_key, setting_value, updated_at)
+              VALUES (?, ?, ?)
+              ON CONFLICT(setting_key) DO UPDATE SET
+                setting_value = excluded.setting_value,
+                updated_at = excluded.updated_at
+              """,
+            arguments: [setting.key, setting.value, setting.updatedAt.timeIntervalSince1970]
+          )
+        }
       }
     } catch {
       throw ServiceStoreError.storageFailure

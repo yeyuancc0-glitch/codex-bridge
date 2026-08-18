@@ -28,7 +28,69 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.projects.map(\.projectID), ["project-1"])
     XCTAssertEqual(model.tasks.map(\.taskID), ["task-1"])
     XCTAssertEqual(model.models.map(\.modelID), ["fixture-model"])
+    XCTAssertEqual(model.modelPreferences?.executionEffort, "medium")
     XCTAssertEqual(factory.makeCount, 1)
+  }
+
+  func testModelPreferencesReachServiceClient() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.setExecutionEffort("low")
+
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.modelPreferences.executionEffort == "low"
+    }
+    XCTAssertEqual(model.modelPreferences?.executionEffort, "low")
+  }
+
+  func testModelCatalogFailureIsVisibleInsteadOfRemainingInLoadingState() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient(failModelCatalog: true)
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+
+    XCTAssertTrue(model.models.isEmpty)
+    XCTAssertNil(model.modelPreferences)
+    XCTAssertNotNil(model.modelCatalogError)
+  }
+
+  func testSupervisorEnabledToggleReachesServiceClient() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    XCTAssertEqual(model.modelPreferences?.supervisorEnabled, true)
+
+    model.setSupervisorEnabled(false)
+
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.modelPreferences.supervisorEnabled == false
+    }
+    XCTAssertEqual(model.modelPreferences?.supervisorEnabled, false)
   }
 
   func testShutdownClosesOnlyUIClientAndLeavesServiceRegistered() async throws {
@@ -227,6 +289,7 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     let configuredTunnelIDs: [String]
     let tunnelDisconnectCount: Int
     let tunnelClearCount: Int
+    let modelPreferences: IPCModelPreferences
   }
 
   private var closes = 0
@@ -237,6 +300,17 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var configuredTunnelIDs: [String] = []
   private var tunnelDisconnectCount = 0
   private var tunnelClearCount = 0
+  private var modelPreferencesValue = IPCModelPreferences(
+    executionModel: "fixture-model",
+    executionEffort: "medium",
+    supervisorModel: "fixture-model",
+    supervisorEffort: "medium"
+  )
+  private let failModelCatalog: Bool
+
+  init(failModelCatalog: Bool = false) {
+    self.failModelCatalog = failModelCatalog
+  }
 
   func status() async throws -> IPCServiceStatusResponse {
     IPCServiceStatusResponse(
@@ -301,10 +375,39 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
           modelID: "fixture-model",
           displayName: "Fixture Model",
           isDefault: true,
-          reasoningEfforts: ["medium"],
+          reasoningEfforts: ["low", "medium"],
           defaultReasoningEffort: "medium"
         )
       ]
+    )
+  }
+
+  func modelCatalog() async throws -> IPCModelCatalogResponse {
+    if failModelCatalog {
+      throw BridgeServiceClientError.unavailable
+    }
+    let catalog = try await models()
+    return IPCModelCatalogResponse(
+      models: catalog.models,
+      preferences: modelPreferencesValue
+    )
+  }
+
+  func modelPreferences() async throws -> IPCModelPreferences {
+    modelPreferencesValue
+  }
+
+  func setModelPreferences(_ preferences: IPCModelPreferences) async throws {
+    modelPreferencesValue = preferences
+  }
+
+  func setSupervisorEnabled(_ enabled: Bool) async throws {
+    modelPreferencesValue = IPCModelPreferences(
+      executionModel: modelPreferencesValue.executionModel,
+      executionEffort: modelPreferencesValue.executionEffort,
+      supervisorModel: modelPreferencesValue.supervisorModel,
+      supervisorEffort: modelPreferencesValue.supervisorEffort,
+      supervisorEnabled: enabled
     )
   }
 
@@ -433,7 +536,8 @@ private actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       approvalDecisions: approvalDecisions,
       configuredTunnelIDs: configuredTunnelIDs,
       tunnelDisconnectCount: tunnelDisconnectCount,
-      tunnelClearCount: tunnelClearCount
+      tunnelClearCount: tunnelClearCount,
+      modelPreferences: modelPreferencesValue
     )
   }
 

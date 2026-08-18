@@ -42,7 +42,8 @@ struct ServiceHostFixture {
 
 func makeServiceHostFixture(
   _ testCase: XCTestCase,
-  startMCP: Bool = false
+  startMCP: Bool = false,
+  catalogAppServer: AppServerConfiguration? = nil
 ) async throws -> ServiceHostFixture {
   let root = FileManager.default.temporaryDirectory.appending(
     path: "bridge-service-host-tests-\(UUID().uuidString)",
@@ -59,7 +60,7 @@ func makeServiceHostFixture(
       dataRootURL: root,
       executionAppServer: unavailable,
       supervisorAppServer: unavailable,
-      catalogAppServer: unavailable,
+      catalogAppServer: catalogAppServer ?? unavailable,
       clientInfo: .bridge(version: "service-host-tests")
     ),
     secretStore: secrets,

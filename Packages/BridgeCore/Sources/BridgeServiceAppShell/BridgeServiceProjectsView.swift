@@ -46,7 +46,7 @@ struct BridgeServiceProjectsView: View {
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
             }
-            .tag(Optional(project.projectID))
+            .tag(project.projectID)
           }
         }
       }
@@ -189,6 +189,7 @@ private struct ProjectPermissionEditor: View {
   @ObservedObject var model: BridgeServiceAppModel
   let project: MCPProjectSummary
   @State private var draft: BridgeProjectPolicyDraft
+  @State private var showSavedFeedback = false
 
   init(model: BridgeServiceAppModel, project: MCPProjectSummary) {
     self.model = model
@@ -203,16 +204,45 @@ private struct ProjectPermissionEditor: View {
       permissionPicker("读取", selection: $draft.readPermission)
       permissionPicker("写入", selection: $draft.writePermission)
       permissionPicker("网络", selection: $draft.networkPermission)
-      HStack {
+      HStack(spacing: 12) {
         Button("保存权限") {
           model.updateProjectPolicy(projectID: project.projectID, draft: draft)
+          withAnimation(.easeInOut(duration: 0.2)) {
+            showSavedFeedback = true
+          }
+          Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            withAnimation(.easeInOut(duration: 0.3)) {
+              showSavedFeedback = false
+            }
+          }
         }
         .buttonStyle(.borderedProminent)
         .disabled(!hasChanges)
-        Text("ChatGPT 和 Supervisor 永远不能代替本机用户批准 Codex 操作。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+
+        if showSavedFeedback {
+          HStack(spacing: 4) {
+            Image(systemName: "checkmark.circle.fill")
+              .foregroundStyle(.green)
+            Text("权限已保存生效")
+              .font(.caption)
+              .foregroundStyle(.green)
+          }
+          .transition(.opacity)
+        } else if !hasChanges {
+          HStack(spacing: 4) {
+            Image(systemName: "checkmark")
+              .foregroundStyle(.secondary)
+            Text("已是最新配置")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
       }
+
+      Text("ChatGPT 和 Supervisor 永远不能代替本机用户批准 Codex 操作。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 

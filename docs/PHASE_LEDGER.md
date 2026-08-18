@@ -1,5 +1,7 @@
 # Phase Accountability Ledger
 
+> **历史实现台账。** 本文件记录旧 App 内控制平面和发布硬化证据，不再作为轻量 V1 的完成清单。当前产品目标、阶段和验收以 [`V1_LIGHTWEIGHT_REFACTOR_PLAN.md`](./V1_LIGHTWEIGHT_REFACTOR_PLAN.md) 为准；旧模块在新 Service 路径真实闭环通过前保持冻结。
+
 状态只使用：`implemented`、`evaluated-local`、`not applicable`、`blocked`、`accepted omission`。
 
 | Phase / artifact | Scope | Status | Decision / reason | Evidence | Verification | Remaining risk |

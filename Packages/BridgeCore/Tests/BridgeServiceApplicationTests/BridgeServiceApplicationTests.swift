@@ -64,6 +64,120 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(status.pendingApprovalCount, 1)
   }
 
+  func testModelPreferencesArePersistedAndUsedForNewTasks() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    let defaults = try await application.serviceModelPreferences(deadline: deadline)
+    XCTAssertEqual(
+      defaults,
+      ServiceModelPreferences(
+        executionModel: "execution-model",
+        executionEffort: "high",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium"
+      )
+    )
+
+    let configured = ServiceModelPreferences(
+      executionModel: "gpt-5.6-luna",
+      executionEffort: "medium",
+      supervisorModel: "execution-model",
+      supervisorEffort: "high"
+    )
+    try await application.setServiceModelPreferences(configured, deadline: deadline)
+    let storedExecutionModel = try await fixture.settings.string(for: .defaultExecutionModel)
+    let storedSupervisorEffort = try await fixture.settings.string(for: .defaultSupervisorEffort)
+    XCTAssertEqual(
+      storedExecutionModel,
+      "gpt-5.6-luna"
+    )
+    XCTAssertEqual(
+      storedSupervisorEffort,
+      "high"
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the configured model defaults."
+      ),
+      deadline: deadline
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.executionModel, configured.executionModel)
+    XCTAssertEqual(task.executionEffort, configured.executionEffort)
+    XCTAssertEqual(task.supervisorModel, configured.supervisorModel)
+    XCTAssertEqual(task.supervisorEffort, configured.supervisorEffort)
+  }
+
+  func testDisabledSupervisorSkipsSupervisorForSubmittedTasks() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    try await application.setSupervisorEnabled(false)
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Implement the requested feature.",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium",
+        clientRequestID: "disabled-supervisor-request"
+      ),
+      deadline: deadline
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertNil(task.supervisorModel)
+    XCTAssertNil(task.supervisorEffort)
+
+    let approved = try await fixture.tasks.approve(taskID: task.id)
+    XCTAssertEqual(approved.state.supervisorStatus, .disabled)
+
+    let snapshot = try await application.serviceTask(
+      taskID: receipt.taskID,
+      recentEventLimit: 20,
+      deadline: deadline
+    )
+    XCTAssertEqual(snapshot.supervisorStatus, ServiceSupervisorStatus.disabled.rawValue)
+  }
+
+  func testModelPreferencesRejectUnknownModelsWithoutWritingSettings() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    do {
+      try await application.setServiceModelPreferences(
+        ServiceModelPreferences(
+          executionModel: "missing-model",
+          executionEffort: "high",
+          supervisorModel: "gpt-5.6-luna",
+          supervisorEffort: "medium"
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected the unknown model to be rejected")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .contractRejected)
+    }
+    let storedModel = try await fixture.settings.string(for: .defaultExecutionModel)
+    XCTAssertNil(storedModel)
+  }
+
   func testSubmissionIsIdempotentAndChangedPayloadIsRejected() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

@@ -9,6 +9,10 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func updateProjectPolicy(_ request: IPCProjectPolicyRequest) async throws -> MCPProjectDetail
   func removeProject(projectID: String) async throws
   func models() async throws -> MCPModelList
+  func modelCatalog() async throws -> IPCModelCatalogResponse
+  func modelPreferences() async throws -> IPCModelPreferences
+  func setModelPreferences(_ preferences: IPCModelPreferences) async throws
+  func setSupervisorEnabled(_ enabled: Bool) async throws
   func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage
   func readThread(_ request: IPCThreadReadRequest) async throws -> MCPThreadReadPage
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot]

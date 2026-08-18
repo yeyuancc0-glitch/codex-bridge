@@ -121,6 +121,113 @@ extension BridgeServiceAppModel {
     }
   }
 
+  func setModelPreferences(_ preferences: IPCModelPreferences) {
+    let previous = modelPreferences
+    modelPreferences = preferences
+    runMutation { [weak self] client in
+      guard let self else { return }
+      do {
+        try await client.setModelPreferences(preferences)
+        await self.refresh(silent: true, includeCatalog: true)
+      } catch {
+        modelPreferences = previous
+        throw error
+      }
+    }
+  }
+
+  func setSupervisorEnabled(_ enabled: Bool) {
+    guard let current = modelPreferences else { return }
+    let previous = modelPreferences
+    modelPreferences = IPCModelPreferences(
+      executionModel: current.executionModel,
+      executionEffort: current.executionEffort,
+      supervisorModel: current.supervisorModel,
+      supervisorEffort: current.supervisorEffort,
+      supervisorEnabled: enabled
+    )
+    runMutation { [weak self] client in
+      guard let self else { return }
+      do {
+        try await client.setSupervisorEnabled(enabled)
+        await self.refresh(silent: true, includeCatalog: true)
+      } catch {
+        modelPreferences = previous
+        throw error
+      }
+    }
+  }
+
+  func setExecutionModel(_ modelID: String) {
+    guard let current = modelPreferences,
+      let model = models.first(where: { $0.modelID == modelID })
+    else { return }
+
+    let effort =
+      model.reasoningEfforts.contains(current.executionEffort)
+      ? current.executionEffort
+      : model.defaultReasoningEffort ?? model.reasoningEfforts[0]
+
+    setModelPreferences(
+      IPCModelPreferences(
+        executionModel: modelID,
+        executionEffort: effort,
+        supervisorModel: current.supervisorModel,
+        supervisorEffort: current.supervisorEffort
+      )
+    )
+  }
+
+  func setExecutionEffort(_ effort: String) {
+    guard let current = modelPreferences,
+      let model = models.first(where: { $0.modelID == current.executionModel }),
+      model.reasoningEfforts.contains(effort)
+    else { return }
+    setModelPreferences(
+      IPCModelPreferences(
+        executionModel: current.executionModel,
+        executionEffort: effort,
+        supervisorModel: current.supervisorModel,
+        supervisorEffort: current.supervisorEffort
+      )
+    )
+  }
+
+  func setSupervisorModel(_ modelID: String) {
+    guard let current = modelPreferences,
+      let model = models.first(where: { $0.modelID == modelID })
+    else { return }
+
+    let effort =
+      model.reasoningEfforts.contains(current.supervisorEffort)
+      ? current.supervisorEffort
+      : model.defaultReasoningEffort ?? model.reasoningEfforts[0]
+
+    setModelPreferences(
+      IPCModelPreferences(
+        executionModel: current.executionModel,
+        executionEffort: current.executionEffort,
+        supervisorModel: modelID,
+        supervisorEffort: effort
+      )
+    )
+  }
+
+  func setSupervisorEffort(_ effort: String) {
+    guard let current = modelPreferences,
+      let model = models.first(where: { $0.modelID == current.supervisorModel }),
+      model.reasoningEfforts.contains(effort)
+    else { return }
+    setModelPreferences(
+      IPCModelPreferences(
+        executionModel: current.executionModel,
+        executionEffort: current.executionEffort,
+        supervisorModel: current.supervisorModel,
+        supervisorEffort: effort
+      )
+    )
+  }
+
   public func configureTunnel(tunnelID: String, runtimeKey: String) {
     runMutation { [weak self] client in
       guard let self else { return }

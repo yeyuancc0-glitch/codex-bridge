@@ -149,6 +149,17 @@ public actor TunnelManager {
       lifecycle = .ready
       beginMonitor(runID: context.id)
     } catch {
+      let msg = "[TunnelManager] start() failed with error: \(error)\n"
+      NSLog("%@", msg)
+      if let data = msg.data(using: .utf8) {
+        if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")) {
+          handle.seekToEndOfFile()
+          handle.write(data)
+          try? handle.close()
+        } else {
+          try? data.write(to: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log"))
+        }
+      }
       if let child = process {
         await terminate(child)
         captureDiagnostics(from: child)
@@ -210,6 +221,17 @@ public actor TunnelManager {
           standardOutput: output.standardOutput
         )
     else {
+      let msg = "[TunnelManager] Doctor check failed with exitCode=\(exit.code)\nstdout:\n\(output.standardOutput)\nstderr:\n\(output.standardError)\n"
+      NSLog("%@", msg)
+      if let data = msg.data(using: .utf8) {
+        if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")) {
+          handle.seekToEndOfFile()
+          handle.write(data)
+          try? handle.close()
+        } else {
+          try? data.write(to: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log"))
+        }
+      }
       throw TunnelManagerError.doctorFailed(
         exitCode: exit.code,
         diagnostics: Self.combinedDiagnostics(output)
@@ -256,6 +278,16 @@ public actor TunnelManager {
       if health.ready, !lastDiagnostics.actionRequired { return }
       try await Task.sleep(for: .milliseconds(200))
     }
+    let diagMsg = "[TunnelManager] readinessTimedOut! stdout:\n\(lastDiagnostics.standardOutput)\nstderr:\n\(lastDiagnostics.standardError)\n"
+    if let data = diagMsg.data(using: .utf8) {
+      if let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")) {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        try? handle.close()
+      } else {
+        try? data.write(to: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log"))
+      }
+    }
     throw TunnelManagerError.readinessTimedOut
   }
 
@@ -271,8 +303,16 @@ public actor TunnelManager {
 
   private func inspectRun(runID: UUID) {
     guard runContext?.id == runID, let child = process else { return }
-    if child.pollExit() != nil {
+    if let exit = child.pollExit() {
       captureDiagnostics(from: child)
+      let diag = diagnostics(for: child)
+      let exitMsg = "[TunnelManager] tunnel-client exited with \(exit). stdout: \(diag.standardOutput), stderr: \(diag.standardError)\n"
+      if let data = exitMsg.data(using: .utf8),
+        let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")) {
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+      }
       lifecycle = .failed
       if let context = runContext, !cleanup(context) { recordCleanupFailure() }
       process = nil
@@ -288,18 +328,27 @@ public actor TunnelManager {
 
   private func healthState(child: TunnelSpawnedProcess) -> (pollFresh: Bool, ready: Bool) {
     guard let context = runContext, context.hasExpectedIdentity else { return (false, false) }
-    guard
-      let snapshot = try? healthClient.snapshot(
+    do {
+      let snapshot = try healthClient.snapshot(
         urlFileDirectory: context.run,
         expectedPeerPID: child.pid
       )
-    else {
+      guard let timestamp = snapshot.pollTimestamp, timestamp > 0 else {
+        return (snapshot.isReady, snapshot.isReady)
+      }
+      let age = now().timeIntervalSince1970 - timestamp
+      let fresh = age >= -5 && age <= configuration.metricsFreshness.timeInterval
+      return (fresh, fresh && snapshot.isReady)
+    } catch {
+      let logMsg = "[TunnelManager] healthClient.snapshot error: \(error)\n"
+      if let data = logMsg.data(using: .utf8),
+        let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")) {
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+      }
       return (false, false)
     }
-    guard let timestamp = snapshot.pollTimestamp, timestamp > 0 else { return (false, false) }
-    let age = now().timeIntervalSince1970 - timestamp
-    let fresh = age >= -5 && age <= configuration.metricsFreshness.timeInterval
-    return (fresh, fresh && snapshot.isReady)
   }
 
   private func loadRuntimeKey() throws -> Data {
@@ -353,6 +402,7 @@ public actor TunnelManager {
       "--control-plane.api-key=file:/dev/fd/3",
       "--mcp.server-url", configuration.helperMCPURL.absoluteString,
       "--mcp.extra-headers", "X-Codex-Bridge-Token: file:/dev/fd/4",
+      "--harpoon.allow-plaintext-http=true",
       "--health.listen-addr", "127.0.0.1:0",
       "--health.url-file", urlFile,
       "--pid.file", pidFile,

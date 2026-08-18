@@ -9,7 +9,7 @@ struct TunnelHealthSnapshot: Equatable, Sendable {
 struct LoopbackHealthClient: Sendable {
   static let urlFileName = "health.url"
 
-  private let maximumResponseBytes = 64 * 1024
+  private let maximumResponseBytes = 1024 * 1024
 
   func snapshot(
     urlFileDirectory: TunnelDirectoryHandle,
@@ -17,13 +17,18 @@ struct LoopbackHealthClient: Sendable {
   ) throws -> TunnelHealthSnapshot {
     let baseURL = try healthBaseURL(in: urlFileDirectory)
     guard Self.process(expectedPeerPID, ownsListeningPort: baseURL.port!) else {
+      Self.appendLog("[UnixHealthClient] ownsListeningPort failed for pid \(expectedPeerPID) on port \(baseURL.port ?? -1)")
       throw TunnelHealthError.unexpectedPeer
     }
     let ready = try request(path: "/readyz", baseURL: baseURL)
-    let metrics = try request(path: "/metrics", baseURL: baseURL)
+    let readyBodyText = String(decoding: ready.body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    let isReady = ready.status == 200 && (readyBodyText == "ready" || readyBodyText == "ok" || readyBodyText.isEmpty)
+    let metrics = try? request(path: "/metrics", baseURL: baseURL)
+    let pollTime = metrics != nil && metrics!.status == 200 ? Self.pollTimestamp(in: metrics!.body) : nil
+    Self.appendLog("[UnixHealthClient] snapshot success: isReady=\(isReady) (status=\(ready.status), body='\(readyBodyText)'), pollTime=\(String(describing: pollTime))")
     return TunnelHealthSnapshot(
-      isReady: ready.status == 200 && ready.body == Data("ready".utf8),
-      pollTimestamp: metrics.status == 200 ? Self.pollTimestamp(in: metrics.body) : nil
+      isReady: isReady,
+      pollTimestamp: pollTime
     )
   }
 
@@ -65,7 +70,10 @@ struct LoopbackHealthClient: Sendable {
   private func request(path: String, baseURL: URL) throws -> HTTPResponse {
     guard let port = baseURL.port else { throw TunnelHealthError.invalidURLFile }
     let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-    guard descriptor >= 0 else { throw TunnelHealthError.unavailable }
+    guard descriptor >= 0 else {
+      Self.appendLog("socket creation failed errno=\(errno)")
+      throw TunnelHealthError.unavailable
+    }
     defer { Darwin.close(descriptor) }
     try setTimeout(descriptor)
     try connect(descriptor, port: port)
@@ -82,6 +90,7 @@ struct LoopbackHealthClient: Sendable {
     guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
       setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0
     else {
+      Self.appendLog("setsockopt failed errno=\(errno)")
       throw TunnelHealthError.unavailable
     }
   }
@@ -97,7 +106,10 @@ struct LoopbackHealthClient: Sendable {
         Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
       }
     }
-    guard status == 0 else { throw TunnelHealthError.unavailable }
+    guard status == 0 else {
+      Self.appendLog("connect failed port=\(port) errno=\(errno)")
+      throw TunnelHealthError.unavailable
+    }
   }
 
   private func write(_ data: Data, to descriptor: Int32) throws {
@@ -111,7 +123,10 @@ struct LoopbackHealthClient: Sendable {
           bytes.count - offset,
           MSG_NOSIGNAL
         )
-        guard count > 0 else { throw TunnelHealthError.unavailable }
+        guard count > 0 else {
+          Self.appendLog("send failed errno=\(errno)")
+          throw TunnelHealthError.unavailable
+        }
         offset += count
       }
     }
@@ -119,17 +134,42 @@ struct LoopbackHealthClient: Sendable {
 
   private func readResponse(from descriptor: Int32) throws -> HTTPResponse {
     var response = Data()
-    var chunk = [UInt8](repeating: 0, count: 4_096)
+    var chunk = [UInt8](repeating: 0, count: 16_384)
     while response.count <= maximumResponseBytes {
       let count = Darwin.recv(descriptor, &chunk, chunk.count, 0)
       if count == 0 { break }
-      guard count > 0 else { throw TunnelHealthError.unavailable }
+      guard count > 0 else {
+        if errno == EAGAIN || errno == EWOULDBLOCK {
+          break
+        }
+        Self.appendLog("recv failed count=\(count) errno=\(errno) responseCount=\(response.count)")
+        throw TunnelHealthError.unavailable
+      }
       response.append(chunk, count: count)
     }
     guard response.count <= maximumResponseBytes else {
+      Self.appendLog("response too large: \(response.count)")
       throw TunnelHealthError.responseTooLarge
     }
+    guard !response.isEmpty else {
+      throw TunnelHealthError.invalidResponse
+    }
     return try HTTPResponse(data: response)
+  }
+
+  package static func appendLog(_ message: String) {
+    let url = URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")
+    let line = message + "\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if FileManager.default.fileExists(atPath: url.path) {
+      if let handle = try? FileHandle(forWritingTo: url) {
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+      }
+    } else {
+      try? data.write(to: url)
+    }
   }
 
   package static func pollTimestamp(in body: Data) -> TimeInterval? {
@@ -181,7 +221,7 @@ struct LoopbackHealthClient: Sendable {
         )
       }
       guard bytes == MemoryLayout<socket_fdinfo>.size,
-        socket.psi.soi_family == AF_INET,
+        socket.psi.soi_family == AF_INET || socket.psi.soi_family == AF_INET6,
         socket.psi.soi_kind == SOCKINFO_TCP,
         socket.psi.soi_proto.pri_tcp.tcpsi_state == TSI_S_LISTEN
       else {
@@ -218,14 +258,40 @@ package struct HTTPResponse {
     else {
       throw TunnelHealthError.invalidResponse
     }
-    guard !head.lowercased().contains("transfer-encoding:") else {
-      throw TunnelHealthError.invalidResponse
-    }
     self.status = status
-    body = Data(data[split.upperBound...])
-    if try Self.contentLength(in: head) != body.count {
+    let rawBody = data[split.upperBound...]
+    if head.lowercased().contains("transfer-encoding: chunked") {
+      body = Self.decodeChunked(Data(rawBody))
+    } else if let length = try? Self.contentLength(in: head) {
+      guard rawBody.count == length else {
+        throw TunnelHealthError.invalidResponse
+      }
+      body = Data(rawBody)
+    } else {
       throw TunnelHealthError.invalidResponse
     }
+  }
+
+  private static func decodeChunked(_ data: Data) -> Data {
+    var result = Data()
+    var index = data.startIndex
+    while index < data.endIndex {
+      guard let crlf = data[index...].range(of: Data("\r\n".utf8)) else {
+        break
+      }
+      let sizeLine = String(decoding: data[index..<crlf.lowerBound], as: UTF8.self).trimmingCharacters(in: .whitespaces)
+      guard let chunkSize = Int(sizeLine, radix: 16), chunkSize > 0 else {
+        break
+      }
+      let chunkStart = crlf.upperBound
+      guard let chunkEnd = data.index(chunkStart, offsetBy: chunkSize, limitedBy: data.endIndex) else {
+        break
+      }
+      result.append(data[chunkStart..<chunkEnd])
+      let nextStart = data.index(chunkEnd, offsetBy: 2, limitedBy: data.endIndex) ?? chunkEnd
+      index = nextStart
+    }
+    return result.isEmpty ? data : result
   }
 
   private static func contentLength(in head: String) throws -> Int {

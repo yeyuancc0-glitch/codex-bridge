@@ -10,11 +10,13 @@ public struct BridgeServiceRootView: View {
 
   public var body: some View {
     NavigationSplitView {
-      List(BridgeServiceNavigation.allCases, selection: $model.selection) { item in
+      List(BridgeServiceNavigation.allCases, id: \.self, selection: $model.selection) { item in
         Label(item.title, systemImage: item.symbol)
-          .tag(Optional(item))
+          .tag(item)
       }
       .navigationTitle("Codex Bridge")
+      .listStyle(.sidebar)
+      .frame(minWidth: 180)
       .safeAreaInset(edge: .bottom) {
         connectionFooter
       }

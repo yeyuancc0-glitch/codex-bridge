@@ -353,4 +353,24 @@ final class SimpleServiceStoreTests: XCTestCase {
     XCTAssertEqual(reopenedExposure, .full)
     XCTAssertEqual(reopenedExecutionModel, "codex-model")
   }
+
+  func testSupervisorEnabledDefaultsTrueAndPersistsToggle() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let settings = ServiceSettings(store: store)
+
+    let initial = try await settings.isSupervisorEnabled()
+    XCTAssertEqual(initial, true)
+
+    try await settings.setSupervisorEnabled(false)
+    let reopened = try SimpleServiceStore(path: fixture.databasePath)
+    let reopenedSettings = ServiceSettings(store: reopened)
+    let disabled = try await reopenedSettings.isSupervisorEnabled()
+    XCTAssertEqual(disabled, false)
+
+    try await reopenedSettings.setSupervisorEnabled(true)
+    let reenabled = try await reopenedSettings.isSupervisorEnabled()
+    XCTAssertEqual(reenabled, true)
+  }
 }

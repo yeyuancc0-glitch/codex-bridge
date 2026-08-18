@@ -3,8 +3,24 @@ set -euo pipefail
 umask 022
 
 readonly script_directory="${0:A:h}"
-readonly helper_directory="${TUNNEL_HELPER_DIRECTORY:-}"
-readonly trusted_unsigned_sha256="${TUNNEL_HELPER_UNSIGNED_SHA256:-}"
+readonly default_helper_directory="${script_directory:h}/.build/tunnel-helper"
+readonly configured_helper_directory="${TUNNEL_HELPER_DIRECTORY:-}"
+if [[ -n "${configured_helper_directory}" ]]; then
+  helper_directory="${configured_helper_directory}"
+elif [[ -d "${default_helper_directory}" ]]; then
+  helper_directory="${default_helper_directory}"
+else
+  helper_directory=""
+fi
+readonly helper_directory
+if [[ -n "${TUNNEL_HELPER_UNSIGNED_SHA256:-}" ]]; then
+  trusted_unsigned_sha256="${TUNNEL_HELPER_UNSIGNED_SHA256}"
+elif [[ "${helper_directory}" == "${default_helper_directory}" ]]; then
+  trusted_unsigned_sha256="1f1d76a01673bd2037178c8e9c8829a6bf18ed7b3260c6fa373bf1aa66e9e371"
+else
+  trusted_unsigned_sha256=""
+fi
+readonly trusted_unsigned_sha256
 readonly require_helper="${REQUIRE_TUNNEL_HELPER:-NO}"
 readonly helpers_destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
 readonly resources_destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/TunnelClient"
@@ -68,6 +84,8 @@ then
     sign_arguments+=(--timestamp)
   fi
   /usr/bin/codesign "${sign_arguments[@]}" "${temporary_helper}"
+else
+  /usr/bin/codesign --force --sign - "${temporary_helper}"
 fi
 
 readonly staged_sha256="$(/usr/bin/shasum -a 256 "${temporary_helper}")"

@@ -218,6 +218,47 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertTrue(remainingProjects.isEmpty)
   }
 
+  func testXPCModelPreferencesRoundTripThroughTheService() async throws {
+    let catalog = AppServerConfiguration(
+      executableURL: URL(fileURLWithPath: "/bin/sh"),
+      arguments: ["-c", xpcModelCatalogScript]
+    )
+    let fixture = try await makeServiceHostFixture(self, catalogAppServer: catalog)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let defaults = try await client.modelCatalog()
+    let preferences = defaults.preferences
+    XCTAssertEqual(preferences.executionModel, "execution-model")
+    XCTAssertEqual(preferences.executionEffort, "high")
+    XCTAssertEqual(preferences.supervisorModel, "gpt-5.6-luna")
+    XCTAssertEqual(preferences.supervisorEffort, "medium")
+    XCTAssertEqual(preferences.supervisorEnabled, true)
+
+    let configured = IPCModelPreferences(
+      executionModel: "gpt-5.6-luna",
+      executionEffort: "medium",
+      supervisorModel: "execution-model",
+      supervisorEffort: "high"
+    )
+    try await client.setModelPreferences(configured)
+    let reloaded = try await client.modelCatalog()
+    XCTAssertEqual(reloaded.preferences, configured)
+
+    try await client.setSupervisorEnabled(false)
+    let disabled = try await client.modelCatalog()
+    XCTAssertEqual(disabled.preferences.supervisorEnabled, false)
+
+    try await client.setSupervisorEnabled(true)
+    let reenabled = try await client.modelCatalog()
+    XCTAssertEqual(reenabled.preferences.supervisorEnabled, true)
+  }
+
   func testIPCCodecRejectsOversizeAndMismatchedResponses() throws {
     let oversized = Data(repeating: 0x41, count: BridgeServiceIPC.maximumMessageBytes + 1)
     XCTAssertThrowsError(try BridgeServiceIPCCodec.decodeRequest(oversized)) { error in
@@ -286,4 +327,16 @@ final class BridgeServiceHostTests: XCTestCase {
     _ = try await client.connect(transport: transport)
     return client
   }
+}
+
+private var xpcModelCatalogScript: String {
+  #"""
+  IFS= read -r initialize
+  printf '%s\n' '{"id":1,"result":{"userAgent":"fixture/1","codexHome":"/private/fixture","platformFamily":"unix","platformOs":"macos"}}'
+  IFS= read -r initialized
+  IFS= read -r request
+  case "$request" in *'"method":"model/list"'*) ;; *) exit 11 ;; esac
+  printf '%s\n' '{"id":2,"result":{"data":[{"id":"execution-model","model":"execution-model","displayName":"Execution","description":"Execution","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}],"defaultReasoningEffort":"high","isDefault":true},{"id":"gpt-5.6-luna","model":"gpt-5.6-luna","displayName":"Luna","description":"Supervisor","hidden":false,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Medium"}],"defaultReasoningEffort":"medium","isDefault":false}],"nextCursor":null}}'
+  sleep 1
+  """#
 }

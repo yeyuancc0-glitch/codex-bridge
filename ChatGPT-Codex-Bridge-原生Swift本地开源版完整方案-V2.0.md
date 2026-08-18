@@ -1,5 +1,7 @@
 # ChatGPT–Codex Bridge 原生 Swift 本地开源版完整实施方案
 
+> **历史架构参考，不再定义当前 V1。** 项目已转向独立后台 Service、轻量单库任务状态、并行 Execution/Supervisor 和纯客户端 App。当前实施基线见 [`docs/V1_LIGHTWEIGHT_REFACTOR_PLAN.md`](./docs/V1_LIGHTWEIGHT_REFACTOR_PLAN.md)。本文只保留为旧控制平面与后续安全硬化参考，不应继续驱动 V1 功能扩张。
+
 **版本：** V2.0  
 **方案日期：** 2026-08-12  
 **文档状态：** 架构与实施基线  

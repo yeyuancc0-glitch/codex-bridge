@@ -7,6 +7,16 @@ import BridgeSecurity
 import BridgeServiceCore
 import Foundation
 
+public struct ServiceModelCatalog: Equatable, Sendable {
+  public let models: MCPModelList
+  public let preferences: ServiceModelPreferences
+
+  public init(models: MCPModelList, preferences: ServiceModelPreferences) {
+    self.models = models
+    self.preferences = preferences
+  }
+}
+
 public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   let appVersion: String
   let projects: ServiceProjectService
@@ -211,6 +221,45 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try await catalog.listModels(deadline: deadline)
   }
 
+  public func serviceModelPreferences(
+    deadline: ContinuousClock.Instant
+  ) async throws -> ServiceModelPreferences {
+    try await serviceModelCatalog(deadline: deadline).preferences
+  }
+
+  public func serviceModelCatalog(
+    deadline: ContinuousClock.Instant
+  ) async throws -> ServiceModelCatalog {
+    try Self.checkDeadline(deadline)
+    let models = try await catalog.listModels(deadline: deadline)
+    let preferences = try await resolvedDefaultModelPreferences(models: models.models)
+    return ServiceModelCatalog(models: models, preferences: preferences)
+  }
+
+  public func setServiceModelPreferences(
+    _ preferences: ServiceModelPreferences,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    let models = try await catalog.listModels(deadline: deadline).models
+    _ = try Self.select(
+      modelID: preferences.executionModel,
+      effort: preferences.executionEffort,
+      models: models
+    )
+    _ = try Self.select(
+      modelID: preferences.supervisorModel,
+      effort: preferences.supervisorEffort,
+      models: models
+    )
+    try Self.checkDeadline(deadline)
+    try await settings.setModelPreferences(preferences)
+  }
+
+  public func setSupervisorEnabled(_ enabled: Bool) async throws {
+    try await settings.setSupervisorEnabled(enabled)
+  }
+
   public func serviceTask(
     taskID: String,
     recentEventLimit: Int,
@@ -290,7 +339,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       taskID: result.task.id.rawValue,
       status: result.task.state.status.rawValue,
       reusedExistingTask: result.reusedExistingTask,
-      localApprovalRequired: true
+      localApprovalRequired: result.task.state.status == .awaitingLocalApproval
     )
   }
 
