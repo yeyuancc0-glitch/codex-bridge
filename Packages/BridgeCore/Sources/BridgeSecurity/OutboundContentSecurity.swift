@@ -322,14 +322,13 @@ public enum OutboundContentSecurity {
   }
 
   private static func isRelativePathPrefix(_ character: Character) -> Bool {
-    guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else {
-      return false
-    }
-    switch scalar.value {
-    case 48...57, 65...90, 97...122:
+    // A slash preceded by an alphanumeric character (any script, including
+    // CJK) is part of prose like "原创帖/回复" rather than an absolute path;
+    // only slash preceded by whitespace/line start or punctuation may begin a
+    // local path such as "/Users/me".
+    if character.isLetter || character.isNumber {
       return true
-    default:
-      return "._~/-".unicodeScalars.contains(scalar)
     }
+    return "._~/-".contains(character)
   }
 }

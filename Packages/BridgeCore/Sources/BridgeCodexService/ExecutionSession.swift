@@ -395,7 +395,7 @@ package actor ExecutionSession {
       response.model == posture.model,
       response.approvalPolicy == posture.approvalPolicy,
       response.approvalsReviewer == posture.approvalsReviewer,
-      response.sandbox == posture.sandboxPolicy
+      response.sandbox.type == posture.sandboxPolicy.type
     else {
       throw ExecutionServiceError.threadMismatch(response.thread.id)
     }

@@ -77,7 +77,7 @@ public struct MCPServiceToolDispatcher: Sendable {
     } catch {
       let correlationID = UUID().uuidString.lowercased()
       logger.error(
-        "Lightweight MCP service tool request failed.",
+        "Lightweight MCP service tool request failed. name=\(parameters.name) error=\(error) type=\(String(describing: type(of: error)))",
         metadata: ["correlation_id": .string(correlationID)]
       )
       throw MCPError.internalError("The tool request failed.")

@@ -3,11 +3,13 @@ import BridgeIPC
 import BridgeMCP
 import Foundation
 import SwiftUI
+import WebKit
 
 public enum BridgeServiceNavigation: String, CaseIterable, Identifiable, Sendable {
   case overview
-  case tasks
+  case workbench
   case projects
+  case logs
   case connections
   case settings
 
@@ -16,8 +18,9 @@ public enum BridgeServiceNavigation: String, CaseIterable, Identifiable, Sendabl
   var title: String {
     switch self {
     case .overview: "概览"
-    case .tasks: "任务"
+    case .workbench: "工作台"
     case .projects: "项目"
+    case .logs: "日志"
     case .connections: "连接"
     case .settings: "设置"
     }
@@ -25,9 +28,10 @@ public enum BridgeServiceNavigation: String, CaseIterable, Identifiable, Sendabl
 
   var symbol: String {
     switch self {
-    case .overview: "gauge.with.dots.needle.50percent"
-    case .tasks: "list.bullet.rectangle"
-    case .projects: "folder"
+    case .overview: "gauge.with.needle"
+    case .workbench: "bubble.left.and.text.bubble.right.fill"
+    case .projects: "folder.fill"
+    case .logs: "list.dash.header.rectangle"
     case .connections: "point.3.connected.trianglepath.dotted"
     case .settings: "gearshape"
     }
@@ -85,11 +89,21 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var modelCatalogError: String?
   @Published public internal(set) var threads: [MCPThreadSummary] = []
   @Published public internal(set) var selectedThread: MCPThreadReadPage?
+  @Published public internal(set) var selectedThreadID: String?
   @Published public internal(set) var selectedProjectID: String?
+  @Published public var chatWebView: WKWebView?
   @Published public internal(set) var isRefreshing = false
   @Published public internal(set) var lastRefreshAt: Date?
   @Published public internal(set) var conversation: TaskConversationModel?
   @Published public var errorMessage: String?
+  @Published public var isChatBrowserEnabled: Bool {
+    didSet {
+      UserDefaults.standard.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
+      if !isChatBrowserEnabled {
+        chatWebView = nil
+      }
+    }
+  }
 
   let registration: any BridgeServiceRegistrationManaging
   let clientFactory: BridgeServiceClientFactory
@@ -100,6 +114,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   var pollingTask: Task<Void, Never>?
   var started = false
   var stopped = false
+
+  private static let chatBrowserEnabledKey = "chatBrowserEnabled"
 
   public convenience init() {
     self.init(
@@ -122,10 +138,17 @@ public final class BridgeServiceAppModel: ObservableObject {
     self.connectionRetryDelay = connectionRetryDelay
     self.maximumConnectionAttempts = maximumConnectionAttempts
     registrationStatus = registration.status
+    isChatBrowserEnabled =
+      UserDefaults.standard.object(forKey: Self.chatBrowserEnabledKey)
+      as? Bool ?? true
   }
 
   deinit {
     pollingTask?.cancel()
+  }
+
+  public func projectName(for projectID: String) -> String {
+    projects.first(where: { $0.projectID == projectID })?.name ?? projectID
   }
 
   public var runningTaskCount: Int {

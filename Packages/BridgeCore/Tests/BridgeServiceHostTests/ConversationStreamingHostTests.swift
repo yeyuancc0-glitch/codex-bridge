@@ -122,6 +122,126 @@ final class ConversationStreamingHostTests: XCTestCase {
     collect.cancel()
   }
 
+  func testConversationSubscriptionStreamsReasoningAndToolCalls() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-conversation-rich-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(
+      at: root,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    )
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let secrets = ServiceHostTestSecretStore()
+    let projectRoot = root.appending(path: "Project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let execution = AppServerConfiguration(
+      executableURL: URL(fileURLWithPath: "/bin/sh"),
+      arguments: ["-c", hostRichConversationScript(root: projectRoot.path)]
+    )
+    let unavailable = AppServerConfiguration(
+      executableURL: URL(fileURLWithPath: "/bin/false"),
+      arguments: []
+    )
+    let composition = try await ServiceComposition.make(
+      configuration: ServiceCompositionConfiguration(
+        appVersion: "0.2.0",
+        dataRootURL: root,
+        executionAppServer: execution,
+        supervisorAppServer: unavailable,
+        catalogAppServer: unavailable,
+        clientInfo: .bridge(version: "conversation-rich-tests")
+      ),
+      secretStore: secrets,
+      randomBytes: { Data(repeating: 0x23, count: $0) }
+    )
+    addTeardownBlock { await composition.shutdown() }
+
+    let pair = xpcClient(composition: composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let registered = try await client.registerProject(
+      IPCProjectRegistrationRequest(
+        name: "Rich Streaming Project",
+        absolutePath: projectRoot.path,
+        writePermission: ProjectPermission.allowed.rawValue
+      )
+    )
+    let submitted = try await composition.tasks.submit(
+      ServiceTaskRequest(
+        projectID: ProjectID(rawValue: registered.projectID),
+        source: .macOSApp,
+        clientRequestID: "request-rich-streaming",
+        prompt: "Fix the tokenizer.",
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .workspaceWrite
+      )
+    )
+    let taskID = submitted.task.id
+    _ = try await composition.tasks.begin(taskID: taskID)
+
+    let (subscription, updates) = try await client.subscribeTaskConversation(
+      taskID: taskID.rawValue,
+      limit: 200
+    )
+    XCTAssertEqual(subscription.subscriptionID, 0)
+
+    let collector = HostChangeCollector()
+    let collect = Task { await collector.collect(updates) }
+
+    _ = try await composition.coordinator.start(taskID: taskID)
+
+    let completed = try await waitForHostTask(composition, taskID: taskID) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.resultSummary, "Final streaming agent text.")
+
+    let pushes = await collector.all()
+
+    let reasoningPushes = pushes.filter { $0.kind == "reasoning" }
+    XCTAssertEqual(reasoningPushes.count, 3)
+    XCTAssertEqual(reasoningPushes[0].fullContent, "I should inspect")
+    XCTAssertEqual(reasoningPushes[0].baseContentLength, 0)
+    XCTAssertEqual(reasoningPushes[1].delta, " the parser.")
+    XCTAssertEqual(reasoningPushes[1].baseContentLength, 16)
+    XCTAssertEqual(reasoningPushes[2].final, true)
+    XCTAssertEqual(reasoningPushes[2].fullContent, "I should inspect the parser.")
+
+    let toolPushes = pushes.filter { $0.kind == "tool_call" }
+    XCTAssertTrue(toolPushes.count >= 3)
+    XCTAssertEqual(toolPushes[0].toolName, "read")
+    XCTAssertEqual(toolPushes[0].toolStatus, "inProgress")
+    XCTAssertEqual(toolPushes[1].delta, "\nReading Sources/A.swift")
+    XCTAssertEqual(toolPushes.last?.toolStatus, "completed")
+    XCTAssertEqual(toolPushes.last?.final, true)
+
+    let page = try await client.taskConversation(
+      IPCTaskConversationRequest(taskID: taskID.rawValue, limit: 200)
+    )
+    let reasoning = page.messages.first { $0.kind == "reasoning" }
+    XCTAssertNotNil(reasoning)
+    XCTAssertTrue(reasoning?.content.contains("I should inspect the parser.") == true)
+    let tool = page.messages.first { $0.kind == "tool_call" }
+    XCTAssertNotNil(tool)
+    XCTAssertEqual(tool?.toolName, "read")
+    XCTAssertEqual(tool?.toolStatus, "completed")
+    XCTAssertEqual(tool?.toolArguments, #"{"path":"Sources/A.swift"}"#)
+    XCTAssertTrue(tool?.content.contains("Reading Sources/A.swift") == true)
+
+    try await client.unsubscribeTaskConversation(
+      taskID: taskID.rawValue,
+      subscriptionID: subscription.subscriptionID
+    )
+    collect.cancel()
+  }
+
   func testDeleteTaskRemovesTaskAndConversation() async throws {
     let root = FileManager.default.temporaryDirectory.appending(
       path: "bridge-conversation-delete-\(UUID().uuidString)",
@@ -297,6 +417,39 @@ func hostAgentDeltaScript(root: String) -> String {
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-host","turnId":"turn-host","itemId":"item-stream","delta":" the parser"}}'
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-host","turnId":"turn-host","itemId":"item-stream","delta":" now."}}'
       printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-host","turn":__COMPLETED__}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+    .replacingOccurrences(of: "__COMPLETED__", with: completed)
+}
+
+func hostRichConversationScript(root: String) -> String {
+  let thread = hostThreadJSON(id: "thread-host-rich", root: root)
+  let turn = hostTurnJSON(id: "turn-host-rich", status: "inProgress")
+  let completedItems =
+    #"[{"id":"reasoning-main","type":"reasoning","content":["I should inspect the parser."],"summary":[]},"#
+    + #"{"id":"tool-read","type":"mcpToolCall","tool":"read","server":"filesystem","arguments":{"path":"Sources/A.swift"},"status":"completed"},"#
+    + #"{"id":"item-stream","type":"agentMessage","text":"Final streaming agent text."}]"#
+  let completed = hostTurnJSON(id: "turn-host-rich", status: "completed", items: completedItems)
+  return hostCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r thread_start
+      case "$thread_start" in *'"method":"thread/start"'*) ;; *) exit 21 ;; esac
+      printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 22 ;; esac
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-host-rich","turn":__TURN__}}'
+      printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+      printf '%s\n' '{"method":"item/reasoning/textDelta","params":{"threadId":"thread-host-rich","turnId":"turn-host-rich","itemId":"reasoning-main","contentIndex":0,"delta":"I should inspect"}}'
+      printf '%s\n' '{"method":"item/reasoning/textDelta","params":{"threadId":"thread-host-rich","turnId":"turn-host-rich","itemId":"reasoning-main","contentIndex":0,"delta":" the parser."}}'
+      printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-host-rich","turnId":"turn-host-rich","startedAtMs":1,"item":{"id":"tool-read","type":"mcpToolCall","tool":"read","server":"filesystem","arguments":{"path":"Sources/A.swift"},"status":"inProgress"}}}'
+      printf '%s\n' '{"method":"item/mcpToolCall/progress","params":{"threadId":"thread-host-rich","turnId":"turn-host-rich","itemId":"tool-read","message":"Reading Sources/A.swift"}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-host-rich","turnId":"turn-host-rich","completedAtMs":2,"item":{"id":"tool-read","type":"mcpToolCall","tool":"read","server":"filesystem","arguments":{"path":"Sources/A.swift"},"status":"completed"}}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-host-rich","turnId":"turn-host-rich","itemId":"item-stream","delta":"Final streaming agent text."}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-host-rich","turn":__COMPLETED__}}'
       sleep 1
       """#
     .replacingOccurrences(of: "__ROOT__", with: root)

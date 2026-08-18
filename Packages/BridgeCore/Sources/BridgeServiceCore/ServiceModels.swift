@@ -464,19 +464,49 @@ public enum ServiceTaskMessageRole: String, Codable, CaseIterable, Sendable {
   case agent
 }
 
+public enum ServiceTaskMessageKind: String, Codable, CaseIterable, Sendable {
+  case user
+  case agent
+  case reasoning
+  case toolCall = "tool_call"
+}
+
 public struct ServiceTaskMessageDraft: Codable, Equatable, Sendable {
   public let key: String
   public let role: ServiceTaskMessageRole
+  public let kind: ServiceTaskMessageKind
   public let content: String
+  public let toolName: String?
+  public let toolStatus: String?
+  public let toolArguments: String?
   public let createdAt: Date
 
-  public init(key: String, role: ServiceTaskMessageRole, content: String, createdAt: Date) throws {
+  public init(
+    key: String,
+    role: ServiceTaskMessageRole,
+    content: String,
+    createdAt: Date,
+    kind: ServiceTaskMessageKind = .agent,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil
+  ) throws {
     try ServiceValidation.identifier(key, field: "taskMessage.key", maximumBytes: 256)
     try ServiceValidation.text(content, field: "taskMessage.content", maximumBytes: 256 * 1_024)
+    try ServiceValidation.optionalText(toolName, field: "taskMessage.toolName", maximumBytes: 256)
+    try ServiceValidation.optionalText(
+      toolArguments,
+      field: "taskMessage.toolArguments",
+      maximumBytes: 64 * 1_024
+    )
     try ServiceValidation.date(createdAt, field: "taskMessage.createdAt")
     self.key = key
     self.role = role
+    self.kind = kind
     self.content = content
+    self.toolName = toolName
+    self.toolStatus = toolStatus
+    self.toolArguments = toolArguments
     self.createdAt = createdAt
   }
 }
@@ -486,7 +516,11 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
   public let taskID: TaskID
   public let key: String
   public let role: ServiceTaskMessageRole
+  public let kind: ServiceTaskMessageKind
   public let content: String
+  public let toolName: String?
+  public let toolStatus: String?
+  public let toolArguments: String?
   public let createdAt: Date
 
   public init(
@@ -495,18 +529,33 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
     key: String,
     role: ServiceTaskMessageRole,
     content: String,
-    createdAt: Date
+    createdAt: Date,
+    kind: ServiceTaskMessageKind = .agent,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil
   ) throws {
     guard id > 0 else { throw ServiceStoreError.invalidArgument("taskMessage.id") }
-    try ServiceValidation.identifier(taskID.rawValue, field: "taskMessage.taskID", maximumBytes: 128)
+    try ServiceValidation.identifier(
+      taskID.rawValue, field: "taskMessage.taskID", maximumBytes: 128)
     try ServiceValidation.identifier(key, field: "taskMessage.key", maximumBytes: 256)
     try ServiceValidation.text(content, field: "taskMessage.content", maximumBytes: 256 * 1_024)
+    try ServiceValidation.optionalText(toolName, field: "taskMessage.toolName", maximumBytes: 256)
+    try ServiceValidation.optionalText(
+      toolArguments,
+      field: "taskMessage.toolArguments",
+      maximumBytes: 64 * 1_024
+    )
     try ServiceValidation.date(createdAt, field: "taskMessage.createdAt")
     self.id = id
     self.taskID = taskID
     self.key = key
     self.role = role
+    self.kind = kind
     self.content = content
+    self.toolName = toolName
+    self.toolStatus = toolStatus
+    self.toolArguments = toolArguments
     self.createdAt = createdAt
   }
 }

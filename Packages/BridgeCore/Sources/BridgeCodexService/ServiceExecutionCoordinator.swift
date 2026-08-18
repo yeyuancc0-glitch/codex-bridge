@@ -111,19 +111,25 @@ public actor ServiceExecutionCoordinator {
     }
     let persisted = try await tasks.messages(taskID: taskID, limit: persistedLimit)
     let memoryKeys = Set(inMemory.map(\.key))
-    var page = persisted
+    var page =
+      persisted
       .filter { !memoryKeys.contains($0.key) }
       .map {
         TaskConversationBuffer.Entry(
           key: $0.key,
           role: $0.role,
+          kind: $0.kind,
           content: $0.content,
+          toolName: $0.toolName,
+          toolStatus: $0.toolStatus,
+          toolArguments: $0.toolArguments,
           isFinal: true
         )
       }
     page.append(contentsOf: inMemory)
     let subscription = await conversation.subscribe(taskID: taskID)
-    let merged = subscription.page.isEmpty
+    let merged =
+      subscription.page.isEmpty
       ? page
       : page.filter { entry in
         !subscription.page.contains(where: { $0.key == entry.key })
@@ -260,6 +266,21 @@ public actor ServiceExecutionCoordinator {
       case .agentMessageDelta(let delta):
         await conversation.appendDelta(taskID: taskID, itemID: delta.itemID, delta: delta.delta)
 
+      case .reasoningDelta(let delta):
+        await conversation.appendDelta(
+          taskID: taskID,
+          itemID: delta.itemID,
+          delta: delta.delta,
+          kind: .reasoning
+        )
+
+      case .toolCall(let call):
+        await conversation.upsertToolCall(taskID: taskID, call: call)
+
+      case .toolCallProgress(let itemID, let progress):
+        await conversation.appendToolCallProgress(
+          taskID: taskID, itemID: itemID, progress: progress)
+
       case .turnCompleted(let messages):
         await conversation.finalize(taskID: taskID, messages: messages)
 
@@ -296,6 +317,7 @@ public actor ServiceExecutionCoordinator {
           summary: summary
         )
         await observeSupervisor(task: failed, kind: .final, summary: summary)
+        await conversation.appendAgentMessage(taskID: taskID, content: summary)
         await conversation.close(taskID: taskID)
       }
     } catch {

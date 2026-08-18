@@ -182,6 +182,115 @@ final class TaskConversationBufferTests: XCTestCase {
     await buffer.close(taskID: task.id)
   }
 
+  func testReasoningDeltasAccumulateAndFinalizeAuthoritativeContent() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-buffer-reasoning"
+    )
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks, flushDeltaCount: 8, flushInFlightCount: 4)
+    let subscription = await buffer.subscribe(taskID: task.id)
+    let collector = ChangeCollector()
+    let collect = Task { await collector.collect(subscription.updates) }
+
+    await buffer.appendDelta(
+      taskID: task.id, itemID: "reasoning-1", delta: "I should inspect", kind: .reasoning)
+    await buffer.appendDelta(
+      taskID: task.id, itemID: "reasoning-1", delta: " the parser.", kind: .reasoning)
+
+    var entries = await buffer.entries(taskID: task.id)
+    XCTAssertEqual(entries.count, 1)
+    XCTAssertEqual(entries[0].key, "reasoning:reasoning-1")
+    XCTAssertEqual(entries[0].kind, .reasoning)
+    XCTAssertEqual(entries[0].content, "I should inspect the parser.")
+    XCTAssertEqual(entries[0].isFinal, false)
+
+    let finalMessage = try ExecutionAgentMessage(
+      key: "reasoning:reasoning-1",
+      role: .agent,
+      kind: .reasoning,
+      content: "I should inspect the parser.\nFix the tokenizer."
+    )
+    await buffer.finalize(taskID: task.id, messages: [finalMessage])
+
+    entries = await buffer.entries(taskID: task.id)
+    XCTAssertEqual(entries[0].content, "I should inspect the parser.\nFix the tokenizer.")
+    XCTAssertEqual(entries[0].isFinal, true)
+
+    try await waitUntil { await collector.count(key: "reasoning:reasoning-1") == 3 }
+    let updates = await collector.all()
+    XCTAssertEqual(updates[0].kind, .reasoning)
+    XCTAssertEqual(updates[0].fullContent, "I should inspect")
+    XCTAssertEqual(updates[1].delta, " the parser.")
+    XCTAssertEqual(updates[2].kind, .reasoning)
+    XCTAssertEqual(updates[2].final, true)
+    XCTAssertEqual(
+      updates[2].fullContent, "I should inspect the parser.\nFix the tokenizer.")
+
+    let persisted = try await fixture.store.taskMessages(taskID: task.id)
+    XCTAssertEqual(persisted[0].kind, .reasoning)
+    XCTAssertEqual(persisted[0].content, "I should inspect the parser.\nFix the tokenizer.")
+    await buffer.close(taskID: task.id)
+    collect.cancel()
+  }
+
+  func testToolCallLifecycleStreamsStatusAndProgressAndPersists() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(fixture: fixture, taskID: "tsk-buffer-tool")
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks, flushDeltaCount: 8, flushInFlightCount: 4)
+    let subscription = await buffer.subscribe(taskID: task.id)
+    let collector = ChangeCollector()
+    let collect = Task { await collector.collect(subscription.updates) }
+
+    let started = try ExecutionToolCall(
+      itemID: "tool-1", tool: "read", arguments: #"{"path":"Sources/A.swift"}"#,
+      status: .inProgress)
+    await buffer.upsertToolCall(taskID: task.id, call: started)
+
+    var entries = await buffer.entries(taskID: task.id)
+    XCTAssertEqual(entries.count, 1)
+    XCTAssertEqual(entries[0].key, "tool:tool-1")
+    XCTAssertEqual(entries[0].kind, .toolCall)
+    XCTAssertEqual(entries[0].toolName, "read")
+    XCTAssertEqual(entries[0].toolStatus, "inProgress")
+    XCTAssertEqual(entries[0].isFinal, false)
+
+    await buffer.appendToolCallProgress(
+      taskID: task.id, itemID: "tool-1", progress: "Reading Sources/A.swift")
+
+    let completed = try ExecutionToolCall(
+      itemID: "tool-1", tool: "read", arguments: #"{"path":"Sources/A.swift"}"#,
+      status: .completed)
+    await buffer.upsertToolCall(taskID: task.id, call: completed)
+
+    entries = await buffer.entries(taskID: task.id)
+    XCTAssertEqual(entries[0].toolStatus, "completed")
+    XCTAssertEqual(entries[0].isFinal, true)
+    XCTAssertEqual(
+      entries[0].content, #"{"path":"Sources/A.swift"}"# + "\nReading Sources/A.swift")
+    XCTAssertEqual(entries[0].toolArguments, #"{"path":"Sources/A.swift"}"#)
+
+    try await waitUntil { await collector.count(key: "tool:tool-1") == 3 }
+    let updates = await collector.all()
+    let toolUpdates = updates.filter { $0.key == "tool:tool-1" }
+    XCTAssertEqual(toolUpdates.count, 3)
+    XCTAssertEqual(toolUpdates[0].kind, .toolCall)
+    XCTAssertEqual(toolUpdates[0].toolStatus, "inProgress")
+    XCTAssertEqual(toolUpdates[1].delta, "\nReading Sources/A.swift")
+    XCTAssertEqual(toolUpdates[2].toolStatus, "completed")
+    XCTAssertEqual(toolUpdates[2].final, true)
+
+    await buffer.close(taskID: task.id)
+
+    let persisted = try await fixture.store.taskMessages(taskID: task.id)
+    XCTAssertEqual(persisted[0].kind, .toolCall)
+    XCTAssertEqual(persisted[0].toolName, "read")
+    XCTAssertEqual(persisted[0].toolStatus, "completed")
+    collect.cancel()
+  }
+
   private func waitUntil(
     timeout: Duration = .seconds(2),
     condition: @escaping @Sendable () async -> Bool

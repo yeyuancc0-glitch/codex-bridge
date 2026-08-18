@@ -207,14 +207,37 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
 public struct ExecutionAgentMessage: Codable, Equatable, Sendable {
   public let key: String
   public let role: ServiceTaskMessageRole
+  public let kind: ServiceTaskMessageKind
   public let content: String
+  public let toolName: String?
+  public let toolStatus: String?
+  public let toolArguments: String?
 
-  public init(key: String, role: ServiceTaskMessageRole, content: String) throws {
+  public init(
+    key: String,
+    role: ServiceTaskMessageRole,
+    kind: ServiceTaskMessageKind = .agent,
+    content: String,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil
+  ) throws {
     try ExecutionValidation.identifier(key, field: "agentMessage.key", maximumBytes: 256)
     try ExecutionValidation.text(content, field: "agentMessage.content", maximumBytes: 256 * 1_024)
+    try ExecutionValidation.optionalText(
+      toolName, field: "agentMessage.toolName", maximumBytes: 256)
+    try ExecutionValidation.optionalText(
+      toolArguments,
+      field: "agentMessage.toolArguments",
+      maximumBytes: 64 * 1_024
+    )
     self.key = key
     self.role = role
+    self.kind = kind
     self.content = content
+    self.toolName = toolName
+    self.toolStatus = toolStatus
+    self.toolArguments = toolArguments
   }
 }
 
@@ -244,6 +267,64 @@ public struct ExecutionAgentMessageDelta: Codable, Equatable, Sendable {
   }
 }
 
+public struct ExecutionReasoningDelta: Codable, Equatable, Sendable {
+  public let threadID: String
+  public let turnID: String
+  public let itemID: String
+  public let delta: String
+
+  public init(threadID: String, turnID: String, itemID: String, delta: String) throws {
+    try ExecutionValidation.identifier(
+      threadID,
+      field: "reasoningDelta.threadID",
+      maximumBytes: 1_024
+    )
+    try ExecutionValidation.identifier(
+      turnID,
+      field: "reasoningDelta.turnID",
+      maximumBytes: 1_024
+    )
+    try ExecutionValidation.identifier(itemID, field: "reasoningDelta.itemID", maximumBytes: 256)
+    try ExecutionValidation.text(delta, field: "reasoningDelta.delta", maximumBytes: 64 * 1_024)
+    self.threadID = threadID
+    self.turnID = turnID
+    self.itemID = itemID
+    self.delta = delta
+  }
+}
+
+public enum ExecutionToolCallStatus: String, Codable, Equatable, Sendable {
+  case inProgress
+  case completed
+  case failed
+}
+
+public struct ExecutionToolCall: Codable, Equatable, Sendable {
+  public let itemID: String
+  public let tool: String
+  public let arguments: String?
+  public let status: ExecutionToolCallStatus
+
+  public init(
+    itemID: String,
+    tool: String,
+    arguments: String?,
+    status: ExecutionToolCallStatus
+  ) throws {
+    try ExecutionValidation.identifier(itemID, field: "toolCall.itemID", maximumBytes: 256)
+    try ExecutionValidation.text(tool, field: "toolCall.tool", maximumBytes: 256)
+    try ExecutionValidation.optionalText(
+      arguments,
+      field: "toolCall.arguments",
+      maximumBytes: 64 * 1_024
+    )
+    self.itemID = itemID
+    self.tool = tool
+    self.arguments = arguments
+    self.status = status
+  }
+}
+
 public enum ExecutionEvent: Equatable, Sendable {
   case planUpdated(currentStep: String, steps: [String])
   case commandCompleted(
@@ -254,6 +335,9 @@ public enum ExecutionEvent: Equatable, Sendable {
   case filesChanged(relativePaths: [String], status: ExecutionFileChangeStatus)
   case approvalRequested(ExecutionApprovalRequest)
   case agentMessageDelta(ExecutionAgentMessageDelta)
+  case reasoningDelta(ExecutionReasoningDelta)
+  case toolCall(ExecutionToolCall)
+  case toolCallProgress(itemID: String, progress: String)
   case turnCompleted(messages: [ExecutionAgentMessage])
   case completed(resultSummary: String)
   case interrupted

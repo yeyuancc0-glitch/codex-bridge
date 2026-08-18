@@ -7,8 +7,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   public struct Entry: Identifiable, Equatable {
     public let key: String
     public let role: String
+    public let kind: String
     public let messageID: Int64?
     public var content: String
+    public var toolName: String?
+    public var toolStatus: String?
+    public var toolArguments: String?
     public var isFinal: Bool
 
     public var id: String { key }
@@ -16,16 +20,24 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     init(_ message: IPCTaskConversationMessage, isFinal: Bool) {
       key = message.key
       role = message.role
+      kind = message.kind
       messageID = message.messageID
       content = message.content
+      toolName = message.toolName
+      toolStatus = message.toolStatus
+      toolArguments = message.toolArguments
       self.isFinal = isFinal
     }
 
-    init(key: String, role: String, content: String, isFinal: Bool) {
+    init(key: String, role: String, kind: String, content: String, isFinal: Bool) {
       self.key = key
       self.role = role
+      self.kind = kind
       messageID = nil
       self.content = content
+      toolName = nil
+      toolStatus = nil
+      toolArguments = nil
       self.isFinal = isFinal
     }
   }
@@ -125,6 +137,15 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       } else if let delta = push.delta, entry.content.count == push.baseContentLength {
         entry.content += delta
       }
+      if let toolName = push.toolName {
+        entry.toolName = toolName
+      }
+      if let toolStatus = push.toolStatus {
+        entry.toolStatus = toolStatus
+      }
+      if let toolArguments = push.toolArguments {
+        entry.toolArguments = toolArguments
+      }
       if push.final {
         entry.isFinal = true
       }
@@ -134,12 +155,16 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         let content = push.fullContent
           ?? (push.baseContentLength == 0 ? push.delta : nil)
       else { return }
-      let entry = Entry(
+      var entry = Entry(
         key: push.key,
         role: push.role,
+        kind: push.kind,
         content: content,
         isFinal: push.final
       )
+      entry.toolName = push.toolName
+      entry.toolStatus = push.toolStatus
+      entry.toolArguments = push.toolArguments
       index[entry.key] = entries.count
       entries.append(entry)
     }

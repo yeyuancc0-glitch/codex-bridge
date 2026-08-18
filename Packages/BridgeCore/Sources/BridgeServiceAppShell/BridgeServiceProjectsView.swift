@@ -31,7 +31,7 @@ struct BridgeServiceProjectsView: View {
         } label: {
           Label("添加", systemImage: "plus")
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderedProminent)
         .controlSize(.small)
       }
       .padding(14)
@@ -46,39 +46,69 @@ struct BridgeServiceProjectsView: View {
         )
         .frame(maxHeight: .infinity)
       } else {
-        List(selection: projectSelection) {
-          ForEach(model.projects, id: \.projectID) { project in
-            HStack(spacing: 10) {
-              Image(systemName: "folder.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(.blue)
+        ScrollView {
+          LazyVStack(spacing: 8) {
+            ForEach(model.projects, id: \.projectID) { project in
+              let isSelected = model.selectedProjectID == project.projectID
+              Button {
+                model.selectProject(project.projectID)
+              } label: {
+                HStack(spacing: 12) {
+                  Image(systemName: isSelected ? "folder.fill" : "folder")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
 
-              VStack(alignment: .leading, spacing: 2) {
-                Text(project.name)
-                  .font(.body.weight(.medium))
-                  .lineLimit(1)
+                  VStack(alignment: .leading, spacing: 3) {
+                    Text(project.name)
+                      .font(.body.weight(isSelected ? .semibold : .medium))
+                      .foregroundStyle(.primary)
+                      .lineLimit(1)
 
-                Text(project.projectID)
-                  .font(.system(size: 10, design: .monospaced))
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
+                    Text(project.projectID)
+                      .font(.system(size: 10, design: .monospaced))
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+                  }
+
+                  Spacer()
+
+                  if isSelected {
+                    Image(systemName: "chevron.right")
+                      .font(.caption2.weight(.bold))
+                      .foregroundStyle(Color.accentColor)
+                  }
+                }
+                .padding(12)
+                .background(
+                  isSelected
+                    ? Color.accentColor.opacity(0.12)
+                    : Color(nsColor: .controlBackgroundColor)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                  RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(
+                      isSelected
+                        ? Color.accentColor.opacity(0.35)
+                        : Color(nsColor: .separatorColor).opacity(0.3),
+                      lineWidth: isSelected ? 1.2 : 0.8
+                    )
+                )
               }
-
-              Spacer()
-
-              if model.selectedProjectID == project.projectID {
-                Image(systemName: "chevron.right")
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
-              }
+              .buttonStyle(.plain)
             }
-            .padding(.vertical, 4)
-            .tag(project.projectID)
           }
+          .padding(12)
         }
-        .listStyle(.sidebar)
       }
     }
+    .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+    .overlay(
+      Rectangle()
+        .frame(width: 1)
+        .foregroundStyle(Color(nsColor: .separatorColor).opacity(0.35)),
+      alignment: .trailing
+    )
   }
 
   @ViewBuilder
@@ -140,16 +170,6 @@ struct BridgeServiceProjectsView: View {
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-  }
-
-  private var projectSelection: Binding<String?> {
-    Binding(
-      get: { model.selectedProjectID },
-      set: { value in
-        guard let value else { return }
-        model.selectProject(value)
-      }
-    )
   }
 
   private var selectedProject: MCPProjectSummary? {

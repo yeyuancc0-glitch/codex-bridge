@@ -63,7 +63,7 @@ public struct BridgeServiceRootView: View {
       Spacer(minLength: 4)
 
       switch item {
-      case .tasks:
+      case .workbench:
         if !model.approvals.isEmpty {
           Text("\(model.approvals.count)")
             .font(.caption2.weight(.bold))
@@ -99,10 +99,12 @@ public struct BridgeServiceRootView: View {
     switch model.selection ?? .overview {
     case .overview:
       BridgeServiceOverviewView(model: model)
-    case .tasks:
-      BridgeServiceTasksView(model: model)
+    case .workbench:
+      BridgeServiceWorkbenchView(model: model)
     case .projects:
       BridgeServiceProjectsView(model: model)
+    case .logs:
+      BridgeServiceLogsView(model: model)
     case .connections:
       BridgeServiceConnectionsView(model: model)
     case .settings:
@@ -178,6 +180,12 @@ public struct BridgeServiceMenuBarView: View {
       }
 
       Divider()
+
+      Button("打开工作台") {
+        model.selection = .workbench
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first(where: \.canBecomeMain)?.makeKeyAndOrderFront(nil)
+      }
 
       Button("打开主窗口") {
         NSApp.activate(ignoringOtherApps: true)

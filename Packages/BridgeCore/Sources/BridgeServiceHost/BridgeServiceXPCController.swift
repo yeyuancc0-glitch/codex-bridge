@@ -360,7 +360,11 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
                 messageID: message.id,
                 key: message.key,
                 role: message.role.rawValue,
-                content: message.content
+                kind: message.kind.rawValue,
+                content: message.content,
+                toolName: message.toolName,
+                toolStatus: message.toolStatus,
+                toolArguments: message.toolArguments
               )
             }
           )
@@ -525,7 +529,11 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           messageID: nil,
           key: entry.key,
           role: entry.role.rawValue,
+          kind: entry.kind.rawValue,
           content: entry.content,
+          toolName: entry.toolName,
+          toolStatus: entry.toolStatus,
+          toolArguments: entry.toolArguments,
           final: entry.isFinal
         )
       }
@@ -537,10 +545,14 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       taskID: change.taskID.rawValue,
       key: change.key,
       role: change.role.rawValue,
+      kind: change.kind.rawValue,
       delta: change.delta,
       baseContentLength: change.baseContentLength,
       fullContent: change.fullContent,
-      final: change.final
+      final: change.final,
+      toolName: change.toolName,
+      toolStatus: change.toolStatus,
+      toolArguments: change.toolArguments
     )
     guard let data = try? JSONEncoder().encode(push),
       data.count <= BridgeServiceIPC.maximumMessageBytes

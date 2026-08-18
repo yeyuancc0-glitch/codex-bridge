@@ -38,8 +38,8 @@ struct BridgeServiceOverviewView: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
               Spacer()
-              Button("查看全部任务") {
-                model.selection = .tasks
+              Button("进入工作台") {
+                model.selection = .workbench
               }
               .buttonStyle(.link)
             }
@@ -76,7 +76,7 @@ struct BridgeServiceOverviewView: View {
         tone: .warning,
         actionTitle: "立即处理"
       ) {
-        model.selection = .tasks
+        model.selection = .workbench
       }
     }
   }
@@ -171,9 +171,13 @@ struct BridgeServiceOverviewView: View {
                 .font(.subheadline.weight(.medium))
                 .lineLimit(1)
 
-              Text(task.projectID)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
+              HStack(spacing: 4) {
+                Image(systemName: "folder")
+                  .font(.caption2)
+                Text(model.projectName(for: task.projectID))
+                  .font(.caption)
+              }
+              .foregroundStyle(.secondary)
             }
 
             Spacer()

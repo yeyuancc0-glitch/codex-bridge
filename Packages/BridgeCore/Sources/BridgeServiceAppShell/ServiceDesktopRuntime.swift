@@ -191,9 +191,29 @@ extension BridgeServiceAppModel {
     if let value = await projectResult {
       projects = value
       reconcileProjectSelection()
+      if selectedProjectID == nil, let first = value.first {
+        selectedProjectID = first.projectID
+      }
+      if let activeProjectID = selectedProjectID {
+        let threadPage = await optional {
+          try await client.threads(IPCThreadListRequest(projectID: activeProjectID, limit: 100))
+        }
+        if let threadPage {
+          threads = threadPage.threads
+          if selectedThreadID == nil, let firstThread = threadPage.threads.first {
+            openThread(firstThread.threadID, inProject: activeProjectID)
+          }
+        }
+      }
     }
     if let value = await taskResult {
       tasks = value
+      // If there's an active running task with a threadID, auto-switch to it if not set
+      if let activeTask = value.first(where: \.isRunning), let threadID = activeTask.threadID {
+        if selectedThreadID != threadID {
+          openThread(threadID, inProject: activeTask.projectID)
+        }
+      }
     }
     if let value = await approvalResult {
       approvals = value

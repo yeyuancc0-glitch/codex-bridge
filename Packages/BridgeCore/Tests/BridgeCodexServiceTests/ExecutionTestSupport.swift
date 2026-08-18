@@ -63,7 +63,8 @@ func submitStartedExecutionTask(
   supervisorEffort: String? = nil,
   permissionMode: ServicePermissionMode = .workspaceWrite,
   accessMode: ServiceAccessMode = .requestApproval,
-  fastMode: Bool = false
+  fastMode: Bool = false,
+  networkAllowed: Bool = false
 ) async throws -> ServiceTaskRecord {
   let result = try await fixture.tasks.submit(
     ServiceTaskRequest(
@@ -77,6 +78,7 @@ func submitStartedExecutionTask(
       supervisorModel: supervisorModel,
       supervisorEffort: supervisorEffort,
       permissionMode: permissionMode,
+      networkAllowed: networkAllowed,
       accessMode: accessMode,
       fastMode: fastMode
     ),

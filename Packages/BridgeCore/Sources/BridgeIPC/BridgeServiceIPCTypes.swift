@@ -554,20 +554,32 @@ public struct IPCTaskConversationMessage: Codable, Equatable, Sendable {
   public let messageID: Int64?
   public let key: String
   public let role: String
+  public let kind: String
   public let content: String
+  public let toolName: String?
+  public let toolStatus: String?
+  public let toolArguments: String?
   public let final: Bool
 
   public init(
     messageID: Int64?,
     key: String,
     role: String,
+    kind: String = "agent",
     content: String,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil,
     final: Bool = true
   ) {
     self.messageID = messageID
     self.key = key
     self.role = role
+    self.kind = kind
     self.content = content
+    self.toolName = toolName
+    self.toolStatus = toolStatus
+    self.toolArguments = toolArguments
     self.final = final
   }
 
@@ -575,7 +587,11 @@ public struct IPCTaskConversationMessage: Codable, Equatable, Sendable {
     case messageID = "message_id"
     case key
     case role
+    case kind
     case content
+    case toolName = "tool_name"
+    case toolStatus = "tool_status"
+    case toolArguments = "tool_arguments"
     case final
   }
 }
@@ -599,37 +615,53 @@ public struct IPCTaskConversationPush: Codable, Equatable, Sendable {
   public let taskID: String
   public let key: String
   public let role: String
+  public let kind: String
   public let delta: String?
   public let baseContentLength: Int
   public let fullContent: String?
   public let final: Bool
+  public let toolName: String?
+  public let toolStatus: String?
+  public let toolArguments: String?
 
   public init(
     taskID: String,
     key: String,
     role: String,
+    kind: String = "agent",
     delta: String?,
     baseContentLength: Int,
     fullContent: String?,
-    final: Bool
+    final: Bool,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil
   ) {
     self.taskID = taskID
     self.key = key
     self.role = role
+    self.kind = kind
     self.delta = delta
     self.baseContentLength = baseContentLength
     self.fullContent = fullContent
     self.final = final
+    self.toolName = toolName
+    self.toolStatus = toolStatus
+    self.toolArguments = toolArguments
   }
 
   private enum CodingKeys: String, CodingKey {
     case taskID = "task_id"
     case key
     case role
+    case kind
     case delta
     case baseContentLength = "base_content_length"
     case fullContent = "full_content"
     case final
+    case toolName = "tool_name"
+    case toolStatus = "tool_status"
+    case toolArguments = "tool_arguments"
   }
 }
 

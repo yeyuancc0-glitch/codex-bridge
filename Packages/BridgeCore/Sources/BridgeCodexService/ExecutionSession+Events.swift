@@ -31,10 +31,25 @@ extension ExecutionSession {
         )
         return
       }
+      if item.type == "mcpToolCall" || item.type == "dynamicToolCall" {
+        guard let call = Self.toolCall(from: notification.params) else {
+          await fail(
+            code: "invalid_tool_call_item",
+            summary: "Codex emitted an invalid tool call item."
+          )
+          return
+        }
+        yield(.toolCall(call))
+        return
+      }
       guard item.type == "commandExecution" || item.type == "fileChange" else { return }
       await receiveSemanticNotification(notification)
     case "item/agentMessage/delta":
       await receiveAgentMessageDelta(notification)
+    case "item/reasoning/textDelta":
+      await receiveReasoningTextDelta(notification)
+    case "item/mcpToolCall/progress":
+      await receiveMcpToolCallProgress(notification)
     case "turn/completed":
       await receiveTurnCompleted(notification)
     default:
@@ -71,6 +86,17 @@ extension ExecutionSession {
       return
     }
     seenItems[item.key] = item.type
+    if item.type == "mcpToolCall" || item.type == "dynamicToolCall" {
+      guard let call = Self.toolCall(from: notification.params) else {
+        await fail(
+          code: "invalid_tool_call_item",
+          summary: "Codex emitted an invalid tool call item."
+        )
+        return
+      }
+      yield(.toolCall(call))
+      return
+    }
     guard item.type == "commandExecution" || item.type == "fileChange" else { return }
     do {
       let evidence = try CodexApprovalWireDecoder.decodeItemStarted(notification)
@@ -128,6 +154,47 @@ extension ExecutionSession {
       await fail(
         code: "invalid_agent_delta",
         summary: "Codex emitted an invalid agent message delta."
+      )
+    }
+  }
+
+  private func receiveReasoningTextDelta(_ notification: RPCNotification) async {
+    do {
+      guard case .reasoningTextDelta(let delta) = try notification.decodedCodexNotification()
+      else {
+        throw ExecutionServiceError.protocolViolation("reasoning text delta")
+      }
+      try requireActiveEvidence(threadID: delta.threadId, turnID: delta.turnId)
+      let event = try ExecutionReasoningDelta(
+        threadID: delta.threadId,
+        turnID: delta.turnId,
+        itemID: delta.itemId,
+        delta: delta.delta
+      )
+      yield(.reasoningDelta(event))
+    } catch {
+      await fail(
+        code: "invalid_reasoning_delta",
+        summary: "Codex emitted an invalid reasoning delta."
+      )
+    }
+  }
+
+  private func receiveMcpToolCallProgress(_ notification: RPCNotification) async {
+    do {
+      guard case .mcpToolCallProgress(let progress) = try notification.decodedCodexNotification()
+      else {
+        throw ExecutionServiceError.protocolViolation("mcp tool call progress")
+      }
+      try requireActiveEvidence(threadID: progress.threadId, turnID: progress.turnId)
+      guard Self.isSafeWireIdentifier(progress.itemId) else {
+        throw ExecutionServiceError.protocolViolation("tool call progress item")
+      }
+      yield(.toolCallProgress(itemID: progress.itemId, progress: progress.message))
+    } catch {
+      await fail(
+        code: "invalid_tool_progress",
+        summary: "Codex emitted invalid tool call progress."
       )
     }
   }
@@ -458,20 +525,108 @@ extension ExecutionSession {
   private static func agentMessages(from turn: CodexTurn) -> [ExecutionAgentMessage] {
     var messages: [ExecutionAgentMessage] = []
     for item in turn.items {
-      guard let object = item.objectValue,
-        object["type"]?.stringValue == "agentMessage",
-        let itemID = object["id"]?.stringValue,
-        let text = object["text"]?.stringValue,
-        let message = try? ExecutionAgentMessage(
-          key: "agent:" + itemID,
-          role: .agent,
-          content: OutboundContentSecurity.redacted(text, maximumUTF8Bytes: 256 * 1_024)
-        )
-      else { continue }
-      messages.append(message)
+      guard let object = item.objectValue, let itemID = object["id"]?.stringValue else { continue }
+      switch object["type"]?.stringValue {
+      case "agentMessage":
+        guard let text = object["text"]?.stringValue,
+          let message = try? ExecutionAgentMessage(
+            key: "agent:" + itemID,
+            role: .agent,
+            kind: .agent,
+            content: OutboundContentSecurity.redacted(text, maximumUTF8Bytes: 256 * 1_024)
+          )
+        else { continue }
+        messages.append(message)
+      case "reasoning":
+        let content = reasoningContent(from: object)
+        guard
+          let message = try? ExecutionAgentMessage(
+            key: "reasoning:" + itemID,
+            role: .agent,
+            kind: .reasoning,
+            content: OutboundContentSecurity.redacted(content, maximumUTF8Bytes: 256 * 1_024)
+          )
+        else { continue }
+        messages.append(message)
+      case "mcpToolCall", "dynamicToolCall":
+        guard let tool = object["tool"]?.stringValue,
+          let statusValue = object["status"]?.stringValue,
+          let status = ExecutionToolCallStatus(rawValue: statusValue)
+        else { continue }
+        let arguments = encodedArguments(object["arguments"])
+        let safeTool = OutboundContentSecurity.redacted(tool, maximumUTF8Bytes: 256)
+        let content = arguments ?? safeTool
+        guard
+          let message = try? ExecutionAgentMessage(
+            key: "tool:" + itemID,
+            role: .agent,
+            kind: .toolCall,
+            content: content,
+            toolName: safeTool,
+            toolStatus: status.rawValue,
+            toolArguments: arguments
+          )
+        else { continue }
+        messages.append(message)
+      default:
+        continue
+      }
       if messages.count >= 256 { break }
     }
     return messages
+  }
+
+  private static func toolCall(from params: JSONValue?) -> ExecutionToolCall? {
+    guard let object = params?.objectValue,
+      let item = object["item"]?.objectValue,
+      let itemID = item["id"]?.stringValue,
+      let type = item["type"]?.stringValue,
+      type == "mcpToolCall" || type == "dynamicToolCall",
+      let tool = item["tool"]?.stringValue,
+      let statusValue = item["status"]?.stringValue,
+      let status = ExecutionToolCallStatus(rawValue: statusValue)
+    else {
+      return nil
+    }
+    return try? ExecutionToolCall(
+      itemID: itemID,
+      tool: OutboundContentSecurity.redacted(tool, maximumUTF8Bytes: 256),
+      arguments: encodedArguments(item["arguments"]),
+      status: status
+    )
+  }
+
+  private static func encodedArguments(_ value: JSONValue?) -> String? {
+    guard let value else { return nil }
+    if case .null = value { return nil }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    guard let data = try? encoder.encode(value),
+      let text = String(data: data, encoding: .utf8),
+      !text.isEmpty
+    else {
+      return nil
+    }
+    return OutboundContentSecurity.redacted(text, maximumUTF8Bytes: 64 * 1_024)
+  }
+
+  private static func reasoningContent(from object: [String: JSONValue]) -> String {
+    var parts: [String] = []
+    if case .array(let content)? = object["content"] {
+      for part in content {
+        if let text = part.stringValue, !text.isEmpty {
+          parts.append(text)
+        }
+      }
+    }
+    if case .array(let summary)? = object["summary"] {
+      for part in summary {
+        if let text = part.stringValue, !text.isEmpty {
+          parts.append(text)
+        }
+      }
+    }
+    return parts.joined(separator: "\n")
   }
 
   private static func turnFailureSummary(_ turn: CodexTurn) -> String {

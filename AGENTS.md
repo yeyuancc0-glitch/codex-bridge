@@ -33,10 +33,10 @@ V1 的用户结果是：ChatGPT 网页版可以读取用户明确注册的本地
 ## 当前实际架构状态
 
 - `BridgeServiceCore` 已提供单 SQLite 数据库、项目、设置、直接任务状态、展示型事件和项目级活动写任务约束。
-- 任务对话消息已进入 Service SQLite（`bridge_service_task_messages`，V3 schema）：每条消息按 `(task_id, message_key)` 去重，随任务级联删除；用户消息、Codex agent 消息与增量在 `TaskConversationBuffer` 中按 key 归并，最终以权威全文落库。
-- `BridgeCodexService` 已提供独立 ExecutionManager、SupervisorManager、本机 Codex 审批、ServiceExecutionCoordinator 和对话订阅推送（`item/agentMessage/delta` 流式入 buffer，`turn/completed` 归并权威文本）。
+- 任务对话消息已进入 Service SQLite（`bridge_service_task_messages`，V4 schema）：每条消息按 `(task_id, message_key)` 去重，随任务级联删除；消息带 `kind`（`user`/`agent`/`reasoning`/`tool_call`）及 `tool_name`/`tool_status`/`tool_arguments` 列，用户消息、Codex agent 文本、reasoning 思考链与工具调用增量在 `TaskConversationBuffer` 中按 key 归并，最终以权威全文落库。
+- `BridgeCodexService` 已提供独立 ExecutionManager、SupervisorManager、本机 Codex 审批、ServiceExecutionCoordinator 和对话订阅推送（`item/agentMessage/delta`、`item/reasoning/textDelta`、`item/mcpToolCall/progress` 流式入 buffer，tool call 经 `item/started`/`item/completed` 更新状态，`turn/completed` 归并权威文本）。
 - `BridgeMCP` 已接入轻量 Service API，支持只读与完整动作两种 MCP 暴露模式。
-- `CodexBridgeService` 已作为 bundled LaunchAgent 后台进程运行，并通过版本化 XPC 向 App 提供本机操作接口；XPC 增加任务删除、对话分页与对话流式订阅（`CodexBridgeTaskStreamListener` 推送），App 端 `TaskConversationModel` + `TaskConversationSheet` 实时渲染打字机式对话。
+- `CodexBridgeService` 已作为 bundled LaunchAgent 后台进程运行，并通过版本化 XPC 向 App 提供本机操作接口；XPC 增加任务删除、对话分页与对话流式订阅（`CodexBridgeTaskStreamListener` 推送），App 端 `TaskConversationModel` + `TaskConversationSheet` 实时渲染打字机式对话，包含可折叠思考链区块与工具调用卡片。
 - 正式 App Target 已使用 `BridgeServiceAppShell`，不再启动旧 App 内控制平面。退出 UI 只断开 XPC，不注销 Service，不停止任务。
 - Secure MCP Tunnel 已由后台 Service 持有。Tunnel ID 与 enabled 状态进入 Service SQLite；Runtime Key 与本地 MCP Header Secret只进入 Keychain。
 - Tunnel helper 当前固定为 OpenAI `tunnel-client` v0.0.10、commit `105e17a79a36e4e5c897fd698ed2b8dbf935b144`，并有固定归档哈希、Universal 2 构建和官方 arm64 `doctor` 兼容门。
@@ -122,7 +122,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - 当前任务状态直接存储；`task_events` 只用于展示和诊断，不参与事件归约。
 - 任务对话以 `(task_id, message_key)` 幂等落库；同一项目写任务完成后才允许删除任务记录（`deleteTask`），活动任务删除一律拒绝；删除走 FK 级联清事件与消息。
 - 对话增量推送采用确定合并协议：按 `message_key` 归并，`fullContent` 权威替换，`delta` 仅在 `baseContentLength` 与当前内容匹配时追加；客户端订阅先应用原子快照页再消费增量流，订阅与分页在同一 actor 内完成，避免竞态。
-- `TaskConversationBuffer` 是对话流的唯一拥有者：用户消息即时 fullContent 通知，agent 增量按 key 累积，`turn/completed` 以权威全文 finalize，close/purge 只由 Coordinator 在任务终态触发；落库按增量阈值/在途数/时间兜底强制 flush。
+- `TaskConversationBuffer` 是对话流的唯一拥有者：用户消息即时 fullContent 通知，agent 文本与 reasoning 增量按 key 累积，tool call 按 `tool:<itemID>` 更新状态与追加进度，`turn/completed` 以权威全文 finalize，close/purge 只由 Coordinator 在任务终态触发；落库按增量阈值/在途数/时间兜底强制 flush。
 - XPC 流式推送按连接持有：Listener 为每个连接建独立 Controller 与 `StreamRegistry`（forwarder 任务 + subscriptionID），连接失效即取消 forwarder 并退订；客户端 `CodexBridgeTaskStreamHub` 是锁保护的注册表，不用 actor，避免区域隔离编译错误。
 - 使用数据库约束消除并发特例，避免多个模块复制锁状态。
 - 函数嵌套不超过 3 层；一个状态只有一个拥有者。
@@ -140,7 +140,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - 并发测试覆盖跨连接竞争，而不只覆盖单 actor 顺序调用。
 - 必须验证同项目写任务互斥、不同项目并行、只读并行、任务与事件同事务、幂等冲突、重启 unknown 和无伪恢复。
 - 对话验证消息按 key 幂等去重、分页顺序、删除级联、订阅快照原子性、delta 合并协议、容量上限与 close/purge 后停止推送。
-- Execution 使用 fake app-server 真实进程验证 Thread、Turn、steer、interrupt、审批、进程回收和 `item/agentMessage/delta` 流式入 buffer。
+- Execution 使用 fake app-server 真实进程验证 Thread、Turn、steer、interrupt、审批、进程回收、`item/agentMessage/delta` 流式入 buffer，以及 `item/reasoning/textDelta` 与 tool call 生命周期（started/progress/completed）端到端推送。
 - Service 验证 App 退出后 Service 与任务继续、Service 崩溃不留孤儿进程，以及 XPC 真实订阅推送到达客户端。
 - Tunnel 验证 helper 身份、FD 密钥传递、回环健康端口所有权、严格 readiness、重连和密钥不外泄。
 - 迁移验证旧文件不变、事务回滚、重复执行、冲突、不安全源、离线项目和无源重试。

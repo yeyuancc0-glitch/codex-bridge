@@ -423,11 +423,28 @@ public struct AgentMessageDeltaNotification: Codable, Equatable, Sendable {
   public let delta: String
 }
 
+public struct ReasoningTextDeltaNotification: Codable, Equatable, Sendable {
+  public let threadId: String
+  public let turnId: String
+  public let itemId: String
+  public let contentIndex: Int
+  public let delta: String
+}
+
+public struct McpToolCallProgressNotification: Codable, Equatable, Sendable {
+  public let threadId: String
+  public let turnId: String
+  public let itemId: String
+  public let message: String
+}
+
 public enum CodexNotification: Equatable, Sendable {
   case threadStarted(ThreadStartedNotification)
   case turnStarted(TurnNotification)
   case turnCompleted(TurnNotification)
   case agentMessageDelta(AgentMessageDeltaNotification)
+  case reasoningTextDelta(ReasoningTextDeltaNotification)
+  case mcpToolCallProgress(McpToolCallProgressNotification)
   case unknown(RPCNotification)
 }
 
@@ -442,6 +459,10 @@ extension RPCNotification {
       return .turnCompleted(try decodeParams(TurnNotification.self))
     case "item/agentMessage/delta":
       return .agentMessageDelta(try decodeParams(AgentMessageDeltaNotification.self))
+    case "item/reasoning/textDelta":
+      return .reasoningTextDelta(try decodeParams(ReasoningTextDeltaNotification.self))
+    case "item/mcpToolCall/progress":
+      return .mcpToolCallProgress(try decodeParams(McpToolCallProgressNotification.self))
     default:
       return .unknown(self)
     }

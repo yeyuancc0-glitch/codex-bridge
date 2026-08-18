@@ -96,6 +96,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
   private func receiveHead(_ head: HTTPRequestHead, context: ChannelHandlerContext) {
     hasSeenRequestHead = true
+    NSLog("[MCPHTTP] \(head.method) \(head.uri) headers=\(head.headers.count)")
     guard case .waiting = inputState else {
       context.close(promise: nil)
       return
@@ -212,7 +213,21 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   ) async {
     defer { lease.release() }
     let request = makeRequest(state)
+    var bodyPreview = "none"
+    if let data = request.body, data.count > 0 {
+      let text = String(data: Data(data.prefix(240)), encoding: .utf8) ?? "?"
+      bodyPreview = text.replacingOccurrences(of: "\n", with: " ")
+    }
+    NSLog(
+      "[MCPHTTP] handling \(state.head.method) uri=\(state.head.uri) session=\(state.sessionID ?? "none") body=\(bodyPreview)"
+    )
     let response = await handler(request)
+    var responsePreview = ""
+    if case .data(let data, _) = response {
+      let text = String(data: Data(data.prefix(300)), encoding: .utf8) ?? "?"
+      responsePreview = " body=" + text.replacingOccurrences(of: "\n", with: " ")
+    }
+    NSLog("[MCPHTTP] response code=\(response.statusCode)\(responsePreview)")
     let sessionID = state.sessionID ?? responseSessionID(response)
     try? await eventLoop.submit {
       self.activeResponseSessionID = sessionID
@@ -440,8 +455,8 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     cancelTimeouts()
     let port = channel.localAddress?.port ?? configuration.port
     let body = """
-    {"resource":"http://127.0.0.1:\(port)/mcp","authorization_servers":[],"scopes_supported":["read","write"]}
-    """
+      {"resource":"http://127.0.0.1:\(port)/mcp","authorization_servers":[],"scopes_supported":["read","write"]}
+      """
     let bodyData = Data(body.utf8)
     var head = HTTPResponseHead(version: .http1_1, status: .ok)
     head.headers.add(name: "Content-Type", value: "application/json")

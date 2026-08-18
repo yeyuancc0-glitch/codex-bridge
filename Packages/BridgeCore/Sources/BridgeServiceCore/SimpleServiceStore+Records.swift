@@ -152,17 +152,25 @@ extension SimpleServiceStore {
     try db.execute(
       sql: """
         INSERT INTO bridge_service_task_messages (
-          task_id, message_key, role, content, created_at
-        ) VALUES (?, ?, ?, ?, ?)
+          task_id, message_key, role, kind, content, tool_name, tool_status,
+          tool_arguments, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id, message_key) DO UPDATE SET
           content = excluded.content,
+          tool_name = excluded.tool_name,
+          tool_status = excluded.tool_status,
+          tool_arguments = excluded.tool_arguments,
           created_at = excluded.created_at
         """,
       arguments: [
         taskID.rawValue,
         message.key,
         message.role.rawValue,
+        message.kind.rawValue,
         message.content,
+        message.toolName,
+        message.toolStatus,
+        message.toolArguments,
         message.createdAt.timeIntervalSince1970,
       ]
     )
@@ -377,13 +385,23 @@ extension SimpleServiceStore {
     guard let role = ServiceTaskMessageRole(rawValue: row["role"]) else {
       throw ServiceStoreError.corruptRecord
     }
+    let kind: ServiceTaskMessageKind
+    if let rawKind: String = row["kind"] {
+      kind = ServiceTaskMessageKind(rawValue: rawKind) ?? .agent
+    } else {
+      kind = .agent
+    }
     return try ServiceTaskMessageRecord(
       id: row["message_id"],
       taskID: TaskID(rawValue: row["task_id"]),
       key: row["message_key"],
       role: role,
       content: row["content"],
-      createdAt: Date(timeIntervalSince1970: row["created_at"])
+      createdAt: Date(timeIntervalSince1970: row["created_at"]),
+      kind: kind,
+      toolName: row["tool_name"],
+      toolStatus: row["tool_status"],
+      toolArguments: row["tool_arguments"]
     )
   }
 

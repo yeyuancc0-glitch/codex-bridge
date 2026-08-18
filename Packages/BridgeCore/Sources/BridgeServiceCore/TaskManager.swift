@@ -251,14 +251,22 @@ public actor ServiceTaskManager {
     taskID: TaskID,
     key: String,
     role: ServiceTaskMessageRole,
-    content: String
+    content: String,
+    kind: ServiceTaskMessageKind = .agent,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil
   ) async throws {
     try await store.upsertTaskMessage(
       ServiceTaskMessageDraft(
         key: key,
         role: role,
         content: content,
-        createdAt: now()
+        createdAt: now(),
+        kind: kind,
+        toolName: toolName,
+        toolStatus: toolStatus,
+        toolArguments: toolArguments
       ),
       taskID: taskID
     )

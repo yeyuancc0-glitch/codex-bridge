@@ -1,12 +1,15 @@
 import GRDB
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 3
+  static let version: Int64 = 4
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
   static let migrationV3 = "BridgeServiceCore.v3"
-  static let knownMigrations: Set<String> = [migrationV1, migrationV2, migrationV3]
+  static let migrationV4 = "BridgeServiceCore.v4"
+  static let knownMigrations: Set<String> = [
+    migrationV1, migrationV2, migrationV3, migrationV4,
+  ]
 
   static func prepare(_ database: DatabaseQueue) throws {
     do {
@@ -30,6 +33,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV3) { db in
       try createVersionThree(in: db)
+    }
+    migrator.registerMigration(migrationV4) { db in
+      try createVersionFour(in: db)
     }
     return migrator
   }
@@ -105,6 +111,30 @@ enum ServiceStoreSchema {
         ON bridge_service_task_messages(task_id, message_id);
 
         UPDATE bridge_service_meta SET schema_version = 3 WHERE singleton = 1;
+        """)
+  }
+
+  static func createVersionFour(in db: Database) throws {
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_task_messages
+          ADD COLUMN kind TEXT NOT NULL DEFAULT 'agent'
+            CHECK (kind IN ('user', 'agent', 'reasoning', 'tool_call'));
+
+        ALTER TABLE bridge_service_task_messages
+          ADD COLUMN tool_name TEXT;
+
+        ALTER TABLE bridge_service_task_messages
+          ADD COLUMN tool_status TEXT
+            CHECK (tool_status IN ('inProgress', 'completed', 'failed'));
+
+        ALTER TABLE bridge_service_task_messages
+          ADD COLUMN tool_arguments TEXT;
+
+        UPDATE bridge_service_task_messages
+          SET kind = CASE WHEN role = 'user' THEN 'user' ELSE 'agent' END;
+
+        UPDATE bridge_service_meta SET schema_version = 4 WHERE singleton = 1;
         """)
   }
 
@@ -283,7 +313,8 @@ enum ServiceStoreSchema {
           "event_id", "task_id", "kind", "summary", "created_at",
         ],
         "bridge_service_task_messages": [
-          "message_id", "task_id", "message_key", "role", "content", "created_at",
+          "message_id", "task_id", "message_key", "role", "kind", "content",
+          "tool_name", "tool_status", "tool_arguments", "created_at",
         ],
       ]
       for (table, expected) in requiredColumns {

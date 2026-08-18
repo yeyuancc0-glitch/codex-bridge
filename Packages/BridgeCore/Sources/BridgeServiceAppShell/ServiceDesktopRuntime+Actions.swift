@@ -50,6 +50,7 @@ extension BridgeServiceAppModel {
   public func selectProject(_ projectID: String?) {
     selectedProjectID = projectID
     selectedThread = nil
+    selectedThreadID = nil
     threads = []
     guard let projectID else { return }
     Task { [weak self] in
@@ -57,19 +58,34 @@ extension BridgeServiceAppModel {
     }
   }
 
-  public func openThread(_ threadID: String) {
-    guard let projectID = selectedProjectID else { return }
+  public func openThread(_ threadID: String, inProject projectID: String? = nil) {
+    let targetProjectID =
+      projectID ?? selectedProjectID
+      ?? tasks.first(where: { $0.threadID == threadID })?.projectID
+      ?? projects.first?.projectID
+    guard let targetProjectID else { return }
+
+    if selectedProjectID != targetProjectID {
+      selectedProjectID = targetProjectID
+    }
+    selectedThreadID = threadID
+
+    // Check if there is an active task on this thread to stream live conversation
+    if let activeTask = tasks.first(where: { $0.threadID == threadID && $0.isRunning }) {
+      openConversation(taskID: activeTask.taskID)
+    }
+
     runMutation { [weak self] client in
       guard let self else { return }
       let page = try await client.readThread(
         IPCThreadReadRequest(
-          projectID: projectID,
+          projectID: targetProjectID,
           threadID: threadID,
           detail: .full,
-          limit: 200
+          limit: 100
         )
       )
-      guard self.selectedProjectID == projectID else { return }
+      guard self.selectedThreadID == threadID else { return }
       self.selectedThread = page
     }
   }

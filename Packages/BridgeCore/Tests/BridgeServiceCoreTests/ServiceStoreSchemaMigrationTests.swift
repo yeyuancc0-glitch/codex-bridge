@@ -140,4 +140,103 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
     XCTAssertEqual(messages.map(\.key), ["user:1"])
     XCTAssertEqual(messages[0].content, "Migrated conversation.")
   }
+
+  func testVersionThreeDatabaseMigratesToMessageKindAndToolColumns() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-schema-migration-v4-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "service.sqlite").path
+
+    let legacy = try DatabaseQueue(path: path)
+    try await legacy.writeWithoutTransaction { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+          INSERT INTO grdb_migrations (identifier)
+          VALUES ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'), ('BridgeServiceCore.v3');
+          """
+      )
+      try ServiceStoreSchema.createVersionOne(in: db)
+      try ServiceStoreSchema.createVersionTwo(in: db)
+      try ServiceStoreSchema.createVersionThree(in: db)
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission, created_at, updated_at
+          ) VALUES ('prj-v3', 'Legacy', '/tmp/legacy', '1', '2',
+            'allowed', 'allowed', 'denied', 1, 2)
+          """
+      )
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_tasks (
+            task_id, project_id, source, client_request_id, prompt, requested_thread_id,
+            codex_thread_id, codex_turn_id, status, supervisor_status, execution_model,
+            execution_effort, supervisor_model, supervisor_effort, permission_mode,
+            network_allowed, current_step, changed_files_json, result_summary,
+            supervisor_summary, failure_code, access_mode, fast_mode, created_at, updated_at
+          ) VALUES ('tsk-v3', 'prj-v3', 'chatgpt.mcp', NULL, 'Legacy prompt', NULL,
+            NULL, NULL, 'completed', 'disabled', 'legacy-model', 'medium', NULL, NULL,
+            'workspace-write', 0, NULL, CAST('[]' AS BLOB), NULL, NULL, NULL,
+            'request-approval', 0, 1, 2)
+          """
+      )
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_task_messages (
+            task_id, message_key, role, content, created_at
+          ) VALUES
+            ('tsk-v3', 'user:1', 'user', 'Legacy user prompt.', 3),
+            ('tsk-v3', 'agent:1', 'agent', 'Legacy agent reply.', 4)
+          """
+      )
+    }
+
+    let store = try SimpleServiceStore(path: path)
+    let messages = try await store.taskMessages(taskID: TaskID(rawValue: "tsk-v3"))
+    XCTAssertEqual(messages.count, 2)
+    XCTAssertEqual(messages[0].kind, .user)
+    XCTAssertEqual(messages[1].kind, .agent)
+
+    let stored = try await store.upsertTaskMessage(
+      ServiceTaskMessageDraft(
+        key: "reasoning:1",
+        role: .agent,
+        content: "Let me think about this.",
+        createdAt: Date(timeIntervalSince1970: 1_800_000_300),
+        kind: .reasoning
+      ),
+      taskID: TaskID(rawValue: "tsk-v3")
+    )
+    XCTAssertEqual(stored.kind, .reasoning)
+
+    let tool = try await store.upsertTaskMessage(
+      ServiceTaskMessageDraft(
+        key: "tool:1",
+        role: .agent,
+        content: #"{"path":"Sources/A.swift"}"#,
+        createdAt: Date(timeIntervalSince1970: 1_800_000_400),
+        kind: .toolCall,
+        toolName: "read",
+        toolStatus: "completed",
+        toolArguments: #"{"path":"Sources/A.swift"}"#
+      ),
+      taskID: TaskID(rawValue: "tsk-v3")
+    )
+    XCTAssertEqual(tool.kind, .toolCall)
+    XCTAssertEqual(tool.toolName, "read")
+    XCTAssertEqual(tool.toolStatus, "completed")
+
+    let reopened = try SimpleServiceStore(path: path)
+    let reloaded = try await reopened.taskMessages(taskID: TaskID(rawValue: "tsk-v3"))
+    let reloadedTool = reloaded.first { $0.key == "tool:1" }
+    XCTAssertEqual(reloadedTool?.kind, .toolCall)
+    XCTAssertEqual(reloadedTool?.toolName, "read")
+    XCTAssertEqual(reloadedTool?.toolStatus, "completed")
+    XCTAssertEqual(reloadedTool?.toolArguments, #"{"path":"Sources/A.swift"}"#)
+  }
 }

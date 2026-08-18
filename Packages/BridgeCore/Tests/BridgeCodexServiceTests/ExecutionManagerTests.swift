@@ -203,6 +203,30 @@ final class ExecutionManagerTests: XCTestCase {
     XCTAssertFalse(active)
   }
 
+  func testNetworkTaskAcceptsThreadResponseWithoutNetworkAccessEcho() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-network",
+      networkAllowed: true
+    )
+    let manager = makeExecutionManager(script: agentDeltaScript(root: fixture.root.path))
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    let binding = try await coordinator.start(taskID: task.id)
+    XCTAssertEqual(binding.threadID, "thread-conversation")
+
+    let completed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.resultSummary, "Final authoritative agent text.")
+  }
+
   func testWrongApprovalIdentifierDoesNotAlterWaitingTask() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(
