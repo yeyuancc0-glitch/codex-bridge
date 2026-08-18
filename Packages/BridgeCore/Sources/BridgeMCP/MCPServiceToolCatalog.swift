@@ -19,6 +19,10 @@ public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case directEditProjectFile = "direct_edit_project_file"
   case directApplyProjectPatch = "direct_apply_project_patch"
   case directManageProjectPath = "direct_manage_project_path"
+  case directExecCommand = "direct_exec_project_command"
+  case directReadCommand = "direct_read_command"
+  case directWriteStdin = "direct_write_stdin"
+  case directInterruptCommand = "direct_interrupt_command"
 }
 
 public struct MCPServiceToolCatalog: Sendable {
@@ -48,6 +52,10 @@ public struct MCPServiceToolCatalog: Sendable {
           Self.directEditProjectFile,
           Self.directApplyProjectPatch,
           Self.directManageProjectPath,
+          Self.directExecProjectCommand,
+          Self.directReadCommand,
+          Self.directWriteStdin,
+          Self.directInterruptCommand,
         ]
       )
     }
@@ -562,6 +570,104 @@ public struct MCPServiceToolCatalog: Sendable {
       openWorldHint: false
     ),
     outputSchema: directManagePathOutputSchema
+  )
+
+  private static let directExecProjectCommand = Tool(
+    name: MCPServiceToolName.directExecCommand.rawValue,
+    title: "Direct execute project command",
+    description:
+      "Explicit Direct Workspace action that runs a user-registered project command (or a "
+      + "built-in safe command) on the local machine. Use only when the user explicitly asks "
+      + "ChatGPT itself to run a command inside the project. The session streams bounded "
+      + "output and can be read with direct_read_command.",
+    inputSchema: objectSchema(
+      properties: [
+        "project_id": boundedStringSchema(maximum: 128),
+        "command_id": nullableStringSchema(maximum: 256),
+        "argv": arraySchema(boundedStringSchema(maximum: 4_096)),
+        "working_directory": nullableStringSchema(maximum: 1_024),
+        "tty": boolSchema,
+        "yield_time_ms": integerSchema(minimum: 0, maximum: 60_000),
+        "timeout_ms": integerSchema(minimum: 1, maximum: 3_600_000),
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["project_id", "argv"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: directCommandOutputSchema
+  )
+
+  private static let directReadCommand = Tool(
+    name: MCPServiceToolName.directReadCommand.rawValue,
+    title: "Read direct command",
+    description:
+      "Read the latest bounded output of a direct command session started with "
+      + "direct_exec_project_command.",
+    inputSchema: objectSchema(
+      properties: ["session_id": boundedStringSchema(maximum: 128)],
+      required: ["session_id"]
+    ),
+    annotations: readAnnotations,
+    outputSchema: directCommandOutputSchema
+  )
+
+  private static let directWriteStdin = Tool(
+    name: MCPServiceToolName.directWriteStdin.rawValue,
+    title: "Write direct command stdin",
+    description:
+      "Write a bounded chunk of input to the stdin of a running interactive direct command "
+      + "session.",
+    inputSchema: objectSchema(
+      properties: [
+        "session_id": boundedStringSchema(maximum: 128),
+        "data": boundedStringSchema(maximum: 64 * 1_024),
+      ],
+      required: ["session_id", "data"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: objectSchema(properties: [:])
+  )
+
+  private static let directInterruptCommand = Tool(
+    name: MCPServiceToolName.directInterruptCommand.rawValue,
+    title: "Interrupt direct command",
+    description:
+      "Cancel a running direct command session, terminating its process group.",
+    inputSchema: objectSchema(
+      properties: ["session_id": boundedStringSchema(maximum: 128)],
+      required: ["session_id"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: directCommandOutputSchema
+  )
+
+  private static let directCommandOutputSchema = objectSchema(
+    properties: [
+      "session_id": stringSchema,
+      "status": stringSchema,
+      "exit_code": nullableStringSchema(maximum: 32),
+      "timed_out": boolSchema,
+      "head": stringSchema,
+      "tail": stringSchema,
+      "byte_count": integerSchema(minimum: 0),
+      "truncated": boolSchema,
+    ],
+    required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
   )
 
   private static let projectIDInput = objectSchema(

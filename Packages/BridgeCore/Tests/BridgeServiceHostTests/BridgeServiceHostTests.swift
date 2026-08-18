@@ -99,7 +99,7 @@ final class BridgeServiceHostTests: XCTestCase {
     )
     defer { Task { await fullClient.disconnect() } }
     let fullTools = try await fullClient.listTools()
-    XCTAssertEqual(fullTools.tools.count, 18)
+    XCTAssertEqual(fullTools.tools.count, 22)
     XCTAssertTrue(
       fullTools.tools.contains(where: {
         $0.name == MCPServiceToolName.submitTask.rawValue
@@ -211,7 +211,7 @@ final class BridgeServiceHostTests: XCTestCase {
     let mcpClient = try await connectMCP(endpoint: endpoint.localURL, secret: secret)
     defer { Task { await mcpClient.disconnect() } }
     let tools = try await mcpClient.listTools()
-    XCTAssertEqual(tools.tools.count, 18)
+    XCTAssertEqual(tools.tools.count, 22)
 
     try await client.removeProject(projectID: registered.projectID)
     let remainingProjects = try await client.projects()

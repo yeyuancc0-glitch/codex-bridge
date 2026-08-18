@@ -1,4 +1,5 @@
 import BridgeCodexService
+import BridgeDirectCommand
 import BridgeDomain
 import BridgeFiles
 import BridgeMCP
@@ -28,7 +29,9 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   let mutations: RestrictedProjectMutationService
   let runtimeStatus: ServiceRuntimeStatus
   let workspaceGate: ServiceWorkspaceMutationGate
-  private let iso8601 = ISO8601DateFormatter()
+  let commandPolicy: DirectCommandPolicy
+  let directCommands: DirectCommandSessionManager
+  let iso8601 = ISO8601DateFormatter()
 
   public init(
     appVersion: String,
@@ -40,7 +43,9 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     runtimeStatus: ServiceRuntimeStatus,
     files: RestrictedProjectFileService? = nil,
     mutations: RestrictedProjectMutationService? = nil,
-    workspaceGate: ServiceWorkspaceMutationGate? = nil
+    workspaceGate: ServiceWorkspaceMutationGate? = nil,
+    commandPolicy: DirectCommandPolicy = DirectCommandPolicy(),
+    directCommands: DirectCommandSessionManager = DirectCommandSessionManager()
   ) {
     precondition(!appVersion.isEmpty)
     self.appVersion = appVersion
@@ -58,6 +63,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       mutations
       ?? RestrictedProjectMutationService(repository: repository)
     self.workspaceGate = workspaceGate ?? ServiceWorkspaceMutationGate()
+    self.commandPolicy = commandPolicy
+    self.directCommands = directCommands
   }
 
   public func serviceStatus(
@@ -656,7 +663,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     }
   }
 
-  private func acquireDirectLease(
+  func acquireDirectLease(
     project: ServiceProjectRecord,
     owner: ServiceWorkspaceOwner
   ) async throws -> DirectWorkspaceLease {

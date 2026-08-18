@@ -843,6 +843,11 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           message: "The command exceeded its time limit.",
           retryable: true
         )
+      case .commandDenied(let reason):
+        return .init(
+          code: "command_denied",
+          message: "The requested command was denied: \(reason)"
+        )
       case .outputLimitExceeded:
         return .init(
           code: "output_limit_exceeded",

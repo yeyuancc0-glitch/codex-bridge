@@ -32,6 +32,7 @@ let package = Package(
         .library(name: "BridgeLegacyImport", targets: ["BridgeLegacyImport"]),
         .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
         .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
+        .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
         .library(name: "BridgeIPC", targets: ["BridgeIPC"]),
         .library(name: "BridgeServiceHost", targets: ["BridgeServiceHost"]),
         .library(name: "BridgeServiceAppShell", targets: ["BridgeServiceAppShell"]),
@@ -248,12 +249,23 @@ let package = Package(
             dependencies: [
                 "BridgeCodexRPC",
                 "BridgeCodexService",
+                "BridgeDirectCommand",
                 "BridgeDomain",
                 "BridgeFiles",
                 "BridgeMCP",
                 "BridgeProjects",
                 "BridgeSecurity",
                 "BridgeServiceCore",
+            ]
+        ),
+        .target(
+            name: "BridgeDirectCommand",
+            dependencies: [
+                "BridgeDomain",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceCore",
+                .product(name: "Logging", package: "swift-log"),
             ]
         ),
         .target(
@@ -509,6 +521,7 @@ let package = Package(
             dependencies: [
                 "BridgeCodexRPC",
                 "BridgeCodexService",
+                "BridgeDirectCommand",
                 "BridgeDomain",
                 "BridgeMCP",
                 "BridgeProjects",
@@ -522,6 +535,7 @@ let package = Package(
             name: "BridgeServiceHostTests",
             dependencies: [
                 "BridgeCodexRPC",
+                "BridgeDirectCommand",
                 "BridgeDomain",
                 "BridgeIPC",
                 "BridgeLegacyImport",
@@ -542,6 +556,16 @@ let package = Package(
                 "BridgeIPC",
                 "BridgeMCP",
                 "BridgeServiceAppShell",
+            ]
+        ),
+        .testTarget(
+            name: "BridgeDirectCommandTests",
+            dependencies: [
+                "BridgeDirectCommand",
+                "BridgeDomain",
+                "BridgeProjects",
+                "BridgeSecurity",
+                "BridgeServiceCore",
             ]
         ),
     ]

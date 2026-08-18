@@ -299,6 +299,12 @@ public struct MCPToolDispatcher: Sendable {
         message: "The command exceeded its time limit.",
         retryable: true
       )
+    case .commandDenied(let reason):
+      description = .init(
+        code: "command_denied",
+        message: "The requested command was denied: \(reason)",
+        retryable: false
+      )
     case .outputLimitExceeded:
       description = .init(
         code: "output_limit_exceeded",

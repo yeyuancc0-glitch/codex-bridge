@@ -360,6 +360,58 @@ public struct MCPServiceToolDispatcher: Sendable {
         try await service.serviceDirectManagePath(request, deadline: deadline)
       }
       return try resultEncoder.encode(ServiceDirectManagePathOutput(receipt: receipt))
+
+    case .directExecCommand:
+      let request = try parseDirectExec(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectExecCommand(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
+
+    case .directReadCommand:
+      let values = try StrictToolArguments(
+        arguments,
+        allowed: ["session_id"],
+        required: ["session_id"]
+      )
+      let sessionID = try values.requiredIdentifier("session_id", maximumUTF8Bytes: 128)
+      let deadline = clock.now.advanced(by: deadlines.read)
+      let output = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectReadCommand(sessionID: sessionID, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectCommandOutput(output: output))
+
+    case .directWriteStdin:
+      let values = try StrictToolArguments(
+        arguments,
+        allowed: ["session_id", "data"],
+        required: ["session_id", "data"]
+      )
+      let sessionID = try values.requiredIdentifier("session_id", maximumUTF8Bytes: 128)
+      let data = try values.requiredText("data", maximumUTF8Bytes: 64 * 1_024)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectWriteStdin(
+          sessionID: sessionID,
+          data: data,
+          deadline: deadline
+        )
+      }
+      return try resultEncoder.encode(ServiceDirectWriteStdinOutput())
+
+    case .directInterruptCommand:
+      let values = try StrictToolArguments(
+        arguments,
+        allowed: ["session_id"],
+        required: ["session_id"]
+      )
+      let sessionID = try values.requiredIdentifier("session_id", maximumUTF8Bytes: 128)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let output = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectInterruptCommand(sessionID: sessionID, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectCommandOutput(output: output))
     }
   }
 
@@ -517,6 +569,45 @@ public struct MCPServiceToolDispatcher: Sendable {
     return MCPDirectPatchRequest(
       projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
       patch: patch,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
+  private func parseDirectExec(_ arguments: [String: Value]?) throws -> MCPDirectExecRequest {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 128 * 1_024 else {
+      throw MCPError.invalidParams("The command request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: [
+        "project_id", "command_id", "argv", "working_directory", "tty", "yield_time_ms",
+        "timeout_ms", "client_request_id",
+      ],
+      required: ["project_id", "argv"]
+    )
+    let argv = try values.optionalStringArray(
+      "argv", maximumCount: 128, maximumElementUTF8Bytes: 4_096)
+    guard !argv.isEmpty else {
+      throw MCPError.invalidParams("Argument 'argv' must contain an executable.")
+    }
+    let commandID = try values.optionalIdentifier("command_id", maximumUTF8Bytes: 256)
+    let workingDirectory = try values.optionalIdentifier(
+      "working_directory", maximumUTF8Bytes: 1_024)
+    if let workingDirectory, !OutboundContentSecurity.isSafeRelativePath(workingDirectory) {
+      throw MCPError.invalidParams(
+        "Argument 'working_directory' must be a safe relative path.")
+    }
+    let yieldTimeMS = try values.optionalNonnegativeInteger("yield_time_ms").map(Int.init)
+    let timeoutMS = try values.optionalPositiveInteger(
+      "timeout_ms", maximum: 3_600_000)
+    return MCPDirectExecRequest(
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      commandID: commandID,
+      argv: argv,
+      workingDirectory: workingDirectory,
+      tty: try values.optionalBoolean("tty") ?? false,
+      yieldTimeMS: yieldTimeMS ?? 1_000,
+      timeoutMS: timeoutMS ?? 300_000,
       clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
     )
   }
@@ -724,6 +815,12 @@ public struct MCPServiceToolDispatcher: Sendable {
         code: "command_timeout",
         message: "The command exceeded its time limit.",
         retryable: true
+      )
+    case .commandDenied(let reason):
+      dto = .init(
+        code: "command_denied",
+        message: "The requested command was denied: \(reason)",
+        retryable: false
       )
     case .outputLimitExceeded:
       dto = .init(
@@ -1007,5 +1104,74 @@ private struct ServiceDirectManagePathOutput: Codable, Sendable {
     case oldSHA256 = "old_sha256"
     case newSHA256 = "new_sha256"
     case byteCount = "byte_count"
+  }
+}
+
+private struct ServiceDirectExecOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let sessionID: String
+  let status: String
+  let exitCode: Int?
+  let startedAt: String?
+  let output: MCPDirectCommandOutput?
+
+  init(receipt: MCPDirectCommandReceipt) {
+    sessionID = receipt.sessionID
+    status = receipt.status
+    exitCode = receipt.exitCode
+    startedAt = receipt.startedAt
+    output = receipt.output
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case sessionID = "session_id"
+    case status
+    case exitCode = "exit_code"
+    case startedAt = "started_at"
+    case output
+  }
+}
+
+private struct ServiceDirectCommandOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let sessionID: String
+  let status: String
+  let exitCode: Int?
+  let timedOut: Bool
+  let head: String
+  let tail: String
+  let byteCount: Int
+  let truncated: Bool
+
+  init(output: MCPDirectCommandOutput) {
+    sessionID = output.sessionID
+    status = output.status
+    exitCode = output.exitCode
+    timedOut = output.timedOut
+    head = output.head
+    tail = output.tail
+    byteCount = output.byteCount
+    truncated = output.truncated
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case sessionID = "session_id"
+    case status
+    case exitCode = "exit_code"
+    case timedOut = "timed_out"
+    case head
+    case tail
+    case byteCount = "byte_count"
+    case truncated
+  }
+}
+
+private struct ServiceDirectWriteStdinOutput: Codable, Sendable {
+  let schemaVersion = 1
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
   }
 }

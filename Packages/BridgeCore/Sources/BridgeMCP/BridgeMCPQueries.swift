@@ -53,6 +53,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case notGitRepository
   case commandSessionNotFound
   case commandTimeout
+  case commandDenied(String)
   case outputLimitExceeded
 }
 

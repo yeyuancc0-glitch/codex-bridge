@@ -109,6 +109,27 @@ public protocol BridgeMCPServiceAPI: Sendable {
     _ request: MCPDirectManagePathRequest,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPDirectManagePathReceipt
+
+  func serviceDirectExecCommand(
+    _ request: MCPDirectExecRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandReceipt
+
+  func serviceDirectReadCommand(
+    sessionID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandOutput
+
+  func serviceDirectWriteStdin(
+    sessionID: String,
+    data: String,
+    deadline: ContinuousClock.Instant
+  ) async throws
+
+  func serviceDirectInterruptCommand(
+    sessionID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandOutput
 }
 
 public struct MCPServiceTaskEvent: Codable, Equatable, Sendable {
@@ -802,41 +823,41 @@ public struct MCPDirectCommandReceipt: Codable, Equatable, Sendable {
 public struct MCPDirectCommandOutput: Codable, Equatable, Sendable {
   public let sessionID: String
   public let status: String
-  public let sequence: Int
-  public let stdout: String
-  public let stderr: String
-  public let truncated: Bool
   public let exitCode: Int?
-  public let completedAt: String?
+  public let timedOut: Bool
+  public let head: String
+  public let tail: String
+  public let byteCount: Int
+  public let truncated: Bool
 
   public init(
     sessionID: String,
     status: String,
-    sequence: Int,
-    stdout: String,
-    stderr: String,
-    truncated: Bool,
     exitCode: Int? = nil,
-    completedAt: String? = nil
+    timedOut: Bool = false,
+    head: String,
+    tail: String,
+    byteCount: Int,
+    truncated: Bool
   ) {
     self.sessionID = sessionID
     self.status = status
-    self.sequence = sequence
-    self.stdout = stdout
-    self.stderr = stderr
-    self.truncated = truncated
     self.exitCode = exitCode
-    self.completedAt = completedAt
+    self.timedOut = timedOut
+    self.head = head
+    self.tail = tail
+    self.byteCount = byteCount
+    self.truncated = truncated
   }
 
   private enum CodingKeys: String, CodingKey {
     case sessionID = "session_id"
     case status
-    case sequence
-    case stdout
-    case stderr
-    case truncated
     case exitCode = "exit_code"
-    case completedAt = "completed_at"
+    case timedOut = "timed_out"
+    case head
+    case tail
+    case byteCount = "byte_count"
+    case truncated
   }
 }
