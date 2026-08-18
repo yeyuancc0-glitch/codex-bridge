@@ -1,14 +1,15 @@
 import GRDB
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 4
+  static let version: Int64 = 5
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
   static let migrationV3 = "BridgeServiceCore.v3"
   static let migrationV4 = "BridgeServiceCore.v4"
+  static let migrationV5 = "BridgeServiceCore.v5"
   static let knownMigrations: Set<String> = [
-    migrationV1, migrationV2, migrationV3, migrationV4,
+    migrationV1, migrationV2, migrationV3, migrationV4, migrationV5,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -36,6 +37,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV4) { db in
       try createVersionFour(in: db)
+    }
+    migrator.registerMigration(migrationV5) { db in
+      try createVersionFive(in: db)
     }
     return migrator
   }
@@ -135,6 +139,20 @@ enum ServiceStoreSchema {
           SET kind = CASE WHEN role = 'user' THEN 'user' ELSE 'agent' END;
 
         UPDATE bridge_service_meta SET schema_version = 4 WHERE singleton = 1;
+        """)
+  }
+
+  static func createVersionFive(in db: Database) throws {
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_projects
+          ADD COLUMN direct_command_mode TEXT NOT NULL DEFAULT 'registered'
+            CHECK (direct_command_mode IN ('denied', 'registered', 'safe'));
+
+        ALTER TABLE bridge_service_projects
+          ADD COLUMN workspace_commands_json BLOB NOT NULL DEFAULT '[]';
+
+        UPDATE bridge_service_meta SET schema_version = 5 WHERE singleton = 1;
         """)
   }
 
@@ -298,6 +316,7 @@ enum ServiceStoreSchema {
         "bridge_service_projects": [
           "project_id", "name", "canonical_path", "root_device", "root_inode",
           "read_permission", "write_permission", "network_permission", "created_at", "updated_at",
+          "direct_command_mode", "workspace_commands_json",
         ],
         "bridge_service_settings": ["setting_key", "setting_value", "updated_at"],
         "bridge_service_tasks": [

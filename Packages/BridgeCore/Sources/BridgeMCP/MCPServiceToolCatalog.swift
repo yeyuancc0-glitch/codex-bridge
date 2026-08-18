@@ -14,6 +14,7 @@ public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case steerTask = "steer_task"
   case interruptTask = "interrupt_task"
   case getProjectChanges = "get_project_changes"
+  case listProjectCommands = "list_project_commands"
   case directWriteProjectFile = "direct_write_project_file"
   case directEditProjectFile = "direct_edit_project_file"
   case directApplyProjectPatch = "direct_apply_project_patch"
@@ -35,6 +36,7 @@ public struct MCPServiceToolCatalog: Sendable {
       Self.listModels,
       Self.getTask,
       Self.getProjectChanges,
+      Self.listProjectCommands,
     ]
     if exposureMode == .full {
       tools.append(
@@ -421,13 +423,30 @@ public struct MCPServiceToolCatalog: Sendable {
     )
   )
 
+  private static let listProjectCommands = Tool(
+    name: MCPServiceToolName.listProjectCommands.rawValue,
+    title: "List project commands",
+    description:
+      "Read the registered Direct commands and the command mode for an approved project. "
+      + "These commands only run when the user explicitly asks ChatGPT to execute them locally.",
+    inputSchema: projectIDInput,
+    annotations: readAnnotations,
+    outputSchema: outputSchema(
+      properties: [
+        "command_mode": ["type": "string", "enum": ["denied", "registered", "safe"]],
+        "commands": arraySchema(projectCommandSchema),
+      ],
+      required: ["command_mode", "commands"]
+    )
+  )
+
   private static let directWriteProjectFile = Tool(
     name: MCPServiceToolName.directWriteProjectFile.rawValue,
     title: "Direct write project file",
     description:
       "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
-        + "to edit the local project without delegating the work to Codex. Creates a new file or "
-        + "atomically replaces an existing file inside the approved project root.",
+      + "to edit the local project without delegating the work to Codex. Creates a new file or "
+      + "atomically replaces an existing file inside the approved project root.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -454,8 +473,8 @@ public struct MCPServiceToolCatalog: Sendable {
     title: "Direct edit project file",
     description:
       "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
-        + "to edit the local project without delegating the work to Codex. Applies an exact text "
-        + "replacement guarded by the file revision read earlier.",
+      + "to edit the local project without delegating the work to Codex. Applies an exact text "
+      + "replacement guarded by the file revision read earlier.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -482,8 +501,8 @@ public struct MCPServiceToolCatalog: Sendable {
     title: "Direct apply project patch",
     description:
       "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
-        + "to edit the local project without delegating the work to Codex. Applies a multi-file "
-        + "patch (*** Begin Patch / *** Add File / *** Update File) with per-file revision checks.",
+      + "to edit the local project without delegating the work to Codex. Applies a multi-file "
+      + "patch (*** Begin Patch / *** Add File / *** Update File) with per-file revision checks.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -518,8 +537,8 @@ public struct MCPServiceToolCatalog: Sendable {
     title: "Direct manage project path",
     description:
       "Explicit Direct Workspace destructive action. Use only when the user explicitly asks "
-        + "ChatGPT itself to move or delete files. Deleting and moving require the current file "
-        + "revision read earlier.",
+      + "ChatGPT itself to move or delete files. Deleting and moving require the current file "
+      + "revision read earlier.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -577,6 +596,14 @@ public struct MCPServiceToolCatalog: Sendable {
       "git_state": stringSchema,
       "verification_commands": arraySchema(stringSchema),
       "thread_count": integerSchema(minimum: 0),
+      "direct_workspace": objectSchema(
+        properties: [
+          "file_write_permission": stringSchema,
+          "command_mode": ["type": "string", "enum": ["denied", "registered", "safe"]],
+          "commands": arraySchema(projectCommandSchema),
+        ],
+        required: ["file_write_permission", "command_mode", "commands"]
+      ),
     ],
     required: ["project_id", "name", "capabilities", "verification_commands"]
   )
@@ -589,6 +616,19 @@ public struct MCPServiceToolCatalog: Sendable {
       "redacted": boolSchema,
     ],
     required: ["relative_path", "line_number", "preview", "redacted"]
+  )
+
+  private static let projectCommandSchema = objectSchema(
+    properties: [
+      "command_id": stringSchema,
+      "name": stringSchema,
+      "executable": stringSchema,
+      "arguments": arraySchema(stringSchema),
+      "working_directory": stringSchema,
+      "requires_network": boolSchema,
+      "risk": ["type": "string", "enum": ["normal", "elevated"]],
+    ],
+    required: ["command_id", "name", "executable", "arguments", "risk"]
   )
 
   private static let threadSchema = objectSchema(

@@ -7,6 +7,9 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case registerProject = "register_project"
   case updateProjectPolicy = "update_project_policy"
   case removeProject = "remove_project"
+  case getProjectCommands = "get_project_commands"
+  case updateProjectCommands = "update_project_commands"
+  case setProjectCommandMode = "set_project_command_mode"
   case listModels = "list_models"
   case getModelCatalog = "get_model_catalog"
   case getModelPreferences = "get_model_preferences"
@@ -173,6 +176,98 @@ public struct IPCProjectPolicyRequest: Codable, Equatable, Sendable {
     case readPermission = "read_permission"
     case writePermission = "write_permission"
     case networkPermission = "network_permission"
+  }
+}
+
+public struct IPCProjectCommandsRequest: Codable, Equatable, Sendable {
+  public let projectID: String
+
+  public init(projectID: String) {
+    self.projectID = projectID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+  }
+}
+
+public struct IPCWorkspaceCommand: Codable, Equatable, Sendable {
+  public let commandID: String
+  public let name: String
+  public let executable: String
+  public let arguments: [String]
+  public let workingDirectory: String?
+  public let requiresNetwork: Bool
+  public let risk: String
+
+  public init(
+    commandID: String,
+    name: String,
+    executable: String,
+    arguments: [String],
+    workingDirectory: String? = nil,
+    requiresNetwork: Bool = false,
+    risk: String = "normal"
+  ) {
+    self.commandID = commandID
+    self.name = name
+    self.executable = executable
+    self.arguments = arguments
+    self.workingDirectory = workingDirectory
+    self.requiresNetwork = requiresNetwork
+    self.risk = risk
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case commandID = "command_id"
+    case name
+    case executable
+    case arguments
+    case workingDirectory = "working_directory"
+    case requiresNetwork = "requires_network"
+    case risk
+  }
+}
+
+public struct IPCProjectCommandsUpdateRequest: Codable, Equatable, Sendable {
+  public let projectID: String
+  public let commands: [IPCWorkspaceCommand]
+
+  public init(projectID: String, commands: [IPCWorkspaceCommand]) {
+    self.projectID = projectID
+    self.commands = commands
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+    case commands
+  }
+}
+
+public struct IPCProjectCommandModeUpdateRequest: Codable, Equatable, Sendable {
+  public let projectID: String
+  public let commandMode: String
+
+  public init(projectID: String, commandMode: String) {
+    self.projectID = projectID
+    self.commandMode = commandMode
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+    case commandMode = "command_mode"
+  }
+}
+
+public struct IPCProjectCommandsResponse: Codable, Equatable, Sendable {
+  public let project: MCPProjectDetail
+
+  public init(project: MCPProjectDetail) {
+    self.project = project
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case project
   }
 }
 

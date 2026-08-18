@@ -103,12 +103,17 @@ extension SimpleServiceStore {
   }
 
   static func insert(_ project: ServiceProjectRecord, in db: Database) throws {
+    let workspaceCommands = try JSONEncoder().encode(project.workspaceCommands)
+    guard workspaceCommands.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
     try db.execute(
       sql: """
         INSERT INTO bridge_service_projects (
           project_id, name, canonical_path, root_device, root_inode,
-          read_permission, write_permission, network_permission, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          read_permission, write_permission, network_permission, created_at, updated_at,
+          direct_command_mode, workspace_commands_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
       arguments: [
         project.id.rawValue,
@@ -121,6 +126,8 @@ extension SimpleServiceStore {
         project.accessPolicy.network.rawValue,
         project.createdAt.timeIntervalSince1970,
         project.updatedAt.timeIntervalSince1970,
+        project.directCommandMode.rawValue,
+        workspaceCommands,
       ]
     )
   }
@@ -290,8 +297,17 @@ extension SimpleServiceStore {
 
   static func decodeProject(_ row: Row) throws -> ServiceProjectRecord {
     guard let device = UInt64(row["root_device"] as String),
-      let inode = UInt64(row["root_inode"] as String)
+      let inode = UInt64(row["root_inode"] as String),
+      let directCommandMode = ServiceDirectCommandMode(rawValue: row["direct_command_mode"])
     else {
+      throw ServiceStoreError.corruptRecord
+    }
+    let workspaceCommandsData: Data = row["workspace_commands_json"]
+    let workspaceCommands: [ServiceWorkspaceCommand]
+    do {
+      workspaceCommands = try JSONDecoder().decode(
+        [ServiceWorkspaceCommand].self, from: workspaceCommandsData)
+    } catch {
       throw ServiceStoreError.corruptRecord
     }
     return try ServiceProjectRecord(
@@ -307,6 +323,8 @@ extension SimpleServiceStore {
         write: ProjectPermission(rawValue: row["write_permission"]),
         network: ProjectPermission(rawValue: row["network_permission"])
       ),
+      directCommandMode: directCommandMode,
+      workspaceCommands: workspaceCommands,
       createdAt: Date(timeIntervalSince1970: row["created_at"]),
       updatedAt: Date(timeIntervalSince1970: row["updated_at"])
     )

@@ -85,7 +85,7 @@ final class BridgeServiceHostTests: XCTestCase {
     defer { Task { await readOnlyClient.disconnect() } }
 
     let readOnlyTools = try await readOnlyClient.listTools()
-    XCTAssertEqual(readOnlyTools.tools.count, 10)
+    XCTAssertEqual(readOnlyTools.tools.count, 11)
     XCTAssertFalse(
       readOnlyTools.tools.contains(where: {
         $0.name == MCPServiceToolName.submitTask.rawValue
@@ -99,7 +99,7 @@ final class BridgeServiceHostTests: XCTestCase {
     )
     defer { Task { await fullClient.disconnect() } }
     let fullTools = try await fullClient.listTools()
-    XCTAssertEqual(fullTools.tools.count, 17)
+    XCTAssertEqual(fullTools.tools.count, 18)
     XCTAssertTrue(
       fullTools.tools.contains(where: {
         $0.name == MCPServiceToolName.submitTask.rawValue
@@ -211,11 +211,64 @@ final class BridgeServiceHostTests: XCTestCase {
     let mcpClient = try await connectMCP(endpoint: endpoint.localURL, secret: secret)
     defer { Task { await mcpClient.disconnect() } }
     let tools = try await mcpClient.listTools()
-    XCTAssertEqual(tools.tools.count, 17)
+    XCTAssertEqual(tools.tools.count, 18)
 
     try await client.removeProject(projectID: registered.projectID)
     let remainingProjects = try await client.projects()
     XCTAssertTrue(remainingProjects.isEmpty)
+  }
+
+  func testXPCWorkspaceCommandsRoundTripThroughTheService() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let projectRoot = fixture.root.appending(path: "CommandProject", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let registered = try await client.registerProject(
+      IPCProjectRegistrationRequest(
+        name: "Command Project",
+        absolutePath: projectRoot.path,
+        writePermission: ProjectPermission.requiresLocalApproval.rawValue
+      )
+    )
+
+    let initial = try await client.projectCommands(projectID: registered.projectID)
+    XCTAssertEqual(initial.directWorkspace?.commandMode, "registered")
+    XCTAssertTrue(initial.directWorkspace?.commands.isEmpty ?? false)
+
+    let updated = try await client.updateProjectCommands(
+      projectID: registered.projectID,
+      commands: [
+        IPCWorkspaceCommand(
+          commandID: "wcmd-xpc",
+          name: "XPC Tests",
+          executable: "Scripts/with-xcode.sh",
+          arguments: ["swift", "test"],
+          requiresNetwork: false,
+          risk: "normal"
+        )
+      ]
+    )
+    XCTAssertEqual(updated.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
+    XCTAssertEqual(updated.directWorkspace?.commandMode, "registered")
+
+    let withMode = try await client.setProjectCommandMode(
+      projectID: registered.projectID,
+      commandMode: "safe"
+    )
+    XCTAssertEqual(withMode.directWorkspace?.commandMode, "safe")
+    XCTAssertEqual(withMode.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
+    XCTAssertEqual(withMode.capabilities.write, ProjectPermission.requiresLocalApproval.rawValue)
+
+    let reloaded = try await client.projectCommands(projectID: registered.projectID)
+    XCTAssertEqual(reloaded.directWorkspace?.commandMode, "safe")
+    XCTAssertEqual(reloaded.directWorkspace?.commands.map(\.name), ["XPC Tests"])
   }
 
   func testXPCModelPreferencesRoundTripThroughTheService() async throws {

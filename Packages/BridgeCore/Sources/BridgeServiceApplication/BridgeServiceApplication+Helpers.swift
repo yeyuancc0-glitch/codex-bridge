@@ -190,6 +190,18 @@ extension BridgeServiceApplication {
     )
   }
 
+  static func projectCommand(_ command: ServiceWorkspaceCommand) -> MCPProjectCommand {
+    MCPProjectCommand(
+      commandID: command.id,
+      name: Self.safe(command.name, maximum: 256),
+      executable: Self.safe(command.executable, maximum: 4_096),
+      arguments: command.arguments.map { Self.safe($0, maximum: 4_096) },
+      workingDirectory: command.workingDirectory.map { Self.safe($0, maximum: 1_024) },
+      requiresNetwork: command.requiresNetwork,
+      risk: command.risk.rawValue
+    )
+  }
+
   static func executionState(_ tasks: [ServiceTaskRecord]) -> String {
     if tasks.contains(where: { $0.state.status == .unknown }) { return "unknown" }
     if tasks.contains(where: {

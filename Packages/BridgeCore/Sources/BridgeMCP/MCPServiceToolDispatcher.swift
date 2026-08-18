@@ -316,6 +316,19 @@ public struct MCPServiceToolDispatcher: Sendable {
       }
       return try resultEncoder.encode(ServiceProjectChangesOutput(changes: changes))
 
+    case .listProjectCommands:
+      let values = try StrictToolArguments(
+        arguments,
+        allowed: ["project_id"],
+        required: ["project_id"]
+      )
+      let projectID = try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128)
+      let deadline = clock.now.advanced(by: deadlines.read)
+      let commands = try await withToolDeadline(until: deadline) {
+        try await service.serviceProjectCommands(projectID: projectID, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceProjectCommandsOutput(commands: commands))
+
     case .directWriteProjectFile:
       let request = try parseDirectWrite(arguments)
       let deadline = clock.now.advanced(by: deadlines.mutation)
@@ -588,8 +601,10 @@ public struct MCPServiceToolDispatcher: Sendable {
 
   private func isExposed(_ name: MCPServiceToolName) -> Bool {
     exposureMode == .full
-      || ![.submitTask, .steerTask, .interruptTask, .directWriteProjectFile, .directEditProjectFile,
-        .directApplyProjectPatch, .directManageProjectPath].contains(name)
+      || ![
+        .submitTask, .steerTask, .interruptTask, .directWriteProjectFile, .directEditProjectFile,
+        .directApplyProjectPatch, .directManageProjectPath,
+      ].contains(name)
   }
 
   private func encodeQueryError(_ error: BridgeMCPQueryError) throws -> CallTool.Result {
@@ -903,6 +918,23 @@ private struct ServiceProjectChangesOutput: Codable, Sendable {
     case deletions
     case truncated
     case notGitRepository = "not_git_repository"
+  }
+}
+
+private struct ServiceProjectCommandsOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let commandMode: String
+  let commands: [MCPProjectCommand]
+
+  init(commands: MCPProjectCommands) {
+    commandMode = commands.commandMode
+    self.commands = commands.commands
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case commandMode = "command_mode"
+    case commands
   }
 }
 

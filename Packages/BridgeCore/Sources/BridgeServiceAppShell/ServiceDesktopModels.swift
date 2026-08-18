@@ -1,4 +1,6 @@
+import BridgeIPC
 import BridgeMCP
+import CryptoKit
 import Foundation
 
 extension MCPServiceTaskSnapshot {
@@ -31,5 +33,78 @@ public struct BridgeProjectPolicyDraft: Equatable, Sendable {
     readPermission = project.capabilities.read
     writePermission = project.capabilities.write
     networkPermission = project.capabilities.network
+  }
+}
+
+public struct BridgeWorkspaceCommandDraft: Equatable, Identifiable, Sendable {
+  public var name: String
+  public var executable: String
+  public var arguments: String
+  public var workingDirectory: String
+  public var requiresNetwork: Bool
+  public var risk: String
+
+  public var id: String {
+    BridgeWorkspaceCommandDraft.stableID(
+      name: name,
+      executable: executable,
+      arguments: arguments,
+      workingDirectory: workingDirectory
+    )
+  }
+
+  public init(
+    name: String = "",
+    executable: String = "",
+    arguments: String = "",
+    workingDirectory: String = "",
+    requiresNetwork: Bool = false,
+    risk: String = "normal"
+  ) {
+    self.name = name
+    self.executable = executable
+    self.arguments = arguments
+    self.workingDirectory = workingDirectory
+    self.requiresNetwork = requiresNetwork
+    self.risk = risk
+  }
+
+  public init(command: MCPProjectCommand) {
+    name = command.name
+    executable = command.executable
+    arguments = command.arguments.joined(separator: "\n")
+    workingDirectory = command.workingDirectory ?? ""
+    requiresNetwork = command.requiresNetwork
+    risk = command.risk
+  }
+
+  public static func stableID(
+    name: String,
+    executable: String,
+    arguments: String,
+    workingDirectory: String
+  ) -> String {
+    let canonical = [
+      name.trimmingCharacters(in: .whitespacesAndNewlines),
+      executable.trimmingCharacters(in: .whitespacesAndNewlines),
+      arguments.split(separator: "\n").joined(separator: "\u{0}"),
+      workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines),
+    ].joined(separator: "\u{1}")
+    let digest = SHA256.hash(data: Data(canonical.utf8))
+    return "wcmd_" + digest.map { String(format: "%02x", $0) }.joined().prefix(40)
+  }
+
+  public func toIPCCommand() -> IPCWorkspaceCommand {
+    IPCWorkspaceCommand(
+      commandID: id,
+      name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+      executable: executable.trimmingCharacters(in: .whitespacesAndNewlines),
+      arguments: arguments.split(separator: "\n")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
+      workingDirectory: workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        .isEmpty ? nil : workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines),
+      requiresNetwork: requiresNetwork,
+      risk: risk
+    )
   }
 }

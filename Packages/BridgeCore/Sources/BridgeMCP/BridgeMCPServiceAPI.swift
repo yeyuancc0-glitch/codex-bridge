@@ -19,6 +19,11 @@ public protocol BridgeMCPServiceAPI: Sendable {
     deadline: ContinuousClock.Instant
   ) async throws -> MCPProjectDetail
 
+  func serviceProjectCommands(
+    projectID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectCommands
+
   func serviceSearchProjectFiles(
     projectID: String,
     query: String,

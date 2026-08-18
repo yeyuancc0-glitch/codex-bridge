@@ -34,6 +34,46 @@ extension BridgeServiceAppModel {
     }
   }
 
+  func loadProjectDetail(projectID: String) {
+    guard let client, connectionState == .connected else { return }
+    Task { [weak self] in
+      do {
+        let detail = try await client.projectCommands(projectID: projectID)
+        self?.projectDetails[projectID] = detail
+      } catch {
+        self?.errorMessage = "读取项目命令配置失败。"
+      }
+    }
+  }
+
+  func saveProjectCommands(
+    projectID: String,
+    drafts: [BridgeWorkspaceCommandDraft]
+  ) {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      let commands = drafts.map { $0.toIPCCommand() }
+      let detail = try await client.updateProjectCommands(
+        projectID: projectID,
+        commands: commands
+      )
+      self.projectDetails[projectID] = detail
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
+  func setProjectCommandMode(projectID: String, mode: String) {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      let detail = try await client.setProjectCommandMode(
+        projectID: projectID,
+        commandMode: mode
+      )
+      self.projectDetails[projectID] = detail
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
   public func removeProject(_ projectID: String) {
     runMutation { [weak self] client in
       guard let self else { return }
@@ -53,6 +93,7 @@ extension BridgeServiceAppModel {
     selectedThreadID = nil
     threads = []
     guard let projectID else { return }
+    loadProjectDetail(projectID: projectID)
     Task { [weak self] in
       await self?.loadThreads(projectID: projectID)
     }

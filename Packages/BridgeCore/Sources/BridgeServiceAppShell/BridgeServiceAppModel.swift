@@ -82,6 +82,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var connectionState: BridgeServiceConnectionState = .idle
   @Published public internal(set) var serviceStatus: IPCServiceStatusResponse?
   @Published public internal(set) var projects: [MCPProjectSummary] = []
+  @Published public internal(set) var projectDetails: [String: MCPProjectDetail] = [:]
   @Published public internal(set) var tasks: [MCPServiceTaskSnapshot] = []
   @Published public internal(set) var approvals: [IPCApprovalSummary] = []
   @Published public internal(set) var models: [MCPModelSummary] = []

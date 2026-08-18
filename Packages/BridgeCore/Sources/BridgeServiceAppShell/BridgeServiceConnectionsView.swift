@@ -156,8 +156,8 @@ struct BridgeServiceConnectionsView: View {
 
           Text(
             model.exposureMode == .full
-              ? "完整模式会向 ChatGPT 暴露任务创建、纠偏与中断工具；所有危险写入与执行仍需本机授权。"
-              : "只读模式仅允许 ChatGPT 读取项目目录结构、文件内容、Thread 与任务状态。"
+              ? "完整模式会向 ChatGPT 暴露：Codex 任务提交/纠偏/中断，以及用户明确要求直接执行时的 ChatGPT Direct 文件编辑与受控命令执行。所有危险写入与执行仍需本机授权。"
+              : "只读模式仅允许 ChatGPT 读取项目目录结构、文件内容、Thread、任务状态与已登记命令清单。"
           )
           .font(.caption)
           .foregroundStyle(.secondary)

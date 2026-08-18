@@ -60,6 +60,24 @@ public actor ServiceProjectService {
     return updated
   }
 
+  @discardableResult
+  public func updateWorkspaceConfiguration(
+    directCommandMode: ServiceDirectCommandMode,
+    workspaceCommands: [ServiceWorkspaceCommand],
+    projectID: ProjectID
+  ) async throws -> ServiceProjectRecord {
+    guard let current = try await store.project(id: projectID) else {
+      throw ServiceStoreError.unknownProject(projectID)
+    }
+    let updated = try current.updatingWorkspaceConfiguration(
+      directCommandMode: directCommandMode,
+      workspaceCommands: workspaceCommands,
+      at: now()
+    )
+    try await store.updateProject(updated)
+    return updated
+  }
+
   public func remove(projectID: ProjectID) async throws {
     try await store.removeProject(id: projectID)
   }

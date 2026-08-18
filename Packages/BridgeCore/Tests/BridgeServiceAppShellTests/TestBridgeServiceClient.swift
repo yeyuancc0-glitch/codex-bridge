@@ -127,6 +127,80 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func removeProject(projectID _: String) async throws {}
 
+  func projectCommands(projectID: String) async throws -> MCPProjectDetail {
+    MCPProjectDetail(
+      projectID: projectID,
+      name: "Fixture",
+      capabilities: MCPProjectCapabilities(
+        read: "allowed",
+        write: "requiresLocalApproval",
+        network: "denied"
+      ),
+      directWorkspace: MCPDirectWorkspace(
+        fileWritePermission: "requiresLocalApproval",
+        commandMode: "registered",
+        commands: [
+          MCPProjectCommand(
+            commandID: "wcmd-test",
+            name: "Tests",
+            executable: "Scripts/with-xcode.sh",
+            arguments: ["swift", "test"]
+          )
+        ]
+      )
+    )
+  }
+
+  func updateProjectCommands(
+    projectID: String,
+    commands: [IPCWorkspaceCommand]
+  ) async throws -> MCPProjectDetail {
+    MCPProjectDetail(
+      projectID: projectID,
+      name: "Fixture",
+      capabilities: MCPProjectCapabilities(
+        read: "allowed",
+        write: "requiresLocalApproval",
+        network: "denied"
+      ),
+      directWorkspace: MCPDirectWorkspace(
+        fileWritePermission: "requiresLocalApproval",
+        commandMode: "registered",
+        commands: commands.map {
+          MCPProjectCommand(
+            commandID: $0.commandID,
+            name: $0.name,
+            executable: $0.executable,
+            arguments: $0.arguments,
+            workingDirectory: $0.workingDirectory,
+            requiresNetwork: $0.requiresNetwork,
+            risk: $0.risk
+          )
+        }
+      )
+    )
+  }
+
+  func setProjectCommandMode(
+    projectID: String,
+    commandMode: String
+  ) async throws -> MCPProjectDetail {
+    MCPProjectDetail(
+      projectID: projectID,
+      name: "Fixture",
+      capabilities: MCPProjectCapabilities(
+        read: "allowed",
+        write: "requiresLocalApproval",
+        network: "denied"
+      ),
+      directWorkspace: MCPDirectWorkspace(
+        fileWritePermission: "requiresLocalApproval",
+        commandMode: commandMode,
+        commands: []
+      )
+    )
+  }
+
   func models() async throws -> MCPModelList {
     MCPModelList(
       models: [

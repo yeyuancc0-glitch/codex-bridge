@@ -84,6 +84,33 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func projectCommands(projectID: String) async throws -> MCPProjectDetail {
+    try await call(
+      operation: .getProjectCommands,
+      payload: IPCProjectCommandsRequest(projectID: projectID)
+    )
+  }
+
+  public func updateProjectCommands(
+    projectID: String,
+    commands: [IPCWorkspaceCommand]
+  ) async throws -> MCPProjectDetail {
+    try await call(
+      operation: .updateProjectCommands,
+      payload: IPCProjectCommandsUpdateRequest(projectID: projectID, commands: commands)
+    )
+  }
+
+  public func setProjectCommandMode(
+    projectID: String,
+    commandMode: String
+  ) async throws -> MCPProjectDetail {
+    try await call(
+      operation: .setProjectCommandMode,
+      payload: IPCProjectCommandModeUpdateRequest(projectID: projectID, commandMode: commandMode)
+    )
+  }
+
   public func models() async throws -> MCPModelList {
     try await call(operation: .listModels, payload: Optional<IPCMutationResponse>.none)
   }

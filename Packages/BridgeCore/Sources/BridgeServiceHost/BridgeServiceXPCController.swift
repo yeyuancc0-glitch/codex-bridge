@@ -56,12 +56,14 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return
     }
     Task { [weak self] in
-      let response = await self?.handle(decoded) ?? Self.fallbackFailure(
-        requestID: decoded.requestID,
-        code: "unavailable",
-        message: "The service is unavailable.",
-        retryable: true
-      )
+      let response =
+        await self?.handle(decoded)
+        ?? Self.fallbackFailure(
+          requestID: decoded.requestID,
+          code: "unavailable",
+          message: "The service is unavailable.",
+          retryable: true
+        )
       self?.admission.release()
       replyBox.call(response)
     }
@@ -157,6 +159,67 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
           payload: detail
+        )
+
+      case .getProjectCommands:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCProjectCommandsRequest.self,
+          from: request
+        )
+        let detail = try await composition.application.serviceProject(
+          projectID: payload.projectID,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: detail
+        )
+
+      case .updateProjectCommands:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCProjectCommandsUpdateRequest.self,
+          from: request
+        )
+        _ = try await composition.projects.updateWorkspaceConfiguration(
+          directCommandMode: .registered,
+          workspaceCommands: try Self.workspaceCommands(payload.commands),
+          projectID: ProjectID(rawValue: payload.projectID)
+        )
+        let updatedCommands = try await composition.application.serviceProject(
+          projectID: payload.projectID,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: updatedCommands
+        )
+
+      case .setProjectCommandMode:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCProjectCommandModeUpdateRequest.self,
+          from: request
+        )
+        guard let mode = ServiceDirectCommandMode(rawValue: payload.commandMode) else {
+          throw ServiceStoreError.invalidArgument("project.commandMode")
+        }
+        let current = try await composition.projects.project(
+          id: ProjectID(rawValue: payload.projectID)
+        )
+        guard let current else {
+          throw ServiceStoreError.unknownProject(ProjectID(rawValue: payload.projectID))
+        }
+        _ = try await composition.projects.updateWorkspaceConfiguration(
+          directCommandMode: mode,
+          workspaceCommands: current.workspaceCommands,
+          projectID: ProjectID(rawValue: payload.projectID)
+        )
+        let updatedMode = try await composition.application.serviceProject(
+          projectID: payload.projectID,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: updatedMode
         )
 
       case .removeProject:
@@ -411,7 +474,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           }
           await self?.removeForwarder(taskID: taskID)
         }
-        streams.put(taskID: taskID, forwarder: forwarder, subscriptionID: subscription.subscriptionID)
+        streams.put(
+          taskID: taskID, forwarder: forwarder, subscriptionID: subscription.subscriptionID)
         return try BridgeServiceIPCCodec.success(
           requestID: request.requestID,
           payload: IPCTaskConversationSubscription(
@@ -606,6 +670,28 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
     )
   }
 
+  private static func workspaceCommands(
+    _ commands: [IPCWorkspaceCommand]
+  ) throws -> [ServiceWorkspaceCommand] {
+    guard commands.count <= 128 else {
+      throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
+    return try commands.map { command in
+      guard let risk = ServiceWorkspaceCommandRisk(rawValue: command.risk) else {
+        throw ServiceStoreError.invalidArgument("workspaceCommand.risk")
+      }
+      return try ServiceWorkspaceCommand(
+        id: command.commandID,
+        name: command.name,
+        executable: command.executable,
+        arguments: command.arguments,
+        workingDirectory: command.workingDirectory,
+        requiresNetwork: command.requiresNetwork,
+        risk: risk
+      )
+    }
+  }
+
   private static func absoluteDirectoryURL(_ path: String) throws -> URL {
     guard !path.isEmpty,
       path.hasPrefix("/"),
@@ -727,7 +813,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           retryable: true
         )
       case .writeNotAllowed:
-        return .init(code: "write_not_allowed", message: "The project does not allow remote writes.")
+        return .init(
+          code: "write_not_allowed", message: "The project does not allow remote writes.")
       case .approvalRequired(let approvalID):
         return .init(
           code: "approval_required",

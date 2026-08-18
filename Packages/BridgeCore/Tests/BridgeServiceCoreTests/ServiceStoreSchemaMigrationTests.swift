@@ -239,4 +239,87 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
     XCTAssertEqual(reloadedTool?.toolStatus, "completed")
     XCTAssertEqual(reloadedTool?.toolArguments, #"{"path":"Sources/A.swift"}"#)
   }
+
+  func testVersionFourDatabaseMigratesToWorkspaceCommandColumns() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-schema-migration-v5-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "service.sqlite").path
+
+    let legacy = try DatabaseQueue(path: path)
+    try await legacy.writeWithoutTransaction { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+          INSERT INTO grdb_migrations (identifier)
+          VALUES ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+                 ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4');
+          """
+      )
+      try ServiceStoreSchema.createVersionOne(in: db)
+      try ServiceStoreSchema.createVersionTwo(in: db)
+      try ServiceStoreSchema.createVersionThree(in: db)
+      try ServiceStoreSchema.createVersionFour(in: db)
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission, created_at, updated_at
+          ) VALUES ('prj-v4', 'Legacy', '/tmp/legacy', '1', '2',
+            'allowed', 'requiresLocalApproval', 'denied', 1, 2)
+          """
+      )
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_tasks (
+            task_id, project_id, source, client_request_id, prompt, requested_thread_id,
+            codex_thread_id, codex_turn_id, status, supervisor_status, execution_model,
+            execution_effort, supervisor_model, supervisor_effort, permission_mode,
+            network_allowed, current_step, changed_files_json, result_summary,
+            supervisor_summary, failure_code, access_mode, fast_mode, created_at, updated_at
+          ) VALUES ('tsk-v4', 'prj-v4', 'chatgpt.mcp', NULL, 'Legacy prompt', NULL,
+            NULL, NULL, 'completed', 'disabled', 'legacy-model', 'medium', NULL, NULL,
+            'workspace-write', 0, NULL, CAST('[]' AS BLOB), NULL, NULL, NULL,
+            'request-approval', 0, 1, 2)
+          """
+      )
+    }
+
+    let store = try SimpleServiceStore(path: path)
+    let project = try await store.project(id: ProjectID(rawValue: "prj-v4"))
+    XCTAssertEqual(project?.directCommandMode, .registered)
+    XCTAssertTrue(project?.workspaceCommands.isEmpty ?? false)
+    XCTAssertEqual(project?.accessPolicy.write, .requiresLocalApproval)
+
+    try await store.updateWorkspaceConfiguration(
+      projectID: ProjectID(rawValue: "prj-v4"),
+      directCommandMode: .safe,
+      workspaceCommands: [
+        try ServiceWorkspaceCommand(
+          id: "wcmd-test",
+          name: "Tests",
+          executable: "Scripts/with-xcode.sh",
+          arguments: ["swift", "test"]
+        )
+      ],
+      at: Date(timeIntervalSince1970: 3)
+    )
+    let updated = try await store.project(id: ProjectID(rawValue: "prj-v4"))
+    XCTAssertEqual(updated?.directCommandMode, .safe)
+    XCTAssertEqual(updated?.workspaceCommands.count, 1)
+    XCTAssertEqual(updated?.workspaceCommands[0].name, "Tests")
+    XCTAssertEqual(updated?.accessPolicy.write, .requiresLocalApproval)
+    XCTAssertEqual(updated?.accessPolicy.read, .allowed)
+
+    let reopened = try SimpleServiceStore(path: path)
+    let reloaded = try await reopened.project(id: ProjectID(rawValue: "prj-v4"))
+    XCTAssertEqual(reloaded?.directCommandMode, .safe)
+    XCTAssertEqual(reloaded?.workspaceCommands.map(\.id), ["wcmd-test"])
+
+    let task = try await reopened.task(id: TaskID(rawValue: "tsk-v4"))
+    XCTAssertEqual(task?.state.status, .completed)
+  }
 }

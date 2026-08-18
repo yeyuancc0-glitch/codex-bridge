@@ -51,6 +51,10 @@ public actor SimpleServiceStore {
   }
 
   public func updateProject(_ project: ServiceProjectRecord) throws {
+    let workspaceCommands = try encoder.encode(project.workspaceCommands)
+    guard workspaceCommands.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
     do {
       try database.write { db in
         guard let row = try Self.projectRow(id: project.id, in: db) else {
@@ -67,7 +71,8 @@ public actor SimpleServiceStore {
           sql: """
             UPDATE bridge_service_projects
             SET name = ?, read_permission = ?, write_permission = ?,
-                network_permission = ?, updated_at = ?
+                network_permission = ?, direct_command_mode = ?,
+                workspace_commands_json = ?, updated_at = ?
             WHERE project_id = ?
             """,
           arguments: [
@@ -75,8 +80,55 @@ public actor SimpleServiceStore {
             project.accessPolicy.read.rawValue,
             project.accessPolicy.write.rawValue,
             project.accessPolicy.network.rawValue,
+            project.directCommandMode.rawValue,
+            workspaceCommands,
             project.updatedAt.timeIntervalSince1970,
             project.id.rawValue,
+          ]
+        )
+        guard db.changesCount == 1 else { throw ServiceStoreError.storageFailure }
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
+  public func updateWorkspaceConfiguration(
+    projectID: ProjectID,
+    directCommandMode: ServiceDirectCommandMode,
+    workspaceCommands: [ServiceWorkspaceCommand],
+    at date: Date
+  ) throws {
+    try ServiceValidation.date(date, field: "project.updatedAt")
+    guard workspaceCommands.count <= 128 else {
+      throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
+    let workspaceCommandsData = try encoder.encode(workspaceCommands)
+    guard workspaceCommandsData.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
+    do {
+      try database.write { db in
+        guard let row = try Self.projectRow(id: projectID, in: db) else {
+          throw ServiceStoreError.unknownProject(projectID)
+        }
+        let existing = try Self.decodeProject(row)
+        guard date >= existing.updatedAt else {
+          throw ServiceStoreError.invalidArgument("project.updatedAt")
+        }
+        try db.execute(
+          sql: """
+            UPDATE bridge_service_projects
+            SET direct_command_mode = ?, workspace_commands_json = ?, updated_at = ?
+            WHERE project_id = ?
+            """,
+          arguments: [
+            directCommandMode.rawValue,
+            workspaceCommandsData,
+            date.timeIntervalSince1970,
+            projectID.rawValue,
           ]
         )
         guard db.changesCount == 1 else { throw ServiceStoreError.storageFailure }

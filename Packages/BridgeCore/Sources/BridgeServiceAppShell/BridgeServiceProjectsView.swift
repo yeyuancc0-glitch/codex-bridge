@@ -139,6 +139,9 @@ struct BridgeServiceProjectsView: View {
               .id(project.projectID + permissionFingerprint(project))
           }
 
+          ProjectWorkspaceEditor(model: model, project: project)
+            .id(project.projectID + workspaceFingerprint(model, project))
+
           VStack(alignment: .leading, spacing: 12) {
             HStack {
               Text("Codex Threads")
@@ -308,6 +311,14 @@ struct BridgeServiceProjectsView: View {
   private func permissionFingerprint(_ project: MCPProjectSummary) -> String {
     project.capabilities.read + project.capabilities.write + project.capabilities.network
   }
+
+  private func workspaceFingerprint(_ model: BridgeServiceAppModel, _ project: MCPProjectSummary)
+    -> String
+  {
+    guard let detail = model.projectDetails[project.projectID] else { return "loading" }
+    return detail.directWorkspace?.commandMode ?? "none"
+      + String(detail.directWorkspace?.commands.count ?? 0)
+  }
 }
 
 private struct ProjectPermissionEditor: View {
@@ -405,5 +416,229 @@ private struct ProjectPermissionEditor: View {
       .labelsHidden()
       .frame(maxWidth: 320)
     }
+  }
+}
+
+private struct ProjectWorkspaceEditor: View {
+  @ObservedObject var model: BridgeServiceAppModel
+  let project: MCPProjectSummary
+  @State private var draftMode = "registered"
+  @State private var drafts: [BridgeWorkspaceCommandDraft] = []
+  @State private var showSavedFeedback = false
+  @State private var modeChanged = false
+
+  var body: some View {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Label("ChatGPT Direct 命令", systemImage: "terminal")
+            .font(.subheadline.weight(.semibold))
+          Spacer()
+          if showSavedFeedback {
+            HStack(spacing: 4) {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+              Text("已保存生效")
+                .font(.caption)
+                .foregroundStyle(.green)
+            }
+            .transition(.opacity)
+          }
+        }
+
+        Text(
+          "默认仍由 Codex 执行项目任务。这里配置的是用户在 ChatGPT 对话中明确要求\u{201C}直接执行\u{201D}时，网页 GPT 可以使用的本地命令。"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
+        Divider()
+
+        Picker("Direct 命令模式", selection: $draftMode) {
+          Text("禁止").tag("denied")
+          Text("仅登记命令").tag("registered")
+          Text("安全开发命令").tag("safe")
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 420)
+
+        Divider()
+
+        commandList
+
+        Divider()
+
+        HStack {
+          Button("+ 添加命令") {
+            drafts.append(BridgeWorkspaceCommandDraft())
+          }
+          .buttonStyle(.bordered)
+
+          Spacer()
+
+          Button("保存命令配置") {
+            model.saveProjectCommands(projectID: project.projectID, drafts: drafts)
+            withAnimation(.easeInOut(duration: 0.2)) {
+              showSavedFeedback = true
+            }
+            Task {
+              try? await Task.sleep(for: .seconds(2.5))
+              withAnimation(.easeInOut(duration: 0.3)) {
+                showSavedFeedback = false
+              }
+            }
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(drafts.isEmpty || !hasCommandChanges)
+
+          if modeChanged {
+            Button("保存命令模式") {
+              model.setProjectCommandMode(projectID: project.projectID, mode: draftMode)
+              modeChanged = false
+              withAnimation(.easeInOut(duration: 0.2)) {
+                showSavedFeedback = true
+              }
+              Task {
+                try? await Task.sleep(for: .seconds(2.5))
+                withAnimation(.easeInOut(duration: 0.3)) {
+                  showSavedFeedback = false
+                }
+              }
+            }
+            .buttonStyle(.borderedProminent)
+          }
+        }
+      }
+      .onAppear {
+        loadDetail()
+      }
+      .onChange(of: model.projectDetails[project.projectID]) {
+        loadDetail()
+      }
+    }
+  }
+
+  private var commandList: some View {
+    VStack(spacing: 8) {
+      if drafts.isEmpty {
+        HStack(spacing: 8) {
+          Image(systemName: "command")
+            .foregroundStyle(.secondary)
+          Text("尚未登记项目命令。添加后，ChatGPT 在用户明确要求直接执行时才可使用。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      } else {
+        ForEach(drafts) { draft in
+          ProjectCommandRow(draft: binding(for: draft)) {
+            drafts.removeAll { $0.id == draft.id }
+          }
+        }
+      }
+    }
+  }
+
+  private func binding(for draft: BridgeWorkspaceCommandDraft) -> Binding<
+    BridgeWorkspaceCommandDraft
+  > {
+    Binding(
+      get: { drafts.first(where: { $0.id == draft.id }) ?? draft },
+      set: { newValue in
+        if let index = drafts.firstIndex(where: { $0.id == draft.id }) {
+          drafts[index] = newValue
+        }
+      }
+    )
+  }
+
+  private func loadDetail() {
+    guard let detail = model.projectDetails[project.projectID] else { return }
+    draftMode = detail.directWorkspace?.commandMode ?? "registered"
+    let existing = detail.directWorkspace?.commands ?? []
+    if drafts.isEmpty && !existing.isEmpty {
+      drafts = existing.map(BridgeWorkspaceCommandDraft.init)
+    }
+    modeChanged = false
+  }
+
+  private var hasCommandChanges: Bool {
+    guard let detail = model.projectDetails[project.projectID] else { return true }
+    let existing = detail.directWorkspace?.commands ?? []
+    guard existing.count == drafts.count else { return true }
+    return zip(existing, drafts).contains { command, draft in
+      command.name != draft.name
+        || command.executable != draft.executable
+        || command.arguments
+          != draft.arguments.split(separator: "\n")
+          .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        || command.workingDirectory
+          != (draft.workingDirectory.isEmpty ? nil : draft.workingDirectory)
+        || command.requiresNetwork != draft.requiresNetwork
+        || command.risk != draft.risk
+    }
+  }
+}
+
+private struct ProjectCommandRow: View {
+  @Binding var draft: BridgeWorkspaceCommandDraft
+  let onRemove: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        TextField("命令名称", text: $draft.name)
+          .textFieldStyle(.roundedBorder)
+        Spacer()
+        Button(role: .destructive) {
+          onRemove()
+        } label: {
+          Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+      }
+
+      HStack(spacing: 8) {
+        TextField("可执行文件 / 脚本路径", text: $draft.executable)
+          .textFieldStyle(.roundedBorder)
+      }
+
+      HStack(spacing: 8) {
+        TextField("参数（每行一个）", text: $draft.arguments, axis: .vertical)
+          .textFieldStyle(.roundedBorder)
+          .lineLimit(2...4)
+
+        TextField("工作目录（相对项目根，可选）", text: $draft.workingDirectory)
+          .textFieldStyle(.roundedBorder)
+      }
+
+      HStack(spacing: 12) {
+        Toggle("需要网络", isOn: $draft.requiresNetwork)
+          .toggleStyle(.switch)
+          .controlSize(.small)
+
+        Picker("风险", selection: $draft.risk) {
+          Text("普通").tag("normal")
+          Text("高风险（每次需批准）").tag("elevated")
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 260)
+
+        Spacer()
+      }
+    }
+    .padding(10)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
+    )
   }
 }

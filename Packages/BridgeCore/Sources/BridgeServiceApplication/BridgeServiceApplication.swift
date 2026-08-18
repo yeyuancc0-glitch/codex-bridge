@@ -111,7 +111,24 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       projectID: project.id.rawValue,
       name: Self.safe(project.name, maximum: 1_024),
       capabilities: Self.capabilities(project.accessPolicy),
-      verificationCommands: []
+      verificationCommands: [],
+      directWorkspace: MCPDirectWorkspace(
+        fileWritePermission: project.accessPolicy.write.rawValue,
+        commandMode: project.directCommandMode.rawValue,
+        commands: project.workspaceCommands.map(Self.projectCommand)
+      )
+    )
+  }
+
+  public func serviceProjectCommands(
+    projectID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectCommands {
+    try Self.checkDeadline(deadline)
+    let project = try await readableProject(projectID)
+    return MCPProjectCommands(
+      commandMode: project.directCommandMode.rawValue,
+      commands: project.workspaceCommands.map(Self.projectCommand)
     )
   }
 
@@ -473,7 +490,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
     let operationID = "op-" + UUID().uuidString.lowercased()
-    let lease = try await acquireDirectLease(project: project, owner: .directFileOperation(operationID: operationID))
+    let lease = try await acquireDirectLease(
+      project: project, owner: .directFileOperation(operationID: operationID))
     do {
       let result = try await mutations.write(
         ProjectWriteRequest(
@@ -512,7 +530,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
     let operationID = "op-" + UUID().uuidString.lowercased()
-    let lease = try await acquireDirectLease(project: project, owner: .directFileOperation(operationID: operationID))
+    let lease = try await acquireDirectLease(
+      project: project, owner: .directFileOperation(operationID: operationID))
     do {
       let result = try await mutations.edit(
         ProjectEditRequest(
@@ -551,7 +570,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
     let operationID = "op-" + UUID().uuidString.lowercased()
-    let lease = try await acquireDirectLease(project: project, owner: .directFileOperation(operationID: operationID))
+    let lease = try await acquireDirectLease(
+      project: project, owner: .directFileOperation(operationID: operationID))
     do {
       let operations: [ProjectPatchFileOperation]
       do {
@@ -607,7 +627,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
     let operationID = "op-" + UUID().uuidString.lowercased()
-    let lease = try await acquireDirectLease(project: project, owner: .directFileOperation(operationID: operationID))
+    let lease = try await acquireDirectLease(
+      project: project, owner: .directFileOperation(operationID: operationID))
     do {
       let action = ProjectPathAction(rawValue: request.action) ?? .deleteFile
       let result = try await mutations.managePath(

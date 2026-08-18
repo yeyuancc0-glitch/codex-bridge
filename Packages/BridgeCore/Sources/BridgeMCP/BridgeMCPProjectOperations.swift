@@ -31,6 +31,28 @@ public protocol BridgeMCPProjectOperations: Sendable {
   ) async throws -> MCPOpenInCodexReceipt
 }
 
+public struct MCPDirectWorkspace: Codable, Equatable, Sendable {
+  public let fileWritePermission: String
+  public let commandMode: String
+  public let commands: [MCPProjectCommand]
+
+  public init(
+    fileWritePermission: String,
+    commandMode: String,
+    commands: [MCPProjectCommand]
+  ) {
+    self.fileWritePermission = fileWritePermission
+    self.commandMode = commandMode
+    self.commands = commands
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case fileWritePermission = "file_write_permission"
+    case commandMode = "command_mode"
+    case commands
+  }
+}
+
 public struct MCPProjectDetail: Codable, Equatable, Sendable {
   public let projectID: String
   public let name: String
@@ -38,6 +60,7 @@ public struct MCPProjectDetail: Codable, Equatable, Sendable {
   public let gitState: String?
   public let verificationCommands: [String]
   public let threadCount: Int?
+  public let directWorkspace: MCPDirectWorkspace?
 
   public init(
     projectID: String,
@@ -45,7 +68,8 @@ public struct MCPProjectDetail: Codable, Equatable, Sendable {
     capabilities: MCPProjectCapabilities,
     gitState: String? = nil,
     verificationCommands: [String] = [],
-    threadCount: Int? = nil
+    threadCount: Int? = nil,
+    directWorkspace: MCPDirectWorkspace? = nil
   ) {
     self.projectID = projectID
     self.name = name
@@ -53,6 +77,7 @@ public struct MCPProjectDetail: Codable, Equatable, Sendable {
     self.gitState = gitState
     self.verificationCommands = verificationCommands
     self.threadCount = threadCount
+    self.directWorkspace = directWorkspace
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -62,6 +87,7 @@ public struct MCPProjectDetail: Codable, Equatable, Sendable {
     case gitState = "git_state"
     case verificationCommands = "verification_commands"
     case threadCount = "thread_count"
+    case directWorkspace = "direct_workspace"
   }
 }
 

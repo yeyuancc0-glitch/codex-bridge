@@ -10,13 +10,14 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let readOnly = MCPServiceToolCatalog(exposureMode: .readOnly).definitions.map(\.name)
     let full = MCPServiceToolCatalog(exposureMode: .full).definitions.map(\.name)
 
-    XCTAssertEqual(readOnly.count, 10)
-    XCTAssertEqual(full.count, 17)
+    XCTAssertEqual(readOnly.count, 11)
+    XCTAssertEqual(full.count, 18)
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.submitTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.steerTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.interruptTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.directWriteProjectFile.rawValue))
     XCTAssertTrue(readOnly.contains(MCPServiceToolName.getProjectChanges.rawValue))
+    XCTAssertTrue(readOnly.contains(MCPServiceToolName.listProjectCommands.rawValue))
     XCTAssertTrue(full.contains(MCPServiceToolName.submitTask.rawValue))
     XCTAssertTrue(full.contains(MCPServiceToolName.directWriteProjectFile.rawValue))
     XCTAssertFalse(full.contains("resolve_approval"))
@@ -401,6 +402,63 @@ final class BridgeServiceApplicationTests: XCTestCase {
     } catch {
       XCTAssertEqual(error as? BridgeMCPQueryError, .threadNotFound)
     }
+  }
+
+  func testProjectCommandsRoundTripThroughTheApplication() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    let initial = try await application.serviceProjectCommands(
+      projectID: fixture.project.id.rawValue,
+      deadline: deadline
+    )
+    XCTAssertEqual(initial.commandMode, "registered")
+    XCTAssertTrue(initial.commands.isEmpty)
+
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .safe,
+      workspaceCommands: [
+        try ServiceWorkspaceCommand(
+          id: "wcmd-tests",
+          name: "Codex Bridge Tests",
+          executable: "Scripts/with-xcode.sh",
+          arguments: ["swift", "test", "--package-path", "Packages/BridgeCore"],
+          requiresNetwork: false
+        ),
+        try ServiceWorkspaceCommand(
+          id: "wcmd-deploy",
+          name: "Deploy",
+          executable: "/usr/bin/make",
+          arguments: ["deploy"],
+          requiresNetwork: true,
+          risk: .elevated
+        ),
+      ],
+      projectID: fixture.project.id
+    )
+
+    let commands = try await application.serviceProjectCommands(
+      projectID: fixture.project.id.rawValue,
+      deadline: deadline
+    )
+    XCTAssertEqual(commands.commandMode, "safe")
+    XCTAssertEqual(commands.commands.map(\.commandID), ["wcmd-tests", "wcmd-deploy"])
+    XCTAssertEqual(commands.commands[0].name, "Codex Bridge Tests")
+    XCTAssertEqual(commands.commands[1].risk, "elevated")
+    XCTAssertTrue(commands.commands[1].requiresNetwork)
+
+    let detail = try await application.serviceProject(
+      projectID: fixture.project.id.rawValue,
+      deadline: deadline
+    )
+    let workspace = try XCTUnwrap(detail.directWorkspace)
+    XCTAssertEqual(workspace.fileWritePermission, "requiresLocalApproval")
+    XCTAssertEqual(workspace.commandMode, "safe")
+    XCTAssertEqual(workspace.commands.count, 2)
   }
 
   func testStrictSDKClientCallsLightweightServiceOverLoopbackHTTP() async throws {
