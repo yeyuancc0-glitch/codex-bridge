@@ -1,4 +1,6 @@
 import BridgeCodexRPC
+import BridgeDirectCommand
+import BridgeDomain
 import BridgeIPC
 import BridgeMCP
 import BridgeProjects
@@ -316,6 +318,48 @@ final class BridgeServiceHostTests: XCTestCase {
       clientRequestID: nil
     )
     XCTAssertFalse(consumed)
+  }
+
+  func testTunnelDisconnectDoesNotStopRunningDirectCommandSession() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let projectID = ProjectID(rawValue: "prj-tunnel-direct")
+    let session = try await fixture.composition.application.directCommands.launch(
+      sessionID: "dcmd-tunnel",
+      projectID: projectID,
+      argv: ["/bin/sh", "-c", "sleep 1; echo survived-tunnel-disconnect"],
+      workingDirectory: nil,
+      requiresNetwork: false,
+      usePTY: false,
+      timeout: .seconds(30)
+    )
+    XCTAssertEqual(session.status, "running")
+
+    // Tunnel disconnecting must only block new remote submissions, never touch running local work.
+    try await fixture.composition.disconnectTunnel()
+    try await fixture.composition.tunnelStatus()
+
+    var deadline = Date().addingTimeInterval(10)
+    var finished: DirectCommandSession?
+    while Date() < deadline {
+      if let current = await fixture.composition.application.directCommands.snapshot(
+        sessionID: "dcmd-tunnel"
+      ), current.status == "ended" {
+        finished = current
+        break
+      }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    let result = try XCTUnwrap(finished)
+    XCTAssertEqual(result.exitCode, 0)
+    XCTAssertTrue(result.output.tail.contains("survived-tunnel-disconnect"))
   }
 
   func testXPCModelPreferencesRoundTripThroughTheService() async throws {

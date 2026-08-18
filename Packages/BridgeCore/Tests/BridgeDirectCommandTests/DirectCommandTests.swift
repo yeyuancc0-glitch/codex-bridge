@@ -420,4 +420,55 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     }
     XCTAssertTrue(reaped)
   }
+
+  func testManagerInitReapsOrphanProcessesAfterServiceCrash() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "direct-command-orphan-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let orphanPIDFile = root.appending(path: "orphan-pids.txt")
+    let survivor = Process()
+    survivor.executableURL = URL(fileURLWithPath: "/bin/sh")
+    survivor.arguments = ["-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]
+    survivor.standardOutput = FileHandle.nullDevice
+    survivor.standardError = FileHandle.nullDevice
+    survivor.standardInput = FileHandle.nullDevice
+    try survivor.run()
+    let survivorPID = survivor.processIdentifier
+    defer { _ = Darwin.kill(-survivorPID, SIGKILL) }
+
+    let spawned = Process()
+    spawned.executableURL = URL(fileURLWithPath: "/bin/sh")
+    spawned.arguments = ["-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]
+    spawned.standardOutput = FileHandle.nullDevice
+    spawned.standardError = FileHandle.nullDevice
+    spawned.standardInput = FileHandle.nullDevice
+    try spawned.run()
+    let orphanPID = spawned.processIdentifier
+    _ = Darwin.setpgid(orphanPID, orphanPID)
+    try Data("orphan-session\t\(orphanPID)\n".utf8).write(to: orphanPIDFile, options: .atomic)
+
+    // Service restarts and constructs a new manager; it must reap the orphaned process group.
+    let manager = DirectCommandSessionManager(
+      runner: DirectCommandRunner(defaultTimeout: .seconds(60)),
+      orphanPIDFileURL: orphanPIDFile
+    )
+    defer { Task { await manager.cancelAll() } }
+    let survivorAlive = kill(survivorPID, 0) == 0
+    XCTAssertTrue(survivorAlive, "unrelated process must be left alone")
+
+    var deadline = Date().addingTimeInterval(5)
+    var reaped = false
+    while Date() < deadline {
+      if kill(orphanPID, 0) != 0 {
+        reaped = true
+        break
+      }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    XCTAssertTrue(reaped, "orphaned direct command process must be reaped on restart")
+  }
 }
