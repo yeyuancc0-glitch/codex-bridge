@@ -348,6 +348,33 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     approvalDecisions.append("\(request.approvalID):\(request.decision)")
   }
 
+  private var directApprovalDecisions: [String] = []
+  private var directApprovalsValue: [IPCPendingDirectApproval] = [
+    IPCPendingDirectApproval(
+      approvalID: "direct-approval-1",
+      projectID: "prj-1",
+      kind: "command",
+      summary: "Run swift test",
+      createdAt: Date()
+    )
+  ]
+
+  func pendingDirectApprovals() async throws -> [IPCPendingDirectApproval] {
+    directApprovalsValue
+  }
+
+  func approveDirectApproval(approvalID: String) async throws -> Bool {
+    directApprovalDecisions.append("approve:\(approvalID)")
+    directApprovalsValue = directApprovalsValue.filter { $0.approvalID != approvalID }
+    return true
+  }
+
+  func denyDirectApproval(approvalID: String) async throws -> Bool {
+    directApprovalDecisions.append("deny:\(approvalID)")
+    directApprovalsValue = directApprovalsValue.filter { $0.approvalID != approvalID }
+    return true
+  }
+
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws {
     exposureMode = mode
   }

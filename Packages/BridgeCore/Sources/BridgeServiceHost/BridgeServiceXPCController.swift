@@ -530,6 +530,53 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         )
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
 
+      case .listDirectApprovals:
+        let pending = try await composition.application.servicePendingDirectApprovals(
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: IPCDirectApprovalListResponse(
+            approvals: pending.map {
+              IPCPendingDirectApproval(
+                approvalID: $0.approvalID,
+                projectID: $0.projectID,
+                kind: $0.kind.rawValue,
+                summary: $0.summary,
+                createdAt: $0.createdAt
+              )
+            }
+          )
+        )
+
+      case .approveDirectApproval:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCDirectApprovalDecisionRequest.self,
+          from: request
+        )
+        let approved = try await composition.application.serviceApproveDirectApproval(
+          approvalID: payload.approvalID,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: approved
+        )
+
+      case .denyDirectApproval:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCDirectApprovalDecisionRequest.self,
+          from: request
+        )
+        let denied = try await composition.application.serviceDenyDirectApproval(
+          approvalID: payload.approvalID,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: denied
+        )
+
       case .setExposureMode:
         let payload = try BridgeServiceIPCCodec.payload(
           IPCExposureModeRequest.self,

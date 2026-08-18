@@ -29,9 +29,10 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   let mutations: RestrictedProjectMutationService
   let runtimeStatus: ServiceRuntimeStatus
   let workspaceGate: ServiceWorkspaceMutationGate
-  let commandPolicy: DirectCommandPolicy
-  let directCommands: DirectCommandSessionManager
-  let iso8601 = ISO8601DateFormatter()
+  public let commandPolicy: DirectCommandPolicy
+  public let directCommands: DirectCommandSessionManager
+  public let approvals: DirectActionApprovalCenter
+  public let iso8601 = ISO8601DateFormatter()
 
   public init(
     appVersion: String,
@@ -45,7 +46,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     mutations: RestrictedProjectMutationService? = nil,
     workspaceGate: ServiceWorkspaceMutationGate? = nil,
     commandPolicy: DirectCommandPolicy = DirectCommandPolicy(),
-    directCommands: DirectCommandSessionManager = DirectCommandSessionManager()
+    directCommands: DirectCommandSessionManager = DirectCommandSessionManager(),
+    approvals: DirectActionApprovalCenter = DirectActionApprovalCenter()
   ) {
     precondition(!appVersion.isEmpty)
     self.appVersion = appVersion
@@ -65,6 +67,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     self.workspaceGate = workspaceGate ?? ServiceWorkspaceMutationGate()
     self.commandPolicy = commandPolicy
     self.directCommands = directCommands
+    self.approvals = approvals
   }
 
   public func serviceStatus(
@@ -496,6 +499,15 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   ) async throws -> MCPDirectWriteReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
+    if project.accessPolicy.write == .requiresLocalApproval {
+      try await requireDirectApproval(
+        project: project,
+        kind: .fileWrite,
+        summary: "Write \(request.relativePath)",
+        payload: request,
+        clientRequestID: request.clientRequestID
+      )
+    }
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))
@@ -536,6 +548,15 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   ) async throws -> MCPDirectEditReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
+    if project.accessPolicy.write == .requiresLocalApproval {
+      try await requireDirectApproval(
+        project: project,
+        kind: .fileWrite,
+        summary: "Edit \(request.relativePath)",
+        payload: request,
+        clientRequestID: request.clientRequestID
+      )
+    }
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))
@@ -576,6 +597,15 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   ) async throws -> MCPDirectPatchReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
+    if project.accessPolicy.write == .requiresLocalApproval {
+      try await requireDirectApproval(
+        project: project,
+        kind: .fileWrite,
+        summary: "Apply patch",
+        payload: request,
+        clientRequestID: request.clientRequestID
+      )
+    }
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))
@@ -633,6 +663,17 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   ) async throws -> MCPDirectManagePathReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
+    let destructive = ["delete_file", "move_file", "delete_empty_directory"].contains(
+      request.action)
+    if project.accessPolicy.write == .requiresLocalApproval || destructive {
+      try await requireDirectApproval(
+        project: project,
+        kind: .pathAction,
+        summary: "\(request.action) \(request.relativePath)",
+        payload: request,
+        clientRequestID: request.clientRequestID
+      )
+    }
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))

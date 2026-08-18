@@ -26,6 +26,9 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case unsubscribeTaskConversation = "unsubscribe_task_conversation"
   case listApprovals = "list_approvals"
   case resolveApproval = "resolve_approval"
+  case listDirectApprovals = "list_direct_approvals"
+  case approveDirectApproval = "approve_direct_approval"
+  case denyDirectApproval = "deny_direct_approval"
   case setExposureMode = "set_exposure_mode"
   case configureTunnel = "configure_tunnel"
   case connectTunnel = "connect_tunnel"
@@ -391,6 +394,56 @@ public struct IPCApprovalResolutionRequest: Codable, Equatable, Sendable {
     case taskID = "task_id"
     case approvalID = "approval_id"
     case decision
+  }
+}
+
+public struct IPCPendingDirectApproval: Codable, Equatable, Sendable {
+  public let approvalID: String
+  public let projectID: String
+  public let kind: String
+  public let summary: String
+  public let createdAt: Date
+
+  public init(
+    approvalID: String,
+    projectID: String,
+    kind: String,
+    summary: String,
+    createdAt: Date
+  ) {
+    self.approvalID = approvalID
+    self.projectID = projectID
+    self.kind = kind
+    self.summary = summary
+    self.createdAt = createdAt
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case approvalID = "approval_id"
+    case projectID = "project_id"
+    case kind
+    case summary
+    case createdAt = "created_at"
+  }
+}
+
+public struct IPCDirectApprovalDecisionRequest: Codable, Equatable, Sendable {
+  public let approvalID: String
+
+  public init(approvalID: String) {
+    self.approvalID = approvalID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case approvalID = "approval_id"
+  }
+}
+
+public struct IPCDirectApprovalListResponse: Codable, Equatable, Sendable {
+  public let approvals: [IPCPendingDirectApproval]
+
+  public init(approvals: [IPCPendingDirectApproval]) {
+    self.approvals = approvals
   }
 }
 

@@ -383,7 +383,7 @@ public struct RestrictedProjectMutationService: Sendable {
     guard project.accessPolicy.read == .allowed else {
       throw ProjectMutationError.readNotAllowed
     }
-    guard project.accessPolicy.write == .allowed else {
+    guard project.accessPolicy.write != .denied else {
       throw ProjectMutationError.writeNotAllowed
     }
     return project

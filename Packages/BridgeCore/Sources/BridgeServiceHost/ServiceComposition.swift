@@ -1,5 +1,6 @@
 import BridgeCodexRPC
 import BridgeCodexService
+import BridgeDirectCommand
 import BridgeDomain
 import BridgeLegacyImport
 import BridgeMCP
@@ -129,7 +130,10 @@ public actor ServiceComposition {
       settings: settings,
       coordinator: coordinator,
       catalog: catalog,
-      runtimeStatus: runtimeStatus
+      runtimeStatus: runtimeStatus,
+      directCommands: DirectCommandSessionManager(
+        orphanPIDFileURL: paths.supervisorScratchURL.appending(path: "direct-command-pids.txt")
+      )
     )
     let resolvedTunnelFactory =
       tunnelFactory
@@ -292,6 +296,8 @@ public actor ServiceComposition {
     await tunnel.shutdown()
     await stopMCP()
     await coordinator.shutdown()
+    await application.directCommands.cancelAll()
+    await application.approvals.cancelAll()
     await runtimeStatus.updateMCP(state: "stopped")
   }
 

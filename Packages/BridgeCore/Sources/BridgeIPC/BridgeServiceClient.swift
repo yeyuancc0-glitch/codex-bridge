@@ -250,6 +250,28 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func pendingDirectApprovals() async throws -> [IPCPendingDirectApproval] {
+    let response: IPCDirectApprovalListResponse = try await call(
+      operation: .listDirectApprovals,
+      payload: Optional<IPCMutationResponse>.none
+    )
+    return response.approvals
+  }
+
+  public func approveDirectApproval(approvalID: String) async throws -> Bool {
+    try await call(
+      operation: .approveDirectApproval,
+      payload: IPCDirectApprovalDecisionRequest(approvalID: approvalID)
+    )
+  }
+
+  public func denyDirectApproval(approvalID: String) async throws -> Bool {
+    try await call(
+      operation: .denyDirectApproval,
+      payload: IPCDirectApprovalDecisionRequest(approvalID: approvalID)
+    )
+  }
+
   public func setExposureMode(_ mode: MCPServiceExposureMode) async throws {
     let _: IPCMutationResponse = try await call(
       operation: .setExposureMode,

@@ -187,6 +187,7 @@ extension BridgeServiceAppModel {
       try await client.tasks(IPCTaskListRequest(limit: 200))
     }
     async let approvalResult = optional { try await client.approvals(taskID: nil) }
+    async let directApprovalResult = optional { try await client.pendingDirectApprovals() }
 
     if let value = await projectResult {
       projects = value
@@ -217,6 +218,9 @@ extension BridgeServiceAppModel {
     }
     if let value = await approvalResult {
       approvals = value
+    }
+    if let value = await directApprovalResult {
+      directApprovals = value
     }
     if includeCatalog {
       do {

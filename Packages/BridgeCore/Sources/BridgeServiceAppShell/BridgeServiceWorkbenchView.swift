@@ -255,6 +255,15 @@ struct BridgeServiceWorkbenchView: View {
             }
           }
 
+          // Direct Workspace Approvals
+          if !model.directApprovals.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+              ForEach(model.directApprovals, id: \.approvalID) { approval in
+                DirectApprovalCard(model: model, approval: approval)
+              }
+            }
+          }
+
           // Active Task Step if Running
           if let activeTask = currentActiveTask, let step = activeTask.currentStep {
             NativeCard {
@@ -524,6 +533,65 @@ private struct ApprovalCard: View {
     .overlay(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .strokeBorder(Color.orange.opacity(0.5), lineWidth: 1)
+    )
+  }
+}
+
+private struct DirectApprovalCard: View {
+  let model: BridgeServiceAppModel
+  let approval: IPCPendingDirectApproval
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 6) {
+        Image(systemName: "terminal.fill")
+          .foregroundStyle(.orange)
+        Text("Direct 操作等待批准")
+          .font(.caption.weight(.bold))
+        Spacer()
+        Text(approval.kind)
+          .font(.caption2.weight(.medium))
+          .foregroundStyle(.secondary)
+      }
+
+      Text(approval.summary)
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+
+      HStack {
+        Text("项目 \(approval.projectID)")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Text(approval.createdAt, style: .relative)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+
+      Divider()
+
+      HStack(spacing: 8) {
+        Button("拒绝") {
+          model.resolveDirectApproval(approval, allow: false)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+
+        Spacer()
+
+        Button("仅本次允许") {
+          model.resolveDirectApproval(approval, allow: true)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+      }
+    }
+    .padding(10)
+    .background(Color(nsColor: .controlBackgroundColor))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(Color.purple.opacity(0.5), lineWidth: 1)
     )
   }
 }

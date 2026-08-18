@@ -35,6 +35,9 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func unsubscribeTaskConversation(taskID: String, subscriptionID: Int) async throws
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws
+  func pendingDirectApprovals() async throws -> [IPCPendingDirectApproval]
+  func approveDirectApproval(approvalID: String) async throws -> Bool
+  func denyDirectApproval(approvalID: String) async throws -> Bool
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws
   func configureTunnel(_ request: IPCTunnelConfigurationRequest) async throws -> IPCTunnelStatus
   func connectTunnel() async throws -> IPCTunnelStatus

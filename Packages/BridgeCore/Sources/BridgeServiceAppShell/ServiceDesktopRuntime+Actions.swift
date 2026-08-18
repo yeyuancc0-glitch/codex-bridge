@@ -192,6 +192,21 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func resolveDirectApproval(
+    _ approval: IPCPendingDirectApproval,
+    allow: Bool
+  ) {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      if allow {
+        _ = try await client.approveDirectApproval(approvalID: approval.approvalID)
+      } else {
+        _ = try await client.denyDirectApproval(approvalID: approval.approvalID)
+      }
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
   public func setExposureMode(_ mode: MCPServiceExposureMode) {
     updateExposureState(mode)
     runMutation { [weak self] client in

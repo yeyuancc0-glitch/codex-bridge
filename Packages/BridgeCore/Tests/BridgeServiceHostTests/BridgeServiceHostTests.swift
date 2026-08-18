@@ -271,6 +271,53 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(reloaded.directWorkspace?.commands.map(\.name), ["XPC Tests"])
   }
 
+  func testXPCDirectApprovalsRoundTripThroughTheService() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let initial = try await client.pendingDirectApprovals()
+    XCTAssertTrue(initial.isEmpty)
+
+    let approvalID = await fixture.composition.application.approvals.request(
+      projectID: "prj-approval",
+      kind: .command,
+      summary: "Run swift test",
+      payloadDigest: "digest-xpc",
+      clientRequestID: "req-xpc-1"
+    )
+    let pending = try await client.pendingDirectApprovals()
+    XCTAssertEqual(pending.map(\.approvalID), [approvalID])
+    XCTAssertEqual(pending[0].kind, "command")
+
+    let approveResult = try await client.approveDirectApproval(approvalID: approvalID)
+    XCTAssertTrue(approveResult)
+    let afterApprove = try await client.pendingDirectApprovals()
+    XCTAssertTrue(afterApprove.isEmpty)
+
+    let secondID = await fixture.composition.application.approvals.request(
+      projectID: "prj-approval",
+      kind: .fileWrite,
+      summary: "Write README.md",
+      payloadDigest: "digest-xpc-2",
+      clientRequestID: nil
+    )
+    let denyResult = try await client.denyDirectApproval(approvalID: secondID)
+    XCTAssertTrue(denyResult)
+    let afterDeny = try await client.pendingDirectApprovals()
+    XCTAssertTrue(afterDeny.isEmpty)
+    let consumed = await fixture.composition.application.approvals.consume(
+      payloadDigest: "digest-xpc-2",
+      clientRequestID: nil
+    )
+    XCTAssertFalse(consumed)
+  }
+
   func testXPCModelPreferencesRoundTripThroughTheService() async throws {
     let catalog = AppServerConfiguration(
       executableURL: URL(fileURLWithPath: "/bin/sh"),

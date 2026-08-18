@@ -32,8 +32,14 @@ extension BridgeServiceApplication {
     guard resolution.allowed else {
       throw BridgeMCPQueryError.commandDenied(Self.denialMessage(resolution.reason))
     }
-    guard !resolution.requiresApproval else {
-      throw BridgeMCPQueryError.approvalRequired(approvalID: request.commandID ?? "")
+    if resolution.requiresApproval {
+      try await requireDirectApproval(
+        project: project,
+        kind: resolution.requiresNetwork ? .network : .command,
+        summary: "Run \(request.commandID ?? resolution.argv.joined(separator: " "))",
+        payload: request,
+        clientRequestID: request.clientRequestID
+      )
     }
     let workingDirectory = try Self.resolvedWorkingDirectory(
       project: project,
