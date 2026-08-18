@@ -92,7 +92,7 @@ Packages/BridgeCore/
   Sources/BridgeCodexRPC/        Verified Codex app-server protocol adapter
   Sources/BridgeCodexService/    ExecutionManager, SupervisorManager, local approval, coordinator
   Sources/BridgeServiceApplication/ Lightweight app service shared by MCP and XPC
-  Sources/BridgeMCP/             Bounded MCP server (read-only 9 / full-action 12 tools)
+  Sources/BridgeMCP/             Bounded MCP server (read-only 11 / full-action 22 tools)
   Sources/BridgeIPC/             Versioned, bounded XPC DTOs and client
   Sources/BridgeServiceHost/     Background Service composition root, XPC/MCP/Tunnel/lifecycle
   Sources/BridgeServiceAppShell/ Pure UI client: projects, threads, status, approvals

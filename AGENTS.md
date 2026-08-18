@@ -35,7 +35,9 @@ V1 的用户结果是：ChatGPT 网页版可以读取用户明确注册的本地
 - `BridgeServiceCore` 已提供单 SQLite 数据库、项目、设置、直接任务状态、展示型事件和项目级活动写任务约束。
 - 任务对话消息已进入 Service SQLite（`bridge_service_task_messages`，V4 schema）：每条消息按 `(task_id, message_key)` 去重，随任务级联删除；消息带 `kind`（`user`/`agent`/`reasoning`/`tool_call`）及 `tool_name`/`tool_status`/`tool_arguments` 列，用户消息、Codex agent 文本、reasoning 思考链与工具调用增量在 `TaskConversationBuffer` 中按 key 归并，最终以权威全文落库。
 - `BridgeCodexService` 已提供独立 ExecutionManager、SupervisorManager、本机 Codex 审批、ServiceExecutionCoordinator 和对话订阅推送（`item/agentMessage/delta`、`item/reasoning/textDelta`、`item/mcpToolCall/progress` 流式入 buffer，tool call 经 `item/started`/`item/completed` 更新状态，`turn/completed` 归并权威文本）。
-- `BridgeMCP` 已接入轻量 Service API，支持只读与完整动作两种 MCP 暴露模式。
+- `BridgeMCP` 已接入轻量 Service API，支持只读与完整动作两种 MCP 暴露模式。工具语义明确区分默认 Codex 路径（`submit_task`/`steer_task`/`interrupt_task`）与显式 Direct 路径（`direct_write_project_file`/`direct_edit_project_file`/`direct_apply_project_patch`/`direct_manage_project_path`/`direct_exec_project_command`/`direct_read_command`/`direct_write_stdin`/`direct_interrupt_command`）；Direct 工具仅当用户明确要求 ChatGPT 直接执行时使用。
+- `BridgeDirectCommand` 提供完整 Direct Process Session：每项目单活跃会话、注册/安全命令策略（`denied`/`registered`/`safe`）、结构化 argv 精确匹配、进程组、有界超时/stdin/输出（head/tail）、孤儿 PID 文件重启清理；Direct 会话与 Codex 写任务共用同一 workspace gate 互斥。
+- `DirectActionApprovalCenter` 提供 Direct 本机审批：pending approvals 经 XPC 推送到 App 展示，approve/deny 由本机用户决定；approval 绑定 payload digest + `client_request_id` 一次性消费、内存态、可过期，Service 重启后失效不可重放。
 - `CodexBridgeService` 已作为 bundled LaunchAgent 后台进程运行，并通过版本化 XPC 向 App 提供本机操作接口；XPC 增加任务删除、对话分页与对话流式订阅（`CodexBridgeTaskStreamListener` 推送），App 端 `TaskConversationModel` + `TaskConversationSheet` 实时渲染打字机式对话，包含可折叠思考链区块与工具调用卡片。
 - 正式 App Target 已使用 `BridgeServiceAppShell`，不再启动旧 App 内控制平面。退出 UI 只断开 XPC，不注销 Service，不停止任务。
 - Secure MCP Tunnel 已由后台 Service 持有。Tunnel ID 与 enabled 状态进入 Service SQLite；Runtime Key 与本地 MCP Header Secret只进入 Keychain。
@@ -66,6 +68,7 @@ CodexBridgeService → BridgeServiceHost
 BridgeServiceHost → BridgeServiceCore / BridgeServiceApplication / BridgeMCP
                   → BridgeCodexService / BridgeTunnel / BridgeSecurity
 BridgeCodexService → BridgeCodexRPC
+BridgeDirectCommand → BridgeServiceCore / BridgeProjects / BridgeSecurity
 BridgeMCP → Service API
 BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 ```
@@ -80,6 +83,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - `BridgeIPC`：版本化、有界的 XPC DTO 和 Client。
 - `BridgeServiceHost`：后台 Service 组合根、XPC、MCP、Tunnel 与生命周期。
 - `BridgeServiceAppShell`：纯 UI、本机项目管理、状态和审批。
+- `BridgeDirectCommand`：Direct Process Session、命令策略、输出边界和孤儿清理。
 - `BridgeLegacyImport`：一次性只读旧配置迁移，不承担长期双写。
 - `BridgeSecurity`、`BridgeFiles`、`BridgeProjects`：继续复用的安全边界。
 
@@ -97,6 +101,9 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - Supervisor 失败只降低监督状态，不能终止 Execution。
 - Service 崩溃后任务诚实进入 `unknown` 或 `interrupted`，不得启动新 Turn 冒充旧 Turn 恢复。
 - Tunnel 断线只阻止新的远程提交，不取消已经运行的本地任务。
+- Direct 命令只接受注册项目命令或内置安全程序且按结构化 argv 精确匹配；参数不拼 shell。
+- Direct 命令在独立进程组内运行，有界超时/stdin/输出；中断、Service 关闭和 Service 崩溃孤儿清理都会终止进程组。
+- Direct 会话常驻后台 Service，退出 App 不停止运行中的本地命令；Direct 审批在内存中一次性消费、可过期、重启失效。
 - 不读取、记录、导出或回传 Key、Token、Cookie、登录 URL、验证码、Runtime Key、本地 MCP Header Secret 或认证文件。
 - 旧配置迁移只能读取私有、当前用户所有、非符号链接的源目录和文件；迁移失败不得修改旧源或留下半迁移新数据。
 

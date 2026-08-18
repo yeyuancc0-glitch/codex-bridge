@@ -43,7 +43,7 @@ Local 模式只监听 `127.0.0.1`，适合 MCP Inspector 和本机回归，不�
 3. 使用官方 Secure MCP Tunnel 选项时，选择与 Bridge 中完全相同的 Tunnel ID。若界面要求 MCP 地址，使用官方流程显示的 Tunnel `/mcp` 地址；不要填 `localhost`，也不要填 Bridge 的 path secret。
 4. 使用 Manual HTTPS 时，填入完整 HTTPS `/mcp` 地址和对应强认证信息。仅在你确认该端点为自己的服务时保存。
 5. 保存后只授予这个应用所需的工具访问权限。Bridge 不向 ChatGPT 暴露 Codex 审批工具；高风险审批仍只能在 Mac 本地完成。
-6. 在应用的连接测试或工具列表中确认能看到工具目录。工具数量应为：只读默认 5 个；完整生产组合为 16 个（5 个只读、7 个任务、4 个项目/文件/导航）。
+6. 在应用的连接测试或工具列表中确认能看到工具目录。工具数量应为：只读模式 11 个；完整模式 22 个。完整模式的 Direct 文件编辑与受控命令工具（`direct_write_project_file`、`direct_edit_project_file`、`direct_apply_project_patch`、`direct_manage_project_path`、`direct_exec_project_command`、`direct_read_command`、`direct_write_stdin`、`direct_interrupt_command`）只应在你明确要求 ChatGPT 直接修改文件或运行命令时调用，默认工作仍走 `submit_task` 交给本机 Codex。
 
 不要在 ChatGPT 的 Server Instructions、对话或截图中粘贴 Runtime Key、Authorization 值、项目绝对路径或 Codex 登录信息。
 
@@ -81,6 +81,7 @@ Before starting any task, call list_projects, list_threads when continuing work,
 6. 只有 `get_final_report` 返回绑定同一 task/project/thread/turn/generation 的终态报告，才在 ChatGPT 中宣称完成；
 7. 断开 Tunnel 后确认本地任务不被停止、新的远程提交被拒绝；恢复 Tunnel 后确认重新通过严格健康检查；
 8. 用恶意 fixture 验证 Supervisor 不能读取项目根、用户目录或联网，也不能批准审批请求。
+9. 验证双执行模式：请 ChatGPT 直接改写一个项目文件（`direct_write_project_file`）时，Bridge 本地出现“仅本次允许/拒绝”审批，批准后文件原子写入；拒绝后文件不被修改。再请 ChatGPT 直接运行一个已登记命令（`direct_exec_project_command`），确认命令在独立进程组内有界运行、输出可读、可中断，且 Codex 写任务与 Direct 命令在同一项目互斥。
 
 Supervisor 认证的顺序必须是：创建任务隔离 HOME，启动仅允许出站网络的认证 app-server，用户在系统浏览器完成官方登录，收到匹配的 `account/login/completed` 成功通知并由 `account/read` 核验，然后停止认证进程，再用同一 HOME 启动完全禁网的只读 Supervisor 进程。
 
