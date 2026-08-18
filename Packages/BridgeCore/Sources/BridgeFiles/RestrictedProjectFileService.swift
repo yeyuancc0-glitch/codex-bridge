@@ -30,7 +30,7 @@ public struct RestrictedProjectFileService: Sendable {
     guard !containsUnsupportedControl(file.text) else {
       throw PathSecurityError.binaryFileBlocked
     }
-    return try makeReadResult(file: file, path: path, range: request.lineRange)
+    return try makeReadResult(fileInfo: file, path: path, range: request.lineRange)
   }
 
   public func search(_ request: ProjectFileSearchRequest) async throws
@@ -106,23 +106,25 @@ public struct RestrictedProjectFileService: Sendable {
   }
 
   private func makeReadResult(
-    file: SecureTextFile,
+    fileInfo: SecureTextFile,
     path: SecureRelativePath,
     range: FileLineRange
   ) throws -> ProjectFileReadResult {
-    let lines = normalizedLines(file.text)
+    let lines = normalizedLines(fileInfo.text)
     let startIndex = min(range.startLine - 1, lines.count)
     let endIndex = min(startIndex + range.lineCount, lines.count)
     var visible = try lines[startIndex..<endIndex].map(sanitizeReturnedLine)
     let selectedLineCount = visible.count
-    let moreLinesExist = endIndex < lines.count || file.truncated
+    let moreLinesExist = endIndex < lines.count || fileInfo.truncated
 
     while true {
       let result = readResult(
         lines: visible,
         path: path,
         startLine: range.startLine,
-        moreLinesExist: moreLinesExist || visible.count < endIndex - startIndex
+        moreLinesExist: moreLinesExist || visible.count < endIndex - startIndex,
+        sha256: fileInfo.sha256,
+        byteCount: fileInfo.byteCount
       )
       if try encodedSize(result) <= limits.maximumResponseBytes {
         guard selectedLineCount == 0 || !visible.isEmpty else {
@@ -139,7 +141,9 @@ public struct RestrictedProjectFileService: Sendable {
     lines: [RedactedTextLine],
     path: SecureRelativePath,
     startLine: Int,
-    moreLinesExist: Bool
+    moreLinesExist: Bool,
+    sha256: String,
+    byteCount: Int
   ) -> ProjectFileReadResult {
     let endLine = lines.isEmpty ? nil : startLine + lines.count - 1
     return ProjectFileReadResult(
@@ -149,7 +153,9 @@ public struct RestrictedProjectFileService: Sendable {
       content: lines.map(\.text).joined(separator: "\n"),
       redactedLineCount: lines.lazy.filter(\.redacted).count,
       truncated: moreLinesExist,
-      nextStartLine: moreLinesExist ? startLine + lines.count : nil
+      nextStartLine: moreLinesExist ? startLine + lines.count : nil,
+      sha256: sha256,
+      byteCount: byteCount
     )
   }
 

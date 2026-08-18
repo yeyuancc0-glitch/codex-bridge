@@ -121,6 +121,18 @@ public struct ProjectFileReadRequest: Equatable, Sendable {
   }
 }
 
+public struct FileRevision: Codable, Equatable, Sendable {
+  public let sha256: String
+  public let byteCount: Int
+
+  public init(sha256: String, byteCount: Int) {
+    self.sha256 = sha256
+    self.byteCount = byteCount
+  }
+
+  public var value: String { "sha256:\(sha256)" }
+}
+
 public struct ProjectFileReadResult: Codable, Equatable, Sendable {
   public let relativePath: String
   public let startLine: Int
@@ -129,6 +141,9 @@ public struct ProjectFileReadResult: Codable, Equatable, Sendable {
   public let redactedLineCount: Int
   public let truncated: Bool
   public let nextStartLine: Int?
+  public let sha256: String
+  public let byteCount: Int
+  public let fileRevision: String
 
   public init(
     relativePath: String,
@@ -137,7 +152,9 @@ public struct ProjectFileReadResult: Codable, Equatable, Sendable {
     content: String,
     redactedLineCount: Int,
     truncated: Bool,
-    nextStartLine: Int?
+    nextStartLine: Int?,
+    sha256: String = "",
+    byteCount: Int = 0
   ) {
     self.relativePath = relativePath
     self.startLine = startLine
@@ -146,6 +163,9 @@ public struct ProjectFileReadResult: Codable, Equatable, Sendable {
     self.redactedLineCount = redactedLineCount
     self.truncated = truncated
     self.nextStartLine = nextStartLine
+    self.sha256 = sha256
+    self.byteCount = byteCount
+    self.fileRevision = "sha256:\(sha256)"
   }
 }
 

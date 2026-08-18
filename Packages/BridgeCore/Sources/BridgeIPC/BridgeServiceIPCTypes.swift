@@ -60,11 +60,37 @@ public struct BridgeServiceIPCError: Codable, Equatable, Sendable {
   public let code: String
   public let message: String
   public let retryable: Bool
+  public let owner: String?
+  public let taskID: String?
+  public let operationID: String?
+  public let sessionID: String?
 
-  public init(code: String, message: String, retryable: Bool = false) {
+  public init(
+    code: String,
+    message: String,
+    retryable: Bool = false,
+    owner: String? = nil,
+    taskID: String? = nil,
+    operationID: String? = nil,
+    sessionID: String? = nil
+  ) {
     self.code = code
     self.message = message
     self.retryable = retryable
+    self.owner = owner
+    self.taskID = taskID
+    self.operationID = operationID
+    self.sessionID = sessionID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case code
+    case message
+    case retryable
+    case owner
+    case taskID = "task_id"
+    case operationID = "operation_id"
+    case sessionID = "session_id"
   }
 }
 

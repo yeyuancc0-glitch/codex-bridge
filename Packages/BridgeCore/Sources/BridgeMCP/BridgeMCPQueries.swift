@@ -42,6 +42,40 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case busy
   case timeout
   case unavailable
+  case projectBusy(WorkspaceBusyDetail)
+}
+
+public struct WorkspaceBusyDetail: Codable, Equatable, Sendable {
+  public let owner: String
+  public let taskID: String?
+  public let operationID: String?
+  public let sessionID: String?
+
+  public init(
+    owner: String,
+    taskID: String? = nil,
+    operationID: String? = nil,
+    sessionID: String? = nil
+  ) {
+    self.owner = owner
+    self.taskID = taskID
+    self.operationID = operationID
+    self.sessionID = sessionID
+  }
+
+  public static func codex(taskID: String) -> WorkspaceBusyDetail {
+    WorkspaceBusyDetail(owner: "codex_task", taskID: taskID)
+  }
+
+  public static func codexAdmissionPending() -> WorkspaceBusyDetail {
+    WorkspaceBusyDetail(owner: "codex_task", taskID: nil)
+  }
+
+  public static func direct(owner: String, operationID: String? = nil, sessionID: String? = nil)
+    -> WorkspaceBusyDetail
+  {
+    WorkspaceBusyDetail(owner: owner, operationID: operationID, sessionID: sessionID)
+  }
 }
 
 public struct BridgeStatusSnapshot: Codable, Equatable, Sendable {

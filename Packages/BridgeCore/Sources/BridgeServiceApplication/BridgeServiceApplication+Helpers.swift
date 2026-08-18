@@ -287,6 +287,14 @@ extension BridgeServiceApplication {
     }
   }
 
+  static func publicWorkspaceBusyError(_ error: Error) -> BridgeMCPQueryError {
+    guard let value = error as? ProjectWorkspaceBusyError else { return .unavailable }
+    switch value {
+    case .busy(let detail):
+      return .projectBusy(detail)
+    }
+  }
+
   static func checkDeadline(_ deadline: ContinuousClock.Instant) throws {
     guard ContinuousClock.now < deadline else { throw BridgeMCPQueryError.timeout }
   }

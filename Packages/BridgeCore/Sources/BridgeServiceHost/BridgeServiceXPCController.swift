@@ -702,6 +702,16 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           code: "invalid_state",
           message: "The operation was rejected by local policy."
         )
+      case .projectBusy(let detail):
+        return .init(
+          code: "project_busy",
+          message: "The project workspace is busy.",
+          retryable: true,
+          owner: detail.owner,
+          taskID: detail.taskID,
+          operationID: detail.operationID,
+          sessionID: detail.sessionID
+        )
       }
     }
     if error is TunnelConfigurationError {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -6,12 +7,23 @@ public struct SecureTextFile: Equatable, Sendable {
   public let bytesRead: Int
   public let lineCount: Int
   public let truncated: Bool
+  public let sha256: String
+  public let byteCount: Int
 
-  public init(text: String, bytesRead: Int, lineCount: Int, truncated: Bool) {
+  public init(
+    text: String,
+    bytesRead: Int,
+    lineCount: Int,
+    truncated: Bool,
+    sha256: String = "",
+    byteCount: Int = 0
+  ) {
     self.text = text
     self.bytesRead = bytesRead
     self.lineCount = lineCount
     self.truncated = truncated
+    self.sha256 = sha256
+    self.byteCount = byteCount
   }
 }
 
@@ -60,7 +72,9 @@ public struct SecureFileReader: Sendable {
       text: visible.joined(separator: "\n"),
       bytesRead: data.count,
       lineCount: visible.count,
-      truncated: lines.count > maximumLines
+      truncated: lines.count > maximumLines,
+      sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+      byteCount: data.count
     )
   }
 

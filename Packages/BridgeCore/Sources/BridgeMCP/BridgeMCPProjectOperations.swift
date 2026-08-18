@@ -116,6 +116,9 @@ public struct MCPProjectFileReadPage: Codable, Equatable, Sendable {
   public let redactedLineCount: Int
   public let truncated: Bool
   public let nextStartLine: Int?
+  public let sha256: String
+  public let byteCount: Int
+  public let fileRevision: String
 
   public init(
     relativePath: String,
@@ -124,7 +127,9 @@ public struct MCPProjectFileReadPage: Codable, Equatable, Sendable {
     content: String,
     redactedLineCount: Int,
     truncated: Bool,
-    nextStartLine: Int?
+    nextStartLine: Int?,
+    sha256: String = "",
+    byteCount: Int = 0
   ) {
     self.relativePath = relativePath
     self.startLine = startLine
@@ -133,6 +138,9 @@ public struct MCPProjectFileReadPage: Codable, Equatable, Sendable {
     self.redactedLineCount = redactedLineCount
     self.truncated = truncated
     self.nextStartLine = nextStartLine
+    self.sha256 = sha256
+    self.byteCount = byteCount
+    self.fileRevision = "sha256:\(sha256)"
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -143,6 +151,9 @@ public struct MCPProjectFileReadPage: Codable, Equatable, Sendable {
     case redactedLineCount = "redacted_line_count"
     case truncated
     case nextStartLine = "next_start_line"
+    case sha256
+    case byteCount = "byte_count"
+    case fileRevision = "file_revision"
   }
 }
 

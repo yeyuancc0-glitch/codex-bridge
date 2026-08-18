@@ -216,6 +216,16 @@ public struct MCPToolDispatcher: Sendable {
         message: "The Bridge is at its current request limit.",
         retryable: true
       )
+    case .projectBusy(let detail):
+      description = .init(
+        code: "project_busy",
+        message: "The project workspace is busy.",
+        retryable: true,
+        owner: detail.owner,
+        taskID: detail.taskID,
+        operationID: detail.operationID,
+        sessionID: detail.sessionID
+      )
     case .timeout:
       description = .init(
         code: "timeout",

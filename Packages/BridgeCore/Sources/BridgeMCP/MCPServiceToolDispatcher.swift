@@ -453,6 +453,16 @@ public struct MCPServiceToolDispatcher: Sendable {
       )
     case .busy:
       dto = .init(code: "busy", message: "The Bridge is busy.", retryable: true)
+    case .projectBusy(let detail):
+      dto = .init(
+        code: "project_busy",
+        message: Self.projectBusyMessage(detail),
+        retryable: true,
+        owner: detail.owner,
+        taskID: detail.taskID,
+        operationID: detail.operationID,
+        sessionID: detail.sessionID
+      )
     case .timeout:
       dto = .init(code: "timeout", message: "The operation timed out.", retryable: true)
     case .unavailable:
@@ -478,6 +488,22 @@ public struct MCPServiceToolDispatcher: Sendable {
         ),
         isError: true
       )
+    }
+  }
+
+  private static func projectBusyMessage(_ detail: WorkspaceBusyDetail) -> String {
+    switch detail.owner {
+    case "codex_task":
+      if let taskID = detail.taskID {
+        return "The project workspace is busy with a Codex task (\(taskID))."
+      }
+      return "The project workspace is being acquired by a Codex task."
+    case "direct_file":
+      return "The project workspace is busy with a direct file operation."
+    case "direct_command":
+      return "The project workspace is busy with a running command session."
+    default:
+      return "The project workspace is busy."
     }
   }
 }
@@ -521,6 +547,9 @@ private struct ServiceReadProjectFileOutput: Codable, Sendable {
   let redactedLineCount: Int
   let truncated: Bool
   let nextStartLine: Int?
+  let sha256: String
+  let byteCount: Int
+  let fileRevision: String
 
   init(page: MCPProjectFileReadPage) {
     relativePath = page.relativePath
@@ -530,6 +559,9 @@ private struct ServiceReadProjectFileOutput: Codable, Sendable {
     redactedLineCount = page.redactedLineCount
     truncated = page.truncated
     nextStartLine = page.nextStartLine
+    sha256 = page.sha256
+    byteCount = page.byteCount
+    fileRevision = page.fileRevision
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -541,6 +573,9 @@ private struct ServiceReadProjectFileOutput: Codable, Sendable {
     case redactedLineCount = "redacted_line_count"
     case truncated
     case nextStartLine = "next_start_line"
+    case sha256
+    case byteCount = "byte_count"
+    case fileRevision = "file_revision"
   }
 }
 

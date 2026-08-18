@@ -26,6 +26,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   let catalog: ServiceCodexCatalog
   let files: RestrictedProjectFileService
   let runtimeStatus: ServiceRuntimeStatus
+  let workspaceGate: ServiceWorkspaceMutationGate
   private let iso8601 = ISO8601DateFormatter()
 
   public init(
@@ -36,7 +37,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     coordinator: ServiceExecutionCoordinator,
     catalog: ServiceCodexCatalog,
     runtimeStatus: ServiceRuntimeStatus,
-    files: RestrictedProjectFileService? = nil
+    files: RestrictedProjectFileService? = nil,
+    workspaceGate: ServiceWorkspaceMutationGate? = nil
   ) {
     precondition(!appVersion.isEmpty)
     self.appVersion = appVersion
@@ -51,6 +53,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       ?? RestrictedProjectFileService(
         repository: ServiceProjectRepositoryAdapter(projects: projects)
       )
+    self.workspaceGate = workspaceGate ?? ServiceWorkspaceMutationGate()
   }
 
   public func serviceStatus(
@@ -169,7 +172,9 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
         content: result.content,
         redactedLineCount: result.redactedLineCount,
         truncated: result.truncated,
-        nextStartLine: result.nextStartLine
+        nextStartLine: result.nextStartLine,
+        sha256: result.sha256,
+        byteCount: result.byteCount
       )
     } catch {
       throw Self.publicFileError(error)
@@ -316,6 +321,11 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     }
     let result: ServiceTaskCreationResult
     do {
+      try await workspaceGate.beginCodexAdmission(projectID: project.id)
+    } catch {
+      throw Self.publicWorkspaceBusyError(error)
+    }
+    do {
       result = try await tasks.submit(
         ServiceTaskRequest(
           projectID: project.id,
@@ -336,8 +346,13 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
           fastMode: fastMode
         )
       )
-    } catch let error as ServiceStoreError {
-      throw Self.publicStoreError(error)
+      await workspaceGate.endCodexAdmission(projectID: project.id)
+    } catch {
+      await workspaceGate.endCodexAdmission(projectID: project.id)
+      if let storeError = error as? ServiceStoreError {
+        throw Self.publicStoreError(storeError)
+      }
+      throw error
     }
     if !result.reusedExistingTask {
       let started = try await tasks.begin(taskID: result.task.id)

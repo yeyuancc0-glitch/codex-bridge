@@ -147,9 +147,13 @@ public struct MCPServiceToolCatalog: Sendable {
         "redacted_line_count": integerSchema(minimum: 0),
         "truncated": boolSchema,
         "next_start_line": integerSchema(minimum: 1),
+        "sha256": stringSchema,
+        "byte_count": integerSchema(minimum: 0),
+        "file_revision": stringSchema,
       ],
       required: [
         "relative_path", "start_line", "content", "redacted_line_count", "truncated",
+        "sha256", "byte_count", "file_revision",
       ]
     )
   )
