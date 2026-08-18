@@ -266,7 +266,10 @@ public struct MCPServiceToolCatalog: Sendable {
   private static let submitTask = Tool(
     name: MCPServiceToolName.submitTask.rawValue,
     title: "Submit task",
-    description: "Create a Codex task that remains pending until the local user approves it.",
+    description:
+      "Create a Codex task that remains pending until the local user approves it. "
+      + "Codex is the default execution path. Prefer this tool unless the user explicitly asked "
+      + "ChatGPT to modify files or run commands directly.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -606,7 +609,8 @@ public struct MCPServiceToolCatalog: Sendable {
     name: MCPServiceToolName.directReadCommand.rawValue,
     title: "Read direct command",
     description:
-      "Read the latest bounded output of a direct command session started with "
+      "Read the latest bounded output of a direct command session. Use only when the user "
+      + "explicitly asked ChatGPT to run commands directly and this session was started with "
       + "direct_exec_project_command.",
     inputSchema: objectSchema(
       properties: ["session_id": boundedStringSchema(maximum: 128)],
@@ -621,7 +625,8 @@ public struct MCPServiceToolCatalog: Sendable {
     title: "Write direct command stdin",
     description:
       "Write a bounded chunk of input to the stdin of a running interactive direct command "
-      + "session.",
+      + "session. Use only when the user explicitly asked ChatGPT to drive an interactive "
+      + "command directly.",
     inputSchema: objectSchema(
       properties: [
         "session_id": boundedStringSchema(maximum: 128),
@@ -642,7 +647,8 @@ public struct MCPServiceToolCatalog: Sendable {
     name: MCPServiceToolName.directInterruptCommand.rawValue,
     title: "Interrupt direct command",
     description:
-      "Cancel a running direct command session, terminating its process group.",
+      "Cancel a running direct command session, terminating its process group. Use only when "
+      + "the user explicitly asked ChatGPT to run commands directly and the session must stop.",
     inputSchema: objectSchema(
       properties: ["session_id": boundedStringSchema(maximum: 128)],
       required: ["session_id"]
