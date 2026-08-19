@@ -416,7 +416,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
       projectID: fixture.project.id.rawValue,
       deadline: deadline
     )
-    XCTAssertEqual(initial.commandMode, "registered")
+    XCTAssertEqual(initial.commandMode, "safe")
     XCTAssertTrue(initial.commands.isEmpty)
 
     _ = try await fixture.projects.updateWorkspaceConfiguration(

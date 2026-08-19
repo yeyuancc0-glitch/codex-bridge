@@ -52,8 +52,16 @@ public actor SimpleServiceStore {
 
   public func updateProject(_ project: ServiceProjectRecord) throws {
     let workspaceCommands = try encoder.encode(project.workspaceCommands)
+    let safeWhitelist = try encoder.encode(project.safeWhitelist)
+    let commandBlacklist = try encoder.encode(project.commandBlacklist)
     guard workspaceCommands.count <= 262_144 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
+    guard safeWhitelist.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.safeWhitelist")
+    }
+    guard commandBlacklist.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.commandBlacklist")
     }
     do {
       try database.write { db in
@@ -72,7 +80,8 @@ public actor SimpleServiceStore {
             UPDATE bridge_service_projects
             SET name = ?, read_permission = ?, write_permission = ?,
                 network_permission = ?, direct_command_mode = ?,
-                workspace_commands_json = ?, updated_at = ?
+                workspace_commands_json = ?, direct_safe_whitelist_json = ?,
+                direct_blacklist_json = ?, updated_at = ?
             WHERE project_id = ?
             """,
           arguments: [
@@ -82,6 +91,8 @@ public actor SimpleServiceStore {
             project.accessPolicy.network.rawValue,
             project.directCommandMode.rawValue,
             workspaceCommands,
+            safeWhitelist,
+            commandBlacklist,
             project.updatedAt.timeIntervalSince1970,
             project.id.rawValue,
           ]
@@ -99,15 +110,31 @@ public actor SimpleServiceStore {
     projectID: ProjectID,
     directCommandMode: ServiceDirectCommandMode,
     workspaceCommands: [ServiceWorkspaceCommand],
+    safeWhitelist: [ServiceSafeCommandRule],
+    commandBlacklist: [ServiceCommandBlacklistRule],
     at date: Date
   ) throws {
     try ServiceValidation.date(date, field: "project.updatedAt")
     guard workspaceCommands.count <= 128 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
     }
+    guard safeWhitelist.count <= 128 else {
+      throw ServiceStoreError.invalidArgument("project.safeWhitelist")
+    }
+    guard commandBlacklist.count <= 128 else {
+      throw ServiceStoreError.invalidArgument("project.commandBlacklist")
+    }
     let workspaceCommandsData = try encoder.encode(workspaceCommands)
+    let safeWhitelistData = try encoder.encode(safeWhitelist)
+    let commandBlacklistData = try encoder.encode(commandBlacklist)
     guard workspaceCommandsData.count <= 262_144 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
+    guard safeWhitelistData.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.safeWhitelist")
+    }
+    guard commandBlacklistData.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.commandBlacklist")
     }
     do {
       try database.write { db in
@@ -121,12 +148,15 @@ public actor SimpleServiceStore {
         try db.execute(
           sql: """
             UPDATE bridge_service_projects
-            SET direct_command_mode = ?, workspace_commands_json = ?, updated_at = ?
+            SET direct_command_mode = ?, workspace_commands_json = ?,
+                direct_safe_whitelist_json = ?, direct_blacklist_json = ?, updated_at = ?
             WHERE project_id = ?
             """,
           arguments: [
             directCommandMode.rawValue,
             workspaceCommandsData,
+            safeWhitelistData,
+            commandBlacklistData,
             date.timeIntervalSince1970,
             projectID.rawValue,
           ]

@@ -202,6 +202,23 @@ extension BridgeServiceApplication {
     )
   }
 
+  static func safeRule(_ rule: ServiceSafeCommandRule) -> MCPSafeCommandRule {
+    MCPSafeCommandRule(
+      ruleID: Self.safe(rule.id, maximum: 128),
+      name: Self.safe(rule.name, maximum: 256),
+      executable: Self.safe(rule.executable, maximum: 4_096),
+      argumentsPrefix: rule.argumentsPrefix.map { Self.safe($0, maximum: 4_096) }
+    )
+  }
+
+  static func blacklistRule(_ rule: ServiceCommandBlacklistRule) -> MCPCommandBlacklistRule {
+    MCPCommandBlacklistRule(
+      ruleID: Self.safe(rule.id, maximum: 128),
+      executable: rule.executable.map { Self.safe($0, maximum: 4_096) },
+      pattern: rule.pattern.map { Self.safe($0, maximum: 4_096) }
+    )
+  }
+
   static func executionState(_ tasks: [ServiceTaskRecord]) -> String {
     if tasks.contains(where: { $0.state.status == .unknown }) { return "unknown" }
     if tasks.contains(where: {

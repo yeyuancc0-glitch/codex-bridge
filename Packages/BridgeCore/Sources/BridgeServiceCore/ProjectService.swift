@@ -64,6 +64,8 @@ public actor ServiceProjectService {
   public func updateWorkspaceConfiguration(
     directCommandMode: ServiceDirectCommandMode,
     workspaceCommands: [ServiceWorkspaceCommand],
+    safeWhitelist: [ServiceSafeCommandRule] = [],
+    commandBlacklist: [ServiceCommandBlacklistRule] = [],
     projectID: ProjectID
   ) async throws -> ServiceProjectRecord {
     guard let current = try await store.project(id: projectID) else {
@@ -72,6 +74,8 @@ public actor ServiceProjectService {
     let updated = try current.updatingWorkspaceConfiguration(
       directCommandMode: directCommandMode,
       workspaceCommands: workspaceCommands,
+      safeWhitelist: safeWhitelist,
+      commandBlacklist: commandBlacklist,
       at: now()
     )
     try await store.updateProject(updated)

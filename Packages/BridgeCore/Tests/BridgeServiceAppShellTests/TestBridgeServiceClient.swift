@@ -138,7 +138,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       ),
       directWorkspace: MCPDirectWorkspace(
         fileWritePermission: "requiresLocalApproval",
-        commandMode: "registered",
+        commandMode: "safe",
         commands: [
           MCPProjectCommand(
             commandID: "wcmd-test",
@@ -153,7 +153,9 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func updateProjectCommands(
     projectID: String,
-    commands: [IPCWorkspaceCommand]
+    commands: [IPCWorkspaceCommand],
+    safeWhitelist: [IPCSafeCommandRule] = [],
+    commandBlacklist: [IPCBlacklistRule] = []
   ) async throws -> MCPProjectDetail {
     MCPProjectDetail(
       projectID: projectID,
@@ -165,7 +167,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       ),
       directWorkspace: MCPDirectWorkspace(
         fileWritePermission: "requiresLocalApproval",
-        commandMode: "registered",
+        commandMode: "safe",
         commands: commands.map {
           MCPProjectCommand(
             commandID: $0.commandID,
@@ -175,6 +177,21 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
             workingDirectory: $0.workingDirectory,
             requiresNetwork: $0.requiresNetwork,
             risk: $0.risk
+          )
+        },
+        safeWhitelist: safeWhitelist.map {
+          MCPSafeCommandRule(
+            ruleID: $0.ruleID,
+            name: $0.name,
+            executable: $0.executable,
+            argumentsPrefix: $0.argumentsPrefix
+          )
+        },
+        commandBlacklist: commandBlacklist.map {
+          MCPCommandBlacklistRule(
+            ruleID: $0.ruleID,
+            executable: $0.executable,
+            pattern: $0.pattern
           )
         }
       )

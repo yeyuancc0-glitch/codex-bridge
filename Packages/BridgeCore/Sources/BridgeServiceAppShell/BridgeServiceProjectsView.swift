@@ -422,8 +422,10 @@ private struct ProjectPermissionEditor: View {
 private struct ProjectWorkspaceEditor: View {
   @ObservedObject var model: BridgeServiceAppModel
   let project: MCPProjectSummary
-  @State private var draftMode = "registered"
+  @State private var draftMode = "safe"
   @State private var drafts: [BridgeWorkspaceCommandDraft] = []
+  @State private var safeRuleDrafts: [BridgeSafeRuleDraft] = []
+  @State private var blacklistDrafts: [BridgeBlacklistDraft] = []
   @State private var showSavedFeedback = false
   @State private var modeChanged = false
 
@@ -457,14 +459,34 @@ private struct ProjectWorkspaceEditor: View {
 
         Picker("Direct 命令模式", selection: $draftMode) {
           Text("禁止").tag("denied")
-          Text("仅登记命令").tag("registered")
-          Text("安全开发命令").tag("safe")
+          Text("安全模式").tag("safe")
+          Text("完全模式").tag("full")
         }
         .pickerStyle(.segmented)
         .labelsHidden()
         .frame(maxWidth: 420)
 
+        Text(modeDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+
         Divider()
+
+        if draftMode == "safe" {
+          whitelistSection
+          Divider()
+          blacklistSection
+          Divider()
+        } else if draftMode == "full" {
+          Text(
+            "完全模式放行所有命令（仍受项目网络/写入权限与本机审批约束）。建议仅对可信项目使用。"
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          Divider()
+        }
 
         commandList
 
@@ -479,7 +501,12 @@ private struct ProjectWorkspaceEditor: View {
           Spacer()
 
           Button("保存命令配置") {
-            model.saveProjectCommands(projectID: project.projectID, drafts: drafts)
+            model.saveProjectCommands(
+              projectID: project.projectID,
+              drafts: drafts,
+              safeWhitelist: safeRuleDrafts.map { $0.toIPCRule() },
+              commandBlacklist: blacklistDrafts.map { $0.toIPCRule() }
+            )
             withAnimation(.easeInOut(duration: 0.2)) {
               showSavedFeedback = true
             }
@@ -517,6 +544,66 @@ private struct ProjectWorkspaceEditor: View {
       .onChange(of: model.projectDetails[project.projectID]) {
         loadDetail()
       }
+      .onChange(of: draftMode) {
+        modeChanged = true
+      }
+    }
+  }
+
+  private var modeDescription: String {
+    switch draftMode {
+    case "denied":
+      return "禁止 ChatGPT 直接执行任何命令。"
+    case "full":
+      return "完全模式放行所有命令，不再检查白名单。"
+    default:
+      return "安全模式仅放行内置安全命令、已登记命令与你添加的白名单；黑名单规则两种模式下都生效。"
+    }
+  }
+
+  private var whitelistSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("安全白名单（内置之外的自定义命令）", systemImage: "checkmark.shield")
+        .font(.caption.weight(.semibold))
+      if safeRuleDrafts.isEmpty {
+        Text("内置安全命令包括 git status/diff/log、ls、pwd、find、swift test/build 等。在这里添加额外允许的命令。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(safeRuleDrafts) { draft in
+          SafeRuleRow(draft: binding(for: draft)) {
+            safeRuleDrafts.removeAll { $0.id == draft.id }
+          }
+        }
+      }
+      Button("+ 添加白名单命令") {
+        safeRuleDrafts.append(BridgeSafeRuleDraft())
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+  }
+
+  private var blacklistSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("黑名单（禁止执行，两种模式均生效）", systemImage: "shield.slash")
+        .font(.caption.weight(.semibold))
+      if blacklistDrafts.isEmpty {
+        Text("可按可执行文件或参数包含的子串禁止命令，例如 executable=rm 或 pattern=-rf。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(blacklistDrafts) { draft in
+          BlacklistRow(draft: binding(for: draft)) {
+            blacklistDrafts.removeAll { $0.id == draft.id }
+          }
+        }
+      }
+      Button("+ 添加黑名单规则") {
+        blacklistDrafts.append(BridgeBlacklistDraft())
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
     }
   }
 
@@ -557,12 +644,42 @@ private struct ProjectWorkspaceEditor: View {
     )
   }
 
+  private func binding(for draft: BridgeSafeRuleDraft) -> Binding<BridgeSafeRuleDraft> {
+    Binding(
+      get: { safeRuleDrafts.first(where: { $0.id == draft.id }) ?? draft },
+      set: { newValue in
+        if let index = safeRuleDrafts.firstIndex(where: { $0.id == draft.id }) {
+          safeRuleDrafts[index] = newValue
+        }
+      }
+    )
+  }
+
+  private func binding(for draft: BridgeBlacklistDraft) -> Binding<BridgeBlacklistDraft> {
+    Binding(
+      get: { blacklistDrafts.first(where: { $0.id == draft.id }) ?? draft },
+      set: { newValue in
+        if let index = blacklistDrafts.firstIndex(where: { $0.id == draft.id }) {
+          blacklistDrafts[index] = newValue
+        }
+      }
+    )
+  }
+
   private func loadDetail() {
     guard let detail = model.projectDetails[project.projectID] else { return }
-    draftMode = detail.directWorkspace?.commandMode ?? "registered"
+    draftMode = detail.directWorkspace?.commandMode ?? "safe"
     let existing = detail.directWorkspace?.commands ?? []
     if drafts.isEmpty && !existing.isEmpty {
       drafts = existing.map(BridgeWorkspaceCommandDraft.init)
+    }
+    let existingWhitelist = detail.directWorkspace?.safeWhitelist ?? []
+    if safeRuleDrafts.isEmpty && !existingWhitelist.isEmpty {
+      safeRuleDrafts = existingWhitelist.map(BridgeSafeRuleDraft.init)
+    }
+    let existingBlacklist = detail.directWorkspace?.commandBlacklist ?? []
+    if blacklistDrafts.isEmpty && !existingBlacklist.isEmpty {
+      blacklistDrafts = existingBlacklist.map(BridgeBlacklistDraft.init)
     }
     modeChanged = false
   }
@@ -582,6 +699,71 @@ private struct ProjectWorkspaceEditor: View {
         || command.requiresNetwork != draft.requiresNetwork
         || command.risk != draft.risk
     }
+  }
+}
+
+private struct SafeRuleRow: View {
+  @Binding var draft: BridgeSafeRuleDraft
+  let onRemove: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        TextField("规则名称", text: $draft.name)
+          .textFieldStyle(.roundedBorder)
+        Spacer()
+        Button(role: .destructive) {
+          onRemove()
+        } label: {
+          Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+      }
+      HStack(spacing: 8) {
+        TextField("可执行文件", text: $draft.executable)
+          .textFieldStyle(.roundedBorder)
+        TextField("参数前缀（每行一个，可选）", text: $draft.argumentsPrefix, axis: .vertical)
+          .textFieldStyle(.roundedBorder)
+          .lineLimit(1...3)
+      }
+    }
+    .padding(10)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(Color.green.opacity(0.35), lineWidth: 0.8)
+    )
+  }
+}
+
+private struct BlacklistRow: View {
+  @Binding var draft: BridgeBlacklistDraft
+  let onRemove: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        TextField("可执行文件（可选）", text: $draft.executable)
+          .textFieldStyle(.roundedBorder)
+        TextField("参数子串（可选）", text: $draft.pattern)
+          .textFieldStyle(.roundedBorder)
+        Spacer()
+        Button(role: .destructive) {
+          onRemove()
+        } label: {
+          Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+      }
+    }
+    .padding(10)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(Color.red.opacity(0.35), lineWidth: 0.8)
+    )
   }
 }
 

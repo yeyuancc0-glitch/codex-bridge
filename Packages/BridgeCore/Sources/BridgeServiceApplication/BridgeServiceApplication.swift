@@ -125,7 +125,9 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       directWorkspace: MCPDirectWorkspace(
         fileWritePermission: project.accessPolicy.write.rawValue,
         commandMode: project.directCommandMode.rawValue,
-        commands: project.workspaceCommands.map(Self.projectCommand)
+        commands: project.workspaceCommands.map(Self.projectCommand),
+        safeWhitelist: project.safeWhitelist.map(Self.safeRule),
+        commandBlacklist: project.commandBlacklist.map(Self.blacklistRule)
       )
     )
   }

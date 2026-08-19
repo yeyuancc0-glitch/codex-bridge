@@ -290,7 +290,7 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
 
     let store = try SimpleServiceStore(path: path)
     let project = try await store.project(id: ProjectID(rawValue: "prj-v4"))
-    XCTAssertEqual(project?.directCommandMode, .registered)
+    XCTAssertEqual(project?.directCommandMode, .safe)
     XCTAssertTrue(project?.workspaceCommands.isEmpty ?? false)
     XCTAssertEqual(project?.accessPolicy.write, .requiresLocalApproval)
 
@@ -305,6 +305,8 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
           arguments: ["swift", "test"]
         )
       ],
+      safeWhitelist: [],
+      commandBlacklist: [],
       at: Date(timeIntervalSince1970: 3)
     )
     let updated = try await store.project(id: ProjectID(rawValue: "prj-v4"))

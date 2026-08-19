@@ -172,6 +172,7 @@ extension BridgeServiceApplication {
     case .unknownCommand: "unknown command"
     case .networkNotAllowed: "network access is not allowed for this project"
     case .writeNotAllowed: "project write access is denied"
+    case .blacklisted: "command is blacklisted for this project"
     case nil: "command denied"
     }
   }

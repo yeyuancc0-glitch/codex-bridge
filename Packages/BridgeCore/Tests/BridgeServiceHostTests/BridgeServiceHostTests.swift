@@ -241,7 +241,7 @@ final class BridgeServiceHostTests: XCTestCase {
     )
 
     let initial = try await client.projectCommands(projectID: registered.projectID)
-    XCTAssertEqual(initial.directWorkspace?.commandMode, "registered")
+    XCTAssertEqual(initial.directWorkspace?.commandMode, "safe")
     XCTAssertTrue(initial.directWorkspace?.commands.isEmpty ?? false)
 
     let updated = try await client.updateProjectCommands(
@@ -255,22 +255,38 @@ final class BridgeServiceHostTests: XCTestCase {
           requiresNetwork: false,
           risk: "normal"
         )
+      ],
+      safeWhitelist: [
+        IPCSafeCommandRule(
+          ruleID: "safe-xpc",
+          name: "XPC Safe",
+          executable: "make",
+          argumentsPrefix: ["test"]
+        )
+      ],
+      commandBlacklist: [
+        IPCBlacklistRule(ruleID: "blk-xpc", executable: "rm")
       ]
     )
     XCTAssertEqual(updated.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
-    XCTAssertEqual(updated.directWorkspace?.commandMode, "registered")
+    XCTAssertEqual(updated.directWorkspace?.safeWhitelist.map(\.ruleID), ["safe-xpc"])
+    XCTAssertEqual(updated.directWorkspace?.commandBlacklist.map(\.ruleID), ["blk-xpc"])
+    XCTAssertEqual(updated.directWorkspace?.commandMode, "safe")
 
     let withMode = try await client.setProjectCommandMode(
       projectID: registered.projectID,
-      commandMode: "safe"
+      commandMode: "full"
     )
-    XCTAssertEqual(withMode.directWorkspace?.commandMode, "safe")
+    XCTAssertEqual(withMode.directWorkspace?.commandMode, "full")
     XCTAssertEqual(withMode.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
+    XCTAssertEqual(withMode.directWorkspace?.safeWhitelist.map(\.ruleID), ["safe-xpc"])
     XCTAssertEqual(withMode.capabilities.write, ProjectPermission.requiresLocalApproval.rawValue)
 
     let reloaded = try await client.projectCommands(projectID: registered.projectID)
-    XCTAssertEqual(reloaded.directWorkspace?.commandMode, "safe")
+    XCTAssertEqual(reloaded.directWorkspace?.commandMode, "full")
     XCTAssertEqual(reloaded.directWorkspace?.commands.map(\.name), ["XPC Tests"])
+    XCTAssertEqual(reloaded.directWorkspace?.safeWhitelist.map(\.name), ["XPC Safe"])
+    XCTAssertEqual(reloaded.directWorkspace?.commandBlacklist.map(\.ruleID), ["blk-xpc"])
   }
 
   func testXPCDirectApprovalsRoundTripThroughTheService() async throws {

@@ -1,15 +1,16 @@
 import GRDB
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 5
+  static let version: Int64 = 6
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
   static let migrationV3 = "BridgeServiceCore.v3"
   static let migrationV4 = "BridgeServiceCore.v4"
   static let migrationV5 = "BridgeServiceCore.v5"
+  static let migrationV6 = "BridgeServiceCore.v6"
   static let knownMigrations: Set<String> = [
-    migrationV1, migrationV2, migrationV3, migrationV4, migrationV5,
+    migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -40,6 +41,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV5) { db in
       try createVersionFive(in: db)
+    }
+    migrator.registerMigration(migrationV6) { db in
+      try createVersionSix(in: db)
     }
     return migrator
   }
@@ -153,6 +157,66 @@ enum ServiceStoreSchema {
           ADD COLUMN workspace_commands_json BLOB NOT NULL DEFAULT '[]';
 
         UPDATE bridge_service_meta SET schema_version = 5 WHERE singleton = 1;
+        """)
+  }
+
+  static func createVersionSix(in db: Database) throws {
+    try db.execute(
+      sql: """
+        UPDATE bridge_service_projects
+          SET direct_command_mode = 'safe'
+          WHERE direct_command_mode = 'registered';
+
+        ALTER TABLE bridge_service_projects RENAME TO bridge_service_projects_v5;
+
+        CREATE TABLE bridge_service_projects (
+            project_id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            canonical_path TEXT NOT NULL,
+            root_device TEXT NOT NULL,
+            root_inode TEXT NOT NULL,
+            read_permission TEXT NOT NULL
+              CHECK (read_permission IN ('denied', 'requiresLocalApproval', 'allowed')),
+            write_permission TEXT NOT NULL
+              CHECK (write_permission IN ('denied', 'requiresLocalApproval', 'allowed')),
+            network_permission TEXT NOT NULL
+              CHECK (network_permission IN ('denied', 'requiresLocalApproval', 'allowed')),
+            direct_command_mode TEXT NOT NULL DEFAULT 'safe'
+              CHECK (direct_command_mode IN ('denied', 'safe', 'full')),
+            workspace_commands_json BLOB NOT NULL DEFAULT '[]',
+            direct_safe_whitelist_json BLOB NOT NULL DEFAULT '[]',
+            direct_blacklist_json BLOB NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE (canonical_path),
+            UNIQUE (root_device, root_inode),
+            CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 1024),
+            CHECK (substr(canonical_path, 1, 1) = '/'),
+            CHECK (length(CAST(canonical_path AS BLOB)) BETWEEN 1 AND 16384),
+            CHECK (length(root_device) BETWEEN 1 AND 20),
+            CHECK (length(root_inode) BETWEEN 1 AND 20),
+            CHECK (updated_at >= created_at)
+        ) WITHOUT ROWID;
+
+        INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json,
+            direct_safe_whitelist_json, direct_blacklist_json,
+            created_at, updated_at
+        )
+        SELECT
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json,
+            '[]', '[]',
+            created_at, updated_at
+        FROM bridge_service_projects_v5;
+
+        DROP TABLE bridge_service_projects_v5;
+
+        UPDATE bridge_service_meta SET schema_version = 6 WHERE singleton = 1;
         """)
   }
 
@@ -317,6 +381,7 @@ enum ServiceStoreSchema {
           "project_id", "name", "canonical_path", "root_device", "root_inode",
           "read_permission", "write_permission", "network_permission", "created_at", "updated_at",
           "direct_command_mode", "workspace_commands_json",
+          "direct_safe_whitelist_json", "direct_blacklist_json",
         ],
         "bridge_service_settings": ["setting_key", "setting_value", "updated_at"],
         "bridge_service_tasks": [

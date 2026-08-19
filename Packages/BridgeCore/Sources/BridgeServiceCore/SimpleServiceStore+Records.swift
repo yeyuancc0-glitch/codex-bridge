@@ -104,16 +104,25 @@ extension SimpleServiceStore {
 
   static func insert(_ project: ServiceProjectRecord, in db: Database) throws {
     let workspaceCommands = try JSONEncoder().encode(project.workspaceCommands)
+    let safeWhitelist = try JSONEncoder().encode(project.safeWhitelist)
+    let commandBlacklist = try JSONEncoder().encode(project.commandBlacklist)
     guard workspaceCommands.count <= 262_144 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
+    }
+    guard safeWhitelist.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.safeWhitelist")
+    }
+    guard commandBlacklist.count <= 262_144 else {
+      throw ServiceStoreError.invalidArgument("project.commandBlacklist")
     }
     try db.execute(
       sql: """
         INSERT INTO bridge_service_projects (
           project_id, name, canonical_path, root_device, root_inode,
           read_permission, write_permission, network_permission, created_at, updated_at,
-          direct_command_mode, workspace_commands_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          direct_command_mode, workspace_commands_json,
+          direct_safe_whitelist_json, direct_blacklist_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
       arguments: [
         project.id.rawValue,
@@ -128,6 +137,8 @@ extension SimpleServiceStore {
         project.updatedAt.timeIntervalSince1970,
         project.directCommandMode.rawValue,
         workspaceCommands,
+        safeWhitelist,
+        commandBlacklist,
       ]
     )
   }
@@ -310,6 +321,20 @@ extension SimpleServiceStore {
     } catch {
       throw ServiceStoreError.corruptRecord
     }
+    let safeWhitelist: [ServiceSafeCommandRule]
+    do {
+      safeWhitelist = try JSONDecoder().decode(
+        [ServiceSafeCommandRule].self, from: row["direct_safe_whitelist_json"])
+    } catch {
+      throw ServiceStoreError.corruptRecord
+    }
+    let commandBlacklist: [ServiceCommandBlacklistRule]
+    do {
+      commandBlacklist = try JSONDecoder().decode(
+        [ServiceCommandBlacklistRule].self, from: row["direct_blacklist_json"])
+    } catch {
+      throw ServiceStoreError.corruptRecord
+    }
     return try ServiceProjectRecord(
       id: ProjectID(rawValue: row["project_id"]),
       name: row["name"],
@@ -325,6 +350,8 @@ extension SimpleServiceStore {
       ),
       directCommandMode: directCommandMode,
       workspaceCommands: workspaceCommands,
+      safeWhitelist: safeWhitelist,
+      commandBlacklist: commandBlacklist,
       createdAt: Date(timeIntervalSince1970: row["created_at"]),
       updatedAt: Date(timeIntervalSince1970: row["updated_at"])
     )

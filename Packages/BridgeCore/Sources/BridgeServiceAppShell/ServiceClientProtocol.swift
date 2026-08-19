@@ -10,7 +10,9 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func projectCommands(projectID: String) async throws -> MCPProjectDetail
   func updateProjectCommands(
     projectID: String,
-    commands: [IPCWorkspaceCommand]
+    commands: [IPCWorkspaceCommand],
+    safeWhitelist: [IPCSafeCommandRule],
+    commandBlacklist: [IPCBlacklistRule]
   ) async throws -> MCPProjectDetail
   func setProjectCommandMode(projectID: String, commandMode: String) async throws
     -> MCPProjectDetail

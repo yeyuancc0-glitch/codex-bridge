@@ -31,25 +31,77 @@ public protocol BridgeMCPProjectOperations: Sendable {
   ) async throws -> MCPOpenInCodexReceipt
 }
 
+public struct MCPSafeCommandRule: Codable, Equatable, Sendable {
+  public let ruleID: String
+  public let name: String
+  public let executable: String
+  public let argumentsPrefix: [String]
+
+  public init(
+    ruleID: String,
+    name: String,
+    executable: String,
+    argumentsPrefix: [String] = []
+  ) {
+    self.ruleID = ruleID
+    self.name = name
+    self.executable = executable
+    self.argumentsPrefix = argumentsPrefix
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case ruleID = "rule_id"
+    case name
+    case executable
+    case argumentsPrefix = "arguments_prefix"
+  }
+}
+
+public struct MCPCommandBlacklistRule: Codable, Equatable, Sendable {
+  public let ruleID: String
+  public let executable: String?
+  public let pattern: String?
+
+  public init(ruleID: String, executable: String? = nil, pattern: String? = nil) {
+    self.ruleID = ruleID
+    self.executable = executable
+    self.pattern = pattern
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case ruleID = "rule_id"
+    case executable
+    case pattern
+  }
+}
+
 public struct MCPDirectWorkspace: Codable, Equatable, Sendable {
   public let fileWritePermission: String
   public let commandMode: String
   public let commands: [MCPProjectCommand]
+  public let safeWhitelist: [MCPSafeCommandRule]
+  public let commandBlacklist: [MCPCommandBlacklistRule]
 
   public init(
     fileWritePermission: String,
     commandMode: String,
-    commands: [MCPProjectCommand]
+    commands: [MCPProjectCommand],
+    safeWhitelist: [MCPSafeCommandRule] = [],
+    commandBlacklist: [MCPCommandBlacklistRule] = []
   ) {
     self.fileWritePermission = fileWritePermission
     self.commandMode = commandMode
     self.commands = commands
+    self.safeWhitelist = safeWhitelist
+    self.commandBlacklist = commandBlacklist
   }
 
   private enum CodingKeys: String, CodingKey {
     case fileWritePermission = "file_write_permission"
     case commandMode = "command_mode"
     case commands
+    case safeWhitelist = "safe_whitelist"
+    case commandBlacklist = "command_blacklist"
   }
 }
 

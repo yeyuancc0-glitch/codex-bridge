@@ -234,18 +234,73 @@ public struct IPCWorkspaceCommand: Codable, Equatable, Sendable {
   }
 }
 
+public struct IPCSafeCommandRule: Codable, Equatable, Sendable {
+  public let ruleID: String
+  public let name: String
+  public let executable: String
+  public let argumentsPrefix: [String]
+
+  public init(
+    ruleID: String,
+    name: String,
+    executable: String,
+    argumentsPrefix: [String] = []
+  ) {
+    self.ruleID = ruleID
+    self.name = name
+    self.executable = executable
+    self.argumentsPrefix = argumentsPrefix
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case ruleID = "rule_id"
+    case name
+    case executable
+    case argumentsPrefix = "arguments_prefix"
+  }
+}
+
+public struct IPCBlacklistRule: Codable, Equatable, Sendable {
+  public let ruleID: String
+  public let executable: String?
+  public let pattern: String?
+
+  public init(ruleID: String, executable: String? = nil, pattern: String? = nil) {
+    self.ruleID = ruleID
+    self.executable = executable
+    self.pattern = pattern
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case ruleID = "rule_id"
+    case executable
+    case pattern
+  }
+}
+
 public struct IPCProjectCommandsUpdateRequest: Codable, Equatable, Sendable {
   public let projectID: String
   public let commands: [IPCWorkspaceCommand]
+  public let safeWhitelist: [IPCSafeCommandRule]
+  public let commandBlacklist: [IPCBlacklistRule]
 
-  public init(projectID: String, commands: [IPCWorkspaceCommand]) {
+  public init(
+    projectID: String,
+    commands: [IPCWorkspaceCommand],
+    safeWhitelist: [IPCSafeCommandRule] = [],
+    commandBlacklist: [IPCBlacklistRule] = []
+  ) {
     self.projectID = projectID
     self.commands = commands
+    self.safeWhitelist = safeWhitelist
+    self.commandBlacklist = commandBlacklist
   }
 
   private enum CodingKeys: String, CodingKey {
     case projectID = "project_id"
     case commands
+    case safeWhitelist = "safe_whitelist"
+    case commandBlacklist = "command_blacklist"
   }
 }
 

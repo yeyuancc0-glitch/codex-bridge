@@ -217,7 +217,7 @@ final class DirectApprovalFlowTests: XCTestCase {
   func testDirectExecCommandRequiresApprovalForElevatedCommand() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     _ = try await fixture.projects.updateWorkspaceConfiguration(
-      directCommandMode: .registered,
+      directCommandMode: .safe,
       workspaceCommands: [
         try ServiceWorkspaceCommand(
           id: "wcmd-deploy",
@@ -305,7 +305,7 @@ final class DirectApprovalFlowTests: XCTestCase {
   func testAutoApprovalModeAllowsElevatedCommandWithoutApproval() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     _ = try await fixture.projects.updateWorkspaceConfiguration(
-      directCommandMode: .registered,
+      directCommandMode: .safe,
       workspaceCommands: [
         try ServiceWorkspaceCommand(
           id: "wcmd-auto-deploy",

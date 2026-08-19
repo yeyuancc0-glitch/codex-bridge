@@ -11,7 +11,9 @@ final class DirectCommandPolicyTests: XCTestCase {
     mode: ServiceDirectCommandMode,
     write: ProjectPermission = .requiresLocalApproval,
     network: ProjectPermission = .denied,
-    commands: [ServiceWorkspaceCommand] = []
+    commands: [ServiceWorkspaceCommand] = [],
+    safeWhitelist: [ServiceSafeCommandRule] = [],
+    commandBlacklist: [ServiceCommandBlacklistRule] = []
   ) throws -> ServiceProjectRecord {
     try ServiceProjectRecord(
       id: ProjectID(rawValue: "prj-policy"),
@@ -24,6 +26,8 @@ final class DirectCommandPolicyTests: XCTestCase {
       ),
       directCommandMode: mode,
       workspaceCommands: commands,
+      safeWhitelist: safeWhitelist,
+      commandBlacklist: commandBlacklist,
       createdAt: Date(),
       updatedAt: Date()
     )
@@ -43,20 +47,20 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertFalse(result.allowed)
   }
 
-  func testRegisteredModeRejectsUnregisteredCommand() throws {
+  func testSafeModeRejectsUnregisteredUnsafeCommand() throws {
     let policy = DirectCommandPolicy()
     let result = policy.resolve(
-      project: try project(mode: .registered),
+      project: try project(mode: .safe),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: nil,
-        argv: ["git", "status"]
+        argv: ["make", "deploy"]
       )
     )
     XCTAssertEqual(result.reason, .commandNotRegistered)
   }
 
-  func testRegisteredModeAllowsRegisteredCommandByID() throws {
+  func testSafeModeAllowsRegisteredCommandByID() throws {
     let policy = DirectCommandPolicy()
     let command = try ServiceWorkspaceCommand(
       id: "wcmd-test",
@@ -67,7 +71,7 @@ final class DirectCommandPolicyTests: XCTestCase {
     )
     let result = policy.resolve(
       project: try project(
-        mode: .registered,
+        mode: .safe,
         write: .allowed,
         commands: [command]
       ),
@@ -82,7 +86,7 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.argv, ["Scripts/with-xcode.sh", "swift", "test"])
   }
 
-  func testRegisteredModeRejectsMismatchedArgv() throws {
+  func testSafeModeRejectsMismatchedArgv() throws {
     let policy = DirectCommandPolicy()
     let command = try ServiceWorkspaceCommand(
       id: "wcmd-test",
@@ -92,7 +96,7 @@ final class DirectCommandPolicyTests: XCTestCase {
       requiresNetwork: false
     )
     let result = policy.resolve(
-      project: try project(mode: .registered, commands: [command]),
+      project: try project(mode: .safe, commands: [command]),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: "wcmd-test",
@@ -102,9 +106,9 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.reason, .invalidArguments)
   }
 
-  func testSafeModeAllowsBuiltInGit() throws {
+  func testSafeModeAllowsBuiltInGitStatusButRejectsGitPush() throws {
     let policy = DirectCommandPolicy()
-    let result = policy.resolve(
+    let status = policy.resolve(
       project: try project(mode: .safe),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
@@ -112,8 +116,17 @@ final class DirectCommandPolicyTests: XCTestCase {
         argv: ["git", "status"]
       )
     )
-    XCTAssertTrue(result.allowed)
-    XCTAssertEqual(result.argv, ["git", "status"])
+    XCTAssertTrue(status.allowed)
+    XCTAssertEqual(status.argv, ["git", "status"])
+    let push = policy.resolve(
+      project: try project(mode: .safe),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["git", "push"]
+      )
+    )
+    XCTAssertEqual(push.reason, .commandNotRegistered)
   }
 
   func testSafeModeRejectsUnsafeProgram() throws {
@@ -129,6 +142,141 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.reason, .commandNotRegistered)
   }
 
+  func testSafeModeAllowsWhitelistedCommandWithPrefix() throws {
+    let policy = DirectCommandPolicy()
+    let rule = try ServiceSafeCommandRule(
+      id: "safe-make",
+      name: "Make",
+      executable: "make",
+      argumentsPrefix: ["deploy"]
+    )
+    let result = policy.resolve(
+      project: try project(
+        mode: .safe,
+        write: .allowed,
+        safeWhitelist: [rule]
+      ),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["make", "deploy", "--force"]
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertEqual(result.argv, ["make", "deploy", "--force"])
+  }
+
+  func testSafeModeRejectsWhitelistedExecutableWithNonPrefixArguments() throws {
+    let policy = DirectCommandPolicy()
+    let rule = try ServiceSafeCommandRule(
+      id: "safe-make",
+      name: "Make",
+      executable: "make",
+      argumentsPrefix: ["deploy"]
+    )
+    let result = policy.resolve(
+      project: try project(mode: .safe, safeWhitelist: [rule]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["make", "clean"]
+      )
+    )
+    XCTAssertEqual(result.reason, .commandNotRegistered)
+  }
+
+  func testSafeModeWhitelistWithoutPrefixAllowsAnyArguments() throws {
+    let policy = DirectCommandPolicy()
+    let rule = try ServiceSafeCommandRule(
+      id: "safe-node",
+      name: "Node",
+      executable: "node"
+    )
+    let result = policy.resolve(
+      project: try project(mode: .safe, write: .allowed, safeWhitelist: [rule]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["node", "scripts/tool.js", "--flag"]
+      )
+    )
+    XCTAssertTrue(result.allowed)
+  }
+
+  func testBlacklistBlocksInSafeMode() throws {
+    let policy = DirectCommandPolicy()
+    let blacklist = try ServiceCommandBlacklistRule(id: "blk-git", executable: "git")
+    let result = policy.resolve(
+      project: try project(mode: .safe, commandBlacklist: [blacklist]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["git", "status"]
+      )
+    )
+    XCTAssertEqual(result.reason, .blacklisted)
+  }
+
+  func testBlacklistBlocksInFullModeToo() throws {
+    let policy = DirectCommandPolicy()
+    let blacklist = try ServiceCommandBlacklistRule(id: "blk-rm", executable: "rm")
+    let result = policy.resolve(
+      project: try project(mode: .full, commandBlacklist: [blacklist]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["rm", "-rf", "."]
+      )
+    )
+    XCTAssertEqual(result.reason, .blacklisted)
+  }
+
+  func testBlacklistPatternBlocksByArgumentSubstring() throws {
+    let policy = DirectCommandPolicy()
+    let blacklist = try ServiceCommandBlacklistRule(id: "blk-force", pattern: "--force")
+    let result = policy.resolve(
+      project: try project(mode: .full, commandBlacklist: [blacklist]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["git", "push", "--force"]
+      )
+    )
+    XCTAssertEqual(result.reason, .blacklisted)
+  }
+
+  func testFullModeAllowsUnregisteredCommand() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .full),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["/bin/rm", "-rf", "/tmp/junk"]
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertTrue(result.requiresApproval)
+  }
+
+  func testLegacyRegisteredValueDecodesAsSafe() throws {
+    let decoded = try JSONDecoder().decode(
+      ServiceDirectCommandMode.self,
+      from: Data("\"registered\"".utf8)
+    )
+    XCTAssertEqual(decoded, .safe)
+    let safe = try JSONDecoder().decode(
+      ServiceDirectCommandMode.self,
+      from: Data("\"safe\"".utf8)
+    )
+    XCTAssertEqual(safe, .safe)
+    let full = try JSONDecoder().decode(
+      ServiceDirectCommandMode.self,
+      from: Data("\"full\"".utf8)
+    )
+    XCTAssertEqual(full, .full)
+  }
+
   func testNetworkDeniedRejectsNetworkCommand() throws {
     let policy = DirectCommandPolicy()
     let command = try ServiceWorkspaceCommand(
@@ -139,7 +287,7 @@ final class DirectCommandPolicyTests: XCTestCase {
       requiresNetwork: true
     )
     let result = policy.resolve(
-      project: try project(mode: .registered, commands: [command]),
+      project: try project(mode: .safe, commands: [command]),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: "wcmd-pull",
@@ -160,7 +308,7 @@ final class DirectCommandPolicyTests: XCTestCase {
       risk: .elevated
     )
     let result = policy.resolve(
-      project: try project(mode: .registered, commands: [command]),
+      project: try project(mode: .safe, commands: [command]),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: "wcmd-deploy",
@@ -181,7 +329,7 @@ final class DirectCommandPolicyTests: XCTestCase {
       requiresNetwork: false
     )
     let result = policy.resolve(
-      project: try project(mode: .registered, commands: [command]),
+      project: try project(mode: .safe, commands: [command]),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: "wcmd-build",
@@ -203,7 +351,7 @@ final class DirectCommandPolicyTests: XCTestCase {
     )
     let result = policy.resolve(
       project: try project(
-        mode: .registered,
+        mode: .safe,
         write: .allowed,
         commands: [command]
       ),

@@ -181,8 +181,10 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           from: request
         )
         _ = try await composition.projects.updateWorkspaceConfiguration(
-          directCommandMode: .registered,
+          directCommandMode: .safe,
           workspaceCommands: try Self.workspaceCommands(payload.commands),
+          safeWhitelist: try Self.safeCommandRules(payload.safeWhitelist),
+          commandBlacklist: try Self.blacklistRules(payload.commandBlacklist),
           projectID: ProjectID(rawValue: payload.projectID)
         )
         let updatedCommands = try await composition.application.serviceProject(
@@ -211,6 +213,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         _ = try await composition.projects.updateWorkspaceConfiguration(
           directCommandMode: mode,
           workspaceCommands: current.workspaceCommands,
+          safeWhitelist: current.safeWhitelist,
+          commandBlacklist: current.commandBlacklist,
           projectID: ProjectID(rawValue: payload.projectID)
         )
         let updatedMode = try await composition.application.serviceProject(
@@ -758,6 +762,37 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         workingDirectory: command.workingDirectory,
         requiresNetwork: command.requiresNetwork,
         risk: risk
+      )
+    }
+  }
+
+  private static func safeCommandRules(
+    _ rules: [IPCSafeCommandRule]
+  ) throws -> [ServiceSafeCommandRule] {
+    guard rules.count <= 128 else {
+      throw ServiceStoreError.invalidArgument("project.safeWhitelist")
+    }
+    return try rules.map { rule in
+      try ServiceSafeCommandRule(
+        id: rule.ruleID,
+        name: rule.name,
+        executable: rule.executable,
+        argumentsPrefix: rule.argumentsPrefix
+      )
+    }
+  }
+
+  private static func blacklistRules(
+    _ rules: [IPCBlacklistRule]
+  ) throws -> [ServiceCommandBlacklistRule] {
+    guard rules.count <= 128 else {
+      throw ServiceStoreError.invalidArgument("project.commandBlacklist")
+    }
+    return try rules.map { rule in
+      try ServiceCommandBlacklistRule(
+        id: rule.ruleID,
+        executable: rule.executable,
+        pattern: rule.pattern
       )
     }
   }
