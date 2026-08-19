@@ -154,7 +154,6 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func updateProjectCommands(
     projectID: String,
     commands: [IPCWorkspaceCommand],
-    safeWhitelist: [IPCSafeCommandRule] = [],
     commandBlacklist: [IPCBlacklistRule] = []
   ) async throws -> MCPProjectDetail {
     MCPProjectDetail(
@@ -177,14 +176,6 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
             workingDirectory: $0.workingDirectory,
             requiresNetwork: $0.requiresNetwork,
             risk: $0.risk
-          )
-        },
-        safeWhitelist: safeWhitelist.map {
-          MCPSafeCommandRule(
-            ruleID: $0.ruleID,
-            name: $0.name,
-            executable: $0.executable,
-            argumentsPrefix: $0.argumentsPrefix
           )
         },
         commandBlacklist: commandBlacklist.map {

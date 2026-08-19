@@ -202,15 +202,6 @@ extension BridgeServiceApplication {
     )
   }
 
-  static func safeRule(_ rule: ServiceSafeCommandRule) -> MCPSafeCommandRule {
-    MCPSafeCommandRule(
-      ruleID: Self.safe(rule.id, maximum: 128),
-      name: Self.safe(rule.name, maximum: 256),
-      executable: Self.safe(rule.executable, maximum: 4_096),
-      argumentsPrefix: rule.argumentsPrefix.map { Self.safe($0, maximum: 4_096) }
-    )
-  }
-
   static func blacklistRule(_ rule: ServiceCommandBlacklistRule) -> MCPCommandBlacklistRule {
     MCPCommandBlacklistRule(
       ruleID: Self.safe(rule.id, maximum: 128),

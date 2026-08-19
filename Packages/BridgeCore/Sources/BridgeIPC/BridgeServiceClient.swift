@@ -94,7 +94,6 @@ public actor BridgeServiceClient {
   public func updateProjectCommands(
     projectID: String,
     commands: [IPCWorkspaceCommand],
-    safeWhitelist: [IPCSafeCommandRule] = [],
     commandBlacklist: [IPCBlacklistRule] = []
   ) async throws -> MCPProjectDetail {
     try await call(
@@ -102,7 +101,6 @@ public actor BridgeServiceClient {
       payload: IPCProjectCommandsUpdateRequest(
         projectID: projectID,
         commands: commands,
-        safeWhitelist: safeWhitelist,
         commandBlacklist: commandBlacklist
       )
     )

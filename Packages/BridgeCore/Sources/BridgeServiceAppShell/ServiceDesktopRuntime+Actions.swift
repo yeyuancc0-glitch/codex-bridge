@@ -49,7 +49,6 @@ extension BridgeServiceAppModel {
   func saveProjectCommands(
     projectID: String,
     drafts: [BridgeWorkspaceCommandDraft],
-    safeWhitelist: [IPCSafeCommandRule] = [],
     commandBlacklist: [IPCBlacklistRule] = []
   ) {
     runMutation { [weak self] client in
@@ -58,7 +57,6 @@ extension BridgeServiceAppModel {
       let detail = try await client.updateProjectCommands(
         projectID: projectID,
         commands: commands,
-        safeWhitelist: safeWhitelist,
         commandBlacklist: commandBlacklist
       )
       self.projectDetails[projectID] = detail

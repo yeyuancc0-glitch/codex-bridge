@@ -424,7 +424,6 @@ private struct ProjectWorkspaceEditor: View {
   let project: MCPProjectSummary
   @State private var draftMode = "safe"
   @State private var drafts: [BridgeWorkspaceCommandDraft] = []
-  @State private var safeRuleDrafts: [BridgeSafeRuleDraft] = []
   @State private var blacklistDrafts: [BridgeBlacklistDraft] = []
   @State private var showSavedFeedback = false
   @State private var modeChanged = false
@@ -474,21 +473,19 @@ private struct ProjectWorkspaceEditor: View {
         Divider()
 
         if draftMode == "safe" {
-          whitelistSection
-          Divider()
-          blacklistSection
-          Divider()
-        } else if draftMode == "full" {
           Text(
-            "完全模式放行所有命令（仍受项目网络/写入权限与本机审批约束）。建议仅对可信项目使用。"
+            "安全模式仅放行内置安全命令与你添加的允许命令；黑名单规则在两种模式下都生效。"
           )
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-          Divider()
         }
 
-        commandList
+        allowedCommandsList
+
+        Divider()
+
+        blacklistSection
 
         Divider()
 
@@ -504,7 +501,6 @@ private struct ProjectWorkspaceEditor: View {
             model.saveProjectCommands(
               projectID: project.projectID,
               drafts: drafts,
-              safeWhitelist: safeRuleDrafts.map { $0.toIPCRule() },
               commandBlacklist: blacklistDrafts.map { $0.toIPCRule() }
             )
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -518,7 +514,7 @@ private struct ProjectWorkspaceEditor: View {
             }
           }
           .buttonStyle(.borderedProminent)
-          .disabled(drafts.isEmpty || !hasCommandChanges)
+          .disabled(!hasCommandChanges)
 
           if modeChanged {
             Button("保存命令模式") {
@@ -557,30 +553,7 @@ private struct ProjectWorkspaceEditor: View {
     case "full":
       return "完全模式放行所有命令，不再检查白名单。"
     default:
-      return "安全模式仅放行内置安全命令、已登记命令与你添加的白名单；黑名单规则两种模式下都生效。"
-    }
-  }
-
-  private var whitelistSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Label("安全白名单（内置之外的自定义命令）", systemImage: "checkmark.shield")
-        .font(.caption.weight(.semibold))
-      if safeRuleDrafts.isEmpty {
-        Text("内置安全命令包括 git status/diff/log、ls、pwd、find、swift test/build 等。在这里添加额外允许的命令。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } else {
-        ForEach(safeRuleDrafts) { draft in
-          SafeRuleRow(draft: binding(for: draft)) {
-            safeRuleDrafts.removeAll { $0.id == draft.id }
-          }
-        }
-      }
-      Button("+ 添加白名单命令") {
-        safeRuleDrafts.append(BridgeSafeRuleDraft())
-      }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
+      return "安全模式仅放行内置安全命令与允许命令列表中的命令。"
     }
   }
 
@@ -607,15 +580,19 @@ private struct ProjectWorkspaceEditor: View {
     }
   }
 
-  private var commandList: some View {
-    VStack(spacing: 8) {
+  private var allowedCommandsList: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("允许的命令（安全模式下可用）", systemImage: "checkmark.shield")
+        .font(.caption.weight(.semibold))
       if drafts.isEmpty {
         HStack(spacing: 8) {
           Image(systemName: "command")
             .foregroundStyle(.secondary)
-          Text("尚未登记项目命令。添加后，ChatGPT 在用户明确要求直接执行时才可使用。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          Text(
+            "内置安全命令包括 git status/diff/log、ls、pwd、find、swift test/build、xcodebuild 等。在这里添加额外允许的命令；参数为可选前缀。"
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -644,17 +621,6 @@ private struct ProjectWorkspaceEditor: View {
     )
   }
 
-  private func binding(for draft: BridgeSafeRuleDraft) -> Binding<BridgeSafeRuleDraft> {
-    Binding(
-      get: { safeRuleDrafts.first(where: { $0.id == draft.id }) ?? draft },
-      set: { newValue in
-        if let index = safeRuleDrafts.firstIndex(where: { $0.id == draft.id }) {
-          safeRuleDrafts[index] = newValue
-        }
-      }
-    )
-  }
-
   private func binding(for draft: BridgeBlacklistDraft) -> Binding<BridgeBlacklistDraft> {
     Binding(
       get: { blacklistDrafts.first(where: { $0.id == draft.id }) ?? draft },
@@ -672,10 +638,6 @@ private struct ProjectWorkspaceEditor: View {
     let existing = detail.directWorkspace?.commands ?? []
     if drafts.isEmpty && !existing.isEmpty {
       drafts = existing.map(BridgeWorkspaceCommandDraft.init)
-    }
-    let existingWhitelist = detail.directWorkspace?.safeWhitelist ?? []
-    if safeRuleDrafts.isEmpty && !existingWhitelist.isEmpty {
-      safeRuleDrafts = existingWhitelist.map(BridgeSafeRuleDraft.init)
     }
     let existingBlacklist = detail.directWorkspace?.commandBlacklist ?? []
     if blacklistDrafts.isEmpty && !existingBlacklist.isEmpty {
@@ -699,41 +661,6 @@ private struct ProjectWorkspaceEditor: View {
         || command.requiresNetwork != draft.requiresNetwork
         || command.risk != draft.risk
     }
-  }
-}
-
-private struct SafeRuleRow: View {
-  @Binding var draft: BridgeSafeRuleDraft
-  let onRemove: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        TextField("规则名称", text: $draft.name)
-          .textFieldStyle(.roundedBorder)
-        Spacer()
-        Button(role: .destructive) {
-          onRemove()
-        } label: {
-          Image(systemName: "trash")
-        }
-        .buttonStyle(.borderless)
-      }
-      HStack(spacing: 8) {
-        TextField("可执行文件", text: $draft.executable)
-          .textFieldStyle(.roundedBorder)
-        TextField("参数前缀（每行一个，可选）", text: $draft.argumentsPrefix, axis: .vertical)
-          .textFieldStyle(.roundedBorder)
-          .lineLimit(1...3)
-      }
-    }
-    .padding(10)
-    .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .strokeBorder(Color.green.opacity(0.35), lineWidth: 0.8)
-    )
   }
 }
 
@@ -791,7 +718,7 @@ private struct ProjectCommandRow: View {
       }
 
       HStack(spacing: 8) {
-        TextField("参数（每行一个）", text: $draft.arguments, axis: .vertical)
+        TextField("参数前缀（每行一个，可选）", text: $draft.arguments, axis: .vertical)
           .textFieldStyle(.roundedBorder)
           .lineLimit(2...4)
 

@@ -109,46 +109,6 @@ public enum ServiceWorkspaceCommandRisk: String, Codable, CaseIterable, Sendable
   case elevated
 }
 
-public struct ServiceSafeCommandRule: Codable, Equatable, Sendable {
-  public let id: String
-  public let name: String
-  public let executable: String
-  public let argumentsPrefix: [String]
-
-  public init(
-    id: String,
-    name: String,
-    executable: String,
-    argumentsPrefix: [String] = []
-  ) throws {
-    try ServiceValidation.identifier(id, field: "safeRule.id", maximumBytes: 128)
-    try ServiceValidation.text(name, field: "safeRule.name", maximumBytes: 256)
-    try ServiceValidation.text(executable, field: "safeRule.executable", maximumBytes: 4_096)
-    guard argumentsPrefix.count <= 64 else {
-      throw ServiceStoreError.invalidArgument("safeRule.argumentsPrefix")
-    }
-    for (index, argument) in argumentsPrefix.enumerated() {
-      try ServiceValidation.text(
-        argument, field: "safeRule.argumentsPrefix.\(index)", maximumBytes: 4_096)
-    }
-    self.id = id
-    self.name = name
-    self.executable = executable
-    self.argumentsPrefix = argumentsPrefix
-  }
-
-  public static func stableID(name: String, executable: String, argumentsPrefix: [String]) -> String
-  {
-    let canonical = [
-      name.trimmingCharacters(in: .whitespacesAndNewlines),
-      executable.trimmingCharacters(in: .whitespacesAndNewlines),
-      argumentsPrefix.joined(separator: "\u{0}"),
-    ].joined(separator: "\u{1}")
-    let digest = SHA256.hash(data: Data(canonical.utf8))
-    return "safe_" + digest.map { String(format: "%02x", $0) }.joined().prefix(40)
-  }
-}
-
 public struct ServiceCommandBlacklistRule: Codable, Equatable, Sendable {
   public let id: String
   public let executable: String?
@@ -179,6 +139,8 @@ public struct ServiceWorkspaceCommand: Codable, Equatable, Sendable {
   public let id: String
   public let name: String
   public let executable: String
+  /// Argument prefix: raw-argv requests match when they start with this prefix
+  /// (empty means any arguments are allowed for the executable).
   public let arguments: [String]
   public let workingDirectory: String?
   public let requiresNetwork: Bool
@@ -242,7 +204,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
   public let accessPolicy: ProjectAccessPolicy
   public let directCommandMode: ServiceDirectCommandMode
   public let workspaceCommands: [ServiceWorkspaceCommand]
-  public let safeWhitelist: [ServiceSafeCommandRule]
   public let commandBlacklist: [ServiceCommandBlacklistRule]
   public let createdAt: Date
   public let updatedAt: Date
@@ -254,7 +215,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
     accessPolicy: ProjectAccessPolicy,
     directCommandMode: ServiceDirectCommandMode = .safe,
     workspaceCommands: [ServiceWorkspaceCommand] = [],
-    safeWhitelist: [ServiceSafeCommandRule] = [],
     commandBlacklist: [ServiceCommandBlacklistRule] = [],
     createdAt: Date,
     updatedAt: Date
@@ -264,9 +224,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
     try ServiceValidation.projectPolicy(accessPolicy)
     guard workspaceCommands.count <= 128 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
-    }
-    guard safeWhitelist.count <= 128 else {
-      throw ServiceStoreError.invalidArgument("project.safeWhitelist")
     }
     guard commandBlacklist.count <= 128 else {
       throw ServiceStoreError.invalidArgument("project.commandBlacklist")
@@ -282,7 +239,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
     self.accessPolicy = accessPolicy
     self.directCommandMode = directCommandMode
     self.workspaceCommands = workspaceCommands
-    self.safeWhitelist = safeWhitelist
     self.commandBlacklist = commandBlacklist
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -299,7 +255,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
       accessPolicy: policy,
       directCommandMode: directCommandMode,
       workspaceCommands: workspaceCommands,
-      safeWhitelist: safeWhitelist,
       commandBlacklist: commandBlacklist,
       createdAt: createdAt,
       updatedAt: date
@@ -309,7 +264,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
   public func updatingWorkspaceConfiguration(
     directCommandMode: ServiceDirectCommandMode,
     workspaceCommands: [ServiceWorkspaceCommand],
-    safeWhitelist: [ServiceSafeCommandRule],
     commandBlacklist: [ServiceCommandBlacklistRule],
     at date: Date
   ) throws -> ServiceProjectRecord {
@@ -320,7 +274,6 @@ public struct ServiceProjectRecord: Codable, Equatable, Sendable {
       accessPolicy: accessPolicy,
       directCommandMode: directCommandMode,
       workspaceCommands: workspaceCommands,
-      safeWhitelist: safeWhitelist,
       commandBlacklist: commandBlacklist,
       createdAt: createdAt,
       updatedAt: date

@@ -305,7 +305,6 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
           arguments: ["swift", "test"]
         )
       ],
-      safeWhitelist: [],
       commandBlacklist: [],
       at: Date(timeIntervalSince1970: 3)
     )
@@ -323,5 +322,75 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
 
     let task = try await reopened.task(id: TaskID(rawValue: "tsk-v4"))
     XCTAssertEqual(task?.state.status, .completed)
+  }
+
+  func testVersionSixWhitelistColumnMergesIntoWorkspaceCommandsAndIsDropped() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-schema-migration-v7-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "service.sqlite").path
+
+    let legacy = try DatabaseQueue(path: path)
+    try await legacy.writeWithoutTransaction { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+          INSERT INTO grdb_migrations (identifier)
+          VALUES ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+                 ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4'),
+                 ('BridgeServiceCore.v5'), ('BridgeServiceCore.v6');
+          """
+      )
+      try ServiceStoreSchema.createVersionOne(in: db)
+      try ServiceStoreSchema.createVersionTwo(in: db)
+      try ServiceStoreSchema.createVersionThree(in: db)
+      try ServiceStoreSchema.createVersionFour(in: db)
+      try ServiceStoreSchema.createVersionFive(in: db)
+      try ServiceStoreSchema.createVersionSix(in: db)
+      let commandsJSON = """
+        [{"id":"wcmd-build","name":"Build","executable":"swift","arguments":["build"],
+        "workingDirectory":null,"requiresNetwork":false,"risk":"normal"}]
+        """
+      let whitelistJSON = """
+        [{"id":"safe-node","name":"Node","executable":"node",
+        "argumentsPrefix":["scripts/tool.js"]}]
+        """
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json,
+            direct_safe_whitelist_json, direct_blacklist_json,
+            created_at, updated_at
+          ) VALUES ('prj-v6', 'V6', '/tmp/v6', '1', '2',
+            'allowed', 'requiresLocalApproval', 'denied',
+            'safe', CAST(? AS BLOB), CAST(? AS BLOB), CAST('[]' AS BLOB), 1, 2)
+          """,
+        arguments: [commandsJSON, whitelistJSON]
+      )
+    }
+
+    let store = try SimpleServiceStore(path: path)
+    let project = try await store.project(id: ProjectID(rawValue: "prj-v6"))
+    let commands = try XCTUnwrap(project?.workspaceCommands)
+    XCTAssertEqual(commands.count, 2)
+    XCTAssertEqual(commands.map(\.id), ["wcmd-build", "safe-node"])
+    XCTAssertEqual(commands[1].name, "Node")
+    XCTAssertEqual(commands[1].executable, "node")
+    XCTAssertEqual(commands[1].arguments, ["scripts/tool.js"])
+    XCTAssertEqual(commands[1].risk, .normal)
+
+    // Column must be dropped so reopening stays valid and v7 is recorded.
+    let reopened = try SimpleServiceStore(path: path)
+    let reloaded = try await reopened.project(id: ProjectID(rawValue: "prj-v6"))
+    XCTAssertEqual(reloaded?.workspaceCommands.count, 2)
+    try await reopened.setSetting(
+      ServiceSettingRecord(key: "probe", value: "ok", updatedAt: Date(timeIntervalSince1970: 4)))
+    let probe = try await reopened.setting(key: "probe")
+    XCTAssertEqual(probe?.value, "ok")
   }
 }

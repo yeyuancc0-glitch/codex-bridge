@@ -12,7 +12,6 @@ final class DirectCommandPolicyTests: XCTestCase {
     write: ProjectPermission = .requiresLocalApproval,
     network: ProjectPermission = .denied,
     commands: [ServiceWorkspaceCommand] = [],
-    safeWhitelist: [ServiceSafeCommandRule] = [],
     commandBlacklist: [ServiceCommandBlacklistRule] = []
   ) throws -> ServiceProjectRecord {
     try ServiceProjectRecord(
@@ -26,7 +25,6 @@ final class DirectCommandPolicyTests: XCTestCase {
       ),
       directCommandMode: mode,
       workspaceCommands: commands,
-      safeWhitelist: safeWhitelist,
       commandBlacklist: commandBlacklist,
       createdAt: Date(),
       updatedAt: Date()
@@ -142,19 +140,19 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.reason, .commandNotRegistered)
   }
 
-  func testSafeModeAllowsWhitelistedCommandWithPrefix() throws {
+  func testSafeModeAllowsWorkspaceCommandWithArgumentPrefix() throws {
     let policy = DirectCommandPolicy()
-    let rule = try ServiceSafeCommandRule(
-      id: "safe-make",
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-make",
       name: "Make",
       executable: "make",
-      argumentsPrefix: ["deploy"]
+      arguments: ["deploy"]
     )
     let result = policy.resolve(
       project: try project(
         mode: .safe,
         write: .allowed,
-        safeWhitelist: [rule]
+        commands: [command]
       ),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
@@ -166,16 +164,16 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.argv, ["make", "deploy", "--force"])
   }
 
-  func testSafeModeRejectsWhitelistedExecutableWithNonPrefixArguments() throws {
+  func testSafeModeRejectsWorkspaceCommandWithNonPrefixArguments() throws {
     let policy = DirectCommandPolicy()
-    let rule = try ServiceSafeCommandRule(
-      id: "safe-make",
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-make",
       name: "Make",
       executable: "make",
-      argumentsPrefix: ["deploy"]
+      arguments: ["deploy"]
     )
     let result = policy.resolve(
-      project: try project(mode: .safe, safeWhitelist: [rule]),
+      project: try project(mode: .safe, commands: [command]),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: nil,
@@ -185,15 +183,16 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.reason, .commandNotRegistered)
   }
 
-  func testSafeModeWhitelistWithoutPrefixAllowsAnyArguments() throws {
+  func testSafeModeWorkspaceCommandWithoutPrefixAllowsAnyArguments() throws {
     let policy = DirectCommandPolicy()
-    let rule = try ServiceSafeCommandRule(
-      id: "safe-node",
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-node",
       name: "Node",
-      executable: "node"
+      executable: "node",
+      arguments: []
     )
     let result = policy.resolve(
-      project: try project(mode: .safe, write: .allowed, safeWhitelist: [rule]),
+      project: try project(mode: .safe, write: .allowed, commands: [command]),
       request: DirectCommandRequest(
         projectID: ProjectID(rawValue: "prj-policy"),
         commandID: nil,
@@ -201,6 +200,27 @@ final class DirectCommandPolicyTests: XCTestCase {
       )
     )
     XCTAssertTrue(result.allowed)
+  }
+
+  func testSafeModeCommandByIDAllowsExtendedArguments() throws {
+    let policy = DirectCommandPolicy()
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-test",
+      name: "Tests",
+      executable: "swift",
+      arguments: ["test"],
+      requiresNetwork: false
+    )
+    let result = policy.resolve(
+      project: try project(mode: .safe, write: .allowed, commands: [command]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: "wcmd-test",
+        argv: ["swift", "test", "--filter", "Policy"]
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertEqual(result.argv, ["swift", "test", "--filter", "Policy"])
   }
 
   func testBlacklistBlocksInSafeMode() throws {

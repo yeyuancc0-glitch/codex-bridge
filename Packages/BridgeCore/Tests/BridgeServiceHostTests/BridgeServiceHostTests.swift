@@ -256,20 +256,11 @@ final class BridgeServiceHostTests: XCTestCase {
           risk: "normal"
         )
       ],
-      safeWhitelist: [
-        IPCSafeCommandRule(
-          ruleID: "safe-xpc",
-          name: "XPC Safe",
-          executable: "make",
-          argumentsPrefix: ["test"]
-        )
-      ],
       commandBlacklist: [
         IPCBlacklistRule(ruleID: "blk-xpc", executable: "rm")
       ]
     )
     XCTAssertEqual(updated.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
-    XCTAssertEqual(updated.directWorkspace?.safeWhitelist.map(\.ruleID), ["safe-xpc"])
     XCTAssertEqual(updated.directWorkspace?.commandBlacklist.map(\.ruleID), ["blk-xpc"])
     XCTAssertEqual(updated.directWorkspace?.commandMode, "safe")
 
@@ -279,13 +270,11 @@ final class BridgeServiceHostTests: XCTestCase {
     )
     XCTAssertEqual(withMode.directWorkspace?.commandMode, "full")
     XCTAssertEqual(withMode.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
-    XCTAssertEqual(withMode.directWorkspace?.safeWhitelist.map(\.ruleID), ["safe-xpc"])
     XCTAssertEqual(withMode.capabilities.write, ProjectPermission.requiresLocalApproval.rawValue)
 
     let reloaded = try await client.projectCommands(projectID: registered.projectID)
     XCTAssertEqual(reloaded.directWorkspace?.commandMode, "full")
     XCTAssertEqual(reloaded.directWorkspace?.commands.map(\.name), ["XPC Tests"])
-    XCTAssertEqual(reloaded.directWorkspace?.safeWhitelist.map(\.name), ["XPC Safe"])
     XCTAssertEqual(reloaded.directWorkspace?.commandBlacklist.map(\.ruleID), ["blk-xpc"])
   }
 

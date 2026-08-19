@@ -139,8 +139,9 @@ public struct DirectCommandPolicy: Sendable {
     request: DirectCommandRequest
   ) -> Bool {
     let executable = request.argv.first ?? ""
+    let arguments = Array(request.argv.dropFirst())
     return command.executable == executable
-      && command.arguments == Array(request.argv.dropFirst())
+      && (command.arguments.isEmpty || arguments.starts(with: command.arguments))
   }
 
   private func isBlacklisted(
@@ -188,7 +189,12 @@ public struct DirectCommandPolicy: Sendable {
       guard let command = project.workspaceCommands.first(where: { $0.id == commandID }) else {
         return .denied(.unknownCommand)
       }
-      guard request.argv.isEmpty || request.argv == [command.executable] + command.arguments else {
+      let arguments = Array(request.argv.dropFirst())
+      guard
+        request.argv.isEmpty
+          || (request.argv.first == command.executable
+            && (command.arguments.isEmpty || arguments.starts(with: command.arguments)))
+      else {
         return .denied(.invalidArguments)
       }
       matched = command
@@ -198,7 +204,10 @@ public struct DirectCommandPolicy: Sendable {
 
     let effectiveArgv: [String]
     if let matched {
-      effectiveArgv = [matched.executable] + matched.arguments
+      effectiveArgv =
+        request.argv.isEmpty
+        ? [matched.executable] + matched.arguments
+        : request.argv
     } else {
       effectiveArgv = request.argv
     }
@@ -214,12 +223,7 @@ public struct DirectCommandPolicy: Sendable {
       let allowed =
         matched != nil
         || builtInSafeRules.contains { matchesSafeRule($0, argv: request.argv) }
-        || project.safeWhitelist.contains { rule in
-          matchesSafeRule(
-            SafeRule(executable: rule.executable, argumentsPrefix: rule.argumentsPrefix),
-            argv: request.argv
-          )
-        }
+
       guard allowed else { return .denied(.commandNotRegistered) }
     case .full:
       break

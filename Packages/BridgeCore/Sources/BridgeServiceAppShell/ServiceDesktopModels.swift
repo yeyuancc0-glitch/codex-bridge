@@ -109,56 +109,6 @@ public struct BridgeWorkspaceCommandDraft: Equatable, Identifiable, Sendable {
   }
 }
 
-public struct BridgeSafeRuleDraft: Equatable, Identifiable, Sendable {
-  public var name: String
-  public var executable: String
-  public var argumentsPrefix: String
-
-  public var id: String {
-    BridgeSafeRuleDraft.stableID(
-      name: name,
-      executable: executable,
-      argumentsPrefix: argumentsPrefix
-    )
-  }
-
-  public init(
-    name: String = "",
-    executable: String = "",
-    argumentsPrefix: String = ""
-  ) {
-    self.name = name
-    self.executable = executable
-    self.argumentsPrefix = argumentsPrefix
-  }
-
-  public init(rule: MCPSafeCommandRule) {
-    name = rule.name
-    executable = rule.executable
-    argumentsPrefix = rule.argumentsPrefix.joined(separator: "\n")
-  }
-
-  public static func stableID(name: String, executable: String, argumentsPrefix: String) -> String {
-    let canonical = [
-      name.trimmingCharacters(in: .whitespacesAndNewlines),
-      executable.trimmingCharacters(in: .whitespacesAndNewlines),
-      argumentsPrefix.split(separator: "\n").joined(separator: "\u{0}"),
-    ].joined(separator: "\u{1}")
-    let digest = SHA256.hash(data: Data(canonical.utf8))
-    return "safe_" + digest.map { String(format: "%02x", $0) }.joined().prefix(40)
-  }
-
-  public func toIPCRule() -> IPCSafeCommandRule {
-    IPCSafeCommandRule(
-      ruleID: id,
-      name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-      executable: executable.trimmingCharacters(in: .whitespacesAndNewlines),
-      argumentsPrefix: argumentsPrefix.split(separator: "\n")
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-    )
-  }
-}
-
 public struct BridgeBlacklistDraft: Equatable, Identifiable, Sendable {
   public var executable: String
   public var pattern: String

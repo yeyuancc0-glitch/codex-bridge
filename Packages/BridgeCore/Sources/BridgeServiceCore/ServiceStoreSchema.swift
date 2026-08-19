@@ -1,7 +1,25 @@
+import Foundation
 import GRDB
 
+private struct LegacySafeRule: Decodable {
+  let id: String
+  let name: String
+  let executable: String
+  let argumentsPrefix: [String]
+}
+
+private struct LegacyWorkspaceCommand: Codable {
+  let id: String
+  let name: String
+  let executable: String
+  let arguments: [String]
+  let workingDirectory: String?
+  let requiresNetwork: Bool
+  let risk: String
+}
+
 enum ServiceStoreSchema {
-  static let version: Int64 = 6
+  static let version: Int64 = 7
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -9,8 +27,9 @@ enum ServiceStoreSchema {
   static let migrationV4 = "BridgeServiceCore.v4"
   static let migrationV5 = "BridgeServiceCore.v5"
   static let migrationV6 = "BridgeServiceCore.v6"
+  static let migrationV7 = "BridgeServiceCore.v7"
   static let knownMigrations: Set<String> = [
-    migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6,
+    migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -44,6 +63,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV6) { db in
       try createVersionSix(in: db)
+    }
+    migrator.registerMigration(migrationV7) { db in
+      try createVersionSeven(in: db)
     }
     return migrator
   }
@@ -220,6 +242,47 @@ enum ServiceStoreSchema {
         """)
   }
 
+  static func createVersionSeven(in db: Database) throws {
+    let decoder = JSONDecoder()
+    let encoder = JSONEncoder()
+    let rows = try Row.fetchAll(
+      db,
+      sql:
+        "SELECT project_id, workspace_commands_json, direct_safe_whitelist_json FROM bridge_service_projects"
+    )
+    for row in rows {
+      let projectID = row["project_id"] as String
+      let commandsData: Data = row["workspace_commands_json"]
+      let whitelistData: Data = row["direct_safe_whitelist_json"]
+      let commands = (try? decoder.decode([LegacyWorkspaceCommand].self, from: commandsData)) ?? []
+      let whitelist = (try? decoder.decode([LegacySafeRule].self, from: whitelistData)) ?? []
+      guard !whitelist.isEmpty else { continue }
+      let merged =
+        commands
+        + whitelist.map { rule in
+          LegacyWorkspaceCommand(
+            id: rule.id,
+            name: rule.name,
+            executable: rule.executable,
+            arguments: rule.argumentsPrefix,
+            workingDirectory: nil,
+            requiresNetwork: false,
+            risk: "normal"
+          )
+        }
+      let mergedData = try encoder.encode(merged)
+      try db.execute(
+        sql: "UPDATE bridge_service_projects SET workspace_commands_json = ? WHERE project_id = ?",
+        arguments: [mergedData, projectID]
+      )
+    }
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_projects DROP COLUMN direct_safe_whitelist_json;
+        UPDATE bridge_service_meta SET schema_version = 7 WHERE singleton = 1;
+        """)
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -381,7 +444,7 @@ enum ServiceStoreSchema {
           "project_id", "name", "canonical_path", "root_device", "root_inode",
           "read_permission", "write_permission", "network_permission", "created_at", "updated_at",
           "direct_command_mode", "workspace_commands_json",
-          "direct_safe_whitelist_json", "direct_blacklist_json",
+          "direct_blacklist_json",
         ],
         "bridge_service_settings": ["setting_key", "setting_value", "updated_at"],
         "bridge_service_tasks": [
