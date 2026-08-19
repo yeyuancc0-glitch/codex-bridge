@@ -414,9 +414,15 @@ private struct SearchPageScanner {
 }
 
 private func normalizedLines(_ text: String) -> [String] {
-  text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+  var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
     line.last == "\r" ? String(line.dropLast()) : String(line)
   }
+  // A trailing newline is a terminator, not an extra empty logical line, so it
+  // must not trigger a spurious truncated/next_start_line page.
+  if text.hasSuffix("\n"), lines.last == "" {
+    lines.removeLast()
+  }
+  return lines
 }
 
 private func containsUnsupportedControl(_ text: String) -> Bool {

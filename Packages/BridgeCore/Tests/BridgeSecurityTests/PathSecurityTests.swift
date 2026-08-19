@@ -58,6 +58,29 @@ final class PathSecurityTests: XCTestCase {
     XCTAssertFalse(OutboundContentSecurity.isSafe("eyJabcdefgh.abcdefgh.abcdefgh"))
   }
 
+  func testPatchTextPassesSecretOnlyCheckDespiteFileMarkers() {
+    let patch = """
+      *** Begin Patch
+      *** Add File: Sources/App.swift
+      +func main() {}
+      *** End Patch
+      """
+    // The `File:` marker trips the local-path heuristic, so isSafe rejects it,
+    // but isSafeSecrets (used for structured patch payloads) must allow it.
+    XCTAssertFalse(OutboundContentSecurity.isSafe(patch))
+    XCTAssertTrue(OutboundContentSecurity.isSafeSecrets(patch))
+  }
+
+  func testPatchTextStillBlocksEmbeddedSecrets() {
+    let patch = """
+      *** Begin Patch
+      *** Add File: Sources/App.swift
+      +let token = "sk-secretvalue1234567890abcdef"
+      *** End Patch
+      """
+    XCTAssertFalse(OutboundContentSecurity.isSafeSecrets(patch))
+  }
+
   func testOutboundContentRedactsWholeAbsolutePathContainingSpaces() {
     for input in [
       "Open /Users/My Team/private.txt, then continue.",

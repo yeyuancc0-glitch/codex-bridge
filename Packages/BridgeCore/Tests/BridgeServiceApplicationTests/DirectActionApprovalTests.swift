@@ -511,6 +511,34 @@ final class DirectApprovalFlowTests: XCTestCase {
     XCTAssertFalse(page.truncated)
   }
 
+  func testApplyPatchAddsFileEndToEnd() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let patch = """
+      *** Begin Patch
+      *** Add File: Sources/Patched.swift
+      +func patched() {}
+      *** End Patch
+      """
+    let receipt = try await application.serviceDirectApplyPatch(
+      MCPDirectPatchRequest(
+        projectID: fixture.project.id.rawValue,
+        patch: patch,
+        clientRequestID: "req-patch-1"
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(receipt.operations.map(\.relativePath), ["Sources/Patched.swift"])
+    let content = try String(contentsOf: fixture.root.appending(path: "Sources/Patched.swift"))
+    XCTAssertTrue(content.contains("func patched() {}"))
+  }
+
   func testDirectGitCommitCreatesLocalCommit() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

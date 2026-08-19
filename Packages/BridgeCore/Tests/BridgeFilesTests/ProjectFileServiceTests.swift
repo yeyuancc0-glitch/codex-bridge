@@ -44,6 +44,24 @@ final class ProjectFileServiceTests: XCTestCase {
     }
   }
 
+  func testReadTrailingNewlineIsNotASpuriousPage() async throws {
+    try await withFixture { fixture in
+      let text = (1...500).map { "line \($0)" }.joined(separator: "\n") + "\n"
+      try fixture.write("many.txt", text)
+      let result = try await fixture.service.read(
+        ProjectFileReadRequest(
+          projectID: fixture.projectID,
+          relativePath: "many.txt",
+          lineRange: try FileLineRange(startLine: 1, lineCount: 500)
+        )
+      )
+
+      XCTAssertEqual(result.endLine, 500)
+      XCTAssertFalse(result.truncated)
+      XCTAssertNil(result.nextStartLine)
+    }
+  }
+
   func testReadTruncatesBeyondLineCapAndReportsNextStartLine() async throws {
     try await withFixture { fixture in
       let text = (1...12_000).map { "l\($0)" }.joined(separator: "\n")

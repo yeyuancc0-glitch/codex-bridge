@@ -38,6 +38,15 @@ public enum OutboundContentSecurity {
     }
   }
 
+  /// Checks only the secret patterns (keys, tokens, credentials) without the
+  /// local-path heuristic. Used for structured payloads like patch text whose
+  /// markers (`*** Add File: x`) legitimately contain `file:`-like text.
+  public static func isSafeSecrets(_ value: String) -> Bool {
+    !forbiddenPatterns.contains { pattern in
+      value.range(of: pattern, options: .regularExpression) != nil
+    }
+  }
+
   public static func isSafeRelativePath(
     _ value: String,
     maximumUTF8Bytes: Int = 1_024

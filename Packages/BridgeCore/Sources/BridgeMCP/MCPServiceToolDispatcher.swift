@@ -575,7 +575,7 @@ public struct MCPServiceToolDispatcher: Sendable {
       required: ["project_id", "patch"]
     )
     let patch = try values.requiredText("patch", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafe(patch) else {
+    guard OutboundContentSecurity.isSafeSecrets(patch) else {
       throw MCPError.invalidParams("Patch text contains restricted local data.")
     }
     return MCPDirectPatchRequest(
