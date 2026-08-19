@@ -38,9 +38,10 @@ For the public archive:
 2. compute `Contents/Helpers/tunnel-client.sha256` after helper signing;
 3. sign the outer App through Xcode;
 4. verify with `codesign --verify --deep --strict --verbose=2` and inspect the helper/App Team identifiers;
-5. create ZIP and DMG from the signed App.
+5. run `Scripts/verify-release-hardening.sh /path/to/CodexBridge.app`;
+6. create ZIP and DMG from the signed App.
 
-The Xcode helper build phase performs steps 1–2 when a real expanded signing identity is present. `REQUIRE_TUNNEL_HELPER=YES`, `TUNNEL_HELPER_DIRECTORY` and `TUNNEL_HELPER_UNSIGNED_SHA256` must be supplied for a release archive.
+The Xcode helper build phase performs steps 1–2 when a real expanded signing identity is present. `REQUIRE_TUNNEL_HELPER=YES`, `TUNNEL_HELPER_DIRECTORY` and `TUNNEL_HELPER_UNSIGNED_SHA256` must be supplied for a release archive. The hardening verifier is a final-artifact gate and must run after the App, embedded Service and helper have all been signed.
 
 ## 4. Notarization and Gatekeeper
 

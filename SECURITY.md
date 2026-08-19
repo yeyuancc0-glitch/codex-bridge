@@ -30,6 +30,15 @@ Use synthetic fixtures and describe the affected version, trust boundary, expect
 - Runtime Keys never enter Codex, logs, reports or support bundles.
 - Non-idempotent app-server actions are reconciled after failure and are not blindly retried.
 
+## Reverse-engineering resistance
+
+No mechanism can make a locally delivered macOS binary impossible to reverse engineer: a user who controls the machine can eventually inspect code, attach a debugger or patch an unsigned copy. The goal here is to prevent useful secrets and trust decisions from being recovered from the client, and to make tampered release artifacts fail closed.
+
+- Release builds use whole-module optimization, no testability, post-processing and symbol stripping; dSYM files stay outside the shipped App.
+- Public release artifacts must pass `Scripts/verify-release-hardening.sh`. It verifies strict code signatures, Hardened Runtime, a real Developer ID Team ID, matching Team IDs for App/Service/helper and Universal 2 architecture coverage.
+- Runtime Keys, MCP path secrets and Codex credentials remain in Keychain or anonymous file descriptors. They are never compiled into the binary, SQLite, logs or support bundles.
+- Authorization remains in Service policy code. Obfuscation, anti-debugging and self-hash checks are not security boundaries and must not be used to store secrets or approve operations.
+
 ## Direct execution model
 
 When the user explicitly asks ChatGPT itself to edit files or run commands (instead of delegating to Codex), the Service enforces the following boundaries:
