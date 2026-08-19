@@ -86,18 +86,20 @@ public struct ProjectFileLimits: Equatable, Sendable {
 }
 
 public struct FileLineRange: Codable, Equatable, Sendable {
+  public static let maximumLineCount = 10_000
+
   public let startLine: Int
   public let lineCount: Int
 
   public init(startLine: Int = 1, lineCount: Int = 300) throws {
-    guard startLine > 0, lineCount > 0, lineCount <= 300 else {
+    guard startLine > 0, lineCount > 0, lineCount <= Self.maximumLineCount else {
       throw ProjectFileError.invalidLineRange
     }
     self.startLine = startLine
     self.lineCount = lineCount
   }
 
-  public static let maximum = FileLineRange(uncheckedStartLine: 1, lineCount: 300)
+  public static let maximum = FileLineRange(uncheckedStartLine: 1, lineCount: maximumLineCount)
 
   private init(uncheckedStartLine startLine: Int, lineCount: Int) {
     self.startLine = startLine

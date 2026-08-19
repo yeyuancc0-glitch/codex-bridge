@@ -30,7 +30,7 @@ final class ProjectFileServiceTests: XCTestCase {
     }
   }
 
-  func testReadReturnsAtMostThreeHundredLines() async throws {
+  func testReadDefaultsToLargePage() async throws {
     try await withFixture { fixture in
       let text = (1...301).map { "line \($0)" }.joined(separator: "\n")
       try fixture.write("many.txt", text)
@@ -38,9 +38,27 @@ final class ProjectFileServiceTests: XCTestCase {
         ProjectFileReadRequest(projectID: fixture.projectID, relativePath: "many.txt")
       )
 
-      XCTAssertEqual(result.content.split(separator: "\n").count, 300)
+      XCTAssertEqual(result.content.split(separator: "\n").count, 301)
+      XCTAssertFalse(result.truncated)
+      XCTAssertNil(result.nextStartLine)
+    }
+  }
+
+  func testReadTruncatesBeyondLineCapAndReportsNextStartLine() async throws {
+    try await withFixture { fixture in
+      let text = (1...12_000).map { "l\($0)" }.joined(separator: "\n")
+      try fixture.write("huge.txt", text)
+      let result = try await fixture.service.read(
+        ProjectFileReadRequest(
+          projectID: fixture.projectID,
+          relativePath: "huge.txt",
+          lineRange: .maximum
+        )
+      )
+
+      XCTAssertEqual(result.content.split(separator: "\n").count, 10_000)
       XCTAssertTrue(result.truncated)
-      XCTAssertEqual(result.nextStartLine, 301)
+      XCTAssertEqual(result.nextStartLine, 10_001)
     }
   }
 

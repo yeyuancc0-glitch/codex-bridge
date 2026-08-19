@@ -446,6 +446,71 @@ final class DirectApprovalFlowTests: XCTestCase {
     await application.directCommands.cancelAll()
   }
 
+  func testSafeModeRunsBareBinaryViaTrustedPathAndNormalizesDotWorkingDirectory() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+
+    let receipt = try await application.serviceDirectExecCommand(
+      MCPDirectExecRequest(
+        projectID: fixture.project.id.rawValue,
+        commandID: nil,
+        argv: ["pwd"],
+        workingDirectory: ".",
+        tty: false,
+        yieldTimeMS: 50,
+        timeoutMS: 5_000,
+        clientRequestID: "req-bare-pwd"
+      ),
+      deadline: deadline
+    )
+    var sessionID = receipt.sessionID
+    var finalOutput = receipt.output
+    var pollDeadline = Date().addingTimeInterval(10)
+    while Date() < pollDeadline {
+      let output = try await application.serviceDirectReadCommand(
+        sessionID: sessionID,
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      sessionID = output.sessionID
+      finalOutput = output
+      if output.status == "ended" || output.status == "cancelled" || output.status == "timed_out" {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    let ended = try XCTUnwrap(finalOutput)
+    XCTAssertEqual(ended.status, "ended")
+    XCTAssertEqual(ended.exitCode, 0)
+    XCTAssertFalse(ended.tail.isEmpty)
+    await application.directCommands.cancelAll()
+  }
+
+  func testReadProjectFileSupportsLargeLineCountPages() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let content = (1...400).map { "line\($0)" }.joined(separator: "\n")
+    try Data(content.utf8).write(to: fixture.root.appending(path: "big.txt"))
+    let page = try await application.serviceReadProjectFile(
+      projectID: fixture.project.id.rawValue,
+      relativePath: "big.txt",
+      startLine: 1,
+      lineCount: 500,
+      deadline: ContinuousClock.now.advanced(by: .seconds(3))
+    )
+    XCTAssertEqual(page.endLine, 400)
+    XCTAssertNil(page.nextStartLine)
+    XCTAssertFalse(page.truncated)
+  }
+
   func testDirectGitCommitCreatesLocalCommit() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

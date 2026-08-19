@@ -155,35 +155,62 @@ extension BridgeServiceApplication {
     project: ServiceProjectRecord,
     relative: String?
   ) throws -> String {
-    guard let relative, !relative.isEmpty else { return project.root.canonicalPath }
+    let root = project.root.canonicalPath
+    guard let relative, !relative.isEmpty else { return root }
+    var value = relative.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value == "." || value == "./" { return root }
+    if value.hasPrefix("./") {
+      value = String(value.dropFirst(2))
+    }
+    if value.isEmpty { return root }
     let secure: SecureRelativePath
     do {
-      secure = try SecureRelativePath(relative)
+      secure = try SecureRelativePath(value)
     } catch {
       throw BridgeMCPQueryError.pathDenied
     }
-    return project.root.canonicalPath + "/" + secure.components.joined(separator: "/")
+    return root + "/" + secure.components.joined(separator: "/")
   }
 
   /// Resolve a project-relative executable (e.g. `Scripts/with-xcode.sh`) to an absolute path
-  /// inside the project root, verifying symlink containment. Bare binary names and absolute
-  /// paths pass through unchanged.
+  /// inside the project root (verifying symlink containment), or resolve a bare binary name
+  /// (e.g. `git`) against a fixed trusted PATH. Absolute paths pass through unchanged.
   static func resolvedLaunchArgv(
     _ argv: [String],
     project: ServiceProjectRecord
   ) throws -> [String] {
-    guard let executable = argv.first, !executable.hasPrefix("/"), executable.contains("/")
-    else {
-      return argv
+    guard let executable = argv.first, !executable.isEmpty else { return argv }
+    if executable.hasPrefix("/") { return argv }
+    if executable.contains("/") {
+      let root = project.root.canonicalPath
+      let candidate =
+        ((root as NSString).appendingPathComponent(executable) as NSString).standardizingPath
+      let resolved = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
+      guard resolved == root || resolved.hasPrefix(root + "/") else {
+        throw BridgeMCPQueryError.pathDenied
+      }
+      return [resolved] + argv.dropFirst()
     }
-    let root = project.root.canonicalPath
-    let candidate =
-      ((root as NSString).appendingPathComponent(executable) as NSString).standardizingPath
-    let resolved = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
-    guard resolved == root || resolved.hasPrefix(root + "/") else {
-      throw BridgeMCPQueryError.pathDenied
+    if let resolved = Self.executableInTrustedPath(executable) {
+      return [resolved] + argv.dropFirst()
     }
-    return [resolved] + argv.dropFirst()
+    return argv
+  }
+
+  /// Fixed trusted PATH used to resolve bare binary names without invoking a shell.
+  static let trustedPathDirectories = [
+    "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+  ]
+
+  static func executableInTrustedPath(_ name: String) -> String? {
+    guard !name.isEmpty, !name.contains("/"), name.utf8.count <= 4_096 else { return nil }
+    for directory in trustedPathDirectories {
+      let candidate = URL(fileURLWithPath: directory).appendingPathComponent(name).path
+      if FileManager.default.isExecutableFile(atPath: candidate) {
+        return candidate
+      }
+    }
+    return nil
   }
 
   public func serviceDirectGitCommit(

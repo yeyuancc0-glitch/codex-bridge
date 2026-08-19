@@ -1,3 +1,4 @@
+import BridgeFiles
 import BridgeSecurity
 import Foundation
 import Logging
@@ -167,7 +168,7 @@ public struct MCPServiceToolDispatcher: Sendable {
       let requestedCount =
         try values.optionalPositiveInteger("line_count", maximum: Int.max)
         ?? 200
-      let lineCount = min(requestedCount, 300)
+      let lineCount = min(requestedCount, FileLineRange.maximumLineCount)
       let deadline = clock.now.advanced(by: deadlines.read)
       let page = try await withToolDeadline(until: deadline) {
         try await service.serviceReadProjectFile(
@@ -604,9 +605,14 @@ public struct MCPServiceToolDispatcher: Sendable {
     let commandID = try values.optionalIdentifier("command_id", maximumUTF8Bytes: 256)
     let workingDirectory = try values.optionalIdentifier(
       "working_directory", maximumUTF8Bytes: 1_024)
-    if let workingDirectory, !OutboundContentSecurity.isSafeRelativePath(workingDirectory) {
-      throw MCPError.invalidParams(
-        "Argument 'working_directory' must be a safe relative path.")
+    if let workingDirectory {
+      let trimmed = workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+      if trimmed != "." && !trimmed.hasPrefix("./")
+        && !OutboundContentSecurity.isSafeRelativePath(trimmed)
+      {
+        throw MCPError.invalidParams(
+          "Argument 'working_directory' must be a safe relative path.")
+      }
     }
     let yieldTimeMS = try values.optionalNonnegativeInteger("yield_time_ms").map(Int.init)
     let timeoutMS = try values.optionalPositiveInteger(

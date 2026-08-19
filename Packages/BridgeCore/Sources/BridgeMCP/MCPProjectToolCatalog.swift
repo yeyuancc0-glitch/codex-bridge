@@ -42,13 +42,15 @@ extension MCPToolCatalog {
   static let readProjectFile = Tool(
     name: MCPProjectToolName.readProjectFile.rawValue,
     title: "Read project file",
-    description: "Read at most 300 lines and 200 KiB from one approved relative project path.",
+    description:
+      "Read up to 10000 lines (capped at 200 KiB per response) from one approved relative "
+      + "project path; larger files page via next_start_line.",
     inputSchema: projectObject(
       properties: [
         "project_id": projectBoundedString(128),
         "relative_path": projectBoundedString(1_024),
         "start_line": projectInteger(minimum: 1),
-        "line_count": projectInteger(minimum: 1, maximum: 1_000_000),
+        "line_count": projectInteger(minimum: 1, maximum: 10_000),
       ],
       required: ["project_id", "relative_path"]
     ),

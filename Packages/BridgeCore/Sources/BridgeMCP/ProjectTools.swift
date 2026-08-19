@@ -1,3 +1,4 @@
+import BridgeFiles
 import BridgeSecurity
 import Foundation
 import MCP
@@ -102,7 +103,9 @@ struct ProjectTools: Sendable {
     let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
     try validateRelativePath(path)
     let startLine = try values.optionalPositiveInteger("start_line", maximum: Int.max) ?? 1
-    let lineCount = try values.optionalPositiveInteger("line_count", maximum: 300) ?? 300
+    let requestedCount =
+      try values.optionalPositiveInteger("line_count", maximum: Int.max) ?? 300
+    let lineCount = min(requestedCount, FileLineRange.maximumLineCount)
     let operations = try availableOperations()
     let deadline = clock.now.advanced(by: deadlines.read)
     let page = try await withToolDeadline(until: deadline) {
