@@ -10,6 +10,21 @@ extension BridgeServiceApplication {
     return await approvals.pendingApprovals()
   }
 
+  public func serviceDirectApprovalMode(
+    deadline: ContinuousClock.Instant
+  ) async throws -> ServiceDirectApprovalMode {
+    try Self.checkDeadline(deadline)
+    return try await settings.directApprovalMode()
+  }
+
+  public func serviceSetDirectApprovalMode(
+    _ mode: ServiceDirectApprovalMode,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setDirectApprovalMode(mode)
+  }
+
   public func serviceApproveDirectApproval(
     approvalID: String,
     deadline: ContinuousClock.Instant
@@ -39,6 +54,7 @@ extension BridgeServiceApplication {
     payload: some Encodable,
     clientRequestID: String?
   ) async throws {
+    if try await settings.directApprovalMode() == .auto { return }
     let digest = DirectActionApprovalCenter.payloadDigest(payload)
     let granted = await approvals.consume(payloadDigest: digest, clientRequestID: clientRequestID)
     if granted { return }

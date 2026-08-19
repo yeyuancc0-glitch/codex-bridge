@@ -38,6 +38,8 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func pendingDirectApprovals() async throws -> [IPCPendingDirectApproval]
   func approveDirectApproval(approvalID: String) async throws -> Bool
   func denyDirectApproval(approvalID: String) async throws -> Bool
+  func directApprovalMode() async throws -> String
+  func setDirectApprovalMode(_ mode: String) async throws
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws
   func configureTunnel(_ request: IPCTunnelConfigurationRequest) async throws -> IPCTunnelStatus
   func connectTunnel() async throws -> IPCTunnelStatus

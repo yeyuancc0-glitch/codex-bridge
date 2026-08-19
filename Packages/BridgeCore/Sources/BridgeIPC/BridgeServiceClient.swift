@@ -159,6 +159,21 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func directApprovalMode() async throws -> String {
+    let response: IPCDirectApprovalModeResponse = try await call(
+      operation: .getDirectApprovalMode,
+      payload: Optional<IPCMutationResponse>.none
+    )
+    return response.mode
+  }
+
+  public func setDirectApprovalMode(_ mode: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setDirectApprovalMode,
+      payload: IPCDirectApprovalModeRequest(mode: mode)
+    )
+  }
+
   public func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage {
     try await call(operation: .listThreads, payload: request)
   }

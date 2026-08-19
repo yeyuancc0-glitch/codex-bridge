@@ -260,4 +260,86 @@ final class DirectApprovalFlowTests: XCTestCase {
     XCTAssertEqual(receipt.exitCode, 0)
     await application.directCommands.cancelAll()
   }
+
+  func testAutoApprovalModeSkipsDirectApprovalEntirely() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let target = fixture.root.appending(path: "AutoApprovedFile.txt")
+
+    let request = MCPDirectWriteRequest(
+      projectID: fixture.project.id.rawValue,
+      relativePath: "AutoApprovedFile.txt",
+      mode: "create",
+      content: "auto",
+      expectedSHA256: nil,
+      createParents: false,
+      clientRequestID: "req-auto-1"
+    )
+    // Auto mode: every call succeeds without creating any pending approval.
+    let first = try await application.serviceDirectWriteFile(request, deadline: deadline)
+    XCTAssertEqual(first.relativePath, "AutoApprovedFile.txt")
+    let pending = await application.approvals.pendingApprovals()
+    XCTAssertTrue(pending.isEmpty)
+    let second = try await application.serviceDirectWriteFile(
+      MCPDirectWriteRequest(
+        projectID: fixture.project.id.rawValue,
+        relativePath: "AutoApprovedFile.txt",
+        mode: "replace",
+        content: "auto",
+        expectedSHA256: nil,
+        createParents: false,
+        clientRequestID: "req-auto-1"
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(second.relativePath, "AutoApprovedFile.txt")
+    XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "auto")
+  }
+
+  func testAutoApprovalModeAllowsElevatedCommandWithoutApproval() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .registered,
+      workspaceCommands: [
+        try ServiceWorkspaceCommand(
+          id: "wcmd-auto-deploy",
+          name: "Auto Deploy",
+          executable: "/bin/echo",
+          arguments: ["auto-deploying"],
+          requiresNetwork: false,
+          risk: .elevated
+        )
+      ],
+      projectID: fixture.project.id
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let request = MCPDirectExecRequest(
+      projectID: fixture.project.id.rawValue,
+      commandID: "wcmd-auto-deploy",
+      argv: [],
+      workingDirectory: nil,
+      tty: false,
+      yieldTimeMS: 100,
+      timeoutMS: 5_000,
+      clientRequestID: "req-auto-exec-1"
+    )
+    let receipt = try await application.serviceDirectExecCommand(request, deadline: deadline)
+    XCTAssertEqual(receipt.status, "ended")
+    XCTAssertEqual(receipt.exitCode, 0)
+    let pending = await application.approvals.pendingApprovals()
+    XCTAssertTrue(pending.isEmpty)
+    await application.directCommands.cancelAll()
+  }
 }

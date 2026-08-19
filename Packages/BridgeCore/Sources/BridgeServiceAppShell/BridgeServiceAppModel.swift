@@ -86,6 +86,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var tasks: [MCPServiceTaskSnapshot] = []
   @Published public internal(set) var approvals: [IPCApprovalSummary] = []
   @Published public internal(set) var directApprovals: [IPCPendingDirectApproval] = []
+  @Published public internal(set) var directApprovalMode = "require"
   @Published public internal(set) var models: [MCPModelSummary] = []
   @Published public internal(set) var modelPreferences: IPCModelPreferences?
   @Published public internal(set) var modelCatalogError: String?

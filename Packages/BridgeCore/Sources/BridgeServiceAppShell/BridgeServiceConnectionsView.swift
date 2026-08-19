@@ -161,6 +161,23 @@ struct BridgeServiceConnectionsView: View {
           )
           .font(.caption)
           .foregroundStyle(.secondary)
+
+          if model.exposureMode == .full {
+            Divider()
+            Toggle(
+              "Direct 操作自动批准",
+              isOn: Binding(
+                get: { model.directApprovalMode == "auto" },
+                set: { model.setDirectApprovalMode($0 ? "auto" : "require") }
+              )
+            )
+            .toggleStyle(.switch)
+            Text(
+              "开启后，ChatGPT 通过 direct_* 工具改文件、执行受控命令时不再弹本地审批，直接放行。仅建议在你信任本机、且不需要逐次确认时开启；关闭则每次操作仍要求本机批准。"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
         }
       }
     }

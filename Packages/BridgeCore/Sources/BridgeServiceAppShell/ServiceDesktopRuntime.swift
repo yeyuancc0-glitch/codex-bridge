@@ -188,6 +188,7 @@ extension BridgeServiceAppModel {
     }
     async let approvalResult = optional { try await client.approvals(taskID: nil) }
     async let directApprovalResult = optional { try await client.pendingDirectApprovals() }
+    async let directApprovalModeResult = optional { try await client.directApprovalMode() }
 
     if let value = await projectResult {
       projects = value
@@ -221,6 +222,9 @@ extension BridgeServiceAppModel {
     }
     if let value = await directApprovalResult {
       directApprovals = value
+    }
+    if let value = await directApprovalModeResult {
+      directApprovalMode = value
     }
     if includeCatalog {
       do {

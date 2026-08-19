@@ -207,6 +207,14 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func setDirectApprovalMode(_ mode: String) {
+    runMutation { [weak self] client in
+      guard let self else { return }
+      try await client.setDirectApprovalMode(mode)
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
   public func setExposureMode(_ mode: MCPServiceExposureMode) {
     updateExposureState(mode)
     runMutation { [weak self] client in

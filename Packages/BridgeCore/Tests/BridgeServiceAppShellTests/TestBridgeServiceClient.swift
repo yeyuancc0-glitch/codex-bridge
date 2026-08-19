@@ -375,6 +375,16 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     return true
   }
 
+  private var directApprovalModeValue = "require"
+
+  func directApprovalMode() async throws -> String {
+    directApprovalModeValue
+  }
+
+  func setDirectApprovalMode(_ mode: String) async throws {
+    directApprovalModeValue = mode
+  }
+
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws {
     exposureMode = mode
   }

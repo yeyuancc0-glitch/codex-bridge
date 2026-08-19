@@ -312,6 +312,29 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         try await composition.application.setSupervisorEnabled(payload.enabled)
         return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
 
+      case .getDirectApprovalMode:
+        let mode = try await composition.application.serviceDirectApprovalMode(
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: IPCDirectApprovalModeResponse(mode: mode.rawValue)
+        )
+
+      case .setDirectApprovalMode:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCDirectApprovalModeRequest.self,
+          from: request
+        )
+        guard let mode = ServiceDirectApprovalMode(rawValue: payload.mode) else {
+          throw ServiceStoreError.invalidArgument("directApprovalMode")
+        }
+        try await composition.application.serviceSetDirectApprovalMode(
+          mode,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+
       case .listThreads:
         let payload = try BridgeServiceIPCCodec.payload(
           IPCThreadListRequest.self,

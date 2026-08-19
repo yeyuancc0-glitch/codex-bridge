@@ -29,6 +29,8 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case listDirectApprovals = "list_direct_approvals"
   case approveDirectApproval = "approve_direct_approval"
   case denyDirectApproval = "deny_direct_approval"
+  case getDirectApprovalMode = "get_direct_approval_mode"
+  case setDirectApprovalMode = "set_direct_approval_mode"
   case setExposureMode = "set_exposure_mode"
   case configureTunnel = "configure_tunnel"
   case connectTunnel = "connect_tunnel"
@@ -516,6 +518,22 @@ public struct IPCSupervisorEnabledRequest: Codable, Equatable, Sendable {
 
   public init(enabled: Bool) {
     self.enabled = enabled
+  }
+}
+
+public struct IPCDirectApprovalModeRequest: Codable, Equatable, Sendable {
+  public let mode: String
+
+  public init(mode: String) {
+    self.mode = mode
+  }
+}
+
+public struct IPCDirectApprovalModeResponse: Codable, Equatable, Sendable {
+  public let mode: String
+
+  public init(mode: String) {
+    self.mode = mode
   }
 }
 

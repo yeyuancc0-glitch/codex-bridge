@@ -5,8 +5,14 @@ public enum ServiceMCPExposureMode: String, Codable, CaseIterable, Sendable {
   case full
 }
 
+public enum ServiceDirectApprovalMode: String, Codable, CaseIterable, Sendable {
+  case require
+  case auto
+}
+
 public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case mcpExposureMode = "mcp.exposure_mode"
+  case directApprovalMode = "direct.approval_mode"
   case defaultExecutionModel = "models.execution.default"
   case defaultExecutionEffort = "models.execution.effort"
   case defaultSupervisorModel = "models.supervisor.default"
@@ -68,6 +74,24 @@ public actor ServiceSettings {
 
   public func setExposureMode(_ mode: ServiceMCPExposureMode) async throws {
     try await set(mode.rawValue, for: .mcpExposureMode)
+  }
+
+  public func directApprovalMode() async throws -> ServiceDirectApprovalMode {
+    guard
+      let setting = try await store.setting(
+        key: ServiceSettingKey.directApprovalMode.rawValue
+      )
+    else {
+      return .require
+    }
+    guard let mode = ServiceDirectApprovalMode(rawValue: setting.value) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return mode
+  }
+
+  public func setDirectApprovalMode(_ mode: ServiceDirectApprovalMode) async throws {
+    try await set(mode.rawValue, for: .directApprovalMode)
   }
 
   public func setModelPreferences(_ preferences: ServiceModelPreferences) async throws {
