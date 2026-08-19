@@ -67,7 +67,7 @@ Before starting any task, call list_projects, list_threads when continuing work,
 4. 连接替换失败会关闭远程 admission，重新配置成功后才恢复；
 5. `get_task` 在 Supervisor 不可用时明确返回 `supervisorState = unavailable`；Supervisor 默认推荐 Luna，但允许使用当前目录中的其他用户选择模型。
 
-当前仓库的 `productionReviewAvailable` 固定为 `false`。因此，在没有完成真实 Supervisor 隔离认证前，`submit_task` 被拒绝是预期的 fail-closed 结果，不是 ChatGPT 配置错误。
+新 Service 路径的 `submit_task` 不受旧版 `productionReviewAvailable` 常量门控。它只要求：项目已注册、Codex 模型目录可达、网络权限允许、workspace gate 可准入。任务提交后保持 pending，直到你在 Mac 本机允许。Supervisor 未完成隔离登录只会让 `get_task` 返回 `supervisorState = unavailable`，不会阻止执行（fail-open）。
 
 ### 真实凭证化验收（需要用户在本机授权）
 
@@ -92,7 +92,7 @@ Supervisor 认证的顺序必须是：创建任务隔离 HOME，启动仅允许�
 | 现象 | 处理 |
 | --- | --- |
 | ChatGPT 看不到工具 | 先确认 Bridge 的 MCP listener 和 Tunnel `/readyz`，再重新运行应用连接测试；不要反复更换 Tunnel ID。 |
-| 连接成功但 `submit_task` 被拒绝 | 检查 Bridge 是否仍在 Supervisor production gate；当前版本在真实隔离认证完成前会有意拒绝。 |
+| 连接成功但 `submit_task` 被拒绝 | 检查项目是否已注册、模型目录是否可达、网络权限是否允许，以及是否已有同项目写任务占用 workspace gate；Supervisor 未登录不会导致拒绝，只会显示 `unavailable`。 |
 | Tunnel 认证失败 | 在 Bridge 中重新输入受限 Runtime Key；不要读取或复制 Keychain 内容，也不要把 Key 放进命令行。 |
 | 工具返回旧任务状态 | 使用 `get_task` 的游标重新读取；任务事实来自 EventStore，不以 ChatGPT 对话缓存为准。 |
 | Tunnel 断线后本地任务停止 | 这是不符合设计的结果，应记录任务 ID、event sequence 和连接状态后报告；断线只应关闭新的远程 admission。 |
