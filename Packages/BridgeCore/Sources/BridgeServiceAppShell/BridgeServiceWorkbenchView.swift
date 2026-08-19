@@ -297,16 +297,11 @@ struct BridgeServiceWorkbenchView: View {
     if let conversation = model.conversation, !conversation.entries.isEmpty {
       VStack(alignment: .leading, spacing: 10) {
         ForEach(conversation.entries) { entry in
-          let isUser = entry.role == "user"
           let streaming =
             conversation.isStreaming && entry.key == conversation.entries.last?.key
             && !entry.isFinal
-          MessageBubbleView(
-            role: isUser ? "我" : "Codex",
-            isUser: isUser,
-            content: streaming ? entry.content + "▍" : entry.content
-          )
-          .id(entry.key)
+          MessageBubble(entry: entry, streaming: streaming)
+            .id(entry.key)
         }
 
         if isWaitingForCodex {
@@ -318,14 +313,10 @@ struct BridgeServiceWorkbenchView: View {
         }
       }
     } else if let selectedThread = model.selectedThread, !selectedThread.entries.isEmpty {
-      VStack(alignment: .leading, spacing: 10) {
-        ForEach(Array(selectedThread.entries.enumerated()), id: \.offset) { _, entry in
-          let isUser = entry.role != "assistant"
-          MessageBubbleView(
-            role: isUser ? "我" : "Codex",
-            isUser: isUser,
-            content: entry.text
-          )
+      let groups = ThreadTurnGroup.group(entries: selectedThread.entries)
+      VStack(alignment: .leading, spacing: 12) {
+        ForEach(groups) { group in
+          ThreadChatBubbleView(group: group)
         }
 
         if isWaitingForCodex {
@@ -427,48 +418,6 @@ struct BridgeServiceWorkbenchView: View {
     return model.threads.first(where: { $0.threadID == threadID })?.title
       ?? model.threads.first(where: { $0.threadID == threadID })?.preview
       ?? threadID.prefix(8) + "…"
-  }
-}
-
-private struct MessageBubbleView: View {
-  let role: String
-  let isUser: Bool
-  let content: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) {
-        Image(systemName: isUser ? "person.circle.fill" : "cpu.fill")
-          .font(.caption)
-          .foregroundStyle(isUser ? Color.blue : Color.purple)
-
-        Text(role)
-          .font(.caption2.weight(.bold))
-          .foregroundStyle(isUser ? Color.blue : Color.purple)
-
-        Spacer()
-      }
-
-      Text(content)
-        .font(.system(size: 12))
-        .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-    .padding(10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      isUser
-        ? Color.blue.opacity(0.06)
-        : Color(nsColor: .textBackgroundColor).opacity(0.5)
-    )
-    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .strokeBorder(
-          isUser ? Color.blue.opacity(0.2) : Color(nsColor: .separatorColor).opacity(0.3),
-          lineWidth: 0.8
-        )
-    )
   }
 }
 

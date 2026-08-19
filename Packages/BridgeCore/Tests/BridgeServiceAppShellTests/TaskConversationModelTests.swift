@@ -1,4 +1,5 @@
 import BridgeIPC
+import BridgeMCP
 import Foundation
 import XCTest
 
@@ -205,6 +206,53 @@ final class TaskConversationModelTests: XCTestCase {
     )
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertEqual(model.entries.count, 1)
+  }
+
+  func testThreadTurnGroupGrouping() {
+    let entries: [MCPThreadEntry] = [
+      MCPThreadEntry(turnID: "turn-1", role: "user", text: "Please research X"),
+      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "First, finding account"),
+      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "Second, parsing timeline"),
+      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "Here is the summary of X: ..."),
+    ]
+
+    let groups = ThreadTurnGroup.group(entries: entries)
+    XCTAssertEqual(groups.count, 2)
+
+    XCTAssertEqual(groups[0].role, "user")
+    XCTAssertEqual(groups[0].mainText, "Please research X")
+    XCTAssertTrue(groups[0].thoughts.isEmpty)
+
+    XCTAssertEqual(groups[1].role, "assistant")
+    XCTAssertEqual(groups[1].thoughts, ["First, finding account", "Second, parsing timeline"])
+    XCTAssertEqual(groups[1].mainText, "Here is the summary of X: ...")
+  }
+
+  func testThreadTurnGroupMultipleTurns() {
+    let entries: [MCPThreadEntry] = [
+      MCPThreadEntry(turnID: "turn-1", role: "user", text: "Hello"),
+      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "Hi there!"),
+      MCPThreadEntry(turnID: "turn-2", role: "user", text: "Check disk space"),
+      MCPThreadEntry(turnID: "turn-2", role: "assistant", text: "Running df -h"),
+      MCPThreadEntry(turnID: "turn-2", role: "assistant", text: "You have 100GB available."),
+    ]
+
+    let groups = ThreadTurnGroup.group(entries: entries)
+    XCTAssertEqual(groups.count, 4)
+
+    XCTAssertEqual(groups[0].role, "user")
+    XCTAssertEqual(groups[0].mainText, "Hello")
+
+    XCTAssertEqual(groups[1].role, "assistant")
+    XCTAssertEqual(groups[1].mainText, "Hi there!")
+    XCTAssertTrue(groups[1].thoughts.isEmpty)
+
+    XCTAssertEqual(groups[2].role, "user")
+    XCTAssertEqual(groups[2].mainText, "Check disk space")
+
+    XCTAssertEqual(groups[3].role, "assistant")
+    XCTAssertEqual(groups[3].thoughts, ["Running df -h"])
+    XCTAssertEqual(groups[3].mainText, "You have 100GB available.")
   }
 
   private func waitUntil(

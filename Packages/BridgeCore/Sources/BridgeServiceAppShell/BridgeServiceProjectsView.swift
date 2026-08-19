@@ -6,13 +6,19 @@ struct BridgeServiceProjectsView: View {
   @ObservedObject var model: BridgeServiceAppModel
 
   var body: some View {
-    HSplitView {
+    HStack(spacing: 0) {
       projectList
-        .frame(minWidth: 280, idealWidth: 320)
+        .frame(width: 280)
+        .frame(maxHeight: .infinity)
       projectDetail
-        .frame(minWidth: 500)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .navigationTitle("项目")
+    .task {
+      if model.selectedProjectID == nil, let firstID = model.projects.first?.projectID {
+        model.selectProject(firstID)
+      }
+    }
   }
 
   private var projectList: some View {
@@ -136,11 +142,11 @@ struct BridgeServiceProjectsView: View {
               .foregroundStyle(.secondary)
 
             ProjectPermissionEditor(model: model, project: project)
-              .id(project.projectID + permissionFingerprint(project))
+              .id(project.projectID)
           }
 
           ProjectWorkspaceEditor(model: model, project: project)
-            .id(project.projectID + workspaceFingerprint(model, project))
+            .id(project.projectID)
 
           VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -249,7 +255,8 @@ struct BridgeServiceProjectsView: View {
           Label("Thread 对话历史", systemImage: "bubble.left.and.text.bubble.right.fill")
             .font(.subheadline.weight(.semibold))
           Spacer()
-          Text("共 \(page.entries.count) 条消息")
+          let groups = ThreadTurnGroup.group(entries: page.entries)
+          Text("共 \(groups.count) 轮对话 · \(page.entries.count) 条记录")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -259,36 +266,10 @@ struct BridgeServiceProjectsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         } else {
-          VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(page.entries.enumerated()), id: \.offset) { _, entry in
-              let isAssistant = entry.role == "assistant"
-              HStack(alignment: .top, spacing: 10) {
-                Image(systemName: isAssistant ? "cpu.fill" : "person.fill")
-                  .font(.system(size: 13))
-                  .foregroundStyle(isAssistant ? Color.purple : Color.blue)
-                  .frame(width: 24, height: 24)
-                  .background(isAssistant ? Color.purple.opacity(0.12) : Color.blue.opacity(0.12))
-                  .clipShape(Circle())
-
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(isAssistant ? "Codex" : "用户")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(isAssistant ? .purple : .blue)
-
-                  Text(entry.text)
-                    .font(.system(size: 12))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-              }
-              .padding(10)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .background(
-                isAssistant
-                  ? Color(nsColor: .textBackgroundColor).opacity(0.5)
-                  : Color.blue.opacity(0.04)
-              )
-              .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+          let groups = ThreadTurnGroup.group(entries: page.entries)
+          VStack(alignment: .leading, spacing: 12) {
+            ForEach(groups) { group in
+              ThreadChatBubbleView(group: group)
             }
           }
         }
@@ -306,18 +287,6 @@ struct BridgeServiceProjectsView: View {
     panel.canCreateDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
     model.registerProject(at: url)
-  }
-
-  private func permissionFingerprint(_ project: MCPProjectSummary) -> String {
-    project.capabilities.read + project.capabilities.write + project.capabilities.network
-  }
-
-  private func workspaceFingerprint(_ model: BridgeServiceAppModel, _ project: MCPProjectSummary)
-    -> String
-  {
-    guard let detail = model.projectDetails[project.projectID] else { return "loading" }
-    return detail.directWorkspace?.commandMode ?? "none"
-      + String(detail.directWorkspace?.commands.count ?? 0)
   }
 }
 
@@ -389,6 +358,11 @@ private struct ProjectPermissionEditor: View {
           .foregroundStyle(.secondary)
       }
     }
+    .onChange(of: project) {
+      if !hasChanges {
+        draft = BridgeProjectPolicyDraft(project: project)
+      }
+    }
   }
 
   private var hasChanges: Bool {
@@ -422,11 +396,24 @@ private struct ProjectPermissionEditor: View {
 private struct ProjectWorkspaceEditor: View {
   @ObservedObject var model: BridgeServiceAppModel
   let project: MCPProjectSummary
-  @State private var draftMode = "safe"
-  @State private var drafts: [BridgeWorkspaceCommandDraft] = []
-  @State private var blacklistDrafts: [BridgeBlacklistDraft] = []
+  @State private var draftMode: String
+  @State private var drafts: [BridgeWorkspaceCommandDraft]
+  @State private var blacklistDrafts: [BridgeBlacklistDraft]
   @State private var showSavedFeedback = false
   @State private var modeChanged = false
+
+  init(model: BridgeServiceAppModel, project: MCPProjectSummary) {
+    self.model = model
+    self.project = project
+    let detail = model.projectDetails[project.projectID]
+    _draftMode = State(initialValue: detail?.directWorkspace?.commandMode ?? "safe")
+    _drafts = State(
+      initialValue: detail?.directWorkspace?.commands.map(BridgeWorkspaceCommandDraft.init) ?? []
+    )
+    _blacklistDrafts = State(
+      initialValue: detail?.directWorkspace?.commandBlacklist.map(BridgeBlacklistDraft.init) ?? []
+    )
+  }
 
   var body: some View {
     NativeCard {
@@ -634,16 +621,15 @@ private struct ProjectWorkspaceEditor: View {
 
   private func loadDetail() {
     guard let detail = model.projectDetails[project.projectID] else { return }
-    draftMode = detail.directWorkspace?.commandMode ?? "safe"
-    let existing = detail.directWorkspace?.commands ?? []
-    if drafts.isEmpty && !existing.isEmpty {
-      drafts = existing.map(BridgeWorkspaceCommandDraft.init)
+    if !modeChanged {
+      draftMode = detail.directWorkspace?.commandMode ?? "safe"
     }
-    let existingBlacklist = detail.directWorkspace?.commandBlacklist ?? []
-    if blacklistDrafts.isEmpty && !existingBlacklist.isEmpty {
+    if !hasCommandChanges {
+      let existing = detail.directWorkspace?.commands ?? []
+      drafts = existing.map(BridgeWorkspaceCommandDraft.init)
+      let existingBlacklist = detail.directWorkspace?.commandBlacklist ?? []
       blacklistDrafts = existingBlacklist.map(BridgeBlacklistDraft.init)
     }
-    modeChanged = false
   }
 
   private var hasCommandChanges: Bool {

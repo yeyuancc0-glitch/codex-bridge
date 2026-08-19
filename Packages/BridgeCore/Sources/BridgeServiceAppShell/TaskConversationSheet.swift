@@ -147,7 +147,7 @@ struct TaskConversationSheet: View {
   }
 }
 
-private struct MessageBubble: View {
+struct MessageBubble: View {
   let entry: TaskConversationModel.Entry
   let streaming: Bool
 
@@ -163,35 +163,58 @@ private struct MessageBubble: View {
   }
 }
 
-private struct TextBubbleView: View {
+struct TextBubbleView: View {
   let entry: TaskConversationModel.Entry
   let streaming: Bool
 
   var body: some View {
     let isUser = entry.role == "user"
-    HStack {
+    HStack(alignment: .top, spacing: 0) {
       if isUser {
-        Spacer(minLength: 64)
+        Spacer(minLength: 40)
       }
       VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-        Text(isUser ? "我" : "Codex")
-          .font(.caption2.weight(.semibold))
-          .foregroundStyle(.secondary)
+        HStack(spacing: 4) {
+          if isUser {
+            Text("我")
+              .font(.caption2.weight(.bold))
+              .foregroundStyle(Color.blue)
+            Image(systemName: "person.crop.circle.fill")
+              .font(.caption2)
+              .foregroundStyle(Color.blue)
+          } else {
+            Image(systemName: "cpu.fill")
+              .font(.caption2)
+              .foregroundStyle(Color.purple)
+            Text("Codex")
+              .font(.caption2.weight(.bold))
+              .foregroundStyle(Color.purple)
+          }
+        }
+        .padding(.horizontal, 2)
+
         Text(displayContent)
-          .font(.body)
+          .font(.system(size: 13))
           .textSelection(.enabled)
           .padding(10)
           .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
               .fill(
                 isUser
-                  ? Color.accentColor.opacity(0.14)
+                  ? Color.blue.opacity(0.08)
                   : Color(nsColor: .textBackgroundColor).opacity(0.6)
+              )
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .strokeBorder(
+                isUser ? Color.blue.opacity(0.25) : Color(nsColor: .separatorColor).opacity(0.35),
+                lineWidth: 0.8
               )
           )
       }
       if !isUser {
-        Spacer(minLength: 64)
+        Spacer(minLength: 40)
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -202,7 +225,7 @@ private struct TextBubbleView: View {
   }
 }
 
-private struct ReasoningBubbleView: View {
+struct ReasoningBubbleView: View {
   let entry: TaskConversationModel.Entry
   let streaming: Bool
   @State private var isExpanded = true
@@ -253,7 +276,7 @@ private struct ReasoningBubbleView: View {
   }
 }
 
-private struct ToolCallBubbleView: View {
+struct ToolCallBubbleView: View {
   let entry: TaskConversationModel.Entry
 
   var body: some View {
