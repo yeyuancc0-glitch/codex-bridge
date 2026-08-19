@@ -244,6 +244,13 @@ public struct MCPToolDispatcher: Sendable {
         message: "The file content does not match the expected revision.",
         retryable: true
       )
+    case .revisionConflict(let detail):
+      description = .init(
+        code: "revision_conflict",
+        message: "The file changed since the expected revision. Re-read the file and retry.",
+        retryable: true,
+        data: detail.errorData
+      )
     case .pathForbidden:
       description = .init(
         code: "path_forbidden",
@@ -304,6 +311,20 @@ public struct MCPToolDispatcher: Sendable {
         code: "command_denied",
         message: "The requested command was denied: \(reason)",
         retryable: false
+      )
+    case .processLaunchFailed:
+      description = .init(
+        code: "process_launch_failed",
+        message:
+          "The command could not be launched. Check the executable path and that it is executable.",
+        retryable: true
+      )
+
+    case .gitOperationFailed(let summary):
+      description = .init(
+        code: "git_operation_failed",
+        message: "The git operation failed: \(summary)",
+        retryable: true
       )
     case .outputLimitExceeded:
       description = .init(

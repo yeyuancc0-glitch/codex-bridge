@@ -4,7 +4,7 @@ import BridgeServiceCore
 import XCTest
 
 final class TaskConversationBufferTests: XCTestCase {
-  func testUserMessageStreamsFullContentAndPersistsOnClose() async throws {
+  func testUserMessageStreamsFullContentAndPersistsImmediately() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(fixture: fixture, taskID: "tsk-buffer-user")
     let buffer = TaskConversationBuffer(
@@ -24,7 +24,8 @@ final class TaskConversationBufferTests: XCTestCase {
     XCTAssertEqual(change?.final, true)
 
     let persistedBeforeClose = try await fixture.store.taskMessages(taskID: task.id)
-    XCTAssertTrue(persistedBeforeClose.isEmpty)
+    XCTAssertEqual(persistedBeforeClose.map(\.key), [change?.key].compactMap { $0 })
+    XCTAssertEqual(persistedBeforeClose[0].content, "Please add a test.")
 
     await buffer.close(taskID: task.id)
 
@@ -289,6 +290,38 @@ final class TaskConversationBufferTests: XCTestCase {
     XCTAssertEqual(persisted[0].toolName, "read")
     XCTAssertEqual(persisted[0].toolStatus, "completed")
     collect.cancel()
+  }
+
+  func testPersistedFinalEntriesAreEvictedFromActiveMemoryWindow() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "task-eviction"
+    )
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks,
+      flushDeltaCount: 1,
+      flushInFlightCount: 1
+    )
+
+    let total = TaskConversationBuffer.maximumRetainedMessagesPerTask + 8
+    for index in 0..<total {
+      let call = try ExecutionToolCall(
+        itemID: "tool-\(index)",
+        tool: "read",
+        arguments: "item-\(index)",
+        status: .completed
+      )
+      await buffer.upsertToolCall(taskID: task.id, call: call)
+    }
+
+    let entries = await buffer.entries(taskID: task.id)
+    XCTAssertEqual(entries.count, TaskConversationBuffer.maximumRetainedMessagesPerTask)
+    XCTAssertEqual(entries.first?.key, "tool:tool-8")
+
+    let persisted = try await fixture.store.taskMessages(taskID: task.id)
+    XCTAssertEqual(persisted.count, total)
+    await buffer.close(taskID: task.id)
   }
 
   private func waitUntil(

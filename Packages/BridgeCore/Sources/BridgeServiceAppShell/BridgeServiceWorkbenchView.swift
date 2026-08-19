@@ -51,7 +51,7 @@ struct BridgeServiceWorkbenchView: View {
       Divider()
       if model.isChatBrowserEnabled {
         ChatGPTWebView(
-          initialURL: URL(string: "https://chatgpt.com")!,
+          initialURL: model.chatBrowserResumeURL,
           webViewReference: $model.chatWebView
         )
       } else {
@@ -295,7 +295,7 @@ struct BridgeServiceWorkbenchView: View {
   @ViewBuilder
   private var conversationStreamView: some View {
     if let conversation = model.conversation, !conversation.entries.isEmpty {
-      VStack(alignment: .leading, spacing: 10) {
+      LazyVStack(alignment: .leading, spacing: 10) {
         ForEach(conversation.entries) { entry in
           let streaming =
             conversation.isStreaming && entry.key == conversation.entries.last?.key
@@ -314,7 +314,7 @@ struct BridgeServiceWorkbenchView: View {
       }
     } else if let selectedThread = model.selectedThread, !selectedThread.entries.isEmpty {
       let groups = ThreadTurnGroup.group(entries: selectedThread.entries)
-      VStack(alignment: .leading, spacing: 12) {
+      LazyVStack(alignment: .leading, spacing: 12) {
         ForEach(groups) { group in
           ThreadChatBubbleView(group: group)
         }

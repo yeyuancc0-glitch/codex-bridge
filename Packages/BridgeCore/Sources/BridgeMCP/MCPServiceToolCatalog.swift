@@ -23,6 +23,7 @@ public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case directReadCommand = "direct_read_command"
   case directWriteStdin = "direct_write_stdin"
   case directInterruptCommand = "direct_interrupt_command"
+  case directGitCommit = "direct_git_commit"
 }
 
 public struct MCPServiceToolCatalog: Sendable {
@@ -56,6 +57,7 @@ public struct MCPServiceToolCatalog: Sendable {
           Self.directReadCommand,
           Self.directWriteStdin,
           Self.directInterruptCommand,
+          Self.directGitCommit,
         ]
       )
     }
@@ -159,7 +161,7 @@ public struct MCPServiceToolCatalog: Sendable {
         "project_id": boundedStringSchema(maximum: 128),
         "relative_path": boundedStringSchema(maximum: 1_024),
         "start_line": integerSchema(minimum: 1),
-        "line_count": integerSchema(minimum: 1, maximum: 300),
+        "line_count": integerSchema(minimum: 1, maximum: 1_000_000),
       ],
       required: ["project_id", "relative_path"]
     ),
@@ -674,6 +676,41 @@ public struct MCPServiceToolCatalog: Sendable {
       "truncated": boolSchema,
     ],
     required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
+  )
+
+  private static let directGitCommit = Tool(
+    name: MCPServiceToolName.directGitCommit.rawValue,
+    title: "Direct git commit",
+    description:
+      "Explicit Direct Workspace action that creates a local Git commit inside the project. "
+      + "Use only when the user explicitly asks ChatGPT itself to commit the changes. It stages "
+      + "the listed project files (or all changed files when empty) and runs `git commit` with "
+      + "the provided message. History-rewriting operations (amend/reset/rebasing) and push are "
+      + "never performed.",
+    inputSchema: objectSchema(
+      properties: [
+        "project_id": boundedStringSchema(maximum: 128),
+        "message": boundedStringSchema(maximum: 4_096),
+        "files": arraySchema(boundedStringSchema(maximum: 1_024)),
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["project_id", "message"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: objectSchema(
+      properties: [
+        "commit_hash": nullableStringSchema(maximum: 64),
+        "changed_files": arraySchema(boundedStringSchema(maximum: 1_024)),
+        "summary": stringSchema,
+        "exit_code": integerSchema(minimum: 0),
+      ],
+      required: ["changed_files", "summary", "exit_code"]
+    )
   )
 
   private static let projectIDInput = objectSchema(

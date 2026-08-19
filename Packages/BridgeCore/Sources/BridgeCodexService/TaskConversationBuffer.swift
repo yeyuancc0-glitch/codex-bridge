@@ -92,14 +92,19 @@ public actor TaskConversationBuffer {
 
   public static let maximumMessageBytes = 256 * 1_024
   public static let maximumMessagesPerTask = 512
+  public static let maximumRetainedMessagesPerTask = 64
   public static let maximumSubscribersPerTask = 8
 
   private final class TaskState {
     var entries: [Entry] = []
     var index: [String: Int] = [:]
+    var dirtyRevisions: [String: Int] = [:]
+    var persistedKeys: Set<String> = []
+    var nextRevision = 0
     var unflushedCount: Int = 0
     var lastFlush: Date?
     var isFlushing = false
+    var flushWaiters: [CheckedContinuation<Void, Never>] = []
     var subscribers: [Int: AsyncStream<ConversationChange>.Continuation] = [:]
     var nextSubscriberID = 0
   }
@@ -128,7 +133,7 @@ public actor TaskConversationBuffer {
     guard state.entries.count < Self.maximumMessagesPerTask else { return }
     let key = "user:" + UUID().uuidString.lowercased()
     append(Entry(key: key, role: .user, kind: .user, content: content, isFinal: true), in: state)
-    await flush(taskID: taskID)
+    markDirty(key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -142,6 +147,7 @@ public actor TaskConversationBuffer {
       ),
       in: state
     )
+    await flush(taskID: taskID)
   }
 
   public func appendAgentMessage(taskID: TaskID, content: String) async {
@@ -150,7 +156,7 @@ public actor TaskConversationBuffer {
     guard state.entries.count < Self.maximumMessagesPerTask else { return }
     let key = "agent:bridge:" + UUID().uuidString.lowercased()
     append(Entry(key: key, role: .agent, kind: .agent, content: content, isFinal: true), in: state)
-    await flush(taskID: taskID)
+    markDirty(key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -164,6 +170,7 @@ public actor TaskConversationBuffer {
       ),
       in: state
     )
+    await flush(taskID: taskID)
   }
 
   public func appendDelta(
@@ -191,7 +198,7 @@ public actor TaskConversationBuffer {
         content: content,
         isFinal: false
       )
-      state.unflushedCount += 1
+      markDirty(key: key, in: state)
       notify(
         ConversationChange(
           taskID: taskID,
@@ -212,7 +219,7 @@ public actor TaskConversationBuffer {
         Entry(key: key, role: .agent, kind: kind, content: content, isFinal: false),
         in: state
       )
-      state.unflushedCount += 1
+      markDirty(key: key, in: state)
       notify(
         ConversationChange(
           taskID: taskID,
@@ -256,7 +263,7 @@ public actor TaskConversationBuffer {
       isFinal: isFinal
     )
     guard apply(entry, taskID: taskID, in: state) else { return }
-    state.unflushedCount += 1
+    markDirty(key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -300,7 +307,7 @@ public actor TaskConversationBuffer {
       isFinal: false
     )
     state.entries[index] = entry
-    state.unflushedCount += 1
+    markDirty(key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -332,7 +339,7 @@ public actor TaskConversationBuffer {
       }
     }
     if didUpdate {
-      await flush(taskID: taskID, force: true)
+      await flush(taskID: taskID)
     }
   }
 
@@ -470,6 +477,7 @@ public actor TaskConversationBuffer {
       isFinal: true
     )
     guard apply(entry, taskID: taskID, in: state) else { return false }
+    markDirty(key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -507,7 +515,6 @@ public actor TaskConversationBuffer {
   }
 
   private func shouldFlush(_ state: TaskState) async -> Bool {
-    if state.isFlushing { return false }
     if state.unflushedCount >= flushDeltaCount { return true }
     if state.unflushedCount >= flushInFlightCount { return true }
     if let lastFlush = state.lastFlush {
@@ -518,25 +525,101 @@ public actor TaskConversationBuffer {
   }
 
   private func flush(taskID: TaskID, force: Bool = false) async {
-    guard let state = states[taskID], !state.isFlushing else { return }
-    guard force || state.unflushedCount > 0 else { return }
-    state.isFlushing = true
-    let snapshot = state.entries
-    for entry in snapshot {
-      try? await tasks.upsertTaskMessage(
-        taskID: taskID,
-        key: entry.key,
-        role: entry.role,
-        content: entry.content,
-        kind: entry.kind,
-        toolName: entry.toolName,
-        toolStatus: entry.toolStatus,
-        toolArguments: entry.toolArguments
-      )
+    guard let state = states[taskID] else { return }
+    while state.isFlushing {
+      await withCheckedContinuation { continuation in
+        state.flushWaiters.append(continuation)
+      }
+      guard states[taskID] === state else { return }
     }
-    state.unflushedCount = 0
+    let revisions = state.dirtyRevisions
+    let snapshot: [(Entry, Int?)]
+    if force {
+      snapshot = state.entries.map { ($0, revisions[$0.key]) }
+    } else {
+      snapshot = state.entries.compactMap { entry in
+        guard let revision = revisions[entry.key] else { return nil }
+        return (entry, Optional(revision))
+      }
+    }
+    guard !snapshot.isEmpty else { return }
+
+    state.isFlushing = true
+    let flushedDeltaCount = state.unflushedCount
+    var persisted: [(String, Int?)] = []
+    for (entry, revision) in snapshot {
+      do {
+        try await tasks.upsertTaskMessage(
+          taskID: taskID,
+          key: entry.key,
+          role: entry.role,
+          content: entry.content,
+          kind: entry.kind,
+          toolName: entry.toolName,
+          toolStatus: entry.toolStatus,
+          toolArguments: entry.toolArguments
+        )
+        persisted.append((entry.key, revision))
+      } catch {
+        continue
+      }
+    }
+
+    for (key, revision) in persisted {
+      state.persistedKeys.insert(key)
+      guard let revision, state.dirtyRevisions[key] == revision else { continue }
+      state.dirtyRevisions.removeValue(forKey: key)
+    }
+    state.unflushedCount = max(
+      state.dirtyRevisions.count,
+      state.unflushedCount - flushedDeltaCount
+    )
     state.lastFlush = Date()
     state.isFlushing = false
+    if !force {
+      prunePersistedFinalEntries(in: state)
+    }
+    let waiters = state.flushWaiters
+    state.flushWaiters.removeAll(keepingCapacity: false)
+    for waiter in waiters {
+      waiter.resume()
+    }
+  }
+
+  private func markDirty(key: String, in state: TaskState) {
+    state.nextRevision &+= 1
+    state.dirtyRevisions[key] = state.nextRevision
+    state.unflushedCount += 1
+  }
+
+  private func prunePersistedFinalEntries(in state: TaskState) {
+    var excess = state.entries.count - Self.maximumRetainedMessagesPerTask
+    guard excess > 0 else { return }
+    var retained: [Entry] = []
+    retained.reserveCapacity(state.entries.count - excess)
+    for entry in state.entries {
+      let canEvict =
+        excess > 0
+        && entry.isFinal
+        && state.persistedKeys.contains(entry.key)
+        && state.dirtyRevisions[entry.key] == nil
+      if canEvict {
+        excess -= 1
+        state.persistedKeys.remove(entry.key)
+      } else {
+        retained.append(entry)
+      }
+    }
+    guard retained.count != state.entries.count else { return }
+    state.entries = retained
+    rebuildIndex(in: state)
+  }
+
+  private func rebuildIndex(in state: TaskState) {
+    state.index.removeAll(keepingCapacity: true)
+    for (position, entry) in state.entries.enumerated() {
+      state.index[entry.key] = position
+    }
   }
 
   private static func keyPrefix(for kind: ServiceTaskMessageKind) -> String {

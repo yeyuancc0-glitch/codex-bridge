@@ -37,7 +37,7 @@ final class MCPServiceExposureTests: XCTestCase {
   func testFullModeExposesDirectAndCodexActions() {
     let catalog = MCPServiceToolCatalog(exposureMode: .full)
     let names = catalog.definitions.map(\.name)
-    XCTAssertEqual(names.count, 22)
+    XCTAssertEqual(names.count, 23)
     for name in directToolNames {
       XCTAssertTrue(names.contains(name), "full must expose \(name)")
     }

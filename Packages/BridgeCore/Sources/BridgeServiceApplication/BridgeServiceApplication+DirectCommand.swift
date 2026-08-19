@@ -45,6 +45,7 @@ extension BridgeServiceApplication {
       project: project,
       relative: request.workingDirectory
     )
+    let launchArgv = try Self.resolvedLaunchArgv(resolution.argv, project: project)
     let sessionID = "dcmd-\(UUID().uuidString)"
     let lease = try await acquireDirectLease(
       project: project,
@@ -54,7 +55,7 @@ extension BridgeServiceApplication {
       _ = try await directCommands.launch(
         sessionID: sessionID,
         projectID: project.id,
-        argv: resolution.argv,
+        argv: launchArgv,
         workingDirectory: workingDirectory,
         requiresNetwork: resolution.requiresNetwork,
         usePTY: request.tty,
@@ -164,6 +165,157 @@ extension BridgeServiceApplication {
     return project.root.canonicalPath + "/" + secure.components.joined(separator: "/")
   }
 
+  /// Resolve a project-relative executable (e.g. `Scripts/with-xcode.sh`) to an absolute path
+  /// inside the project root, verifying symlink containment. Bare binary names and absolute
+  /// paths pass through unchanged.
+  static func resolvedLaunchArgv(
+    _ argv: [String],
+    project: ServiceProjectRecord
+  ) throws -> [String] {
+    guard let executable = argv.first, !executable.hasPrefix("/"), executable.contains("/")
+    else {
+      return argv
+    }
+    let root = project.root.canonicalPath
+    let candidate =
+      ((root as NSString).appendingPathComponent(executable) as NSString).standardizingPath
+    let resolved = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
+    guard resolved == root || resolved.hasPrefix(root + "/") else {
+      throw BridgeMCPQueryError.pathDenied
+    }
+    return [resolved] + argv.dropFirst()
+  }
+
+  public func serviceDirectGitCommit(
+    _ request: MCPDirectGitCommitRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectGitCommitReceipt {
+    try Self.checkDeadline(deadline)
+    let message = request.message.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !message.isEmpty, message.utf8.count <= 4_096, !message.contains("\0") else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    guard request.files.count <= 128 else { throw BridgeMCPQueryError.contractRejected }
+    let project = try await readableProject(request.projectID)
+    guard project.accessPolicy.write != .denied else {
+      throw BridgeMCPQueryError.writeNotAllowed
+    }
+    if project.accessPolicy.write == .requiresLocalApproval {
+      try await requireDirectApproval(
+        project: project,
+        kind: .command,
+        summary: "Git commit: \(String(message.prefix(120)))",
+        payload: request,
+        clientRequestID: request.clientRequestID
+      )
+    }
+    let operationID = "op-" + UUID().uuidString.lowercased()
+    let lease = try await acquireDirectLease(
+      project: project,
+      owner: .directGitCommit(operationID: operationID)
+    )
+    do {
+      let receipt = try await Self.runGitCommit(
+        project: project,
+        message: message,
+        files: request.files,
+        runner: DirectGitRunner()
+      )
+      await lease.release()
+      return receipt
+    } catch {
+      await lease.release()
+      throw Self.publicGitError(error)
+    }
+  }
+
+  static func runGitCommit(
+    project: ServiceProjectRecord,
+    message: String,
+    files: [String],
+    runner: DirectGitRunner
+  ) async throws -> MCPDirectGitCommitReceipt {
+    let root = project.root.canonicalPath
+    let git = DirectGitRunner.gitPath
+
+    let verify = try await runner.run(
+      argv: [git, "-C", root, "rev-parse", "--is-inside-work-tree"],
+      workingDirectory: root
+    )
+    guard verify.exitCode == 0 else { throw DirectGitError.notGitRepository }
+
+    let stageArgv: [String]
+    if files.isEmpty {
+      stageArgv = [git, "-C", root, "add", "-A"]
+    } else {
+      stageArgv = [git, "-C", root, "add", "--"] + files
+    }
+    let staged = try await runner.run(argv: stageArgv, workingDirectory: root)
+    guard staged.exitCode == 0 else {
+      throw DirectGitCommitError.gitFailed(Self.gitSummary(staged.output))
+    }
+
+    let changedResult = try await runner.run(
+      argv: [git, "-C", root, "diff", "--cached", "--name-only"],
+      workingDirectory: root
+    )
+    let changedFiles = changedResult.output.tail
+      .split(separator: "\n")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    guard !changedFiles.isEmpty else {
+      return MCPDirectGitCommitReceipt(
+        commitHash: nil,
+        changedFiles: [],
+        summary: "Nothing to commit; working tree is clean for the requested paths.",
+        exitCode: 0
+      )
+    }
+
+    let commit = try await runner.run(
+      argv: [git, "-C", root, "commit", "-m", message],
+      workingDirectory: root
+    )
+    guard commit.exitCode == 0 else {
+      throw DirectGitCommitError.gitFailed(Self.gitSummary(commit.output))
+    }
+    let hashResult = try await runner.run(
+      argv: [git, "-C", root, "rev-parse", "HEAD"],
+      workingDirectory: root
+    )
+    let hash = hashResult.output.tail.split(separator: "\n").first.map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return MCPDirectGitCommitReceipt(
+      commitHash: hash,
+      changedFiles: Array(changedFiles.prefix(128)),
+      summary: Self.gitSummary(commit.output),
+      exitCode: Int(commit.exitCode)
+    )
+  }
+
+  private static func gitSummary(_ output: DirectCommandOutputBuffer) -> String {
+    let tail = output.tail.trimmingCharacters(in: .whitespacesAndNewlines)
+    return tail.isEmpty ? output.head.trimmingCharacters(in: .whitespacesAndNewlines) : tail
+  }
+
+  static func publicGitError(_ error: Error) -> BridgeMCPQueryError {
+    switch error {
+    case DirectGitError.notGitRepository:
+      return .notGitRepository
+    case DirectGitError.invalidArgument:
+      return .contractRejected
+    case DirectGitError.launchFailed:
+      return .processLaunchFailed
+    case DirectGitError.timedOut:
+      return .commandTimeout
+    case DirectGitCommitError.gitFailed(let summary):
+      return .gitOperationFailed(summary)
+    default:
+      return .unavailable
+    }
+  }
+
   static func denialMessage(_ reason: DirectCommandDenialReason?) -> String {
     switch reason {
     case .commandModeDenied: "direct commands are disabled for this project"
@@ -193,7 +345,7 @@ extension BridgeServiceApplication {
       case .invalidArgument:
         return .contractRejected
       case .processLaunchFailed:
-        return .unavailable
+        return .processLaunchFailed
       case .stdinUnavailable:
         return .commandSessionNotFound
       }

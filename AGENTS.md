@@ -36,9 +36,13 @@ V1 的用户结果是：ChatGPT 网页版可以读取用户明确注册的本地
 - 任务对话消息已进入 Service SQLite（`bridge_service_task_messages`，V4 schema）：每条消息按 `(task_id, message_key)` 去重，随任务级联删除；消息带 `kind`（`user`/`agent`/`reasoning`/`tool_call`）及 `tool_name`/`tool_status`/`tool_arguments` 列，用户消息、Codex agent 文本、reasoning 思考链与工具调用增量在 `TaskConversationBuffer` 中按 key 归并，最终以权威全文落库。
 - `BridgeCodexService` 已提供独立 ExecutionManager、SupervisorManager、本机 Codex 审批、ServiceExecutionCoordinator 和对话订阅推送（`item/agentMessage/delta`、`item/reasoning/textDelta`、`item/mcpToolCall/progress` 流式入 buffer，tool call 经 `item/started`/`item/completed` 更新状态，`turn/completed` 归并权威文本）。
 - `BridgeMCP` 已接入轻量 Service API，支持只读与完整动作两种 MCP 暴露模式。工具语义明确区分默认 Codex 路径（`submit_task`/`steer_task`/`interrupt_task`）与显式 Direct 路径（`direct_write_project_file`/`direct_edit_project_file`/`direct_apply_project_patch`/`direct_manage_project_path`/`direct_exec_project_command`/`direct_read_command`/`direct_write_stdin`/`direct_interrupt_command`）；Direct 工具仅当用户明确要求 ChatGPT 直接执行时使用。
-- `BridgeDirectCommand` 提供完整 Direct Process Session：每项目单活跃会话、命令策略（`denied`/`safe`/`full`，安全模式仅放行内置安全前缀与用户允许命令规则，黑名单在安全与完全模式均生效，旧 `registered` 已迁移为 `safe`）、结构化 argv 精确/前缀匹配、进程组、有界超时/stdin/输出（head/tail）、孤儿 PID 文件重启清理；Direct 会话与 Codex 写任务共用同一 workspace gate 互斥。
+- `BridgeDirectCommand` 提供完整 Direct Process Session：每项目单活跃会话、命令策略（`denied`/`safe`/`full`，安全模式仅放行内置安全前缀、项目根内脚本（如 `Scripts/`）与用户允许命令规则，黑名单在安全与完全模式均生效，旧 `registered` 已迁移为 `safe`）、结构化 argv 精确/前缀匹配、进程组、有界超时/stdin/输出（head/tail）、孤儿 PID 文件重启清理；Direct 会话与 Codex 写任务共用同一 workspace gate 互斥。
+- `DirectGitRunner` + `serviceDirectGitCommit` 提供受控 Git 提交（`direct_git_commit`）：只允许 `git add`（指定文件或全部）与 `git commit -m`，显式文件列表与提交信息，禁止 amend/reset/改写历史与 push，复用 workspace gate 与本机审批。
 - `DirectActionApprovalCenter` 提供 Direct 本机审批：pending approvals 经 XPC 推送到 App 展示，approve/deny 由本机用户决定；approval 绑定 payload digest + `client_request_id` 一次性消费、内存态、可过期，Service 重启后失效不可重放；`direct.approval_mode` 设置为 `auto` 时 Direct 文件写入与命令执行跳过本机审批直接放行，可在 App Connections 中切换回 `require`。
 - `CodexBridgeService` 已作为 bundled LaunchAgent 后台进程运行，并通过版本化 XPC 向 App 提供本机操作接口；XPC 增加任务删除、对话分页与对话流式订阅（`CodexBridgeTaskStreamListener` 推送），App 端 `TaskConversationModel` + `TaskConversationSheet` 实时渲染打字机式对话，包含可折叠思考链区块与工具调用卡片。
+- App 的 2 秒后台轮询只刷新轻量 Service/任务/审批状态；Codex Thread Catalog 在连接、手动刷新、项目切换、任务生命周期变化或 60 秒低频兜底到期时读取，启动后不再自动读取首个 Thread 全文。
+- 工作台内嵌 `WKWebView` 离开工作台后保留 3 分钟复用窗口，期间返回取消休眠；持续离开后释放 WebView，但继续使用默认持久化 `WKWebsiteDataStore` 保留网站登录数据。
+- App 对话流在 `TaskConversationModel` 侧按约 40 ms 合并 push 后一次发布 UI 状态，工作台历史与实时消息使用 `LazyVStack`，避免逐 token 触发完整 SwiftUI 刷新。
 - 正式 App Target 已使用 `BridgeServiceAppShell`，不再启动旧 App 内控制平面。退出 UI 只断开 XPC，不注销 Service，不停止任务。
 - Secure MCP Tunnel 已由后台 Service 持有。Tunnel ID 与 enabled 状态进入 Service SQLite；Runtime Key 与本地 MCP Header Secret只进入 Keychain。
 - Tunnel helper 当前固定为 OpenAI `tunnel-client` v0.0.10、commit `105e17a79a36e4e5c897fd698ed2b8dbf935b144`，并有固定归档哈希、Universal 2 构建和官方 arm64 `doctor` 兼容门。
@@ -101,7 +105,8 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - Supervisor 失败只降低监督状态，不能终止 Execution。
 - Service 崩溃后任务诚实进入 `unknown` 或 `interrupted`，不得启动新 Turn 冒充旧 Turn 恢复。
 - Tunnel 断线只阻止新的远程提交，不取消已经运行的本地任务。
-- Direct 命令按结构化 argv 精确/前缀匹配，不拼 shell：`denied` 禁止一切命令；`safe` 仅放行内置安全前缀与用户「允许命令」规则（可执行文件+参数前缀，空前缀=任意参数，可带风险/网络/工作目录元数据），并受用户黑名单约束；`full` 放行所有命令但仍受项目网络/写入权限与审批约束，且黑名单同样生效。
+- Direct 命令按结构化 argv 精确/前缀匹配，不拼 shell：`denied` 禁止一切命令；`safe` 仅放行内置安全前缀、项目根内脚本（相对路径或解析后仍在项目根内的绝对路径）与用户「允许命令」规则（可执行文件+参数前缀，空前缀=任意参数，可带风险/网络/工作目录元数据），并受用户黑名单约束；`full` 放行所有命令但仍受项目网络/写入权限与审批约束，且黑名单同样生效。项目相对可执行文件启动前解析为项目根内绝对路径并校验符号链接包含。
+- Direct 错误细分到可重试码：`process_launch_failed`（进程启动失败）、`command_denied`（策略拒绝）、`approval_required`、`project_busy`（workspace gate 占用）、`command_timeout`、`git_operation_failed`；`direct_edit_project_file`/`direct_apply_project_patch` 的 SHA 冲突返回 `revision_conflict` 并携带 `current_sha256`、`changed_since_revision` 与有界当前内容摘录；`read_project_file` 的 `line_count` 超过 300 时自动收窄到 300 并返回 `next_start_line`，不报错。
 - Direct 命令在独立进程组内运行，有界超时/stdin/输出；中断、Service 关闭和 Service 崩溃孤儿清理都会终止进程组。
 - Direct 会话常驻后台 Service，退出 App 不停止运行中的本地命令；Direct 审批在内存中一次性消费、可过期、重启失效。
 - 不读取、记录、导出或回传 Key、Token、Cookie、登录 URL、验证码、Runtime Key、本地 MCP Header Secret 或认证文件。
@@ -129,7 +134,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - 当前任务状态直接存储；`task_events` 只用于展示和诊断，不参与事件归约。
 - 任务对话以 `(task_id, message_key)` 幂等落库；同一项目写任务完成后才允许删除任务记录（`deleteTask`），活动任务删除一律拒绝；删除走 FK 级联清事件与消息。
 - 对话增量推送采用确定合并协议：按 `message_key` 归并，`fullContent` 权威替换，`delta` 仅在 `baseContentLength` 与当前内容匹配时追加；客户端订阅先应用原子快照页再消费增量流，订阅与分页在同一 actor 内完成，避免竞态。
-- `TaskConversationBuffer` 是对话流的唯一拥有者：用户消息即时 fullContent 通知，agent 文本与 reasoning 增量按 key 累积，tool call 按 `tool:<itemID>` 更新状态与追加进度，`turn/completed` 以权威全文 finalize，close/purge 只由 Coordinator 在任务终态触发；落库按增量阈值/在途数/时间兜底强制 flush。
+- `TaskConversationBuffer` 是对话流的唯一拥有者：用户消息即时 fullContent 通知，agent 文本与 reasoning 增量按 key 累积，tool call 按 `tool:<itemID>` 更新状态与追加进度，`turn/completed` 以权威全文 finalize，close/purge 只由 Coordinator 在任务终态触发；flush 只写 dirty revision，成功落库且 final 的历史消息从活动内存淘汰，单任务常驻最近 64 条窗口，完整历史继续以 SQLite 为权威来源。
 - XPC 流式推送按连接持有：Listener 为每个连接建独立 Controller 与 `StreamRegistry`（forwarder 任务 + subscriptionID），连接失效即取消 forwarder 并退订；客户端 `CodexBridgeTaskStreamHub` 是锁保护的注册表，不用 actor，避免区域隔离编译错误。
 - 使用数据库约束消除并发特例，避免多个模块复制锁状态。
 - 函数嵌套不超过 3 层；一个状态只有一个拥有者。

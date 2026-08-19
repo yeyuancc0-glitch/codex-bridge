@@ -417,6 +417,7 @@ extension BridgeServiceAppModel {
   func loadThreads(projectID: String) async {
     do {
       let client = try currentClient()
+      lastThreadCatalogRefreshAt = Date()
       let page = try await client.threads(
         IPCThreadListRequest(projectID: projectID, limit: 100)
       )

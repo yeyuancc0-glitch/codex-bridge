@@ -891,6 +891,12 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           message: "The file content does not match the expected revision.",
           retryable: true
         )
+      case .revisionConflict:
+        return .init(
+          code: "revision_conflict",
+          message: "The file changed since the expected revision.",
+          retryable: true
+        )
       case .pathForbidden:
         return .init(code: "path_forbidden", message: "The path is not allowed.")
       case .pathChanged:
@@ -934,6 +940,18 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(
           code: "command_denied",
           message: "The requested command was denied: \(reason)"
+        )
+      case .processLaunchFailed:
+        return .init(
+          code: "process_launch_failed",
+          message: "The command could not be launched.",
+          retryable: true
+        )
+      case .gitOperationFailed(let summary):
+        return .init(
+          code: "git_operation_failed",
+          message: "The git operation failed: \(summary)",
+          retryable: true
         )
       case .outputLimitExceeded:
         return .init(

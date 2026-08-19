@@ -6,6 +6,7 @@ import Foundation
 public enum ServiceWorkspaceOwner: Codable, Equatable, Sendable {
   case directFileOperation(operationID: String)
   case directCommand(sessionID: String)
+  case directGitCommit(operationID: String)
 
   public var ownerCode: String {
     switch self {
@@ -13,6 +14,8 @@ public enum ServiceWorkspaceOwner: Codable, Equatable, Sendable {
       "direct_file"
     case .directCommand:
       "direct_command"
+    case .directGitCommit:
+      "direct_git_commit"
     }
   }
 
@@ -22,6 +25,8 @@ public enum ServiceWorkspaceOwner: Codable, Equatable, Sendable {
       .direct(owner: "direct_file", operationID: operationID)
     case .directCommand(let sessionID):
       .direct(owner: "direct_command", sessionID: sessionID)
+    case .directGitCommit(let operationID):
+      .direct(owner: "direct_git_commit", operationID: operationID)
     }
   }
 }

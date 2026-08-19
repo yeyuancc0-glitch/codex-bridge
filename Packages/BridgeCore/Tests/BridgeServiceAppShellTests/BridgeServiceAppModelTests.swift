@@ -1,6 +1,7 @@
 import BridgeIPC
 import BridgeMCP
 import Foundation
+import WebKit
 import XCTest
 
 @testable import BridgeServiceAppShell
@@ -249,6 +250,60 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(registration.status, .notRegistered)
     XCTAssertEqual(model.connectionState, .idle)
     XCTAssertNil(model.serviceStatus)
+  }
+
+  func testBackgroundPollingDoesNotReloadThreadCatalogOrOpenThreadBody() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: .milliseconds(20),
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+    var calls = await client.threadCallCounts()
+    XCTAssertEqual(calls.list, 1)
+    XCTAssertEqual(calls.read, 0)
+    XCTAssertEqual(model.threads.map(\.threadID), ["thread-1"])
+    XCTAssertNil(model.selectedThread)
+
+    try await Task.sleep(for: .milliseconds(90))
+    calls = await client.threadCallCounts()
+    XCTAssertEqual(calls.list, 1)
+    XCTAssertEqual(calls.read, 0)
+    await model.shutdownUI()
+  }
+
+  func testChatBrowserSleepsOnlyAfterLeavingWorkbenchForDelay() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1,
+      chatBrowserSleepDelay: .milliseconds(50)
+    )
+    model.isChatBrowserEnabled = true
+    model.selection = .workbench
+    let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+    model.chatWebView = webView
+
+    model.selection = .projects
+    try await Task.sleep(for: .milliseconds(20))
+    XCTAssertTrue(model.chatWebView === webView)
+
+    model.selection = .workbench
+    try await Task.sleep(for: .milliseconds(60))
+    XCTAssertTrue(model.chatWebView === webView)
+
+    model.selection = .projects
+    try await Task.sleep(for: .milliseconds(70))
+    XCTAssertNil(model.chatWebView)
   }
 
   private func waitUntil(

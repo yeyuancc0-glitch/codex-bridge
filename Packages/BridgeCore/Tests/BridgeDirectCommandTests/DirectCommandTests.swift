@@ -223,6 +223,58 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.argv, ["swift", "test", "--filter", "Policy"])
   }
 
+  func testSafeModeAllowsProjectLocalScript() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .safe),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["Scripts/with-xcode.sh", "swift", "test"]
+      )
+    )
+    XCTAssertTrue(result.allowed)
+  }
+
+  func testSafeModeRejectsAbsoluteExecutableOutsideProject() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .safe),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["/bin/rm", "-rf", "."]
+      )
+    )
+    XCTAssertEqual(result.reason, .commandNotRegistered)
+  }
+
+  func testSafeModeRejectsProjectLocalScriptThatEscapesRoot() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .safe),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["../../outside.sh", "--flag"]
+      )
+    )
+    XCTAssertEqual(result.reason, .commandNotRegistered)
+  }
+
+  func testFullModeAllowsProjectLocalScript() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .full),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["Scripts/deploy.sh", "prod"]
+      )
+    )
+    XCTAssertTrue(result.allowed)
+  }
+
   func testBlacklistBlocksInSafeMode() throws {
     let policy = DirectCommandPolicy()
     let blacklist = try ServiceCommandBlacklistRule(id: "blk-git", executable: "git")

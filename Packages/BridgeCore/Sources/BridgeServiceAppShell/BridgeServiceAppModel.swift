@@ -77,7 +77,9 @@ public typealias BridgeServiceClientFactory =
 
 @MainActor
 public final class BridgeServiceAppModel: ObservableObject {
-  @Published public var selection: BridgeServiceNavigation? = .overview
+  @Published public var selection: BridgeServiceNavigation? = .overview {
+    didSet { updateChatBrowserVisibility() }
+  }
   @Published public internal(set) var registrationStatus: BridgeServiceRegistrationStatus
   @Published public internal(set) var connectionState: BridgeServiceConnectionState = .idle
   @Published public internal(set) var serviceStatus: IPCServiceStatusResponse?
@@ -94,7 +96,13 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var selectedThread: MCPThreadReadPage?
   @Published public internal(set) var selectedThreadID: String?
   @Published public internal(set) var selectedProjectID: String?
-  @Published public var chatWebView: WKWebView?
+  @Published public var chatWebView: WKWebView? {
+    didSet {
+      if chatWebView != nil {
+        updateChatBrowserVisibility()
+      }
+    }
+  }
   @Published public internal(set) var isRefreshing = false
   @Published public internal(set) var lastRefreshAt: Date?
   @Published public internal(set) var conversation: TaskConversationModel?
@@ -102,8 +110,11 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public var isChatBrowserEnabled: Bool {
     didSet {
       UserDefaults.standard.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
-      if !isChatBrowserEnabled {
-        chatWebView = nil
+      if isChatBrowserEnabled {
+        updateChatBrowserVisibility()
+      } else {
+        cancelChatBrowserSleep()
+        releaseChatWebView()
       }
     }
   }
@@ -113,8 +124,13 @@ public final class BridgeServiceAppModel: ObservableObject {
   let pollInterval: Duration?
   let connectionRetryDelay: Duration
   let maximumConnectionAttempts: Int
+  let chatBrowserSleepDelay: Duration
+  let threadCatalogRefreshInterval: TimeInterval = 60
   var client: (any BridgeServiceClientProtocol)?
   var pollingTask: Task<Void, Never>?
+  var chatWebViewSleepTask: Task<Void, Never>?
+  var chatBrowserResumeURL = URL(string: "https://chatgpt.com")!
+  var lastThreadCatalogRefreshAt: Date?
   var started = false
   var stopped = false
 
@@ -132,7 +148,8 @@ public final class BridgeServiceAppModel: ObservableObject {
     clientFactory: @escaping BridgeServiceClientFactory,
     pollInterval: Duration? = .seconds(2),
     connectionRetryDelay: Duration = .milliseconds(200),
-    maximumConnectionAttempts: Int = 20
+    maximumConnectionAttempts: Int = 20,
+    chatBrowserSleepDelay: Duration = .seconds(180)
   ) {
     precondition(maximumConnectionAttempts > 0)
     self.registration = registration
@@ -140,6 +157,7 @@ public final class BridgeServiceAppModel: ObservableObject {
     self.pollInterval = pollInterval
     self.connectionRetryDelay = connectionRetryDelay
     self.maximumConnectionAttempts = maximumConnectionAttempts
+    self.chatBrowserSleepDelay = chatBrowserSleepDelay
     registrationStatus = registration.status
     isChatBrowserEnabled =
       UserDefaults.standard.object(forKey: Self.chatBrowserEnabledKey)
@@ -148,6 +166,7 @@ public final class BridgeServiceAppModel: ObservableObject {
 
   deinit {
     pollingTask?.cancel()
+    chatWebViewSleepTask?.cancel()
   }
 
   public func projectName(for projectID: String) -> String {

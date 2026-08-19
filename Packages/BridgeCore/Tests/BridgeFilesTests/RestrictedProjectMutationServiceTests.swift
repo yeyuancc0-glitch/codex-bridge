@@ -160,7 +160,12 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
         )
       )
     ) { error in
-      XCTAssertEqual(error, .revisionConflict)
+      guard case .revisionConflictWithContext(let relativePath, let currentSHA256, _) = error
+      else {
+        return XCTFail("Expected revisionConflictWithContext, got \(error)")
+      }
+      XCTAssertEqual(relativePath, "app.swift")
+      XCTAssertEqual(currentSHA256, oldSHA)
     }
 
     await assertMutationError(
@@ -175,7 +180,12 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
         )
       )
     ) { error in
-      XCTAssertEqual(error, .revisionConflict)
+      guard case .revisionConflictWithContext(let relativePath, let currentSHA256, _) = error
+      else {
+        return XCTFail("Expected revisionConflictWithContext, got \(error)")
+      }
+      XCTAssertEqual(relativePath, "app.swift")
+      XCTAssertEqual(currentSHA256, oldSHA)
     }
     XCTAssertEqual(
       try String(contentsOf: path, encoding: .utf8),
@@ -242,7 +252,12 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
         )
       )
     ) { error in
-      XCTAssertEqual(error, .revisionConflict)
+      guard case .revisionConflictWithContext(let relativePath, let currentSHA256, _) = error
+      else {
+        return XCTFail("Expected revisionConflictWithContext, got \(error)")
+      }
+      XCTAssertEqual(relativePath, "file.txt")
+      XCTAssertEqual(currentSHA256, sha256(of: Data("original\n".utf8)))
     }
 
     XCTAssertThrowsError(

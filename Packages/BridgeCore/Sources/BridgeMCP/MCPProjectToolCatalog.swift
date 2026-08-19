@@ -48,7 +48,7 @@ extension MCPToolCatalog {
         "project_id": projectBoundedString(128),
         "relative_path": projectBoundedString(1_024),
         "start_line": projectInteger(minimum: 1),
-        "line_count": projectInteger(minimum: 1, maximum: 300),
+        "line_count": projectInteger(minimum: 1, maximum: 1_000_000),
       ],
       required: ["project_id", "relative_path"]
     ),

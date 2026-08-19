@@ -164,7 +164,10 @@ public struct MCPServiceToolDispatcher: Sendable {
         throw MCPError.invalidParams("Argument 'relative_path' must be a safe relative path.")
       }
       let startLine = try values.optionalPositiveInteger("start_line", maximum: Int.max) ?? 1
-      let lineCount = try values.optionalPositiveInteger("line_count", maximum: 300) ?? 200
+      let requestedCount =
+        try values.optionalPositiveInteger("line_count", maximum: Int.max)
+        ?? 200
+      let lineCount = min(requestedCount, 300)
       let deadline = clock.now.advanced(by: deadlines.read)
       let page = try await withToolDeadline(until: deadline) {
         try await service.serviceReadProjectFile(
@@ -368,6 +371,14 @@ public struct MCPServiceToolDispatcher: Sendable {
         try await service.serviceDirectExecCommand(request, deadline: deadline)
       }
       return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
+
+    case .directGitCommit:
+      let request = try parseDirectGitCommit(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectGitCommit(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectGitCommitOutput(receipt: receipt))
 
     case .directReadCommand:
       let values = try StrictToolArguments(
@@ -612,6 +623,32 @@ public struct MCPServiceToolDispatcher: Sendable {
     )
   }
 
+  private func parseDirectGitCommit(_ arguments: [String: Value]?) throws
+    -> MCPDirectGitCommitRequest
+  {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 128 * 1_024 else {
+      throw MCPError.invalidParams("The git commit request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: ["project_id", "message", "files", "client_request_id"],
+      required: ["project_id", "message"]
+    )
+    let files = try values.optionalStringArray(
+      "files", maximumCount: 128, maximumElementUTF8Bytes: 1_024)
+    for file in files {
+      guard OutboundContentSecurity.isSafeRelativePath(file) else {
+        throw MCPError.invalidParams("Argument 'files' must contain safe relative paths.")
+      }
+    }
+    return MCPDirectGitCommitRequest(
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      message: try values.requiredText("message", maximumUTF8Bytes: 4_096),
+      files: files,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
   private func parseDirectManagePath(_ arguments: [String: Value]?) throws
     -> MCPDirectManagePathRequest
   {
@@ -765,6 +802,13 @@ public struct MCPServiceToolDispatcher: Sendable {
         message: "The file content does not match the expected revision. Read the file again.",
         retryable: true
       )
+    case .revisionConflict(let detail):
+      dto = .init(
+        code: "revision_conflict",
+        message: "The file changed since the expected revision. Re-read the file and retry.",
+        retryable: true,
+        data: detail.errorData
+      )
     case .pathForbidden:
       dto = .init(code: "path_forbidden", message: "The path is not allowed.", retryable: false)
     case .pathChanged:
@@ -821,6 +865,20 @@ public struct MCPServiceToolDispatcher: Sendable {
         code: "command_denied",
         message: "The requested command was denied: \(reason)",
         retryable: false
+      )
+    case .processLaunchFailed:
+      dto = .init(
+        code: "process_launch_failed",
+        message:
+          "The command could not be launched. Check the executable path and that it is executable.",
+        retryable: true
+      )
+
+    case .gitOperationFailed(let summary):
+      dto = .init(
+        code: "git_operation_failed",
+        message: "The git operation failed: \(summary)",
+        retryable: true
       )
     case .outputLimitExceeded:
       dto = .init(
@@ -1173,5 +1231,28 @@ private struct ServiceDirectWriteStdinOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+  }
+}
+
+private struct ServiceDirectGitCommitOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let commitHash: String?
+  let changedFiles: [String]
+  let summary: String
+  let exitCode: Int
+
+  init(receipt: MCPDirectGitCommitReceipt) {
+    commitHash = receipt.commitHash
+    changedFiles = receipt.changedFiles
+    summary = receipt.summary
+    exitCode = receipt.exitCode
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case commitHash = "commit_hash"
+    case changedFiles = "changed_files"
+    case summary
+    case exitCode = "exit_code"
   }
 }

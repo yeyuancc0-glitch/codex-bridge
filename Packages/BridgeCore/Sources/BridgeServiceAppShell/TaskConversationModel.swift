@@ -52,10 +52,14 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   public let taskID: String
   public private(set) var subscriptionID = -1
 
+  private static let pushBatchDelay: Duration = .milliseconds(40)
+
   private let client: any BridgeServiceClientProtocol
   private var index: [String: Int] = [:]
   private var hasAppliedPage = false
   private var streamingTask: Task<Void, Never>?
+  private var pushFlushTask: Task<Void, Never>?
+  private var pendingPushes: [IPCTaskConversationPush] = []
 
   public init(taskID: String, client: any BridgeServiceClientProtocol) {
     self.taskID = taskID
@@ -78,8 +82,9 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       streamingTask = Task { [weak self] in
         for await push in updates {
           guard let self, self.hasAppliedPage else { continue }
-          self.applyPush(push)
+          self.enqueuePush(push)
         }
+        self?.flushPendingPushes()
       }
     } catch {
       errorMessage = BridgeServiceAppModel.message(error)
@@ -97,9 +102,13 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   func cancel() {
     streamingTask?.cancel()
     streamingTask = nil
+    pushFlushTask?.cancel()
+    pushFlushTask = nil
+    pendingPushes.removeAll(keepingCapacity: false)
   }
 
   func loadEarlier() async {
+    flushPendingPushes()
     guard canLoadEarlier, !isLoadingEarlier else { return }
     let anchor = entries.first(where: { $0.messageID != nil })?.messageID
     guard let anchor else { return }
@@ -123,51 +132,88 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   }
 
   private func applyPage(_ page: IPCTaskConversationPage) {
+    pushFlushTask?.cancel()
+    pushFlushTask = nil
+    pendingPushes.removeAll(keepingCapacity: false)
     entries = page.messages.map { Entry($0, isFinal: $0.final) }
     rebuildIndex()
     refreshStreamingState()
     scrollAnchor = entries.last?.key
   }
 
-  private func applyPush(_ push: IPCTaskConversationPush) {
-    if let position = index[push.key] {
-      var entry = entries[position]
-      if let fullContent = push.fullContent {
-        entry.content = fullContent
-      } else if let delta = push.delta, entry.content.count == push.baseContentLength {
-        entry.content += delta
+  private func enqueuePush(_ push: IPCTaskConversationPush) {
+    pendingPushes.append(push)
+    guard pushFlushTask == nil else { return }
+    pushFlushTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: Self.pushBatchDelay)
+      } catch {
+        return
       }
-      if let toolName = push.toolName {
-        entry.toolName = toolName
-      }
-      if let toolStatus = push.toolStatus {
-        entry.toolStatus = toolStatus
-      }
-      if let toolArguments = push.toolArguments {
-        entry.toolArguments = toolArguments
-      }
-      if push.final {
-        entry.isFinal = true
-      }
-      entries[position] = entry
-    } else {
-      guard
-        let content = push.fullContent
-          ?? (push.baseContentLength == 0 ? push.delta : nil)
-      else { return }
-      var entry = Entry(
-        key: push.key,
-        role: push.role,
-        kind: push.kind,
-        content: content,
-        isFinal: push.final
-      )
-      entry.toolName = push.toolName
-      entry.toolStatus = push.toolStatus
-      entry.toolArguments = push.toolArguments
-      index[entry.key] = entries.count
-      entries.append(entry)
+      self?.flushPendingPushes()
     }
+  }
+
+  private func flushPendingPushes() {
+    pushFlushTask?.cancel()
+    pushFlushTask = nil
+    guard !pendingPushes.isEmpty else { return }
+    let pushes = pendingPushes
+    pendingPushes.removeAll(keepingCapacity: true)
+    applyPushBatch(pushes)
+  }
+
+  private func applyPushBatch(_ pushes: [IPCTaskConversationPush]) {
+    var updatedEntries = entries
+    var updatedIndex = index
+    var changed = false
+
+    for push in pushes {
+      if let position = updatedIndex[push.key] {
+        var entry = updatedEntries[position]
+        if let fullContent = push.fullContent {
+          entry.content = fullContent
+        } else if let delta = push.delta, entry.content.count == push.baseContentLength {
+          entry.content += delta
+        }
+        if let toolName = push.toolName {
+          entry.toolName = toolName
+        }
+        if let toolStatus = push.toolStatus {
+          entry.toolStatus = toolStatus
+        }
+        if let toolArguments = push.toolArguments {
+          entry.toolArguments = toolArguments
+        }
+        if push.final {
+          entry.isFinal = true
+        }
+        updatedEntries[position] = entry
+        changed = true
+      } else {
+        guard
+          let content = push.fullContent
+            ?? (push.baseContentLength == 0 ? push.delta : nil)
+        else { continue }
+        var entry = Entry(
+          key: push.key,
+          role: push.role,
+          kind: push.kind,
+          content: content,
+          isFinal: push.final
+        )
+        entry.toolName = push.toolName
+        entry.toolStatus = push.toolStatus
+        entry.toolArguments = push.toolArguments
+        updatedIndex[entry.key] = updatedEntries.count
+        updatedEntries.append(entry)
+        changed = true
+      }
+    }
+
+    guard changed else { return }
+    entries = updatedEntries
+    index = updatedIndex
     refreshStreamingState()
     if autoScroll {
       scrollAnchor = entries.last?.key

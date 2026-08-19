@@ -342,4 +342,183 @@ final class DirectApprovalFlowTests: XCTestCase {
     XCTAssertTrue(pending.isEmpty)
     await application.directCommands.cancelAll()
   }
+
+  func testEditRevisionConflictReturnsCurrentSHAAndBoundedExcerpt() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let target = "ConflictFile.txt"
+    let original = Data("line1\nline2\nline3\n".utf8)
+    let originalSHA = SecureFileRevision.digest(of: original).sha256
+    _ = try await application.serviceDirectWriteFile(
+      MCPDirectWriteRequest(
+        projectID: fixture.project.id.rawValue,
+        relativePath: target,
+        mode: "create",
+        content: "line1\nline2\nline3\n",
+        expectedSHA256: nil,
+        createParents: false,
+        clientRequestID: "req-conflict-write"
+      ),
+      deadline: deadline
+    )
+    // Simulate an external writer that changed the file since the caller read it.
+    let changed = Data("line1\nCHANGED\nline3\n".utf8)
+    try changed.write(to: fixture.root.appending(path: target))
+    do {
+      _ = try await application.serviceDirectEditFile(
+        MCPDirectEditRequest(
+          projectID: fixture.project.id.rawValue,
+          relativePath: target,
+          expectedSHA256: originalSHA,
+          oldText: "line2",
+          newText: "replacement",
+          expectedReplacements: 1,
+          clientRequestID: "req-conflict-edit"
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected revision conflict")
+    } catch let error as BridgeMCPQueryError {
+      guard case .revisionConflict(let detail) = error else {
+        return XCTFail("Expected revisionConflict, got \(error)")
+      }
+      XCTAssertEqual(detail.relativePath, target)
+      XCTAssertEqual(detail.currentSHA256, SecureFileRevision.digest(of: changed).sha256)
+      XCTAssertTrue(detail.changedSinceRevision)
+      XCTAssertTrue(detail.addedLines.contains("CHANGED"))
+    }
+  }
+
+  func testSafeModeRunsProjectLocalScriptEndToEnd() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let scripts = fixture.root.appending(path: "Scripts", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    let script = scripts.appending(path: "hello.sh")
+    try Data("#!/bin/sh\necho hello-from-script\n".utf8).write(to: script)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let receipt = try await application.serviceDirectExecCommand(
+      MCPDirectExecRequest(
+        projectID: fixture.project.id.rawValue,
+        commandID: nil,
+        argv: ["Scripts/hello.sh"],
+        workingDirectory: nil,
+        tty: false,
+        yieldTimeMS: 50,
+        timeoutMS: 5_000,
+        clientRequestID: "req-script"
+      ),
+      deadline: deadline
+    )
+    var sessionID = receipt.sessionID
+    var finalOutput = receipt.output
+    var pollDeadline = Date().addingTimeInterval(10)
+    while Date() < pollDeadline {
+      let output = try await application.serviceDirectReadCommand(
+        sessionID: sessionID,
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      sessionID = output.sessionID
+      finalOutput = output
+      if output.status == "ended" || output.status == "cancelled" || output.status == "timed_out" {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    let ended = try XCTUnwrap(finalOutput)
+    XCTAssertEqual(ended.status, "ended")
+    XCTAssertEqual(ended.exitCode, 0)
+    XCTAssertTrue(ended.tail.contains("hello-from-script"))
+    await application.directCommands.cancelAll()
+  }
+
+  func testDirectGitCommitCreatesLocalCommit() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+
+    let initRepo = Process()
+    initRepo.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    initRepo.arguments = ["init"]
+    initRepo.currentDirectoryURL = fixture.root
+    initRepo.standardOutput = FileHandle.nullDevice
+    initRepo.standardError = FileHandle.nullDevice
+    try initRepo.run()
+    initRepo.waitUntilExit()
+
+    let config = Process()
+    config.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    config.arguments = ["config", "user.email", "bridge@example.com"]
+    config.currentDirectoryURL = fixture.root
+    config.standardOutput = FileHandle.nullDevice
+    config.standardError = FileHandle.nullDevice
+    try config.run()
+    config.waitUntilExit()
+    let configName = Process()
+    configName.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    configName.arguments = ["config", "user.name", "Codex Bridge"]
+    configName.currentDirectoryURL = fixture.root
+    configName.standardOutput = FileHandle.nullDevice
+    configName.standardError = FileHandle.nullDevice
+    try configName.run()
+    configName.waitUntilExit()
+
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    _ = try await application.serviceDirectWriteFile(
+      MCPDirectWriteRequest(
+        projectID: fixture.project.id.rawValue,
+        relativePath: "CommittedFile.txt",
+        mode: "create",
+        content: "hello\n",
+        expectedSHA256: nil,
+        createParents: false,
+        clientRequestID: "req-commit-write"
+      ),
+      deadline: deadline
+    )
+    let receipt = try await application.serviceDirectGitCommit(
+      MCPDirectGitCommitRequest(
+        projectID: fixture.project.id.rawValue,
+        message: "feat: add committed file",
+        files: ["CommittedFile.txt"],
+        clientRequestID: "req-commit"
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(receipt.exitCode, 0)
+    XCTAssertNotNil(receipt.commitHash)
+    XCTAssertEqual(receipt.commitHash?.count, 40)
+    XCTAssertEqual(receipt.changedFiles, ["CommittedFile.txt"])
+
+    // The file must actually be committed (working tree clean for it).
+    let status = Process()
+    status.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    status.arguments = ["status", "--porcelain"]
+    status.currentDirectoryURL = fixture.root
+    let pipe = Pipe()
+    status.standardOutput = pipe
+    status.standardError = FileHandle.nullDevice
+    try status.run()
+    status.waitUntilExit()
+    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    XCTAssertFalse(output.contains("CommittedFile.txt"), "file should be committed: \(output)")
+  }
 }

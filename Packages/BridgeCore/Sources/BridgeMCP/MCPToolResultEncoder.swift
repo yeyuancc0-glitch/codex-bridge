@@ -53,6 +53,7 @@ public struct MCPToolErrorDTO: Codable, Equatable, Sendable {
   public let taskID: String?
   public let operationID: String?
   public let sessionID: String?
+  public let data: [String: String]?
 
   public init(
     code: String,
@@ -61,7 +62,8 @@ public struct MCPToolErrorDTO: Codable, Equatable, Sendable {
     owner: String? = nil,
     taskID: String? = nil,
     operationID: String? = nil,
-    sessionID: String? = nil
+    sessionID: String? = nil,
+    data: [String: String]? = nil
   ) {
     self.code = code
     self.message = message
@@ -70,6 +72,7 @@ public struct MCPToolErrorDTO: Codable, Equatable, Sendable {
     self.taskID = taskID
     self.operationID = operationID
     self.sessionID = sessionID
+    self.data = data
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -80,6 +83,7 @@ public struct MCPToolErrorDTO: Codable, Equatable, Sendable {
     case taskID = "task_id"
     case operationID = "operation_id"
     case sessionID = "session_id"
+    case data
   }
 }
 

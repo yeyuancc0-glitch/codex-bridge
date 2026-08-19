@@ -126,6 +126,23 @@ public struct DirectCommandPolicy: Sendable {
     DirectSafeCommandRule(executable: "/usr/bin/echo"),
   ]
 
+  private func isProjectLocalExecutable(_ executable: String, projectRoot: String) -> Bool {
+    // Only path-qualified executables (e.g. `Scripts/with-xcode.sh`) are project-local;
+    // bare binary names resolve through PATH and are covered by the built-in safe rules.
+    guard executable.contains("/") else { return false }
+    let standardizedRoot = (projectRoot as NSString).standardizingPath
+    let candidate: String
+    if executable.hasPrefix("/") {
+      candidate = (executable as NSString).standardizingPath
+    } else {
+      candidate =
+        ((projectRoot as NSString).appendingPathComponent(executable) as NSString)
+        .standardizingPath
+    }
+    return candidate == standardizedRoot
+      || candidate.hasPrefix(standardizedRoot + "/")
+  }
+
   private func matchesSafeRule(_ rule: SafeRule, argv: [String]) -> Bool {
     guard let executable = argv.first, executable == rule.executable else { return false }
     guard !rule.argumentsPrefix.isEmpty else { return true }
@@ -223,7 +240,8 @@ public struct DirectCommandPolicy: Sendable {
       let allowed =
         matched != nil
         || builtInSafeRules.contains { matchesSafeRule($0, argv: request.argv) }
-
+        || isProjectLocalExecutable(
+          executable, projectRoot: project.root.canonicalPath)
       guard allowed else { return .denied(.commandNotRegistered) }
     case .full:
       break

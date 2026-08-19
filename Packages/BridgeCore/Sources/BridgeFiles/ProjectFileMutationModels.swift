@@ -213,6 +213,8 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
   case pathExists
   case pathMissing
   case revisionConflict
+  case revisionConflictWithContext(
+    relativePath: String, currentSHA256: String, boundedDiff: BoundedDiff)
   case pathChanged
   case unsupportedHardLink
   case binaryContent
@@ -239,6 +241,8 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
     case .pathMissing:
       "The target does not exist."
     case .revisionConflict:
+      "The file content does not match the expected revision."
+    case .revisionConflictWithContext:
       "The file content does not match the expected revision."
     case .pathChanged:
       "The target changed after it was validated."

@@ -28,6 +28,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   )
   private let failModelCatalog: Bool
   private var failSubscription = false
+  private var threadListCalls = 0
+  private var threadReadCalls = 0
   private var deletedTaskIDs: [String] = []
   private var subscribeCalls = 0
   private var unsubscribedSubscriptionIDs: [Int] = []
@@ -255,7 +257,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage {
-    MCPThreadPage(
+    threadListCalls += 1
+    return MCPThreadPage(
       threads: [
         MCPThreadSummary(
           threadID: "thread-1",
@@ -267,7 +270,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func readThread(_ request: IPCThreadReadRequest) async throws -> MCPThreadReadPage {
-    MCPThreadReadPage(
+    threadReadCalls += 1
+    return MCPThreadReadPage(
       thread: MCPThreadSummary(
         threadID: request.threadID,
         title: "Fixture Thread",
@@ -450,6 +454,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func closeCount() -> Int {
     closes
+  }
+
+  func threadCallCounts() -> (list: Int, read: Int) {
+    (threadListCalls, threadReadCalls)
   }
 
   func mutationSnapshot() -> MutationSnapshot {

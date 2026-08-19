@@ -330,6 +330,18 @@ extension BridgeServiceApplication {
       return .contractRejected
     case .revisionConflict:
       return .fileRevisionConflict
+    case .revisionConflictWithContext(let relativePath, let currentSHA256, let boundedDiff):
+      return .revisionConflict(
+        RevisionConflictDetail(
+          relativePath: relativePath,
+          currentSHA256: currentSHA256,
+          changedSinceRevision: true,
+          removedLines: boundedDiff.removedLines,
+          addedLines: boundedDiff.addedLines,
+          truncated: boundedDiff.truncated,
+          byteCount: boundedDiff.byteCount
+        )
+      )
     case .pathChanged, .unsupportedHardLink, .unsafeFilesystemState:
       return .pathChanged
     case .binaryContent:

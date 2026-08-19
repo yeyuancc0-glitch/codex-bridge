@@ -51,10 +51,63 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case approvalExpired
   case invalidPatch
   case notGitRepository
+  case revisionConflict(RevisionConflictDetail)
   case commandSessionNotFound
   case commandTimeout
   case commandDenied(String)
+  case processLaunchFailed
+  case gitOperationFailed(String)
   case outputLimitExceeded
+}
+
+public struct RevisionConflictDetail: Codable, Equatable, Sendable {
+  public let relativePath: String
+  public let currentSHA256: String
+  public let changedSinceRevision: Bool
+  public let removedLines: [String]
+  public let addedLines: [String]
+  public let truncated: Bool
+  public let byteCount: Int
+
+  public init(
+    relativePath: String,
+    currentSHA256: String,
+    changedSinceRevision: Bool,
+    removedLines: [String],
+    addedLines: [String],
+    truncated: Bool,
+    byteCount: Int
+  ) {
+    self.relativePath = relativePath
+    self.currentSHA256 = currentSHA256
+    self.changedSinceRevision = changedSinceRevision
+    self.removedLines = removedLines
+    self.addedLines = addedLines
+    self.truncated = truncated
+    self.byteCount = byteCount
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case relativePath = "relative_path"
+    case currentSHA256 = "current_sha256"
+    case changedSinceRevision = "changed_since_revision"
+    case removedLines = "removed_lines"
+    case addedLines = "added_lines"
+    case truncated
+    case byteCount = "byte_count"
+  }
+
+  public var errorData: [String: String] {
+    [
+      "relative_path": relativePath,
+      "current_sha256": currentSHA256,
+      "changed_since_revision": changedSinceRevision ? "true" : "false",
+      "removed_lines": removedLines.joined(separator: "\n"),
+      "added_lines": addedLines.joined(separator: "\n"),
+      "truncated": truncated ? "true" : "false",
+      "byte_count": String(byteCount),
+    ]
+  }
 }
 
 public struct WorkspaceBusyDetail: Codable, Equatable, Sendable {

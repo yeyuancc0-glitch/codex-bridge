@@ -81,12 +81,20 @@ public struct RestrictedProjectMutationService: Sendable {
     }
     let currentRevision = SecureFileRevision.digest(of: raw)
     guard currentRevision.sha256 == request.expectedSHA256 else {
-      throw ProjectMutationError.revisionConflict
+      throw ProjectMutationError.revisionConflictWithContext(
+        relativePath: path.value,
+        currentSHA256: currentRevision.sha256,
+        boundedDiff: BoundedDiffMaker.make(old: "", new: current)
+      )
     }
 
     let occurrences = countOccurrences(of: request.oldText, in: current)
     guard occurrences == request.expectedReplacements else {
-      throw ProjectMutationError.revisionConflict
+      throw ProjectMutationError.revisionConflictWithContext(
+        relativePath: path.value,
+        currentSHA256: currentRevision.sha256,
+        boundedDiff: BoundedDiffMaker.make(old: "", new: current)
+      )
     }
     let updated = current.replacingOccurrences(
       of: request.oldText,
@@ -160,7 +168,11 @@ public struct RestrictedProjectMutationService: Sendable {
         if let expectedSHA256 = operation.expectedSHA256,
           expectedSHA256 != oldRevision.sha256
         {
-          throw ProjectMutationError.revisionConflict
+          throw ProjectMutationError.revisionConflictWithContext(
+            relativePath: path.value,
+            currentSHA256: oldRevision.sha256,
+            boundedDiff: BoundedDiffMaker.make(old: "", new: current)
+          )
         }
         var updated = current
         for hunk in operation.hunks {

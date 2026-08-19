@@ -1,6 +1,7 @@
 import BridgeIPC
 import BridgeMCP
 import Foundation
+import WebKit
 
 extension BridgeServiceAppModel {
   func startAsync() async {
@@ -26,6 +27,8 @@ extension BridgeServiceAppModel {
     started = false
     pollingTask?.cancel()
     pollingTask = nil
+    cancelChatBrowserSleep()
+    releaseChatWebView()
     closeConversation()
     await closeClient()
     connectionState = .idle
@@ -120,7 +123,11 @@ extension BridgeServiceAppModel {
       connectionState = .connected
       lastRefreshAt = Date()
       if !silent { errorMessage = nil }
-      await refreshCollections(client: client, includeCatalog: includeCatalog)
+      await refreshCollections(
+        client: client,
+        includeCatalog: includeCatalog,
+        includeThreads: !silent
+      )
     } catch {
       await closeClient()
       connectionState = .unavailable
@@ -153,7 +160,11 @@ extension BridgeServiceAppModel {
         registrationStatus = .enabled
         lastRefreshAt = Date()
         errorMessage = nil
-        await refreshCollections(client: candidate, includeCatalog: includeCatalog)
+        await refreshCollections(
+          client: candidate,
+          includeCatalog: includeCatalog,
+          includeThreads: true
+        )
         startPolling()
         return
       } catch {
@@ -180,7 +191,8 @@ extension BridgeServiceAppModel {
 
   func refreshCollections(
     client: any BridgeServiceClientProtocol,
-    includeCatalog: Bool
+    includeCatalog: Bool,
+    includeThreads: Bool
   ) async {
     async let projectResult = optional { try await client.projects() }
     async let taskResult = optional {
@@ -196,27 +208,33 @@ extension BridgeServiceAppModel {
       if selectedProjectID == nil, let first = value.first {
         selectedProjectID = first.projectID
       }
-      if let activeProjectID = selectedProjectID {
-        let threadPage = await optional {
-          try await client.threads(IPCThreadListRequest(projectID: activeProjectID, limit: 100))
-        }
-        if let threadPage {
-          threads = threadPage.threads
-          if selectedThreadID == nil, let firstThread = threadPage.threads.first {
-            openThread(firstThread.threadID, inProject: activeProjectID)
-          }
-        }
-      }
     }
+
+    var shouldRefreshThreads = includeThreads || threadCatalogRefreshDue()
     if let value = await taskResult {
+      shouldRefreshThreads =
+        shouldRefreshThreads || Self.taskCatalogChanged(from: tasks, to: value)
       tasks = value
-      // If there's an active running task with a threadID, auto-switch to it if not set
-      if let activeTask = value.first(where: \.isRunning), let threadID = activeTask.threadID {
-        if selectedThreadID != threadID {
-          openThread(threadID, inProject: activeTask.projectID)
-        }
+      if let activeTask = value.first(where: \.isRunning), let threadID = activeTask.threadID,
+        selectedThreadID != threadID || conversation?.taskID != activeTask.taskID
+      {
+        selectedProjectID = activeTask.projectID
+        selectedThreadID = threadID
+        selectedThread = nil
+        openConversation(taskID: activeTask.taskID)
       }
     }
+
+    if shouldRefreshThreads, let projectID = selectedProjectID {
+      lastThreadCatalogRefreshAt = Date()
+      let threadPage = await optional {
+        try await client.threads(IPCThreadListRequest(projectID: projectID, limit: 100))
+      }
+      if selectedProjectID == projectID, let threadPage {
+        threads = threadPage.threads
+      }
+    }
+
     if let value = await approvalResult {
       approvals = value
     }
@@ -238,6 +256,43 @@ extension BridgeServiceAppModel {
         modelCatalogError = Self.message(error)
       }
     }
+  }
+
+  func updateChatBrowserVisibility() {
+    cancelChatBrowserSleep()
+    guard isChatBrowserEnabled, selection != .workbench, chatWebView != nil else { return }
+    let delay = chatBrowserSleepDelay
+    chatWebViewSleepTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: delay)
+      } catch {
+        return
+      }
+      guard let self,
+        self.selection != .workbench,
+        self.isChatBrowserEnabled
+      else { return }
+      self.chatWebViewSleepTask = nil
+      self.releaseChatWebView()
+    }
+  }
+
+  func cancelChatBrowserSleep() {
+    chatWebViewSleepTask?.cancel()
+    chatWebViewSleepTask = nil
+  }
+
+  func releaseChatWebView() {
+    if let url = chatWebView?.url,
+      url.scheme?.lowercased() == "https",
+      url.host?.lowercased() == "chatgpt.com"
+    {
+      chatBrowserResumeURL = url
+    }
+    chatWebView?.stopLoading()
+    chatWebView?.navigationDelegate = nil
+    chatWebView?.uiDelegate = nil
+    chatWebView = nil
   }
 
   func currentClient() throws -> any BridgeServiceClientProtocol {
@@ -315,6 +370,12 @@ extension BridgeServiceAppModel {
     }
   }
 
+  private func threadCatalogRefreshDue(now: Date = Date()) -> Bool {
+    guard let lastThreadCatalogRefreshAt else { return true }
+    return
+      now.timeIntervalSince(lastThreadCatalogRefreshAt) >= threadCatalogRefreshInterval
+  }
+
   private func reconcileProjectSelection() {
     guard let selectedProjectID,
       !projects.contains(where: { $0.projectID == selectedProjectID })
@@ -323,6 +384,35 @@ extension BridgeServiceAppModel {
     threads = []
     selectedThread = nil
   }
+
+  private static func taskCatalogChanged(
+    from previous: [MCPServiceTaskSnapshot],
+    to current: [MCPServiceTaskSnapshot]
+  ) -> Bool {
+    taskCatalogSignature(previous) != taskCatalogSignature(current)
+  }
+
+  private static func taskCatalogSignature(
+    _ values: [MCPServiceTaskSnapshot]
+  ) -> [TaskCatalogKey] {
+    values
+      .map {
+        TaskCatalogKey(
+          taskID: $0.taskID,
+          projectID: $0.projectID,
+          status: $0.status,
+          threadID: $0.threadID
+        )
+      }
+      .sorted { $0.taskID < $1.taskID }
+  }
+}
+
+private struct TaskCatalogKey: Equatable {
+  let taskID: String
+  let projectID: String
+  let status: String
+  let threadID: String?
 }
 
 private func optional<Value: Sendable>(
