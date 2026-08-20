@@ -475,8 +475,6 @@ enum BoundedDiffMaker {
     let newLines = new.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     let commonPrefix = zip(oldLines, newLines).prefix { $0 == $1 }.count
     let commonSuffix = zip(oldLines.reversed(), newLines.reversed()).prefix { $0 == $1 }.count
-    let overlap = min(commonPrefix + commonSuffix, oldLines.count, newLines.count)
-
     let removed = oldLines[commonPrefix..<max(commonPrefix, oldLines.count - commonSuffix)]
     let added = newLines[commonPrefix..<max(commonPrefix, newLines.count - commonSuffix)]
     let boundedRemoved = Array(removed.prefix(maximumLines))

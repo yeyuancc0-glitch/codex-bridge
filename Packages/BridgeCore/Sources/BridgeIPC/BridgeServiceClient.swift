@@ -233,7 +233,7 @@ public actor BridgeServiceClient {
     limit: Int = 200
   ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>) {
     guard !invalidated else { throw BridgeServiceClientError.unavailable }
-    let updates = await streamHub.register(taskID: taskID)
+    let updates = streamHub.register(taskID: taskID)
     do {
       let subscription: IPCTaskConversationSubscription = try await call(
         operation: .subscribeTaskConversation,

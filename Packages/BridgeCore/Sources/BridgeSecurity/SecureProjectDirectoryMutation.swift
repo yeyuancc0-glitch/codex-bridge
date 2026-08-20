@@ -37,7 +37,7 @@ public struct SecureProjectDirectoryMutation: Sendable {
       throw PathSecurityError.sensitiveFileBlocked
     }
 
-    var rootFD = open(
+    let rootFD = open(
       resolver.root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
     )
@@ -81,7 +81,7 @@ public struct SecureProjectDirectoryMutation: Sendable {
   ) throws -> SecureDirectoryMutationResult {
     let (parentFD, name) = try openParent(relativePath: relativePath, rootFD: rootFD, root: root)
     defer { close(parentFD) }
-    var target = name.withCString {
+    let target = name.withCString {
       openat(parentFD, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard target >= 0 else { throw PathSecurityError.writeFailed(errno) }
@@ -123,7 +123,7 @@ public struct SecureProjectDirectoryMutation: Sendable {
       relativePath: destinationPath, rootFD: rootFD, root: root)
     defer { close(destinationParentFD) }
 
-    var target = sourceName.withCString {
+    let target = sourceName.withCString {
       openat(sourceParentFD, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard target >= 0 else { throw PathSecurityError.writeFailed(errno) }
@@ -140,7 +140,7 @@ public struct SecureProjectDirectoryMutation: Sendable {
     }
 
     if destinationExpectedAbsent {
-      var probe = destinationName.withCString {
+      let probe = destinationName.withCString {
         openat(destinationParentFD, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
       }
       if probe >= 0 {
@@ -178,7 +178,7 @@ public struct SecureProjectDirectoryMutation: Sendable {
     guard name.withCString({ mkdirat(parentFD, $0, 0o755) }) == 0 else {
       throw PathSecurityError.writeFailed(errno)
     }
-    var created = name.withCString {
+    let created = name.withCString {
       openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard created >= 0 else { throw PathSecurityError.writeFailed(errno) }

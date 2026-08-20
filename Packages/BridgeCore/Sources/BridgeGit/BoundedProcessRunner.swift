@@ -103,7 +103,9 @@ public enum BoundedProcessError: Error, Equatable, Sendable {
 public struct BoundedProcessRunner: Sendable {
   public init() {}
 
-  public func run(_ configuration: BoundedProcessConfiguration) async throws -> BoundedProcessResult {
+  public func run(
+    _ configuration: BoundedProcessConfiguration
+  ) async throws -> BoundedProcessResult {
     try Self.validate(configuration)
     var child = try spawn(configuration)
     do {

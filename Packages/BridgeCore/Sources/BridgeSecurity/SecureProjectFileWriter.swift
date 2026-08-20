@@ -118,7 +118,7 @@ public struct SecureProjectFileWriter: Sendable {
     guard resolver.sensitivePolicy.allows(relativePath) else {
       throw PathSecurityError.sensitiveFileBlocked
     }
-    var rootFD = open(
+    let rootFD = open(
       resolver.root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
     )
@@ -127,23 +127,18 @@ public struct SecureProjectFileWriter: Sendable {
     try validateRootDescriptor(rootFD, root: resolver.root)
 
     var current = rootFD
-    do {
-      for (index, component) in relativePath.components.enumerated() {
-        let isLast = index == relativePath.components.count - 1
-        let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
-        let next = component.withCString { openat(current, $0, flags) }
-        let openError = errno
-        if current != rootFD { close(current) }
-        current = -1
-        guard next >= 0 else {
-          if openError == ENOENT || openError == ENOTDIR { return nil }
-          throw PathSecurityError.readFailed(openError)
-        }
-        current = next
+    for (index, component) in relativePath.components.enumerated() {
+      let isLast = index == relativePath.components.count - 1
+      let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
+      let next = component.withCString { openat(current, $0, flags) }
+      let openError = errno
+      if current != rootFD { close(current) }
+      current = -1
+      guard next >= 0 else {
+        if openError == ENOENT || openError == ENOTDIR { return nil }
+        throw PathSecurityError.readFailed(openError)
       }
-    } catch {
-      if current >= 0, current != rootFD { close(current) }
-      throw error
+      current = next
     }
     defer { close(current) }
     let metadata = try validateRegularDescriptor(current, root: resolver.root)
@@ -267,7 +262,7 @@ public struct SecureProjectFileWriter: Sendable {
     expectedRevision: SecureFileRevision,
     root: RegisteredRoot
   ) throws {
-    var reopened = name.withCString {
+    let reopened = name.withCString {
       openat(parentFD, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
     }
     guard reopened >= 0 else { throw PathSecurityError.pathChanged }
@@ -334,7 +329,7 @@ public struct SecureProjectFileWriter: Sendable {
     guard resolver.sensitivePolicy.allows(relativePath) else {
       throw PathSecurityError.sensitiveFileBlocked
     }
-    var rootFD = open(
+    let rootFD = open(
       resolver.root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
     )
@@ -343,23 +338,18 @@ public struct SecureProjectFileWriter: Sendable {
     try validateRootDescriptor(rootFD, root: resolver.root)
 
     var current = rootFD
-    do {
-      for (index, component) in relativePath.components.enumerated() {
-        let isLast = index == relativePath.components.count - 1
-        let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
-        let next = component.withCString { openat(current, $0, flags) }
-        let openError = errno
-        if current != rootFD { close(current) }
-        current = -1
-        guard next >= 0 else {
-          if openError == ENOENT || openError == ENOTDIR { return nil }
-          throw PathSecurityError.readFailed(openError)
-        }
-        current = next
+    for (index, component) in relativePath.components.enumerated() {
+      let isLast = index == relativePath.components.count - 1
+      let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
+      let next = component.withCString { openat(current, $0, flags) }
+      let openError = errno
+      if current != rootFD { close(current) }
+      current = -1
+      guard next >= 0 else {
+        if openError == ENOENT || openError == ENOTDIR { return nil }
+        throw PathSecurityError.readFailed(openError)
       }
-    } catch {
-      if current >= 0, current != rootFD { close(current) }
-      throw error
+      current = next
     }
     defer { close(current) }
     let metadata = try validateRegularDescriptor(current, root: resolver.root)

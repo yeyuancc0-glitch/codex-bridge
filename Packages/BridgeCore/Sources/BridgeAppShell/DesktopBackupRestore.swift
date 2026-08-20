@@ -499,7 +499,6 @@ enum DesktopRestoreCoordinator {
     retainedDirectoryURL: URL,
     now: Date
   ) throws -> DesktopRestoreOutcome {
-    let retainedRootURL = retainedRoot(dataDirectoryURL: dataDirectoryURL)
     let retainedExists = (try? openDirectory(retainedDirectoryURL, requirePrivate: true)) != nil
     if retainedExists {
       let retained = try openDirectory(retainedDirectoryURL, requirePrivate: true)

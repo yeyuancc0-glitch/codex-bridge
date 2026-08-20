@@ -305,6 +305,52 @@ final class DirectCommandPolicyTests: XCTestCase {
     }
   }
 
+  func testSafeSearchBuiltInsAcceptBoundedPatternsFlagsAndProjectPaths() throws {
+    let policy = DirectCommandPolicy()
+    let project = try project(mode: .safe, write: .allowed)
+    let requests = [
+      ["rg", "-n", "needle", "."],
+      ["rg", "--regexp=needle", "."],
+      ["rg", "--files", "."],
+      ["grep", "-in", "needle", "."],
+      ["grep", "-e", "needle", "--", "."],
+    ]
+    for argv in requests {
+      let result = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id,
+          commandID: nil,
+          argv: argv
+        )
+      )
+      XCTAssertTrue(result.allowed, argv.joined(separator: " "))
+      XCTAssertNil(result.reason, argv.joined(separator: " "))
+    }
+  }
+
+  func testSafeSearchBuiltInsRejectMissingValuesAndInlineFileEscapes() throws {
+    let policy = DirectCommandPolicy()
+    let project = try project(mode: .safe, write: .allowed)
+    let requests = [
+      ["rg", "-e"],
+      ["grep", "--file", "/private/patterns"],
+      ["rg", "--file=/private/patterns", "."],
+    ]
+    for argv in requests {
+      let result = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id,
+          commandID: nil,
+          argv: argv
+        )
+      )
+      XCTAssertEqual(result.reason, .invalidArguments, argv.joined(separator: " "))
+      XCTAssertFalse(result.allowed, argv.joined(separator: " "))
+    }
+  }
+
   func testSafeModeRejectsAbsoluteProjectSymlinkToOutsideExecutable() throws {
     let policy = DirectCommandPolicy()
     let root = FileManager.default.temporaryDirectory
@@ -635,7 +681,7 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     )
     XCTAssertEqual(session.status, "running")
 
-    var deadline = Date().addingTimeInterval(10)
+    let deadline = Date().addingTimeInterval(10)
     var finished: DirectCommandSession?
     while Date() < deadline {
       if let current = await manager.snapshot(sessionID: "dcmd-1"), current.status == "ended" {
@@ -700,7 +746,7 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     )
     try await manager.interrupt(sessionID: "dcmd-interrupt")
 
-    var deadline = Date().addingTimeInterval(10)
+    let deadline = Date().addingTimeInterval(10)
     var finished: DirectCommandSession?
     while Date() < deadline {
       if let current = await manager.snapshot(sessionID: "dcmd-interrupt"),
@@ -739,7 +785,7 @@ final class DirectCommandSessionManagerTests: XCTestCase {
       timeout: .milliseconds(300)
     )
 
-    var deadline = Date().addingTimeInterval(10)
+    let deadline = Date().addingTimeInterval(10)
     var finished: DirectCommandSession?
     while Date() < deadline {
       if let current = await manager.snapshot(sessionID: "dcmd-timeout"),
@@ -778,7 +824,7 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     )
     let pid = try XCTUnwrap(session.processID)
     await manager.cancelAll()
-    var deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(5)
     var reaped = false
     while Date() < deadline {
       if kill(pid, 0) != 0 {
@@ -832,7 +878,7 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     let survivorAlive = kill(survivorPID, 0) == 0
     XCTAssertTrue(survivorAlive, "unrelated process must be left alone")
 
-    var deadline = Date().addingTimeInterval(5)
+    let deadline = Date().addingTimeInterval(5)
     var reaped = false
     while Date() < deadline {
       if kill(orphanPID, 0) != 0 {
@@ -894,7 +940,7 @@ final class DirectCommandSessionManagerTests: XCTestCase {
         requiresNetwork: false,
         usePTY: false
       )
-      var deadline = Date().addingTimeInterval(5)
+      let deadline = Date().addingTimeInterval(5)
       while Date() < deadline {
         if let session = await manager.snapshot(sessionID: sessionID), session.status == "ended" {
           break

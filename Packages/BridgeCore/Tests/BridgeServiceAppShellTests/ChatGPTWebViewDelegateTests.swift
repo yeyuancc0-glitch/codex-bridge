@@ -9,6 +9,7 @@ final class ChatGPTWebViewDelegateTests: XCTestCase {
   private let createWebViewSelector = NSSelectorFromString(
     "webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:")
 
+  @MainActor
   func testCoordinatorImplementsWKNavigationDelegatePolicySelectors() {
     let coordinator = ChatGPTWebView.Coordinator(ChatGPTWebView())
 

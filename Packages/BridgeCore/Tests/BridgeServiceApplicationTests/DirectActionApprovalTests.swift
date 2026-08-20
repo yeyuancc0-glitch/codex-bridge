@@ -446,7 +446,7 @@ final class DirectApprovalFlowTests: XCTestCase {
     )
     var sessionID = receipt.sessionID
     var finalOutput = receipt.output
-    var pollDeadline = Date().addingTimeInterval(10)
+    let pollDeadline = Date().addingTimeInterval(10)
     while Date() < pollDeadline {
       let output = try await application.serviceDirectReadCommand(
         sessionID: sessionID,
@@ -491,7 +491,7 @@ final class DirectApprovalFlowTests: XCTestCase {
     )
     var sessionID = receipt.sessionID
     var finalOutput = receipt.output
-    var pollDeadline = Date().addingTimeInterval(10)
+    let pollDeadline = Date().addingTimeInterval(10)
     while Date() < pollDeadline {
       let output = try await application.serviceDirectReadCommand(
         sessionID: sessionID,

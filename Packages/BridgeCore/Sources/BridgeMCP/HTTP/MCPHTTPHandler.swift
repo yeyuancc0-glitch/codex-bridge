@@ -352,7 +352,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   private func writeEnd(channel: any Channel) async throws {
     guard !Task.isCancelled, channel.isActive else { return }
     try await channel.writeAndFlush(HTTPServerResponsePart.end(nil)).get()
-    nonisolated(unsafe) let sendableSelf = self
+    let sendableSelf = self
     try await channel.eventLoop.submit {
       sendableSelf.responseTimeout?.cancel()
       sendableSelf.responseTimeout = nil

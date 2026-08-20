@@ -7,7 +7,6 @@ import WebKit
 struct BridgeServiceWorkbenchView: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var isInspectorVisible = true
-  @State private var showThreadPicker = false
 
   var body: some View {
     HSplitView {

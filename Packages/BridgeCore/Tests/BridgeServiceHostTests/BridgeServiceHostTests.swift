@@ -367,7 +367,7 @@ final class BridgeServiceHostTests: XCTestCase {
     try await fixture.composition.disconnectTunnel()
     try await fixture.composition.tunnelStatus()
 
-    var deadline = Date().addingTimeInterval(10)
+    let deadline = Date().addingTimeInterval(10)
     var finished: DirectCommandSession?
     while Date() < deadline {
       if let current = await fixture.composition.application.directCommands.snapshot(

@@ -66,17 +66,8 @@ let package = Package(
   ],
   targets: [
     .target(name: "BridgeDomain"),
-    .target(
-      name: "BridgeSecurity",
-      dependencies: ["BridgeDomain"]
-    ),
-    .target(
-      name: "BridgeCodexRPC",
-      dependencies: [
-        "BridgeDomain",
-        .product(name: "Logging", package: "swift-log"),
-      ]
-    ),
+    .target(name: "BridgeSecurity"),
+    .target(name: "BridgeCodexRPC"),
     .target(
       name: "BridgePersistence",
       dependencies: [
@@ -95,7 +86,7 @@ let package = Package(
     ),
     .target(
       name: "BridgeExecution",
-      dependencies: ["BridgeCodexRPC", "BridgeDomain", "BridgeProjects"]
+      dependencies: ["BridgeCodexRPC", "BridgeDomain", "BridgeProjects", "BridgeSecurity"]
     ),
     .target(
       name: "BridgeCoordinator",
@@ -235,7 +226,6 @@ let package = Package(
       dependencies: [
         "BridgeDomain",
         "BridgeProjects",
-        "BridgeSecurity",
         "BridgeServiceCore",
         .product(name: "GRDB", package: "GRDB.swift"),
       ]
@@ -263,6 +253,7 @@ let package = Package(
         "BridgeProjects",
         "BridgeSecurity",
         "BridgeServiceCore",
+        "BridgeSkills",
       ]
     ),
     .target(
@@ -277,16 +268,14 @@ let package = Package(
     ),
     .target(
       name: "BridgeIPC",
-      dependencies: [
-        "BridgeMCP",
-        "BridgeServiceCore",
-      ]
+      dependencies: ["BridgeMCP"]
     ),
     .target(
       name: "BridgeServiceHost",
       dependencies: [
         "BridgeCodexRPC",
         "BridgeCodexService",
+        "BridgeDirectCommand",
         "BridgeDomain",
         "BridgeLegacyImport",
         "BridgeIPC",

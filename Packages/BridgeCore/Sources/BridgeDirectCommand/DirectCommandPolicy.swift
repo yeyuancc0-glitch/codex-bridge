@@ -306,92 +306,6 @@ public struct DirectCommandPolicy: Sendable {
     return !expectsValue
   }
 
-  private func searchArgumentsAreSafe(
-    executable: String,
-    _ arguments: ArraySlice<String>,
-    projectRoot: String,
-    workingDirectory: String?
-  ) -> Bool {
-    let valueOptions = Set([
-      "-e", "--regexp", "-f", "--file", "-g", "--glob", "--iglob", "--type", "-t",
-      "--type-not", "-T", "--max-count", "-m", "--context", "-C", "-A", "-B",
-      "--after-context", "--before-context", "--max-columns", "--max-depth",
-      "--max-filesize", "--sort", "--sortr", "--threads", "-j", "--path-separator",
-      "--glob-case", "--colors", "--color", "--include", "--exclude", "--exclude-dir",
-    ])
-    let pathOptions = Set(["-f", "--file"])
-    let flags = Set([
-      "-a", "--text", "-b", "--byte-offset", "-c", "--count", "-h", "--no-filename",
-      "-H", "--with-filename", "-i", "--ignore-case", "-l", "--files-with-matches",
-      "-L", "--files-without-match", "-n", "--line-number", "-q", "--quiet", "-r",
-      "--replace", "-R", "--follow", "-s", "--no-messages", "-v", "--invert-match",
-      "-w", "--word-regexp", "-x", "--line-regexp", "-F", "--fixed-strings", "-E",
-      "--encoding", "--hidden", "--no-ignore", "--no-ignore-vcs", "--files",
-      "--glob-case-insensitive", "--stats", "--json", "--heading", "--no-heading",
-      "--trim", "--crlf", "--null", "--null-data", "--passthru", "--binary-files",
-    ])
-    let deniedPrefix = ["--pre", "--hostname-bin"]
-    var patternSeen = false
-    var filesMode = false
-    var expectsValueIsPath: Bool?
-    var pathsEnabled = false
-    for argument in arguments {
-      if let valueKind = expectsValueIsPath {
-        if valueKind {
-          guard
-            safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
-          else { return false }
-        }
-        if !valueKind { patternSeen = true }
-        expectsValueIsPath = nil
-        continue
-      }
-      if pathsEnabled {
-        guard
-          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
-        else { return false }
-        continue
-      }
-      if argument == "--" {
-        pathsEnabled = true
-        continue
-      }
-      if argument == "--files" && executable == "rg" {
-        filesMode = true
-        continue
-      }
-      if argument.hasPrefix("-") && argument != "-" {
-        guard !deniedPrefix.contains(where: { argument == $0 || argument.hasPrefix($0 + "=") })
-        else { return false }
-        let option = argument.split(separator: "=", maxSplits: 1).first.map(String.init) ?? argument
-        if argument.contains("="), ["-e", "--regexp"].contains(option) {
-          patternSeen = true
-        }
-        if valueOptions.contains(option) && !argument.contains("=") {
-          expectsValueIsPath = pathOptions.contains(option)
-        } else if !valueOptions.contains(option) && !flags.contains(option) {
-          // Permit short flag clusters only when every character is a known
-          // flag.  Options that take values must use their separated form.
-          if option.count > 2, option.first == "-", !option.hasPrefix("--") {
-            let cluster = option.dropFirst()
-            guard cluster.allSatisfy({ flags.contains("-\($0)") }) else { return false }
-          } else {
-            return false
-          }
-        }
-        continue
-      }
-      if filesMode || patternSeen {
-        guard
-          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
-        else { return false }
-      } else {
-        patternSeen = true
-      }
-    }
-    return expectsValueIsPath == nil
-  }
-
   private func safeBuiltInInvocation(
     _ argv: [String],
     projectRoot: String,
@@ -409,11 +323,16 @@ public struct DirectCommandPolicy: Sendable {
       return findArgumentsAreSafe(
         argv.dropFirst(), projectRoot: projectRoot, workingDirectory: workingDirectory)
     case "grep", "rg":
-      return searchArgumentsAreSafe(
+      return DirectSearchArgumentValidator.areArgumentsSafe(
         executable: basename,
         argv.dropFirst(),
-        projectRoot: projectRoot,
-        workingDirectory: workingDirectory
+        pathIsSafe: {
+          safePathArgument(
+            $0,
+            projectRoot: projectRoot,
+            workingDirectory: workingDirectory
+          )
+        }
       )
     case "git":
       let denied = [
