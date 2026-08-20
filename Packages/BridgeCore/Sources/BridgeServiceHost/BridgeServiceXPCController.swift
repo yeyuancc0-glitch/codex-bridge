@@ -342,7 +342,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           IPCThreadListRequest.self,
           from: request
         )
-        let page = try await composition.application.serviceThreads(
+        let page = try await composition.application.serviceAppThreads(
           projectID: payload.projectID,
           cursor: payload.cursor,
           limit: payload.limit,
@@ -373,7 +373,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           IPCThreadReadRequest.self,
           from: request
         )
-        let page = try await composition.application.serviceReadThread(
+        let page = try await composition.application.serviceAppReadThread(
           projectID: payload.projectID,
           threadID: payload.threadID,
           detail: payload.detail,

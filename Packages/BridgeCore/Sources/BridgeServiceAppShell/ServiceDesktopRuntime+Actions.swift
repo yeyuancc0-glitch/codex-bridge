@@ -438,6 +438,7 @@ extension BridgeServiceAppModel {
       )
       guard selectedProjectID == projectID else { return }
       threads = page.threads
+      reconcileThreadSelection()
     } catch {
       guard selectedProjectID == projectID else { return }
       threads = []

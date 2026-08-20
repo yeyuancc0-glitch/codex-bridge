@@ -405,6 +405,62 @@ final class BridgeServiceApplicationTests: XCTestCase {
     }
   }
 
+  func testAppThreadCatalogOnlyReturnsChatGPTMCPTaskThreads() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .chatGPT,
+        prompt: "Bridge task",
+        executionModel: "execution-model",
+        executionEffort: "high",
+        permissionMode: .readOnly
+      )
+    )
+    _ = try await fixture.tasks.begin(taskID: TaskID(rawValue: "tsk-service-app"))
+    _ = try await fixture.tasks.markExecutionStarted(
+      taskID: TaskID(rawValue: "tsk-service-app"),
+      threadID: "thread-bridge",
+      turnID: "turn-bridge"
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceMixedThreadListScript(root: fixture.root.path)
+    )
+
+    let page = try await application.serviceAppThreads(
+      projectID: fixture.project.id.rawValue,
+      cursor: nil,
+      limit: 25,
+      search: nil,
+      deadline: ContinuousClock.now.advanced(by: .seconds(3))
+    )
+
+    XCTAssertEqual(page.threads.map(\.threadID), ["thread-bridge"])
+  }
+
+  func testAppThreadReadRejectsThreadWithoutChatGPTMCPTask() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceThreadReadScript(root: fixture.root.path)
+    )
+
+    do {
+      _ = try await application.serviceAppReadThread(
+        projectID: fixture.project.id.rawValue,
+        threadID: "thread-read",
+        detail: .summary,
+        cursor: nil,
+        limit: 25,
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected a non-MCP Thread to be hidden from the App")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .threadNotFound)
+    }
+  }
+
   func testProjectCommandsRoundTripThroughTheApplication() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

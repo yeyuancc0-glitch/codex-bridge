@@ -4,6 +4,13 @@ import SwiftUI
 
 @MainActor
 public final class TaskConversationModel: ObservableObject, Identifiable {
+  public enum Activity: Equatable {
+    case idle
+    case thinking
+    case executing(String?)
+    case responding
+  }
+
   public struct Entry: Identifiable, Equatable {
     public let key: String
     public let role: String
@@ -44,6 +51,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
 
   @Published public private(set) var entries: [Entry] = []
   @Published public private(set) var isStreaming = false
+  @Published public private(set) var activity: Activity = .idle
   @Published public private(set) var errorMessage: String?
   @Published public private(set) var isLoadingEarlier = false
   @Published public var autoScroll = true
@@ -228,6 +236,16 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   }
 
   private func refreshStreamingState() {
-    isStreaming = entries.last(where: { $0.role == "agent" })?.isFinal == false
+    guard let entry = entries.last(where: { $0.role == "agent" && !$0.isFinal }) else {
+      activity = .idle
+      isStreaming = false
+      return
+    }
+    switch entry.kind {
+    case "reasoning": activity = .thinking
+    case "tool_call": activity = .executing(entry.toolName)
+    default: activity = .responding
+    }
+    isStreaming = true
   }
 }

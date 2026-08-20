@@ -13,6 +13,70 @@ extension MCPServiceTaskSnapshot {
   }
 }
 
+struct CodexActivityPresentation: Equatable {
+  let statusText: String
+  let detailText: String?
+  let isActive: Bool
+  let showsBubble: Bool
+
+  init(task: MCPServiceTaskSnapshot?, activity: TaskConversationModel.Activity) {
+    guard let task else {
+      statusText = "已连接本机 Codex 引擎"
+      detailText = nil
+      isActive = false
+      showsBubble = false
+      return
+    }
+    detailText = task.currentStep
+    switch task.status {
+    case "starting":
+      statusText = "Codex 正在启动…"
+      isActive = true
+      showsBubble = true
+    case "running":
+      (statusText, showsBubble) = Self.runningPresentation(activity)
+      isActive = true
+    case "waiting_for_codex_approval":
+      statusText = "等待本机批准 Codex 操作…"
+      isActive = true
+      showsBubble = true
+    case "completed":
+      statusText = "Codex 已完成"
+      isActive = false
+      showsBubble = false
+    case "failed":
+      statusText = "Codex 执行失败"
+      isActive = false
+      showsBubble = false
+    case "interrupted":
+      statusText = "Codex 已中断"
+      isActive = false
+      showsBubble = false
+    case "unknown":
+      statusText = "Codex 状态未知"
+      isActive = false
+      showsBubble = false
+    default:
+      statusText = "等待本机批准任务"
+      isActive = false
+      showsBubble = false
+    }
+  }
+
+  private static func runningPresentation(
+    _ activity: TaskConversationModel.Activity
+  ) -> (String, Bool) {
+    switch activity {
+    case .executing(let tool):
+      return (tool.map { "Codex 正在执行 \($0)…" } ?? "Codex 正在执行工具…", true)
+    case .responding:
+      return ("Codex 正在输出…", false)
+    case .idle, .thinking:
+      return ("Codex 正在思考…", true)
+    }
+  }
+}
+
 extension BridgeServiceRegistrationStatus {
   var localizedTitle: String {
     switch self {

@@ -187,8 +187,8 @@ struct BridgeServiceWorkbenchView: View {
 
         Spacer()
 
-        if let activeTask = currentActiveTask {
-          TaskStatusLabel(status: activeTask.status)
+        if let task = currentTask {
+          TaskStatusLabel(status: task.status)
         } else if model.runningTaskCount > 0 {
           StatusBadge("运行中", tone: .running)
         } else {
@@ -297,17 +297,14 @@ struct BridgeServiceWorkbenchView: View {
     if let conversation = model.conversation, !conversation.entries.isEmpty {
       LazyVStack(alignment: .leading, spacing: 10) {
         ForEach(conversation.entries) { entry in
-          let streaming =
-            conversation.isStreaming && entry.key == conversation.entries.last?.key
-            && !entry.isFinal
-          MessageBubble(entry: entry, streaming: streaming)
+          MessageBubble(entry: entry, streaming: entry.role == "agent" && !entry.isFinal)
             .id(entry.key)
         }
 
         if isWaitingForCodex {
           ThinkingBubbleView(
-            statusText: "Codex 正在思考…",
-            detailText: currentActiveTask?.currentStep
+            statusText: activity.statusText,
+            detailText: activity.detailText
           )
           .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }
@@ -321,8 +318,8 @@ struct BridgeServiceWorkbenchView: View {
 
         if isWaitingForCodex {
           ThinkingBubbleView(
-            statusText: "Codex 正在思考…",
-            detailText: currentActiveTask?.currentStep
+            statusText: activity.statusText,
+            detailText: activity.detailText
           )
           .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }
@@ -330,8 +327,8 @@ struct BridgeServiceWorkbenchView: View {
     } else if isWaitingForCodex {
       VStack(alignment: .leading, spacing: 10) {
         ThinkingBubbleView(
-          statusText: "Codex 正在处理任务…",
-          detailText: currentActiveTask?.currentStep
+          statusText: activity.statusText,
+          detailText: activity.detailText
         )
       }
       .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
@@ -354,36 +351,20 @@ struct BridgeServiceWorkbenchView: View {
   }
 
   private var isWaitingForCodex: Bool {
-    guard let activeTask = currentActiveTask, activeTask.isRunning else { return false }
-    if let conversation = model.conversation {
-      if conversation.isStreaming, let last = conversation.entries.last,
-        last.role != "user" && !last.content.isEmpty
-      {
-        return false
-      }
-      return true
-    }
-    return true
+    activity.showsBubble
   }
 
   private var inspectorFooter: some View {
     HStack {
-      if let conversation = model.conversation, conversation.isStreaming {
+      if activity.isActive {
         HStack(spacing: 6) {
           ThinkingOrbView(size: 14)
-          Text("Codex 正在输出…")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-      } else if let activeTask = currentActiveTask, activeTask.isRunning {
-        HStack(spacing: 6) {
-          ThinkingOrbView(size: 14)
-          Text("Codex 正在思考…")
+          Text(activity.statusText)
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
       } else {
-        Text("已连接本机 Codex 引擎")
+        Text(activity.statusText)
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
@@ -407,10 +388,40 @@ struct BridgeServiceWorkbenchView: View {
   // MARK: - Helpers
 
   private var currentActiveTask: MCPServiceTaskSnapshot? {
-    if let selectedThreadID = model.selectedThreadID {
-      return model.tasks.first(where: { $0.threadID == selectedThreadID && $0.isRunning })
+    if let taskID = model.conversation?.taskID,
+      let task = model.tasks.first(where: { $0.taskID == taskID && $0.isRunning })
+    {
+      return task
     }
-    return model.tasks.first(where: \.isRunning)
+    if let selectedThreadID = model.selectedThreadID,
+      let task = model.tasks.first(where: { $0.threadID == selectedThreadID && $0.isRunning })
+    {
+      return task
+    }
+    return model.tasks.first(where: {
+      $0.projectID == model.selectedProjectID && $0.isRunning
+    }) ?? model.tasks.first(where: \.isRunning)
+  }
+
+  private var currentTask: MCPServiceTaskSnapshot? {
+    if let taskID = model.conversation?.taskID,
+      let task = model.tasks.first(where: { $0.taskID == taskID })
+    {
+      return task
+    }
+    if let selectedThreadID = model.selectedThreadID,
+      let task = model.tasks.first(where: { $0.threadID == selectedThreadID })
+    {
+      return task
+    }
+    return currentActiveTask
+  }
+
+  private var activity: CodexActivityPresentation {
+    CodexActivityPresentation(
+      task: currentActiveTask ?? currentTask,
+      activity: model.conversation?.activity ?? .idle
+    )
   }
 
   private var currentSelectedThreadTitle: String {

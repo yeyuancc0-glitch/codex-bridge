@@ -3,6 +3,8 @@ import SwiftUI
 /// 原生 SwiftUI 动态思考光球组件，参考 `thinking-orbs` 视觉风格。
 /// 基于 `TimelineView(.animation)` 与 `Canvas` 硬件加速绘制多层呼吸光核与轨道粒子。
 public struct ThinkingOrbView: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   public var size: CGFloat
   public var primaryColor: Color
   public var secondaryColor: Color
@@ -21,100 +23,110 @@ public struct ThinkingOrbView: View {
   }
 
   public var body: some View {
-    TimelineView(.animation) { timeline in
-      let time = timeline.date.timeIntervalSinceReferenceDate
-      Canvas { context, canvasSize in
-        let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
-        let baseRadius = min(canvasSize.width, canvasSize.height) * 0.42
-
-        // 1. 外部柔和辉光层 (Outer Aura)
-        let auraBreath = 0.85 + 0.15 * sin(time * 2.2)
-        let auraRect = CGRect(
-          x: center.x - baseRadius * 1.3 * auraBreath,
-          y: center.y - baseRadius * 1.3 * auraBreath,
-          width: baseRadius * 2.6 * auraBreath,
-          height: baseRadius * 2.6 * auraBreath
-        )
-        context.fill(
-          Path(ellipseIn: auraRect),
-          with: .radialGradient(
-            Gradient(colors: [
-              primaryColor.opacity(0.35),
-              secondaryColor.opacity(0.18),
-              Color.clear,
-            ]),
-            center: center,
-            startRadius: 0,
-            endRadius: baseRadius * 1.3 * auraBreath
-          )
-        )
-
-        // 2. 核心呼吸光球 (Pulsing Core)
-        let coreBreath = 0.9 + 0.1 * cos(time * 3.0)
-        let coreRect = CGRect(
-          x: center.x - baseRadius * coreBreath,
-          y: center.y - baseRadius * coreBreath,
-          width: baseRadius * 2.0 * coreBreath,
-          height: baseRadius * 2.0 * coreBreath
-        )
-        context.fill(
-          Path(ellipseIn: coreRect),
-          with: .radialGradient(
-            Gradient(colors: [
-              .white.opacity(0.85),
-              primaryColor.opacity(0.8),
-              secondaryColor.opacity(0.6),
-              accentColor.opacity(0.0),
-            ]),
-            center: CGPoint(
-              x: center.x + baseRadius * 0.2 * sin(time * 1.8),
-              y: center.y - baseRadius * 0.2 * cos(time * 1.8)
-            ),
-            startRadius: 0,
-            endRadius: baseRadius * coreBreath
-          )
-        )
-
-        // 3. 轨道旋转粒子群 (Orbiting Particles)
-        let particleCount = 7
-        for i in 0..<particleCount {
-          let speed = 1.6 + Double(i) * 0.35
-          let phase = Double(i) * (2.0 * .pi / Double(particleCount))
-          let orbitAngle = time * speed + phase
-          let tilt = Double(i) * 0.45
-
-          let orbitRx = baseRadius * (0.65 + 0.25 * sin(time * 1.2 + Double(i)))
-          let orbitRy = baseRadius * (0.35 + 0.2 * cos(time * 1.5 + Double(i)))
-
-          // 旋转倾角变换
-          let unrotatedX = orbitRx * cos(orbitAngle)
-          let unrotatedY = orbitRy * sin(orbitAngle)
-
-          let cosTilt = cos(tilt)
-          let sinTilt = sin(tilt)
-
-          let px = center.x + CGFloat(unrotatedX * cosTilt - unrotatedY * sinTilt)
-          let py = center.y + CGFloat(unrotatedX * sinTilt + unrotatedY * cosTilt)
-
-          let pSize = CGFloat(1.6 + 1.2 * sin(time * 4.0 + Double(i)))
-          let pRect = CGRect(
-            x: px - pSize / 2,
-            y: py - pSize / 2,
-            width: pSize,
-            height: pSize
-          )
-
-          let pColor: Color = (i % 3 == 0) ? .white : ((i % 2 == 0) ? primaryColor : secondaryColor)
-          let pAlpha = 0.6 + 0.4 * sin(time * 3.0 + phase)
-
-          context.fill(
-            Path(ellipseIn: pRect),
-            with: .color(pColor.opacity(pAlpha))
-          )
+    Group {
+      if reduceMotion {
+        orb(time: 0)
+      } else {
+        TimelineView(.animation) { timeline in
+          orb(time: timeline.date.timeIntervalSinceReferenceDate)
         }
       }
     }
     .frame(width: size, height: size)
+    .accessibilityHidden(true)
+  }
+
+  private func orb(time: TimeInterval) -> some View {
+    Canvas { context, canvasSize in
+      let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+      let baseRadius = min(canvasSize.width, canvasSize.height) * 0.42
+
+      // 1. 外部柔和辉光层 (Outer Aura)
+      let auraBreath = 0.85 + 0.15 * sin(time * 2.2)
+      let auraRect = CGRect(
+        x: center.x - baseRadius * 1.3 * auraBreath,
+        y: center.y - baseRadius * 1.3 * auraBreath,
+        width: baseRadius * 2.6 * auraBreath,
+        height: baseRadius * 2.6 * auraBreath
+      )
+      context.fill(
+        Path(ellipseIn: auraRect),
+        with: .radialGradient(
+          Gradient(colors: [
+            primaryColor.opacity(0.35),
+            secondaryColor.opacity(0.18),
+            Color.clear,
+          ]),
+          center: center,
+          startRadius: 0,
+          endRadius: baseRadius * 1.3 * auraBreath
+        )
+      )
+
+      // 2. 核心呼吸光球 (Pulsing Core)
+      let coreBreath = 0.9 + 0.1 * cos(time * 3.0)
+      let coreRect = CGRect(
+        x: center.x - baseRadius * coreBreath,
+        y: center.y - baseRadius * coreBreath,
+        width: baseRadius * 2.0 * coreBreath,
+        height: baseRadius * 2.0 * coreBreath
+      )
+      context.fill(
+        Path(ellipseIn: coreRect),
+        with: .radialGradient(
+          Gradient(colors: [
+            .white.opacity(0.85),
+            primaryColor.opacity(0.8),
+            secondaryColor.opacity(0.6),
+            accentColor.opacity(0.0),
+          ]),
+          center: CGPoint(
+            x: center.x + baseRadius * 0.2 * sin(time * 1.8),
+            y: center.y - baseRadius * 0.2 * cos(time * 1.8)
+          ),
+          startRadius: 0,
+          endRadius: baseRadius * coreBreath
+        )
+      )
+
+      // 3. 轨道旋转粒子群 (Orbiting Particles)
+      let particleCount = 7
+      for i in 0..<particleCount {
+        let speed = 1.6 + Double(i) * 0.35
+        let phase = Double(i) * (2.0 * .pi / Double(particleCount))
+        let orbitAngle = time * speed + phase
+        let tilt = Double(i) * 0.45
+
+        let orbitRx = baseRadius * (0.65 + 0.25 * sin(time * 1.2 + Double(i)))
+        let orbitRy = baseRadius * (0.35 + 0.2 * cos(time * 1.5 + Double(i)))
+
+        // 旋转倾角变换
+        let unrotatedX = orbitRx * cos(orbitAngle)
+        let unrotatedY = orbitRy * sin(orbitAngle)
+
+        let cosTilt = cos(tilt)
+        let sinTilt = sin(tilt)
+
+        let px = center.x + CGFloat(unrotatedX * cosTilt - unrotatedY * sinTilt)
+        let py = center.y + CGFloat(unrotatedX * sinTilt + unrotatedY * cosTilt)
+
+        let pSize = CGFloat(1.6 + 1.2 * sin(time * 4.0 + Double(i)))
+        let pRect = CGRect(
+          x: px - pSize / 2,
+          y: py - pSize / 2,
+          width: pSize,
+          height: pSize
+        )
+
+        let pColor: Color = (i % 3 == 0) ? .white : ((i % 2 == 0) ? primaryColor : secondaryColor)
+        let pAlpha = 0.6 + 0.4 * sin(time * 3.0 + phase)
+
+        context.fill(
+          Path(ellipseIn: pRect),
+          with: .color(pColor.opacity(pAlpha))
+        )
+      }
+    }
   }
 }
 

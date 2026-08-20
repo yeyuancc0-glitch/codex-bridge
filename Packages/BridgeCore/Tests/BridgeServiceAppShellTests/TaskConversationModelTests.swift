@@ -109,6 +109,89 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(model.entries[1].content, "Authoritative text")
   }
 
+  func testActivityTracksReasoningAndToolsUntilEveryEntryIsFinal() async throws {
+    let client = TestBridgeServiceClient()
+    let model = TaskConversationModel(taskID: "task-1", client: client)
+    await model.start()
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "reasoning:item-1",
+        role: "agent",
+        kind: "reasoning",
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: "Inspecting",
+        final: false
+      )
+    )
+    try await waitUntil { model.activity == .thinking }
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "tool:item-2",
+        role: "agent",
+        kind: "tool_call",
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: "Running tests",
+        final: false,
+        toolName: "exec_command",
+        toolStatus: "in_progress"
+      )
+    )
+    try await waitUntil { model.activity == .executing("exec_command") }
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "tool:item-2",
+        role: "agent",
+        kind: "tool_call",
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: "Tests passed",
+        final: true,
+        toolName: "exec_command",
+        toolStatus: "completed"
+      )
+    )
+    try await waitUntil { model.activity == .thinking }
+    XCTAssertTrue(model.isStreaming)
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "reasoning:item-1",
+        role: "agent",
+        kind: "reasoning",
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: "Inspection complete",
+        final: true
+      )
+    )
+    try await waitUntil { model.activity == .idle }
+    XCTAssertFalse(model.isStreaming)
+  }
+
+  func testTaskStateKeepsActivityVisibleUntilTerminalStatus() {
+    let running = taskSnapshot(status: "running")
+    let completed = taskSnapshot(status: "completed")
+
+    let thinking = CodexActivityPresentation(task: running, activity: .idle)
+    XCTAssertTrue(thinking.isActive)
+    XCTAssertTrue(thinking.showsBubble)
+    XCTAssertEqual(thinking.statusText, "Codex 正在思考…")
+
+    let finished = CodexActivityPresentation(task: completed, activity: .thinking)
+    XCTAssertFalse(finished.isActive)
+    XCTAssertFalse(finished.showsBubble)
+    XCTAssertEqual(finished.statusText, "Codex 已完成")
+  }
+
   func testUnknownKeyDeltaWithNonzeroBaseIsIgnored() async throws {
     let client = TestBridgeServiceClient()
     let model = TaskConversationModel(taskID: "task-1", client: client)
@@ -266,5 +349,16 @@ final class TaskConversationModelTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTFail("Condition did not become true before the deadline.")
+  }
+
+  private func taskSnapshot(status: String) -> MCPServiceTaskSnapshot {
+    MCPServiceTaskSnapshot(
+      taskID: "task-1",
+      projectID: "project-1",
+      status: status,
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-20T00:00:00Z"
+    )
   }
 }

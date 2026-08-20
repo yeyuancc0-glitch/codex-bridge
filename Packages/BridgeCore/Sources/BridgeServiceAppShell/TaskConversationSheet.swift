@@ -1,3 +1,4 @@
+import BridgeMCP
 import SwiftUI
 
 struct TaskConversationSheet: View {
@@ -76,8 +77,8 @@ struct TaskConversationSheet: View {
 
           if isWaitingForCodex {
             ThinkingBubbleView(
-              statusText: "Codex 正在思考…",
-              detailText: nil
+              statusText: activity.statusText,
+              detailText: activity.detailText
             )
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
           }
@@ -99,20 +100,17 @@ struct TaskConversationSheet: View {
         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
           .font(.caption)
           .foregroundStyle(.red)
-      } else if isStreamingAny {
+      } else if activity.isActive {
         HStack(spacing: 6) {
           ThinkingOrbView(size: 14)
-          Text("Codex 正在输出…")
+          Text(activity.statusText)
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-      } else if isWaitingForCodex {
-        HStack(spacing: 6) {
-          ThinkingOrbView(size: 14)
-          Text("Codex 正在思考…")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
+      } else if task != nil {
+        Text(activity.statusText)
+          .font(.caption)
+          .foregroundStyle(.secondary)
       } else {
         Text("\(conversation.entries.count) 条消息")
           .font(.caption)
@@ -129,21 +127,19 @@ struct TaskConversationSheet: View {
   }
 
   private var isWaitingForCodex: Bool {
-    if conversation.isStreaming, let last = conversation.entries.last,
-      last.role == "agent" && !last.content.isEmpty
-    {
-      return false
-    }
-    return conversation.isStreaming || (conversation.entries.last?.role == "user")
+    activity.showsBubble
   }
 
   private func isStreaming(_ entry: TaskConversationModel.Entry) -> Bool {
-    conversation.isStreaming && entry.key == conversation.entries.last?.key
-      && entry.role == "agent" && !entry.isFinal
+    entry.role == "agent" && !entry.isFinal
   }
 
-  private var isStreamingAny: Bool {
-    conversation.isStreaming
+  private var task: MCPServiceTaskSnapshot? {
+    model.tasks.first(where: { $0.taskID == conversation.taskID })
+  }
+
+  private var activity: CodexActivityPresentation {
+    CodexActivityPresentation(task: task, activity: conversation.activity)
   }
 }
 

@@ -60,6 +60,46 @@ public actor ServiceCodexCatalog {
     }
   }
 
+  public func listThreads(
+    root: String,
+    cursor: String?,
+    limit: Int,
+    search: String?,
+    including allowedThreadIDs: Set<String>,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPThreadPage {
+    guard root.hasPrefix("/"), (1...100).contains(limit) else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    let offset = try Self.decodeAppCursor(cursor)
+    guard !allowedThreadIDs.isEmpty else {
+      return MCPThreadPage(threads: [], nextCursor: nil)
+    }
+
+    var catalogCursor: String?
+    var matching: [MCPThreadSummary] = []
+    for _ in 0..<32 {
+      try Self.checkDeadline(deadline)
+      let page = try await listThreads(
+        root: root,
+        cursor: catalogCursor,
+        limit: 100,
+        search: search,
+        deadline: deadline
+      )
+      matching.append(contentsOf: page.threads.filter { allowedThreadIDs.contains($0.threadID) })
+      if matching.count > offset + limit || page.nextCursor == nil {
+        let end = min(offset + limit, matching.count)
+        guard offset <= end else { throw BridgeMCPQueryError.contractRejected }
+        let next = end < matching.count ? "app.v1.\(end)" : nil
+        return MCPThreadPage(threads: Array(matching[offset..<end]), nextCursor: next)
+      }
+      guard page.nextCursor != catalogCursor else { throw BridgeMCPQueryError.unavailable }
+      catalogCursor = page.nextCursor
+    }
+    throw BridgeMCPQueryError.unavailable
+  }
+
   public func readThread(
     root: String,
     threadID: String,
@@ -275,6 +315,14 @@ public actor ServiceCodexCatalog {
       throw BridgeMCPQueryError.contractRejected
     }
     return value
+  }
+
+  private static func decodeAppCursor(_ cursor: String?) throws -> Int {
+    guard let cursor else { return 0 }
+    guard cursor.hasPrefix("app.v1."), let offset = Int(cursor.dropFirst(7)), offset >= 0 else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    return offset
   }
 
   private static func safeOptional(_ value: String?, maximum: Int) -> String? {

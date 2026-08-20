@@ -237,6 +237,7 @@ extension BridgeServiceAppModel {
       }
       if selectedProjectID == projectID, let threadPage {
         threads = threadPage.threads
+        reconcileThreadSelection()
       }
     }
 
@@ -261,6 +262,15 @@ extension BridgeServiceAppModel {
         modelCatalogError = Self.message(error)
       }
     }
+  }
+
+  func reconcileThreadSelection() {
+    guard let selectedThreadID else { return }
+    let remainsVisible = threads.contains { $0.threadID == selectedThreadID }
+    let belongsToTask = tasks.contains { $0.threadID == selectedThreadID }
+    guard !remainsVisible, !belongsToTask else { return }
+    self.selectedThreadID = nil
+    selectedThread = nil
   }
 
   func updateChatBrowserVisibility() {
