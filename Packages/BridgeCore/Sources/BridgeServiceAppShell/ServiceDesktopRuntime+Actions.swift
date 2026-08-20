@@ -46,6 +46,19 @@ extension BridgeServiceAppModel {
     }
   }
 
+  private func loadSkills(projectID: String) {
+    guard let client, connectionState == .connected else { return }
+    Task { [weak self] in
+      do {
+        let result = try await client.skills(projectID: projectID)
+        guard self?.selectedProjectID == projectID else { return }
+        self?.skills = result.skills
+      } catch {
+        self?.skills = []
+      }
+    }
+  }
+
   func saveProjectCommands(
     projectID: String,
     drafts: [BridgeWorkspaceCommandDraft],
@@ -83,6 +96,7 @@ extension BridgeServiceAppModel {
       if self.selectedProjectID == projectID {
         self.selectedProjectID = nil
         self.threads = []
+        self.skills = []
         self.selectedThread = nil
       }
       await self.refresh(silent: true, includeCatalog: false)
@@ -96,6 +110,7 @@ extension BridgeServiceAppModel {
     threads = []
     guard let projectID else { return }
     loadProjectDetail(projectID: projectID)
+    loadSkills(projectID: projectID)
     Task { [weak self] in
       await self?.loadThreads(projectID: projectID)
     }

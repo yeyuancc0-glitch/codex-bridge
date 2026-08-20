@@ -93,6 +93,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var modelPreferences: IPCModelPreferences?
   @Published public internal(set) var modelCatalogError: String?
   @Published public internal(set) var threads: [MCPThreadSummary] = []
+  @Published public internal(set) var skills: [MCPServiceSkill] = []
   @Published public internal(set) var selectedThread: MCPThreadReadPage?
   @Published public internal(set) var selectedThreadID: String?
   @Published public internal(set) var selectedProjectID: String?

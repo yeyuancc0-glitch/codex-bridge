@@ -10,8 +10,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let readOnly = MCPServiceToolCatalog(exposureMode: .readOnly).definitions.map(\.name)
     let full = MCPServiceToolCatalog(exposureMode: .full).definitions.map(\.name)
 
-    XCTAssertEqual(readOnly.count, 11)
-    XCTAssertEqual(full.count, 23)
+    XCTAssertEqual(readOnly.count, 13)
+    XCTAssertEqual(full.count, 26)
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.submitTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.steerTask.rawValue))
     XCTAssertFalse(readOnly.contains(MCPServiceToolName.interruptTask.rawValue))
@@ -520,5 +520,113 @@ final class BridgeServiceApplicationTests: XCTestCase {
       result.structuredContent?.objectValue?["local_approval_required"],
       .bool(false)
     )
+  }
+
+  func testRunSkillActionExecutesShebangAndInterpretedScriptsEndToEnd() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .full,
+      workspaceCommands: [],
+      projectID: fixture.project.id
+    )
+    let skills = fixture.root.appending(path: "skills", directoryHint: .isDirectory)
+      .appending(path: "toolkit", directoryHint: .isDirectory)
+    let scripts = skills.appending(path: "scripts", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    let frontmatter = """
+      ---
+      name: toolkit
+      description: >
+        A small E2E toolkit.
+      actions:
+        - name: greet
+          script: scripts/greet.sh
+        - name: sum
+          script: scripts/sum.py
+          interpreter: python3
+        - name: context
+          script: scripts/context.mjs
+          interpreter: node
+      ---
+      """
+    try Data(frontmatter.utf8).write(to: skills.appendingPathComponent("SKILL.md"))
+    try Data("#!/bin/sh\necho 'hello from sh'\n".utf8)
+      .write(to: scripts.appendingPathComponent("greet.sh"))
+    try Data("import sys\nprint('sum=%d' % (int(sys.argv[1]) + int(sys.argv[2])))\n".utf8)
+      .write(to: scripts.appendingPathComponent("sum.py"))
+    try Data("console.log('context-ok ' + (process.argv[2] || ''));\n".utf8)
+      .write(to: scripts.appendingPathComponent("context.mjs"))
+
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+
+    let greet = try await application.serviceRunSkillAction(
+      MCPRunSkillActionRequest(
+        skillName: "toolkit",
+        actionName: "greet",
+        arguments: [],
+        projectID: fixture.project.id.rawValue,
+        yieldTimeMS: 200,
+        timeoutMS: 5_000
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(greet.status, "ended")
+    XCTAssertEqual(greet.exitCode, 0)
+    XCTAssertTrue(greet.output?.tail.contains("hello from sh") == true)
+
+    let sum = try await application.serviceRunSkillAction(
+      MCPRunSkillActionRequest(
+        skillName: "toolkit",
+        actionName: "sum",
+        arguments: ["3", "4"],
+        projectID: fixture.project.id.rawValue,
+        yieldTimeMS: 200,
+        timeoutMS: 5_000
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(sum.exitCode, 0)
+    XCTAssertTrue(sum.output?.tail.contains("sum=7") == true)
+
+    let context = try await application.serviceRunSkillAction(
+      MCPRunSkillActionRequest(
+        skillName: "toolkit",
+        actionName: "context",
+        arguments: ["arg1"],
+        projectID: fixture.project.id.rawValue,
+        yieldTimeMS: 200,
+        timeoutMS: 5_000
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(context.exitCode, 0)
+    XCTAssertTrue(context.output?.tail.contains("context-ok arg1") == true)
+
+    do {
+      _ = try await application.serviceRunSkillAction(
+        MCPRunSkillActionRequest(
+          skillName: "toolkit",
+          actionName: "does-not-exist",
+          arguments: [],
+          projectID: fixture.project.id.rawValue,
+          yieldTimeMS: 200,
+          timeoutMS: 5_000
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected skillNotFound for unknown action")
+    } catch let error as BridgeMCPQueryError {
+      guard case .skillNotFound = error else {
+        return XCTFail("Expected skillNotFound, got \(error)")
+      }
+    }
+
+    await application.directCommands.cancelAll()
   }
 }

@@ -16,6 +16,7 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case setModelPreferences = "set_model_preferences"
   case setSupervisorEnabled = "set_supervisor_enabled"
   case listThreads = "list_threads"
+  case listSkills = "list_skills"
   case readThread = "read_thread"
   case listTasks = "list_tasks"
   case getTask = "get_task"
@@ -194,6 +195,12 @@ public struct IPCProjectCommandsRequest: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case projectID = "project_id"
   }
+}
+
+public struct IPCProjectSkillsRequest: Codable, Equatable, Sendable {
+  public let projectID: String
+  public init(projectID: String) { self.projectID = projectID }
+  private enum CodingKeys: String, CodingKey { case projectID = "project_id" }
 }
 
 public struct IPCWorkspaceCommand: Codable, Equatable, Sendable {

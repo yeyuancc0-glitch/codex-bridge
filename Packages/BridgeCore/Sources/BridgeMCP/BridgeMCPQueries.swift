@@ -58,6 +58,8 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case processLaunchFailed
   case gitOperationFailed(String)
   case outputLimitExceeded
+  case skillNotFound
+  case networkIsolationUnavailable
 }
 
 public struct RevisionConflictDetail: Codable, Equatable, Sendable {

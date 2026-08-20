@@ -20,10 +20,12 @@ final class MCPServiceExposureTests: XCTestCase {
     "interrupt_task",
   ])
 
+  private let skillActionToolName = "run_skill_action"
+
   func testReadOnlyModeExposesCommandsAndObservationOnly() {
     let catalog = MCPServiceToolCatalog(exposureMode: .readOnly)
     let names = catalog.definitions.map(\.name)
-    XCTAssertEqual(names.count, 11)
+    XCTAssertEqual(names.count, 13)
     XCTAssertTrue(names.contains("list_project_commands"))
     XCTAssertTrue(names.contains("get_project_changes"))
     for name in directToolNames {
@@ -37,13 +39,14 @@ final class MCPServiceExposureTests: XCTestCase {
   func testFullModeExposesDirectAndCodexActions() {
     let catalog = MCPServiceToolCatalog(exposureMode: .full)
     let names = catalog.definitions.map(\.name)
-    XCTAssertEqual(names.count, 23)
+    XCTAssertEqual(names.count, 26)
     for name in directToolNames {
       XCTAssertTrue(names.contains(name), "full must expose \(name)")
     }
     for name in codexToolNames {
       XCTAssertTrue(names.contains(name), "full must expose \(name)")
     }
+    XCTAssertTrue(names.contains(skillActionToolName))
   }
 
   func testDirectToolDescriptionsRequireExplicitOptIn() {
@@ -59,6 +62,8 @@ final class MCPServiceExposureTests: XCTestCase {
         "\(definition.name) must state the explicit opt-in precondition"
       )
     }
+    let skillAction = catalog.definitions.first { $0.name == skillActionToolName }
+    XCTAssertTrue(skillAction?.description?.localizedCaseInsensitiveContains("explicit") == true)
   }
 
   func testSubmitTaskDescriptionNamesCodexAsDefault() {

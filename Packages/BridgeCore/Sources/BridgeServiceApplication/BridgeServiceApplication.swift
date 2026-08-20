@@ -6,6 +6,7 @@ import BridgeMCP
 import BridgeProjects
 import BridgeSecurity
 import BridgeServiceCore
+import BridgeSkills
 import Foundation
 
 public struct ServiceModelCatalog: Equatable, Sendable {
@@ -32,6 +33,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   public let commandPolicy: DirectCommandPolicy
   public let directCommands: DirectCommandSessionManager
   public let approvals: DirectActionApprovalCenter
+  let skillScanner: SkillScanner
   public let iso8601 = ISO8601DateFormatter()
 
   public init(
@@ -47,7 +49,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     workspaceGate: ServiceWorkspaceMutationGate? = nil,
     commandPolicy: DirectCommandPolicy = DirectCommandPolicy(),
     directCommands: DirectCommandSessionManager = DirectCommandSessionManager(),
-    approvals: DirectActionApprovalCenter = DirectActionApprovalCenter()
+    approvals: DirectActionApprovalCenter = DirectActionApprovalCenter(),
+    skillScanner: SkillScanner = SkillScanner()
   ) {
     precondition(!appVersion.isEmpty)
     self.appVersion = appVersion
@@ -68,6 +71,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     self.commandPolicy = commandPolicy
     self.directCommands = directCommands
     self.approvals = approvals
+    self.skillScanner = skillScanner
   }
 
   public func serviceStatus(
@@ -255,6 +259,56 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try await catalog.listModels(deadline: deadline)
   }
 
+  public func serviceListSkills(
+    projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceSkillList {
+    try Self.checkDeadline(deadline)
+    let root: URL?
+    if let projectID {
+      root = URL(fileURLWithPath: try await readableProject(projectID).root.canonicalPath)
+    } else {
+      root = nil
+    }
+    do {
+      let manifests = try await skillScanner.scanSkills(for: root)
+      return MCPServiceSkillList(skills: manifests.map(MCPServiceSkill.init))
+    } catch {
+      throw Self.publicSkillError(error)
+    }
+  }
+
+  public func serviceReadSkill(
+    skillName: String,
+    projectID: String?,
+    subpath: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceSkillDocument {
+    try Self.checkDeadline(deadline)
+    guard skillName.utf8.count <= 128, !skillName.isEmpty else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    let root: URL?
+    if let projectID {
+      root = URL(fileURLWithPath: try await readableProject(projectID).root.canonicalPath)
+    } else {
+      root = nil
+    }
+    do {
+      let manifests = try await skillScanner.scanSkills(for: root)
+      guard let manifest = manifests.first(where: { $0.name == skillName }) else {
+        throw BridgeMCPQueryError.skillNotFound
+      }
+      return MCPServiceSkillDocument(
+        document: try await skillScanner.readSkillDocument(manifest, subpath: subpath)
+      )
+    } catch let error as BridgeMCPQueryError {
+      throw error
+    } catch {
+      throw Self.publicSkillError(error)
+    }
+  }
+
   public func serviceModelPreferences(
     deadline: ContinuousClock.Instant
   ) async throws -> ServiceModelPreferences {
@@ -351,6 +405,24 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     guard !submission.networkAccess || project.accessPolicy.network != .denied else {
       throw BridgeMCPQueryError.contractRejected
     }
+    var taskPrompt = Self.prompt(
+      submission.prompt,
+      acceptanceCriteria: submission.acceptanceCriteria
+    )
+    if let skillName = submission.skillName {
+      let skill = try await serviceReadSkill(
+        skillName: skillName,
+        projectID: project.id.rawValue,
+        subpath: "SKILL.md",
+        deadline: deadline
+      )
+      let instructions = String(skill.content.prefix(8 * 1_024))
+      taskPrompt =
+        "Skill instructions for \(skill.name):\n\n\(instructions)\n\nUser task:\n\(taskPrompt)"
+    }
+    guard taskPrompt.utf8.count <= 32 * 1_024 else {
+      throw BridgeMCPQueryError.contractRejected
+    }
     let result: ServiceTaskCreationResult
     do {
       try await workspaceGate.beginCodexAdmission(projectID: project.id)
@@ -363,10 +435,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
           projectID: project.id,
           source: .chatGPT,
           clientRequestID: submission.clientRequestID,
-          prompt: Self.prompt(
-            submission.prompt,
-            acceptanceCriteria: submission.acceptanceCriteria
-          ),
+          prompt: taskPrompt,
           requestedThreadID: submission.threadID,
           executionModel: selections.execution.model,
           executionEffort: selections.execution.effort,

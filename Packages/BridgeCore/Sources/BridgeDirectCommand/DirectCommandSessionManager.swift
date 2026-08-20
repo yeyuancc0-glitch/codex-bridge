@@ -96,6 +96,7 @@ public actor DirectCommandSessionManager {
     requiresNetwork: Bool,
     usePTY: Bool,
     timeout: Duration? = nil,
+    denyNetwork: Bool = false,
     onExit: (@Sendable () async -> Void)? = nil
   ) async throws -> DirectCommandSession {
     guard sessions[sessionID] == nil else { throw DirectCommandSessionError.sessionNotFound }
@@ -108,7 +109,8 @@ public actor DirectCommandSessionManager {
       workingDirectory: workingDirectory,
       environment: nil,
       usePTY: usePTY,
-      output: output
+      output: output,
+      denyNetwork: denyNetwork
     )
     let startedAt = Date()
     activeProjectSession[projectID.rawValue] = sessionID

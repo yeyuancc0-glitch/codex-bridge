@@ -225,6 +225,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     )
   }
 
+  func skills(projectID _: String) async throws -> MCPServiceSkillList {
+    MCPServiceSkillList(skills: [])
+  }
+
   func modelCatalog() async throws -> IPCModelCatalogResponse {
     if failModelCatalog {
       throw BridgeServiceClientError.unavailable

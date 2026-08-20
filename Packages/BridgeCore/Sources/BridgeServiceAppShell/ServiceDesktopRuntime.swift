@@ -89,6 +89,7 @@ extension BridgeServiceAppModel {
       modelPreferences = nil
       modelCatalogError = nil
       threads = []
+      skills = []
       selectedThread = nil
       selectedProjectID = nil
     } catch {
@@ -208,6 +209,12 @@ extension BridgeServiceAppModel {
       if selectedProjectID == nil, let first = value.first {
         selectedProjectID = first.projectID
       }
+    }
+
+    if includeThreads, let projectID = selectedProjectID,
+      let value = await optional({ try await client.skills(projectID: projectID) })
+    {
+      skills = value.skills
     }
 
     var shouldRefreshThreads = includeThreads || threadCatalogRefreshDue()

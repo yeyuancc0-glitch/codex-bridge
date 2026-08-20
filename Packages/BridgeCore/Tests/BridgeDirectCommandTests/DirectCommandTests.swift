@@ -58,6 +58,19 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.reason, .commandNotRegistered)
   }
 
+  func testSafeModeAllowsOnlyServiceValidatedSkillScript() throws {
+    let policy = DirectCommandPolicy()
+    let request = DirectCommandRequest(
+      projectID: ProjectID(rawValue: "prj-policy"),
+      commandID: nil,
+      argv: ["/private/var/skill/scripts/run.py"],
+      isValidatedSkillScript: true
+    )
+    let result = policy.resolve(project: try project(mode: .safe), request: request)
+    XCTAssertTrue(result.allowed)
+    XCTAssertTrue(result.requiresApproval)
+  }
+
   func testSafeModeAllowsRegisteredCommandByID() throws {
     let policy = DirectCommandPolicy()
     let command = try ServiceWorkspaceCommand(

@@ -1,3 +1,4 @@
+import BridgeSkills
 import Foundation
 
 public enum MCPServiceExposureMode: String, Codable, Equatable, Sendable {
@@ -60,6 +61,23 @@ public protocol BridgeMCPServiceAPI: Sendable {
   ) async throws -> MCPThreadReadPage
 
   func serviceModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList
+
+  func serviceListSkills(
+    projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceSkillList
+
+  func serviceReadSkill(
+    skillName: String,
+    projectID: String?,
+    subpath: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceSkillDocument
+
+  func serviceRunSkillAction(
+    _ request: MCPRunSkillActionRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandReceipt
 
   func serviceTask(
     taskID: String,
@@ -135,6 +153,118 @@ public protocol BridgeMCPServiceAPI: Sendable {
     _ request: MCPDirectGitCommitRequest,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPDirectGitCommitReceipt
+}
+
+public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable {
+  public var id: String { name }
+  public let name: String
+  public let scriptPath: String
+  public let interpreter: String?
+  public let requiresNetwork: Bool
+  public let description: String
+
+  public init(action: SkillAction) {
+    name = action.name
+    scriptPath = action.scriptPath
+    interpreter = action.interpreter
+    requiresNetwork = action.requiresNetwork
+    description = action.description
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name
+    case scriptPath = "script_path"
+    case interpreter
+    case requiresNetwork = "requires_network"
+    case description
+  }
+}
+
+public struct MCPServiceSkill: Codable, Equatable, Identifiable, Sendable {
+  public var id: String { name }
+  public let name: String
+  public let description: String
+  public let scope: SkillScope
+  public let triggers: [String]
+  public let actions: [MCPServiceSkillAction]
+  public let hasReferences: Bool
+
+  public init(manifest: SkillManifest) {
+    name = manifest.name
+    description = manifest.description
+    scope = manifest.scope
+    triggers = manifest.triggers
+    actions = manifest.actions.map(MCPServiceSkillAction.init)
+    hasReferences = manifest.hasReferences
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, description, scope, triggers
+    case actions
+    case hasReferences = "has_references"
+  }
+}
+
+public struct MCPServiceSkillList: Codable, Equatable, Sendable {
+  public let skills: [MCPServiceSkill]
+  public init(skills: [MCPServiceSkill]) { self.skills = skills }
+}
+
+public struct MCPServiceSkillDocument: Codable, Equatable, Sendable {
+  public let name: String
+  public let subpath: String
+  public let content: String
+  public let byteCount: Int
+
+  public init(document: SkillDocument) {
+    name = document.name
+    subpath = document.subpath
+    content = document.content
+    byteCount = document.byteCount
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, subpath, content
+    case byteCount = "byte_count"
+  }
+}
+
+public struct MCPRunSkillActionRequest: Codable, Equatable, Sendable {
+  public let skillName: String
+  public let actionName: String
+  public let arguments: [String]
+  public let projectID: String
+  public let yieldTimeMS: Int
+  public let timeoutMS: Int
+  public let clientRequestID: String?
+
+  public init(
+    skillName: String,
+    actionName: String,
+    arguments: [String] = [],
+    projectID: String,
+    yieldTimeMS: Int = 1_000,
+    timeoutMS: Int = 300_000,
+    clientRequestID: String? = nil
+  ) {
+    self.skillName = skillName
+    self.actionName = actionName
+    self.arguments = arguments
+    self.projectID = projectID
+    self.yieldTimeMS = yieldTimeMS
+    self.timeoutMS = timeoutMS
+    self.clientRequestID = clientRequestID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case skillName = "skill_name"
+    case actionName = "action_name"
+    case arguments
+    case projectID = "project_id"
+    case yieldTimeMS = "yield_time_ms"
+    case timeoutMS = "timeout_ms"
+    case clientRequestID = "client_request_id"
+  }
 }
 
 public struct MCPServiceTaskEvent: Codable, Equatable, Sendable {
@@ -227,6 +357,7 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
 public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   public let projectID: String
   public let prompt: String
+  public let skillName: String?
   public let threadID: String?
   public let executionModel: String?
   public let executionEffort: String?
@@ -240,6 +371,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   public init(
     projectID: String,
     prompt: String,
+    skillName: String? = nil,
     threadID: String? = nil,
     executionModel: String? = nil,
     executionEffort: String? = nil,
@@ -252,6 +384,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   ) {
     self.projectID = projectID
     self.prompt = prompt
+    self.skillName = skillName
     self.threadID = threadID
     self.executionModel = executionModel
     self.executionEffort = executionEffort
@@ -261,6 +394,21 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     self.networkAccess = networkAccess
     self.acceptanceCriteria = acceptanceCriteria
     self.clientRequestID = clientRequestID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+    case prompt
+    case skillName = "skill_name"
+    case threadID = "thread_id"
+    case executionModel = "execution_model"
+    case executionEffort = "execution_effort"
+    case supervisorModel = "supervisor_model"
+    case supervisorEffort = "supervisor_effort"
+    case permissionMode = "permission_mode"
+    case networkAccess = "network_access"
+    case acceptanceCriteria = "acceptance_criteria"
+    case clientRequestID = "client_request_id"
   }
 }
 

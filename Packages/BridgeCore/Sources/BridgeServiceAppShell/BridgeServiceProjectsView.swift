@@ -148,6 +148,8 @@ struct BridgeServiceProjectsView: View {
           ProjectWorkspaceEditor(model: model, project: project)
             .id(project.projectID)
 
+          skillsSection
+
           VStack(alignment: .leading, spacing: 12) {
             HStack {
               Text("Codex Threads")
@@ -244,6 +246,52 @@ struct BridgeServiceProjectsView: View {
 
       if let selectedThread = model.selectedThread {
         threadTranscript(selectedThread)
+      }
+    }
+  }
+
+  private var skillsSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("已发现 Skills")
+        .font(.headline)
+        .foregroundStyle(.secondary)
+      if model.skills.isEmpty {
+        NativeCard {
+          Label("该项目没有发现可用 Skill", systemImage: "sparkles")
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 8)
+        }
+      } else {
+        LazyVStack(spacing: 8) {
+          ForEach(model.skills) { skill in
+            NativeCard {
+              HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "sparkles")
+                  .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 4) {
+                  HStack {
+                    Text(skill.name).font(.subheadline.weight(.semibold))
+                    Text(skill.scope.rawValue)
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                  }
+                  if !skill.description.isEmpty {
+                    Text(skill.description)
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(2)
+                  }
+                  if !skill.actions.isEmpty {
+                    Text("动作：\(skill.actions.count) 个")
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                  }
+                }
+                Spacer()
+              }
+            }
+          }
+        }
       }
     }
   }

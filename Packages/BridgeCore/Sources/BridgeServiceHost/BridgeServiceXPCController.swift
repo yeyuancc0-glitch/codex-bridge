@@ -354,6 +354,20 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           payload: page
         )
 
+      case .listSkills:
+        let payload = try BridgeServiceIPCCodec.payload(
+          IPCProjectSkillsRequest.self,
+          from: request
+        )
+        let skills = try await composition.application.serviceListSkills(
+          projectID: payload.projectID,
+          deadline: Self.deadline()
+        )
+        return try BridgeServiceIPCCodec.success(
+          requestID: request.requestID,
+          payload: skills
+        )
+
       case .readThread:
         let payload = try BridgeServiceIPCCodec.payload(
           IPCThreadReadRequest.self,
@@ -852,6 +866,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       switch error {
       case .projectNotFound:
         return .init(code: "project_not_found", message: "The project is unavailable.")
+      case .skillNotFound:
+        return .init(code: "skill_not_found", message: "The Skill is unavailable.")
       case .threadNotFound:
         return .init(code: "thread_not_found", message: "The Thread is unavailable.")
       case .taskNotFound:
@@ -957,6 +973,11 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(
           code: "output_limit_exceeded",
           message: "The command output exceeded the bounded limit."
+        )
+      case .networkIsolationUnavailable:
+        return .init(
+          code: "network_isolation_unavailable",
+          message: "Network isolation could not be applied for this Skill action."
         )
       }
     }

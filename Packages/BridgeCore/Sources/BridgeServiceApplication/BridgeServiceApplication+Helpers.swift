@@ -5,6 +5,7 @@ import BridgeMCP
 import BridgeProjects
 import BridgeSecurity
 import BridgeServiceCore
+import BridgeSkills
 import Foundation
 
 extension BridgeServiceApplication {
@@ -267,6 +268,22 @@ extension BridgeServiceApplication {
     }
     if error is PathSecurityError { return .pathDenied }
     return .unavailable
+  }
+
+  static func publicSkillError(_ error: Error) -> BridgeMCPQueryError {
+    switch error {
+    case SkillError.pathEscapeDetected, SkillError.sensitivePath:
+      return .pathDenied
+    case SkillError.documentTooLarge, SkillError.invalidEncoding, SkillError.invalidManifest,
+      SkillError.invalidSkillName, SkillError.tooManySkills:
+      return .contractRejected
+    case SkillError.documentNotFound:
+      return .skillNotFound
+    case SkillError.actionNotFound, SkillError.actionNotRunnable:
+      return .skillNotFound
+    default:
+      return .unavailable
+    }
   }
 
   static func publicStoreError(_ error: ServiceStoreError) -> BridgeMCPQueryError {

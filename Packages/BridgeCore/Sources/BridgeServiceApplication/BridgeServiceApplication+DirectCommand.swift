@@ -2,12 +2,26 @@ import BridgeDirectCommand
 import BridgeMCP
 import BridgeSecurity
 import BridgeServiceCore
+import BridgeSkills
 import Foundation
 
 extension BridgeServiceApplication {
   public func serviceDirectExecCommand(
     _ request: MCPDirectExecRequest,
     deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandReceipt {
+    try await serviceDirectExecCommand(
+      request, deadline: deadline, isValidatedSkillScript: false, requiresNetwork: false,
+      denyNetwork: false
+    )
+  }
+
+  func serviceDirectExecCommand(
+    _ request: MCPDirectExecRequest,
+    deadline: ContinuousClock.Instant,
+    isValidatedSkillScript: Bool,
+    requiresNetwork: Bool,
+    denyNetwork: Bool
   ) async throws -> MCPDirectCommandReceipt {
     try Self.checkDeadline(deadline)
     guard request.timeoutMS > 0, request.timeoutMS <= 3_600_000,
@@ -26,7 +40,8 @@ extension BridgeServiceApplication {
         commandID: request.commandID,
         argv: request.argv,
         workingDirectory: request.workingDirectory,
-        requiresNetwork: false
+        requiresNetwork: requiresNetwork,
+        isValidatedSkillScript: isValidatedSkillScript
       )
     )
     guard resolution.allowed else {
@@ -60,6 +75,7 @@ extension BridgeServiceApplication {
         requiresNetwork: resolution.requiresNetwork,
         usePTY: request.tty,
         timeout: .milliseconds(request.timeoutMS),
+        denyNetwork: denyNetwork,
         onExit: { await lease.release() }
       )
       let yieldDeadline = ContinuousClock.now.advanced(by: .milliseconds(request.yieldTimeMS))
@@ -71,6 +87,56 @@ extension BridgeServiceApplication {
       await lease.release()
       throw Self.publicCommandError(error)
     }
+  }
+
+  public func serviceRunSkillAction(
+    _ request: MCPRunSkillActionRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandReceipt {
+    try Self.checkDeadline(deadline)
+    let project = try await readableProject(request.projectID)
+    guard request.arguments.count <= 128,
+      request.arguments.allSatisfy({ $0.utf8.count <= 4_096 })
+    else { throw BridgeMCPQueryError.contractRejected }
+    let manifests: [SkillManifest]
+    do {
+      manifests = try await skillScanner.scanSkills(
+        for: URL(fileURLWithPath: project.root.canonicalPath)
+      )
+    } catch {
+      throw Self.publicSkillError(error)
+    }
+    guard let manifest = manifests.first(where: { $0.name == request.skillName }) else {
+      throw BridgeMCPQueryError.skillNotFound
+    }
+    let launch: SkillScanner.SkillActionLaunch
+    do {
+      launch = try await skillScanner.resolveAction(request.actionName, in: manifest)
+    } catch {
+      throw Self.publicSkillError(error)
+    }
+    let argv = [launch.interpreter, launch.resolvedScriptPath] + request.arguments
+    let requiresNetwork = launch.action.requiresNetwork
+    // Enforce real network isolation: when the action declares no network, run it
+    // under a deny-network sandbox so the declaration cannot be bypassed by the
+    // script's own code. Fail closed if the sandbox is unavailable.
+    let denyNetwork = !requiresNetwork
+    let directRequest = MCPDirectExecRequest(
+      projectID: request.projectID,
+      argv: argv,
+      workingDirectory: nil,
+      tty: false,
+      yieldTimeMS: request.yieldTimeMS,
+      timeoutMS: request.timeoutMS,
+      clientRequestID: request.clientRequestID
+    )
+    return try await serviceDirectExecCommand(
+      directRequest,
+      deadline: deadline,
+      isValidatedSkillScript: true,
+      requiresNetwork: requiresNetwork,
+      denyNetwork: denyNetwork
+    )
   }
 
   public func serviceDirectReadCommand(
@@ -375,6 +441,8 @@ extension BridgeServiceApplication {
         return .processLaunchFailed
       case .stdinUnavailable:
         return .commandSessionNotFound
+      case .sandboxUnavailable:
+        return .networkIsolationUnavailable
       }
     default:
       return .unavailable

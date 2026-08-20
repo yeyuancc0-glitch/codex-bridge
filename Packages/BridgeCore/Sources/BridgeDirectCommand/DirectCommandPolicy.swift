@@ -19,19 +19,22 @@ public struct DirectCommandRequest: Equatable, Sendable {
   public let argv: [String]
   public let workingDirectory: String?
   public let requiresNetwork: Bool
+  public let isValidatedSkillScript: Bool
 
   public init(
     projectID: ProjectID,
     commandID: String?,
     argv: [String],
     workingDirectory: String? = nil,
-    requiresNetwork: Bool = false
+    requiresNetwork: Bool = false,
+    isValidatedSkillScript: Bool = false
   ) {
     self.projectID = projectID
     self.commandID = commandID
     self.argv = argv
     self.workingDirectory = workingDirectory
     self.requiresNetwork = requiresNetwork
+    self.isValidatedSkillScript = isValidatedSkillScript
   }
 }
 
@@ -242,6 +245,7 @@ public struct DirectCommandPolicy: Sendable {
         || builtInSafeRules.contains { matchesSafeRule($0, argv: request.argv) }
         || isProjectLocalExecutable(
           executable, projectRoot: project.root.canonicalPath)
+        || request.isValidatedSkillScript
       guard allowed else { return .denied(.commandNotRegistered) }
     case .full:
       break

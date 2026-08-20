@@ -22,6 +22,7 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func setModelPreferences(_ preferences: IPCModelPreferences) async throws
   func setSupervisorEnabled(_ enabled: Bool) async throws
   func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage
+  func skills(projectID: String) async throws -> MCPServiceSkillList
   func readThread(_ request: IPCThreadReadRequest) async throws -> MCPThreadReadPage
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot]
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot

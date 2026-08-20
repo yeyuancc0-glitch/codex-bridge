@@ -332,6 +332,18 @@ public struct MCPToolDispatcher: Sendable {
         message: "The command output exceeded the bounded limit.",
         retryable: false
       )
+    case .skillNotFound:
+      description = .init(
+        code: "skill_not_found",
+        message: "The Skill is unavailable.",
+        retryable: false
+      )
+    case .networkIsolationUnavailable:
+      description = .init(
+        code: "network_isolation_unavailable",
+        message: "Network isolation could not be applied for this Skill action.",
+        retryable: false
+      )
     }
     return try resultEncoder.encode(MCPToolErrorOutput(error: description), isError: true)
   }

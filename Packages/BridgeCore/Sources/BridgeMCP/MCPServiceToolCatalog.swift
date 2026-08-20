@@ -9,6 +9,9 @@ public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case listThreads = "list_threads"
   case readThread = "read_thread"
   case listModels = "list_models"
+  case listSkills = "list_skills"
+  case readSkill = "read_skill"
+  case runSkillAction = "run_skill_action"
   case getTask = "get_task"
   case submitTask = "submit_task"
   case steerTask = "steer_task"
@@ -39,6 +42,8 @@ public struct MCPServiceToolCatalog: Sendable {
       Self.listThreads,
       Self.readThread,
       Self.listModels,
+      Self.listSkills,
+      Self.readSkill,
       Self.getTask,
       Self.getProjectChanges,
       Self.listProjectCommands,
@@ -47,6 +52,7 @@ public struct MCPServiceToolCatalog: Sendable {
       tools.append(
         contentsOf: [
           Self.submitTask,
+          Self.runSkillAction,
           Self.steerTask,
           Self.interruptTask,
           Self.directWriteProjectFile,
@@ -249,6 +255,80 @@ public struct MCPServiceToolCatalog: Sendable {
     )
   )
 
+  private static let listSkills = Tool(
+    name: MCPServiceToolName.listSkills.rawValue,
+    title: "List skills",
+    description: "List safe, locally discoverable Skills available to the approved project.",
+    inputSchema: objectSchema(
+      properties: ["project_id": nullableStringSchema(maximum: 128)]
+    ),
+    annotations: readAnnotations,
+    outputSchema: outputSchema(
+      properties: ["skills": arraySchema(skillSchema)],
+      required: ["skills"]
+    )
+  )
+
+  private static let readSkill = Tool(
+    name: MCPServiceToolName.readSkill.rawValue,
+    title: "Read skill",
+    description: "Read bounded instructions or reference material from a discovered Skill.",
+    inputSchema: objectSchema(
+      properties: [
+        "skill_name": boundedStringSchema(maximum: 128),
+        "project_id": nullableStringSchema(maximum: 128),
+        "subpath": nullableStringSchema(maximum: 1_024),
+      ],
+      required: ["skill_name"]
+    ),
+    annotations: readAnnotations,
+    outputSchema: outputSchema(
+      properties: [
+        "name": stringSchema,
+        "subpath": stringSchema,
+        "content": stringSchema,
+        "byte_count": integerSchema(minimum: 0),
+      ],
+      required: ["name", "subpath", "content", "byte_count"]
+    )
+  )
+
+  private static let runSkillAction = Tool(
+    name: MCPServiceToolName.runSkillAction.rawValue,
+    title: "Run skill action",
+    description:
+      "Run a discovered Skill script through the project's existing Direct command policy. "
+      + "Use only when the user explicitly requests local Skill script execution.",
+    inputSchema: objectSchema(
+      properties: [
+        "skill_name": boundedStringSchema(maximum: 128),
+        "action_name": boundedStringSchema(maximum: 128),
+        "arguments": arraySchema(boundedStringSchema(maximum: 4_096)),
+        "project_id": boundedStringSchema(maximum: 128),
+        "yield_time_ms": integerSchema(minimum: 0, maximum: 60_000),
+        "timeout_ms": integerSchema(minimum: 1, maximum: 3_600_000),
+        "client_request_id": nullableStringSchema(maximum: 512),
+      ],
+      required: ["skill_name", "action_name", "project_id"]
+    ),
+    annotations: Tool.Annotations(
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    ),
+    outputSchema: outputSchema(
+      properties: [
+        "session_id": stringSchema,
+        "status": stringSchema,
+        "exit_code": nullableStringSchema(maximum: 32),
+        "started_at": stringSchema,
+        "output": directCommandOutputSchema,
+      ],
+      required: ["session_id", "status"]
+    )
+  )
+
   private static let getTask = Tool(
     name: MCPServiceToolName.getTask.rawValue,
     title: "Get task",
@@ -278,6 +358,7 @@ public struct MCPServiceToolCatalog: Sendable {
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
         "prompt": boundedStringSchema(maximum: 32 * 1_024),
+        "skill_name": nullableStringSchema(maximum: 128),
         "thread_id": nullableStringSchema(maximum: 1_024),
         "execution_model": nullableStringSchema(maximum: 256),
         "execution_effort": nullableStringSchema(maximum: 64),
@@ -814,6 +895,29 @@ public struct MCPServiceToolCatalog: Sendable {
       "additional_speed_tiers": arraySchema(stringSchema),
     ],
     required: ["model_id", "display_name", "is_default", "reasoning_efforts"]
+  )
+
+  private static let skillSchema = objectSchema(
+    properties: [
+      "name": stringSchema,
+      "description": stringSchema,
+      "scope": ["type": "string", "enum": ["project", "global"]],
+      "triggers": arraySchema(stringSchema),
+      "actions": arraySchema(skillActionSchema),
+      "has_references": boolSchema,
+    ],
+    required: ["name", "description", "scope", "triggers", "actions", "has_references"]
+  )
+
+  private static let skillActionSchema = objectSchema(
+    properties: [
+      "name": stringSchema,
+      "script_path": stringSchema,
+      "interpreter": nullableStringSchema(maximum: 4_096),
+      "requires_network": boolSchema,
+      "description": stringSchema,
+    ],
+    required: ["name", "script_path", "interpreter", "requires_network", "description"]
   )
 
   private static let taskEventSchema = objectSchema(

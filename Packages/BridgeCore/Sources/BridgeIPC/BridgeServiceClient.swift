@@ -120,6 +120,13 @@ public actor BridgeServiceClient {
     try await call(operation: .listModels, payload: Optional<IPCMutationResponse>.none)
   }
 
+  public func skills(projectID: String) async throws -> MCPServiceSkillList {
+    try await call(
+      operation: .listSkills,
+      payload: IPCProjectSkillsRequest(projectID: projectID)
+    )
+  }
+
   public func modelCatalog() async throws -> IPCModelCatalogResponse {
     do {
       return try await call(

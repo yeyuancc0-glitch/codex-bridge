@@ -10,6 +10,7 @@ public enum DirectProcessError: Error, Equatable, Sendable {
   case invalidArgument
   case processLaunchFailed(Int32)
   case stdinUnavailable
+  case sandboxUnavailable
 }
 
 public final class DirectProcessLifetime: @unchecked Sendable {
@@ -25,7 +26,8 @@ public final class DirectProcessLifetime: @unchecked Sendable {
     workingDirectory: String?,
     environment: [String: String]?,
     usePTY: Bool,
-    output: DirectCommandOutputCollector
+    output: DirectCommandOutputCollector,
+    denyNetwork: Bool = false
   ) throws {
     guard let executable = argv.first, !executable.isEmpty else {
       throw DirectProcessError.invalidArgument
@@ -33,8 +35,17 @@ public final class DirectProcessLifetime: @unchecked Sendable {
     guard argv.count <= 128 else { throw DirectProcessError.invalidArgument }
     self.output = output
     self.process = Process()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = Array(argv.dropFirst())
+    if denyNetwork {
+      guard Self.sandboxExecAvailable else { throw DirectProcessError.sandboxUnavailable }
+      process.executableURL = URL(fileURLWithPath: Self.sandboxExecPath)
+      process.arguments =
+        [
+          "-p", Self.denyNetworkProfile, "--",
+        ] + argv
+    } else {
+      process.executableURL = URL(fileURLWithPath: executable)
+      process.arguments = Array(argv.dropFirst())
+    }
     if let workingDirectory {
       process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
     }
@@ -171,4 +182,10 @@ public final class DirectProcessLifetime: @unchecked Sendable {
     (process.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
     inputPipe?.fileHandleForWriting.closeFile()
   }
+
+  private static let sandboxExecPath = "/usr/bin/sandbox-exec"
+  private static let sandboxExecAvailable = FileManager.default.isExecutableFile(
+    atPath: sandboxExecPath)
+
+  private static let denyNetworkProfile = "(version 1)(allow default)(deny network*)"
 }

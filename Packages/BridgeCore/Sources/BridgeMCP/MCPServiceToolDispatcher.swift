@@ -235,6 +235,40 @@ public struct MCPServiceToolDispatcher: Sendable {
       }
       return try resultEncoder.encode(ListModelsOutput(list: models))
 
+    case .listSkills:
+      let values = try StrictToolArguments(arguments, allowed: ["project_id"])
+      let projectID = try values.optionalIdentifier("project_id", maximumUTF8Bytes: 128)
+      let deadline = clock.now.advanced(by: deadlines.read)
+      let skills = try await withToolDeadline(until: deadline) {
+        try await service.serviceListSkills(projectID: projectID, deadline: deadline)
+      }
+      return try resultEncoder.encode(ListSkillsOutput(list: skills))
+
+    case .readSkill:
+      let values = try StrictToolArguments(
+        arguments,
+        allowed: ["skill_name", "project_id", "subpath"],
+        required: ["skill_name"]
+      )
+      let skillName = try values.requiredIdentifier("skill_name", maximumUTF8Bytes: 128)
+      let projectID = try values.optionalIdentifier("project_id", maximumUTF8Bytes: 128)
+      let subpath = try values.optionalString("subpath", maximumUTF8Bytes: 1_024) ?? "SKILL.md"
+      let deadline = clock.now.advanced(by: deadlines.read)
+      let document = try await withToolDeadline(until: deadline) {
+        try await service.serviceReadSkill(
+          skillName: skillName, projectID: projectID, subpath: subpath, deadline: deadline
+        )
+      }
+      return try resultEncoder.encode(ReadSkillOutput(document: document))
+
+    case .runSkillAction:
+      let request = try parseRunSkillAction(arguments)
+      let deadline = clock.now.advanced(by: deadlines.mutation)
+      let receipt = try await withToolDeadline(until: deadline) {
+        try await service.serviceRunSkillAction(request, deadline: deadline)
+      }
+      return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
+
     case .getTask:
       let values = try StrictToolArguments(
         arguments,
@@ -437,6 +471,7 @@ public struct MCPServiceToolDispatcher: Sendable {
       arguments,
       allowed: [
         "project_id", "prompt", "thread_id", "execution_model", "execution_effort",
+        "skill_name",
         "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
         "acceptance_criteria", "client_request_id",
       ],
@@ -476,6 +511,7 @@ public struct MCPServiceToolDispatcher: Sendable {
     return MCPServiceTaskSubmission(
       projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
       prompt: prompt,
+      skillName: try values.optionalIdentifier("skill_name", maximumUTF8Bytes: 128),
       threadID: try values.optionalIdentifier("thread_id", maximumUTF8Bytes: 1_024),
       executionModel: try values.optionalIdentifier(
         "execution_model",
@@ -629,6 +665,38 @@ public struct MCPServiceToolDispatcher: Sendable {
     )
   }
 
+  private func parseRunSkillAction(_ arguments: [String: Value]?) throws
+    -> MCPRunSkillActionRequest
+  {
+    guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 128 * 1_024 else {
+      throw MCPError.invalidParams("The Skill action request is too large.")
+    }
+    let values = try StrictToolArguments(
+      arguments,
+      allowed: [
+        "skill_name", "action_name", "arguments", "project_id",
+        "yield_time_ms", "timeout_ms", "client_request_id",
+      ],
+      required: ["skill_name", "action_name", "project_id"]
+    )
+    let skillName = try values.requiredIdentifier("skill_name", maximumUTF8Bytes: 128)
+    let actionName = try values.requiredIdentifier("action_name", maximumUTF8Bytes: 128)
+    let arguments = try values.optionalStringArray(
+      "arguments", maximumCount: 128, maximumElementUTF8Bytes: 4_096)
+    guard arguments.allSatisfy(OutboundContentSecurity.isSafe) else {
+      throw MCPError.invalidParams("Skill arguments contain restricted local data.")
+    }
+    return MCPRunSkillActionRequest(
+      skillName: skillName,
+      actionName: actionName,
+      arguments: arguments,
+      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      yieldTimeMS: try values.optionalNonnegativeInteger("yield_time_ms").map(Int.init) ?? 1_000,
+      timeoutMS: try values.optionalPositiveInteger("timeout_ms", maximum: 3_600_000) ?? 300_000,
+      clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
+    )
+  }
+
   private func parseDirectGitCommit(_ arguments: [String: Value]?) throws
     -> MCPDirectGitCommitRequest
   {
@@ -737,7 +805,7 @@ public struct MCPServiceToolDispatcher: Sendable {
     exposureMode == .full
       || ![
         .submitTask, .steerTask, .interruptTask, .directWriteProjectFile, .directEditProjectFile,
-        .directApplyProjectPatch, .directManageProjectPath,
+        .directApplyProjectPatch, .directManageProjectPath, .runSkillAction,
       ].contains(name)
   }
 
@@ -892,6 +960,14 @@ public struct MCPServiceToolDispatcher: Sendable {
         message: "The command output exceeded the bounded limit.",
         retryable: false
       )
+    case .skillNotFound:
+      dto = .init(code: "skill_not_found", message: "The Skill is unavailable.", retryable: false)
+    case .networkIsolationUnavailable:
+      dto = .init(
+        code: "network_isolation_unavailable",
+        message: "Network isolation could not be applied for this Skill action.",
+        retryable: false
+      )
     }
     return try resultEncoder.encode(MCPToolErrorOutput(error: dto), isError: true)
   }
@@ -936,6 +1012,35 @@ private struct ServiceGetProjectOutput: Codable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case project
+  }
+}
+
+private struct ListSkillsOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let skills: [MCPServiceSkill]
+  init(list: MCPServiceSkillList) { skills = list.skills }
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case skills
+  }
+}
+
+private struct ReadSkillOutput: Codable, Sendable {
+  let schemaVersion = 1
+  let name: String
+  let subpath: String
+  let content: String
+  let byteCount: Int
+  init(document: MCPServiceSkillDocument) {
+    name = document.name
+    subpath = document.subpath
+    content = document.content
+    byteCount = document.byteCount
+  }
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case name, subpath, content
+    case byteCount = "byte_count"
   }
 }
 

@@ -29,6 +29,7 @@ let package = Package(
     .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
     .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
     .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
+    .library(name: "BridgeSkills", targets: ["BridgeSkills"]),
     .library(name: "BridgeLegacyImport", targets: ["BridgeLegacyImport"]),
     .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
     .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
@@ -203,6 +204,7 @@ let package = Package(
       dependencies: [
         "BridgeDomain",
         "BridgeFiles",
+        "BridgeSkills",
         "BridgeSecurity",
         .product(name: "Logging", package: "swift-log"),
         .product(name: "MCP", package: "swift-sdk"),
@@ -223,6 +225,10 @@ let package = Package(
         "BridgeSecurity",
         .product(name: "GRDB", package: "GRDB.swift"),
       ]
+    ),
+    .target(
+      name: "BridgeSkills",
+      dependencies: ["BridgeSecurity"]
     ),
     .target(
       name: "BridgeLegacyImport",
@@ -489,6 +495,7 @@ let package = Package(
       dependencies: [
         "BridgeDomain",
         "BridgeProjects",
+        "BridgeSkills",
         "BridgeServiceCore",
         "BridgeSecurity",
         .product(name: "GRDB", package: "GRDB.swift"),
