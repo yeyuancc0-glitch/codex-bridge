@@ -19,7 +19,7 @@ extension BridgeServiceApplication {
     let supervisor: SelectedModel?
   }
 
-  func readableProject(_ rawID: String) async throws -> ServiceProjectRecord {
+  func managedProject(_ rawID: String) async throws -> ServiceProjectRecord {
     guard !rawID.isEmpty, rawID.utf8.count <= 128, !rawID.contains("\0") else {
       throw BridgeMCPQueryError.projectNotFound
     }
@@ -32,6 +32,11 @@ extension BridgeServiceApplication {
     } catch {
       throw BridgeMCPQueryError.unavailable
     }
+    return project
+  }
+
+  func readableProject(_ rawID: String) async throws -> ServiceProjectRecord {
+    let project = try await managedProject(rawID)
     guard project.accessPolicy.read == .allowed else {
       throw BridgeMCPQueryError.pathDenied
     }
@@ -181,6 +186,30 @@ extension BridgeServiceApplication {
       name: safe(source.name, maximum: 1_024),
       capabilities: capabilities(source.accessPolicy)
     )
+  }
+
+  static func projectDetail(_ project: ServiceProjectRecord) -> MCPProjectDetail {
+    MCPProjectDetail(
+      projectID: project.id.rawValue,
+      name: safe(project.name, maximum: 1_024),
+      capabilities: capabilities(project.accessPolicy),
+      verificationCommands: [],
+      directWorkspace: MCPDirectWorkspace(
+        fileWritePermission: project.accessPolicy.write.rawValue,
+        commandMode: project.directCommandMode.rawValue,
+        commands: project.workspaceCommands.map(Self.projectCommand),
+        commandBlacklist: project.commandBlacklist.map(Self.blacklistRule)
+      )
+    )
+  }
+
+  static func sortedProjects(_ projects: [ServiceProjectRecord]) -> [ServiceProjectRecord] {
+    projects.sorted {
+      let order = $0.name.localizedCaseInsensitiveCompare($1.name)
+      return order == .orderedSame
+        ? $0.id.rawValue < $1.id.rawValue
+        : order == .orderedAscending
+    }
   }
 
   static func capabilities(_ policy: ProjectAccessPolicy) -> MCPProjectCapabilities {

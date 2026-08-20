@@ -281,6 +281,185 @@ final class DirectApprovalFlowTests: XCTestCase {
     await application.directCommands.cancelAll()
   }
 
+  func testRequireApprovalCoversEveryAllowedDirectMutationEntryPoint() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateAccessPolicy(
+      ProjectAccessPolicy(read: .allowed, write: .allowed, network: .allowed),
+      projectID: fixture.project.id
+    )
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .full,
+      workspaceCommands: [],
+      projectID: fixture.project.id
+    )
+    let skill = fixture.root.appending(
+      path: "skills/require-approval", directoryHint: .isDirectory)
+    let scripts = skill.appending(path: "scripts", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    let skillDocument = """
+      ---
+      name: require-approval
+      description: approval fixture
+      actions:
+        - name: run
+          script: scripts/run.sh
+          requires_network: false
+      ---
+      """
+    try Data(skillDocument.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+    try Data("#!/bin/sh\necho should-not-run\n".utf8)
+      .write(to: scripts.appendingPathComponent("run.sh"))
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: scripts.appendingPathComponent("run.sh").path)
+
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .require, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+
+    func expectApproval(_ operation: () async throws -> Void) async throws {
+      do {
+        try await operation()
+        XCTFail("Expected approval_required")
+      } catch let error as BridgeMCPQueryError {
+        guard case .approvalRequired = error else {
+          XCTFail("Expected approvalRequired, got \(error)")
+          return
+        }
+      }
+    }
+
+    try await expectApproval {
+      _ = try await application.serviceDirectWriteFile(
+        MCPDirectWriteRequest(
+          projectID: fixture.project.id.rawValue,
+          relativePath: "RequireWrite.txt",
+          mode: "create",
+          content: "write",
+          clientRequestID: "require-write"
+        ),
+        deadline: deadline
+      )
+    }
+    try await expectApproval {
+      _ = try await application.serviceDirectEditFile(
+        MCPDirectEditRequest(
+          projectID: fixture.project.id.rawValue,
+          relativePath: "RequireEdit.txt",
+          expectedSHA256: "missing",
+          oldText: "old",
+          newText: "new",
+          expectedReplacements: 1,
+          clientRequestID: "require-edit"
+        ),
+        deadline: deadline
+      )
+    }
+    try await expectApproval {
+      _ = try await application.serviceDirectApplyPatch(
+        MCPDirectPatchRequest(
+          projectID: fixture.project.id.rawValue,
+          patch: "*** Begin Patch\n*** Add File: RequirePatch.txt\n+patch\n*** End Patch",
+          clientRequestID: "require-patch"
+        ),
+        deadline: deadline
+      )
+    }
+    try await expectApproval {
+      _ = try await application.serviceDirectManagePath(
+        MCPDirectManagePathRequest(
+          projectID: fixture.project.id.rawValue,
+          action: "create_directory",
+          relativePath: "RequireDirectory",
+          clientRequestID: "require-path"
+        ),
+        deadline: deadline
+      )
+    }
+    try await expectApproval {
+      _ = try await application.serviceDirectExecCommand(
+        MCPDirectExecRequest(
+          projectID: fixture.project.id.rawValue,
+          argv: ["echo", "should-not-run"],
+          yieldTimeMS: 20,
+          timeoutMS: 5_000,
+          clientRequestID: "require-command"
+        ),
+        deadline: deadline
+      )
+    }
+    try await expectApproval {
+      _ = try await application.serviceDirectGitCommit(
+        MCPDirectGitCommitRequest(
+          projectID: fixture.project.id.rawValue,
+          message: "approval required",
+          clientRequestID: "require-git"
+        ),
+        deadline: deadline
+      )
+    }
+    try await expectApproval {
+      _ = try await application.serviceRunSkillAction(
+        MCPRunSkillActionRequest(
+          skillName: "require-approval",
+          actionName: "run",
+          projectID: fixture.project.id.rawValue,
+          yieldTimeMS: 20,
+          timeoutMS: 5_000,
+          clientRequestID: "require-skill"
+        ),
+        deadline: deadline
+      )
+    }
+
+    let pending = await application.approvals.pendingApprovals()
+    XCTAssertEqual(pending.count, 7)
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: fixture.root.appendingPathComponent("RequireWrite.txt").path))
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: fixture.root.appendingPathComponent("RequirePatch.txt").path))
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: fixture.root.appendingPathComponent("RequireDirectory").path))
+    await application.directCommands.cancelAll()
+  }
+
+  func testRequireApprovalDoesNotOverrideProjectWriteDenial() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateAccessPolicy(
+      ProjectAccessPolicy(read: .allowed, write: .denied, network: .allowed),
+      projectID: fixture.project.id
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .require, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+
+    do {
+      _ = try await application.serviceDirectWriteFile(
+        MCPDirectWriteRequest(
+          projectID: fixture.project.id.rawValue,
+          relativePath: "DeniedBeforeApproval.txt",
+          mode: "create",
+          content: "denied"
+        ),
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected write_not_allowed")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .writeNotAllowed)
+    }
+    let pending = await application.approvals.pendingApprovals()
+    XCTAssertTrue(pending.isEmpty)
+  }
+
   func testAutoApprovalModeSkipsDirectApprovalEntirely() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

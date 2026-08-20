@@ -43,6 +43,8 @@ extension BridgeServiceXPCController {
     guard let streamProxy else {
       throw ServiceStoreError.invalidArgument("stream.unavailable")
     }
+    await conversationStreamGate.acquire()
+    defer { conversationStreamGate.release() }
     let payload = try BridgeServiceIPCCodec.payload(
       IPCTaskConversationRequest.self,
       from: request
@@ -51,13 +53,11 @@ extension BridgeServiceXPCController {
       throw ServiceStoreError.invalidArgument("conversation.limit")
     }
     let taskID = TaskID(rawValue: payload.taskID)
-    let previousForwarder = streams.takeForwarder(taskID)
-    let previousSubscription = streams.takeSubscription(taskID)
-    previousForwarder?.cancel()
-    if let previousSubscription {
+    if let previous = streams.take(taskID) {
+      previous.forwarder.cancel()
       await composition.coordinator.unsubscribeConversation(
         taskID: taskID,
-        subscriptionID: previousSubscription
+        subscriptionID: previous.subscriptionID
       )
     }
     let subscription = try await composition.coordinator.subscribeConversation(
@@ -78,31 +78,52 @@ extension BridgeServiceXPCController {
         guard let push = Self.encodePush(change) else { continue }
         streamProxy.push(push)
       }
-      await self?.removeForwarder(taskID: taskID)
-    }
-    streams.put(
-      taskID: taskID, forwarder: forwarder, subscriptionID: subscription.subscriptionID)
-    return try BridgeServiceIPCCodec.success(
-      requestID: request.requestID,
-      payload: IPCTaskConversationSubscription(
-        subscriptionID: subscription.subscriptionID,
-        page: Self.conversationPage(taskID: payload.taskID, entries: subscription.page)
+      await self?.removeForwarder(
+        taskID: taskID,
+        subscriptionID: subscription.subscriptionID
       )
+    }
+    let registration = StreamRegistration(
+      forwarder: forwarder,
+      subscriptionID: subscription.subscriptionID
     )
+    if let replaced = streams.install(taskID: taskID, registration: registration) {
+      await cancelRegistration(replaced, taskID: taskID)
+    }
+    do {
+      return try BridgeServiceIPCCodec.success(
+        requestID: request.requestID,
+        payload: IPCTaskConversationSubscription(
+          subscriptionID: subscription.subscriptionID,
+          page: Self.conversationPage(taskID: payload.taskID, entries: subscription.page)
+        )
+      )
+    } catch {
+      if let failed = streams.take(taskID, subscriptionID: subscription.subscriptionID) {
+        await cancelRegistration(failed, taskID: taskID)
+      } else {
+        await composition.coordinator.unsubscribeConversation(
+          taskID: taskID,
+          subscriptionID: subscription.subscriptionID
+        )
+      }
+      throw error
+    }
   }
 
   func handleUnsubscribeTaskConversation(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    await conversationStreamGate.acquire()
+    defer { conversationStreamGate.release() }
     let payload = try BridgeServiceIPCCodec.payload(
       IPCTaskConversationUnsubscribeRequest.self,
       from: request
     )
     let taskID = TaskID(rawValue: payload.taskID)
-    let forwarder = streams.takeForwarder(taskID)
-    let subscriptionID = streams.takeSubscription(taskID)
-    forwarder?.cancel()
+    let registration = streams.take(taskID)
+    registration?.forwarder.cancel()
     await composition.coordinator.unsubscribeConversation(
       taskID: taskID,
-      subscriptionID: subscriptionID ?? payload.subscriptionID
+      subscriptionID: registration?.subscriptionID ?? payload.subscriptionID
     )
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }
@@ -190,7 +211,18 @@ extension BridgeServiceXPCController {
     )
   }
 
-  func removeForwarder(taskID: TaskID) async {
-    streams.removeForwarder(taskID)
+  func removeForwarder(taskID: TaskID, subscriptionID: Int) async {
+    _ = streams.take(taskID, subscriptionID: subscriptionID)
+  }
+
+  private func cancelRegistration(
+    _ registration: StreamRegistration,
+    taskID: TaskID
+  ) async {
+    registration.forwarder.cancel()
+    await composition.coordinator.unsubscribeConversation(
+      taskID: taskID,
+      subscriptionID: registration.subscriptionID
+    )
   }
 }

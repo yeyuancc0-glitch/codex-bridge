@@ -220,6 +220,128 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertTrue(remainingProjects.isEmpty)
   }
 
+  func testXPCProjectManagementIgnoresReadPolicyAndDeletesAllTerminalTasks() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let projectRoot = fixture.root.appending(path: "ProjectManagement", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let registered = try await client.registerProject(
+      IPCProjectRegistrationRequest(
+        name: "Project Management",
+        absolutePath: projectRoot.path,
+        writePermission: ProjectPermission.allowed.rawValue
+      )
+    )
+    let projectID = ProjectID(rawValue: registered.projectID)
+
+    let denied = try await client.updateProjectPolicy(
+      IPCProjectPolicyRequest(
+        projectID: registered.projectID,
+        readPermission: ProjectPermission.denied.rawValue,
+        writePermission: ProjectPermission.allowed.rawValue,
+        networkPermission: ProjectPermission.denied.rawValue
+      )
+    )
+    XCTAssertEqual(denied.capabilities.read, ProjectPermission.denied.rawValue)
+    let deniedProjects = try await client.projects()
+    XCTAssertEqual(deniedProjects.map(\.projectID), [registered.projectID])
+    let deniedDetail = try await client.projectCommands(projectID: registered.projectID)
+    XCTAssertEqual(deniedDetail.capabilities.read, ProjectPermission.denied.rawValue)
+
+    let restored = try await client.updateProjectPolicy(
+      IPCProjectPolicyRequest(
+        projectID: registered.projectID,
+        readPermission: ProjectPermission.allowed.rawValue,
+        writePermission: ProjectPermission.allowed.rawValue,
+        networkPermission: ProjectPermission.denied.rawValue
+      )
+    )
+    XCTAssertEqual(restored.capabilities.read, ProjectPermission.allowed.rawValue)
+
+    func storedTask(
+      id: String,
+      date: Date,
+      status: ServiceTaskStatus
+    ) throws -> ServiceTaskRecord {
+      try ServiceTaskRecord(
+        id: TaskID(rawValue: id),
+        projectID: projectID,
+        source: .macOSApp,
+        clientRequestID: id,
+        prompt: "Project deletion test task.",
+        executionModel: "fixture",
+        executionEffort: "medium",
+        permissionMode: .readOnly,
+        networkAllowed: false,
+        state: try ServiceTaskState(status: status),
+        createdAt: date,
+        updatedAt: date
+      )
+    }
+
+    let active = try storedTask(
+      id: "tsk-xpc-project-active",
+      date: Date(timeIntervalSince1970: 1_700_000_100),
+      status: .running
+    )
+    _ = try await fixture.composition.store.createTask(
+      active,
+      event: ServiceTaskEventDraft(
+        kind: .taskCreated,
+        summary: "The active task was created.",
+        createdAt: active.createdAt
+      )
+    )
+
+    var terminalIDs: [TaskID] = []
+    for index in 0...500 {
+      let terminal = try storedTask(
+        id: "tsk-xpc-project-terminal-\(index)",
+        date: Date(timeIntervalSince1970: 1_700_001_000 + Double(index)),
+        status: .completed
+      )
+      _ = try await fixture.composition.store.createTask(
+        terminal,
+        event: ServiceTaskEventDraft(
+          kind: .taskCreated,
+          summary: "The terminal task was created.",
+          createdAt: terminal.createdAt
+        )
+      )
+      terminalIDs.append(terminal.id)
+    }
+
+    do {
+      try await client.removeProject(projectID: registered.projectID)
+      XCTFail("Expected an active task to block project removal")
+    } catch {
+      let activeAfterRejectedRemoval = try await fixture.composition.store.task(id: active.id)
+      XCTAssertNotNil(activeAfterRejectedRemoval)
+    }
+
+    _ = try await fixture.composition.tasks.interrupt(
+      taskID: active.id,
+      summary: "The active task was stopped before project removal."
+    )
+    try await client.removeProject(projectID: registered.projectID)
+
+    let removedProject = try await fixture.composition.store.project(id: projectID)
+    let removedActive = try await fixture.composition.store.task(id: active.id)
+    let removedFirstTerminal = try await fixture.composition.store.task(id: terminalIDs.first!)
+    let removedLastTerminal = try await fixture.composition.store.task(id: terminalIDs.last!)
+    XCTAssertNil(removedProject)
+    XCTAssertNil(removedActive)
+    XCTAssertNil(removedFirstTerminal)
+    XCTAssertNil(removedLastTerminal)
+  }
+
   func testXPCWorkspaceCommandsRoundTripThroughTheService() async throws {
     let fixture = try await makeServiceHostFixture(self)
     let pair = xpcClient(composition: fixture.composition)

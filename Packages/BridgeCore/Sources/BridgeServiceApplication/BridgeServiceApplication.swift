@@ -102,10 +102,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     try Self.checkDeadline(deadline)
     guard (1...100).contains(limit) else { throw BridgeMCPQueryError.contractRejected }
     let all = try await projects.projects()
-    let visible = all.filter { $0.accessPolicy.read == .allowed }.sorted {
-      let order = $0.name.localizedCaseInsensitiveCompare($1.name)
-      return order == .orderedSame ? $0.id.rawValue < $1.id.rawValue : order == .orderedAscending
-    }
+    let visible = Self.sortedProjects(all.filter { $0.accessPolicy.read == .allowed })
     let offset = try Self.decodeOffset(cursor, maximum: visible.count)
     let end = min(offset + limit, visible.count)
     let page = visible[offset..<end].map(Self.projectSummary)
@@ -115,24 +112,28 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     )
   }
 
+  public func serviceManagedProjects(
+    deadline: ContinuousClock.Instant
+  ) async throws -> [MCPProjectSummary] {
+    try Self.checkDeadline(deadline)
+    return Self.sortedProjects(try await projects.projects()).map(Self.projectSummary)
+  }
+
   public func serviceProject(
     projectID: String,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPProjectDetail {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(projectID)
-    return MCPProjectDetail(
-      projectID: project.id.rawValue,
-      name: Self.safe(project.name, maximum: 1_024),
-      capabilities: Self.capabilities(project.accessPolicy),
-      verificationCommands: [],
-      directWorkspace: MCPDirectWorkspace(
-        fileWritePermission: project.accessPolicy.write.rawValue,
-        commandMode: project.directCommandMode.rawValue,
-        commands: project.workspaceCommands.map(Self.projectCommand),
-        commandBlacklist: project.commandBlacklist.map(Self.blacklistRule)
-      )
-    )
+    return Self.projectDetail(project)
+  }
+
+  public func serviceManagedProject(
+    projectID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectDetail {
+    try Self.checkDeadline(deadline)
+    return Self.projectDetail(try await managedProject(projectID))
   }
 
   public func serviceProjectCommands(

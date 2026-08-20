@@ -310,8 +310,10 @@ extension MCPServiceToolCatalog {
         "changed_files": arraySchema(boundedStringSchema(maximum: 1_024)),
         "summary": stringSchema,
         "exit_code": integerSchema(minimum: 0),
+        "index_synchronized": boolSchema,
+        "index_synchronization_error": nullableStringSchema(maximum: 4_096),
       ],
-      required: ["changed_files", "summary", "exit_code"]
+      required: ["changed_files", "summary", "exit_code", "index_synchronized"]
     )
   )
 }

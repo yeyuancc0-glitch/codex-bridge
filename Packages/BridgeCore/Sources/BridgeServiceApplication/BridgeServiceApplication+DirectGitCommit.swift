@@ -19,15 +19,13 @@ extension BridgeServiceApplication {
     guard project.accessPolicy.write != .denied else {
       throw BridgeMCPQueryError.writeNotAllowed
     }
-    if project.accessPolicy.write == .requiresLocalApproval {
-      try await requireDirectApproval(
-        project: project,
-        kind: .command,
-        summary: "Git commit: \(String(message.prefix(120)))",
-        payload: request,
-        clientRequestID: request.clientRequestID
-      )
-    }
+    try await requireDirectApproval(
+      project: project,
+      kind: .command,
+      summary: "Git commit: \(String(message.prefix(120)))",
+      payload: request,
+      clientRequestID: request.clientRequestID
+    )
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project,
@@ -86,12 +84,16 @@ extension BridgeServiceApplication {
         exitCode: 0
       )
     }
-    let commit = try await commitAndSynchronizeIndex(
+    let indexTransaction = try await DirectGitIndexTransaction.begin(
+      root: root,
+      git: git,
+      runner: runner,
+    )
+    defer { indexTransaction.cancel() }
+    let commit = try await createCommit(
       root: root,
       git: git,
       message: message,
-      files: files,
-      changedFiles: changedFiles,
       runner: runner,
       environment: gitEnvironment
     )
@@ -101,6 +103,25 @@ extension BridgeServiceApplication {
       runner: runner,
       environment: gitEnvironment
     )
+    do {
+      try await indexTransaction.synchronize(
+        root: root,
+        git: git,
+        changedFiles: changedFiles,
+        runner: runner
+      )
+    } catch {
+      let synchronizationError = indexSynchronizationSummary(error)
+      return MCPDirectGitCommitReceipt(
+        commitHash: hash,
+        changedFiles: Array(changedFiles.prefix(128)),
+        summary:
+          "\(gitSummary(commit.output)) Index synchronization warning: \(synchronizationError)",
+        exitCode: Int(commit.exitCode),
+        indexSynchronized: false,
+        indexSynchronizationError: synchronizationError
+      )
+    }
     return MCPDirectGitCommitReceipt(
       commitHash: hash,
       changedFiles: Array(changedFiles.prefix(128)),
@@ -183,12 +204,10 @@ extension BridgeServiceApplication {
     return changedFiles
   }
 
-  private static func commitAndSynchronizeIndex(
+  private static func createCommit(
     root: String,
     git: String,
     message: String,
-    files: [String],
-    changedFiles: [String],
     runner: DirectGitRunner,
     environment: [String: String]
   ) async throws -> DirectGitResult {
@@ -199,17 +218,6 @@ extension BridgeServiceApplication {
     )
     guard commit.exitCode == 0 else {
       throw DirectGitCommitError.gitFailed(Self.gitSummary(commit.output))
-    }
-    let synchronizeIndexArgv =
-      files.isEmpty
-      ? [git, "-C", root, "add", "-A"]
-      : [git, "-C", root, "add", "-A", "--"] + changedFiles
-    let synchronized = try await runner.run(
-      argv: synchronizeIndexArgv,
-      workingDirectory: root
-    )
-    guard synchronized.exitCode == 0 else {
-      throw DirectGitCommitError.gitFailed(Self.gitSummary(synchronized.output))
     }
     return commit
   }
@@ -240,6 +248,20 @@ extension BridgeServiceApplication {
   private static func gitSummary(_ output: DirectCommandOutputBuffer) -> String {
     let tail = output.tail.trimmingCharacters(in: .whitespacesAndNewlines)
     return tail.isEmpty ? output.head.trimmingCharacters(in: .whitespacesAndNewlines) : tail
+  }
+
+  private static func indexSynchronizationSummary(_ error: Error) -> String {
+    if case DirectGitCommitError.gitFailed(let summary) = error {
+      return String(summary.prefix(4_096))
+    }
+    switch error {
+    case DirectGitError.launchFailed:
+      return "The commit was created, but Git could not launch to synchronize the real index."
+    case DirectGitError.timedOut:
+      return "The commit was created, but real index synchronization timed out."
+    default:
+      return "The commit was created, but the real Git index could not be synchronized."
+    }
   }
 
   private static func validateGitRelativePaths(_ paths: [String], root: String) throws {

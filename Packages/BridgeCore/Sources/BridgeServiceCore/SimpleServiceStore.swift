@@ -160,6 +160,26 @@ public actor SimpleServiceStore {
   public func removeProject(id: ProjectID) throws {
     do {
       try database.write { db in
+        guard try Self.projectRow(id: id, in: db) != nil else {
+          throw ServiceStoreError.unknownProject(id)
+        }
+        let activeTaskCount =
+          try Int.fetchOne(
+            db,
+            sql: """
+              SELECT COUNT(*) FROM bridge_service_tasks
+              WHERE project_id = ?
+                AND status NOT IN ('completed', 'failed', 'interrupted')
+              """,
+            arguments: [id.rawValue]
+          ) ?? 0
+        guard activeTaskCount == 0 else {
+          throw ServiceStoreError.invalidArgument("project.activeTasks")
+        }
+        try db.execute(
+          sql: "DELETE FROM bridge_service_tasks WHERE project_id = ?",
+          arguments: [id.rawValue]
+        )
         try db.execute(
           sql: "DELETE FROM bridge_service_projects WHERE project_id = ?",
           arguments: [id.rawValue]

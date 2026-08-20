@@ -305,6 +305,206 @@ final class DirectCommandPolicyTests: XCTestCase {
     }
   }
 
+  func testSafeSwiftPathOptionsContainSeparatedAndInlineValues() throws {
+    let policy = DirectCommandPolicy()
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("direct-policy-swift-root-\(UUID().uuidString)")
+    let outside = FileManager.default.temporaryDirectory
+      .appendingPathComponent("direct-policy-swift-outside-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      try? FileManager.default.removeItem(at: outside)
+    }
+    let project = try project(mode: .safe, write: .allowed, root: root)
+    let pathOptions = [
+      "--package-path", "--cache-path", "--config-path", "--security-path", "--scratch-path",
+      "--swift-sdks-path", "--toolset", "--pkg-config-path", "--netrc-file", "--attachments-path",
+      "--xunit-output", "--experimental-codesize-profile-output-dir", "--build-path",
+      "--index-store-path", "--plugin-path", "--sbom-output-dir", "--sdk", "--toolchain",
+      "--swift-sdk",
+    ]
+    for option in pathOptions {
+      for argv in [
+        ["swift", "test", option, root.appendingPathComponent("inside").path],
+        ["swift", "test", "\(option)=\(root.appendingPathComponent("inside").path)"],
+      ] {
+        let result = policy.resolve(
+          project: project,
+          request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: argv)
+        )
+        XCTAssertTrue(result.allowed, argv.joined(separator: " "))
+      }
+      for argv in [
+        ["swift", "test", option, outside.path],
+        ["swift", "test", "\(option)=\(outside.path)"],
+      ] {
+        let result = policy.resolve(
+          project: project,
+          request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: argv)
+        )
+        XCTAssertEqual(result.reason, .invalidArguments, argv.joined(separator: " "))
+        XCTAssertFalse(result.allowed, argv.joined(separator: " "))
+      }
+    }
+  }
+
+  func testSafeXcodebuildPathOptionsAndResponseFilesAreContained() throws {
+    let policy = DirectCommandPolicy()
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("direct-policy-xcode-root-\(UUID().uuidString)")
+    let outside = FileManager.default.temporaryDirectory
+      .appendingPathComponent("direct-policy-xcode-outside-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      try? FileManager.default.removeItem(at: outside)
+    }
+    let project = try project(mode: .safe, write: .allowed, root: root)
+    let pathOptions = [
+      "-project", "-workspace", "-xcconfig", "-sdk", "-resultBundlePath", "-resultStreamPath",
+      "-clonedSourcePackagesDirPath", "-derivedDataPath", "-archivePath", "-exportOptionsPlist",
+      "-codesizeProfileOutputDir", "-exportPath", "-importPath", "-localizationPath", "-xctestrun",
+      "-testProductsPath", "-test-enumeration-output-path", "-packageCachePath",
+      "-authenticationKeyPath", "-importPlatform",
+    ]
+    for option in pathOptions {
+      let prefix = option == "-workspace" ? "-workspace" : "-project"
+      let valid = [
+        "xcodebuild", prefix, root.appendingPathComponent("Project.xcodeproj").path,
+        option, root.appendingPathComponent("inside").path,
+      ]
+      let validResult = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: valid)
+      )
+      XCTAssertTrue(validResult.allowed, valid.joined(separator: " "))
+
+      let inline = [
+        "xcodebuild", prefix, root.appendingPathComponent("Project.xcodeproj").path,
+        "\(option)=\(root.appendingPathComponent("inside").path)",
+      ]
+      let inlineResult = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: inline)
+      )
+      XCTAssertTrue(inlineResult.allowed, inline.joined(separator: " "))
+
+      let escaped = [
+        "xcodebuild", prefix, root.appendingPathComponent("Project.xcodeproj").path,
+        option, outside.path,
+      ]
+      let escapedResult = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: escaped)
+      )
+      XCTAssertEqual(escapedResult.reason, .invalidArguments, escaped.joined(separator: " "))
+      XCTAssertFalse(escapedResult.allowed, escaped.joined(separator: " "))
+    }
+
+    let validResponseFile = [
+      "xcodebuild", "-project", root.appendingPathComponent("Project.xcodeproj").path,
+      "-only-testing", "@\(root.appendingPathComponent("tests.txt").path)",
+    ]
+    let validResponseResult = policy.resolve(
+      project: project,
+      request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: validResponseFile)
+    )
+    XCTAssertTrue(validResponseResult.allowed)
+
+    let escapedResponseFile = [
+      "xcodebuild", "-project", root.appendingPathComponent("Project.xcodeproj").path,
+      "-skip-testing", "@\(outside.appendingPathComponent("tests.txt").path)",
+    ]
+    let escapedResponseResult = policy.resolve(
+      project: project,
+      request: DirectCommandRequest(
+        projectID: project.id, commandID: nil, argv: escapedResponseFile)
+    )
+    XCTAssertEqual(escapedResponseResult.reason, .invalidArguments)
+    XCTAssertFalse(escapedResponseResult.allowed)
+
+    for responseOption in ["-only-testing:", "-skip-testing=", "-only-testing="] {
+      let validCompact = [
+        "xcodebuild", "-project", root.appendingPathComponent("Project.xcodeproj").path,
+        "\(responseOption)@\(root.appendingPathComponent("tests.txt").path)",
+      ]
+      let validCompactResult = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id, commandID: nil, argv: validCompact)
+      )
+      XCTAssertTrue(validCompactResult.allowed, validCompact.joined(separator: " "))
+
+      let escapedCompact = [
+        "xcodebuild", "-project", root.appendingPathComponent("Project.xcodeproj").path,
+        "\(responseOption)@\(outside.appendingPathComponent("tests.txt").path)",
+      ]
+      let escapedCompactResult = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id, commandID: nil, argv: escapedCompact)
+      )
+      XCTAssertEqual(escapedCompactResult.reason, .invalidArguments)
+      XCTAssertFalse(escapedCompactResult.allowed, escapedCompact.joined(separator: " "))
+    }
+
+    for argv in [
+      ["swift", "test", "--disable-sandbox"],
+      [
+        "xcodebuild", "-project", root.appendingPathComponent("Project.xcodeproj").path,
+        "-allowProvisioningUpdates",
+      ],
+    ] {
+      let result = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: argv)
+      )
+      XCTAssertEqual(result.reason, .invalidArguments, argv.joined(separator: " "))
+      XCTAssertFalse(result.allowed, argv.joined(separator: " "))
+    }
+  }
+
+  func testSafeValidatedAgentReachAndOpenCLICommandsRemainAllowed() throws {
+    let policy = DirectCommandPolicy()
+    let project = try project(mode: .safe, write: .allowed, network: .allowed)
+    for executable in ["/opt/homebrew/bin/agent-reach", "/usr/local/bin/opencli"] {
+      let result = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id,
+          commandID: nil,
+          argv: [executable, "doctor", "--json"],
+          requiresNetwork: true,
+          isValidatedSkillScript: true
+        )
+      )
+      XCTAssertTrue(result.allowed, executable)
+      XCTAssertTrue(result.requiresNetwork, executable)
+    }
+  }
+
+  func testSafeNPMRejectsExternalConfigurationAndExecutionPaths() throws {
+    let policy = DirectCommandPolicy()
+    let project = try project(mode: .safe, write: .allowed)
+    for option in ["--cache", "--logs-dir", "--cafile", "--script-shell", "--workspace", "-w"] {
+      for argument in [option, "\(option)=/tmp/outside"] {
+        let argv =
+          argument == option
+          ? ["npm", "test", option, "/tmp/outside"]
+          : ["npm", "test", argument]
+        let result = policy.resolve(
+          project: project,
+          request: DirectCommandRequest(projectID: project.id, commandID: nil, argv: argv)
+        )
+        XCTAssertFalse(result.allowed, argv.joined(separator: " "))
+        XCTAssertEqual(result.reason, .invalidArguments)
+      }
+    }
+  }
+
   func testSafeSearchBuiltInsAcceptBoundedPatternsFlagsAndProjectPaths() throws {
     let policy = DirectCommandPolicy()
     let project = try project(mode: .safe, write: .allowed)

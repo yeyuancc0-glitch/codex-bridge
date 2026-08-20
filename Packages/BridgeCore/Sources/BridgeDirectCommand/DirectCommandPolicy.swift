@@ -154,9 +154,43 @@ public struct DirectCommandPolicy: Sendable {
     DirectSafeCommandRule(executable: "/usr/bin/swift", argumentsPrefix: ["build"]),
     DirectSafeCommandRule(executable: "xcodebuild", argumentsPrefix: ["-project"]),
     DirectSafeCommandRule(executable: "/usr/bin/xcodebuild", argumentsPrefix: ["-project"]),
+    DirectSafeCommandRule(executable: "xcodebuild", argumentsPrefix: ["-workspace"]),
+    DirectSafeCommandRule(executable: "/usr/bin/xcodebuild", argumentsPrefix: ["-workspace"]),
     DirectSafeCommandRule(executable: "echo"),
     DirectSafeCommandRule(executable: "/bin/echo"),
     DirectSafeCommandRule(executable: "/usr/bin/echo"),
+  ]
+
+  private static let swiftPathOptions: Set<String> = [
+    "--package-path", "--cache-path", "--config-path", "--security-path", "--scratch-path",
+    "--swift-sdks-path", "--toolset", "--pkg-config-path", "--netrc-file", "--attachments-path",
+    "--xunit-output", "--experimental-codesize-profile-output-dir", "--build-path",
+    "--index-store-path", "--plugin-path", "--sbom-output-dir", "--sdk", "--toolchain",
+    "--swift-sdk",
+  ]
+
+  private static let xcodebuildPathOptions: Set<String> = [
+    "-project", "-workspace", "-xcconfig", "-sdk", "-resultBundlePath", "-resultStreamPath",
+    "-clonedSourcePackagesDirPath", "-derivedDataPath", "-archivePath", "-exportOptionsPlist",
+    "-codesizeProfileOutputDir", "-exportPath", "-importPath", "-localizationPath", "-xctestrun",
+    "-testProductsPath", "-test-enumeration-output-path", "-packageCachePath",
+    "-authenticationKeyPath", "-importPlatform",
+  ]
+
+  private static let xcodebuildResponseFileOptions: Set<String> = [
+    "-only-testing", "-skip-testing",
+  ]
+
+  private static let xcodebuildResponseFilePrefixes: [String] = [
+    "-only-testing:", "-skip-testing:", "-only-testing=", "-skip-testing=",
+  ]
+
+  private static let swiftDeniedOptions: Set<String> = [
+    "--disable-sandbox"
+  ]
+
+  private static let xcodebuildDeniedOptions: Set<String> = [
+    "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration",
   ]
 
   private func isProjectLocalExecutable(_ executable: String, projectRoot: String) -> Bool {
@@ -344,22 +378,39 @@ public struct DirectCommandPolicy: Sendable {
           || denied.dropLast().contains(where: { argument.hasPrefix($0 + "=") })
       }
     case "npm":
-      let denied = ["--prefix", "--userconfig", "--globalconfig"]
+      let denied = [
+        "--prefix", "--userconfig", "--globalconfig", "--cache", "--logs-dir", "--cafile",
+        "--cert", "--key", "--script-shell", "--nodedir", "--tmp", "--workspace", "-w",
+      ]
       return !argv.dropFirst().contains { argument in
         denied.contains(argument) || denied.contains { argument.hasPrefix($0 + "=") }
       }
     case "swift":
-      return pathOptionsAreContained(
-        argv.dropFirst(), options: ["--package-path"], projectRoot: projectRoot,
-        workingDirectory: workingDirectory
-      )
+      return !containsOption(argv.dropFirst(), options: Self.swiftDeniedOptions)
+        && pathOptionsAreContained(
+          argv.dropFirst(), options: Self.swiftPathOptions, projectRoot: projectRoot,
+          workingDirectory: workingDirectory
+        )
     case "xcodebuild":
-      return pathOptionsAreContained(
-        argv.dropFirst(), options: ["-project", "-workspace", "-derivedDataPath"],
-        projectRoot: projectRoot, workingDirectory: workingDirectory
-      )
+      return !containsOption(argv.dropFirst(), options: Self.xcodebuildDeniedOptions)
+        && pathOptionsAreContained(
+          argv.dropFirst(), options: Self.xcodebuildPathOptions, projectRoot: projectRoot,
+          workingDirectory: workingDirectory
+        )
+        && responseFileOptionsAreContained(
+          argv.dropFirst(), options: Self.xcodebuildResponseFileOptions,
+          prefixes: Self.xcodebuildResponseFilePrefixes,
+          projectRoot: projectRoot, workingDirectory: workingDirectory
+        )
     default:
       return true
+    }
+  }
+
+  private func containsOption(_ arguments: ArraySlice<String>, options: Set<String>) -> Bool {
+    arguments.contains { argument in
+      options.contains(argument)
+        || options.contains { argument.hasPrefix($0 + "=") }
     }
   }
 
@@ -372,6 +423,7 @@ public struct DirectCommandPolicy: Sendable {
     var expectsPath = false
     for argument in arguments {
       if expectsPath {
+        guard !argument.hasPrefix("-") || argument == "-" else { return false }
         guard
           safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
         else { return false }
@@ -389,6 +441,38 @@ public struct DirectCommandPolicy: Sendable {
       }
     }
     return !expectsPath
+  }
+
+  private func responseFileOptionsAreContained(
+    _ arguments: ArraySlice<String>,
+    options: Set<String>,
+    prefixes: [String],
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    var expectsValue = false
+    for argument in arguments {
+      if expectsValue {
+        if argument.hasPrefix("@") {
+          let path = String(argument.dropFirst())
+          guard
+            safePathArgument(path, projectRoot: projectRoot, workingDirectory: workingDirectory)
+          else { return false }
+        }
+        expectsValue = false
+      } else if options.contains(argument) {
+        expectsValue = true
+      } else if let prefix = prefixes.first(where: { argument.hasPrefix($0) }) {
+        let value = String(argument.dropFirst(prefix.count))
+        if value.hasPrefix("@") {
+          let path = String(value.dropFirst())
+          guard
+            safePathArgument(path, projectRoot: projectRoot, workingDirectory: workingDirectory)
+          else { return false }
+        }
+      }
+    }
+    return !expectsValue
   }
 
   private func matchesSafeRule(_ rule: SafeRule, argv: [String]) -> Bool {

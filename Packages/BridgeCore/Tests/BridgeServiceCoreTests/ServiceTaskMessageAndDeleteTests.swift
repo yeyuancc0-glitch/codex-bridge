@@ -13,7 +13,7 @@ final class ServiceTaskMessageAndDeleteTests: XCTestCase {
   }
 
   func testMessageUpsertDeduplicatesByKeyAndPaginates() async throws {
-    let (fixture, store, tasks) = try makeFixture()
+    let (fixture, store, _) = try makeFixture()
     defer { fixture.remove() }
     let project = try makeServiceProject(id: "prj-messages", rootURL: fixture.firstProjectURL)
     try await store.insertProject(project)
@@ -22,7 +22,7 @@ final class ServiceTaskMessageAndDeleteTests: XCTestCase {
       projectID: project.id,
       status: .running
     )
-    try await store.createTask(task, event: creationEvent(at: task.createdAt))
+    _ = try await store.createTask(task, event: creationEvent(at: task.createdAt))
 
     let prompt = try ServiceTaskMessageDraft(
       key: "user:1",
@@ -196,5 +196,75 @@ final class ServiceTaskMessageAndDeleteTests: XCTestCase {
       }
     }
     _ = store
+  }
+
+  func testRemoveProjectChecksAllTasksAndCascadesTerminalData() async throws {
+    let (fixture, store, tasks) = try makeFixture()
+    defer { fixture.remove() }
+    let project = try makeServiceProject(id: "prj-remove-all", rootURL: fixture.firstProjectURL)
+    try await store.insertProject(project)
+
+    let active = try makeServiceTask(
+      id: "tsk-remove-active-outside-page",
+      projectID: project.id,
+      date: Date(timeIntervalSince1970: 1_700_000_100),
+      status: .running,
+      permissionMode: .readOnly
+    )
+    _ = try await store.createTask(active, event: creationEvent(at: active.createdAt))
+
+    var terminalIDs: [TaskID] = []
+    for index in 0...500 {
+      let terminal = try makeServiceTask(
+        id: "tsk-remove-terminal-" + String(index),
+        projectID: project.id,
+        date: Date(timeIntervalSince1970: 1_700_001_000 + Double(index)),
+        status: .completed,
+        permissionMode: .readOnly
+      )
+      _ = try await store.createTask(terminal, event: creationEvent(at: terminal.createdAt))
+      if index == 0 || index == 500 {
+        _ = try await store.upsertTaskMessage(
+          ServiceTaskMessageDraft(
+            key: "agent:terminal-" + String(index),
+            role: .agent,
+            content: "Terminal task " + String(index) + ".",
+            createdAt: terminal.createdAt
+          ),
+          taskID: terminal.id
+        )
+      }
+      terminalIDs.append(terminal.id)
+    }
+
+    do {
+      try await store.removeProject(id: project.id)
+      XCTFail("Expected the active task to block project removal")
+    } catch let error as ServiceStoreError {
+      XCTAssertEqual(error, .invalidArgument("project.activeTasks"))
+    }
+    let activeBeforeRemoval = try await store.task(id: active.id)
+    let lastTerminalBeforeRemoval = try await store.task(id: terminalIDs.last!)
+    XCTAssertNotNil(activeBeforeRemoval)
+    XCTAssertNotNil(lastTerminalBeforeRemoval)
+
+    _ = try await tasks.interrupt(
+      taskID: active.id,
+      summary: "The active task was stopped before project removal."
+    )
+    try await store.removeProject(id: project.id)
+
+    let removedProject = try await store.project(id: project.id)
+    let removedActive = try await store.task(id: active.id)
+    let removedFirstTerminal = try await store.task(id: terminalIDs.first!)
+    let removedLastTerminal = try await store.task(id: terminalIDs.last!)
+    XCTAssertNil(removedProject)
+    XCTAssertNil(removedActive)
+    XCTAssertNil(removedFirstTerminal)
+    XCTAssertNil(removedLastTerminal)
+    let terminalEvents = try await store.events(taskID: terminalIDs.first!)
+    let terminalMessages = try await store.taskMessages(taskID: terminalIDs.last!)
+    XCTAssertTrue(terminalEvents.isEmpty)
+    XCTAssertTrue(terminalMessages.isEmpty)
   }
 }

@@ -10,15 +10,16 @@ extension BridgeServiceApplication {
   ) async throws -> MCPDirectWriteReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
-    if project.accessPolicy.write == .requiresLocalApproval {
-      try await requireDirectApproval(
-        project: project,
-        kind: .fileWrite,
-        summary: "Write \(request.relativePath)",
-        payload: request,
-        clientRequestID: request.clientRequestID
-      )
+    guard project.accessPolicy.write != .denied else {
+      throw BridgeMCPQueryError.writeNotAllowed
     }
+    try await requireDirectApproval(
+      project: project,
+      kind: .fileWrite,
+      summary: "Write \(request.relativePath)",
+      payload: request,
+      clientRequestID: request.clientRequestID
+    )
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))
@@ -59,15 +60,16 @@ extension BridgeServiceApplication {
   ) async throws -> MCPDirectEditReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
-    if project.accessPolicy.write == .requiresLocalApproval {
-      try await requireDirectApproval(
-        project: project,
-        kind: .fileWrite,
-        summary: "Edit \(request.relativePath)",
-        payload: request,
-        clientRequestID: request.clientRequestID
-      )
+    guard project.accessPolicy.write != .denied else {
+      throw BridgeMCPQueryError.writeNotAllowed
     }
+    try await requireDirectApproval(
+      project: project,
+      kind: .fileWrite,
+      summary: "Edit \(request.relativePath)",
+      payload: request,
+      clientRequestID: request.clientRequestID
+    )
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))
@@ -108,15 +110,16 @@ extension BridgeServiceApplication {
   ) async throws -> MCPDirectPatchReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
-    if project.accessPolicy.write == .requiresLocalApproval {
-      try await requireDirectApproval(
-        project: project,
-        kind: .fileWrite,
-        summary: "Apply patch",
-        payload: request,
-        clientRequestID: request.clientRequestID
-      )
+    guard project.accessPolicy.write != .denied else {
+      throw BridgeMCPQueryError.writeNotAllowed
     }
+    try await requireDirectApproval(
+      project: project,
+      kind: .fileWrite,
+      summary: "Apply patch",
+      payload: request,
+      clientRequestID: request.clientRequestID
+    )
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))
@@ -174,17 +177,16 @@ extension BridgeServiceApplication {
   ) async throws -> MCPDirectManagePathReceipt {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(request.projectID)
-    let destructive = ["delete_file", "move_file", "delete_empty_directory"].contains(
-      request.action)
-    if project.accessPolicy.write == .requiresLocalApproval || destructive {
-      try await requireDirectApproval(
-        project: project,
-        kind: .pathAction,
-        summary: "\(request.action) \(request.relativePath)",
-        payload: request,
-        clientRequestID: request.clientRequestID
-      )
+    guard project.accessPolicy.write != .denied else {
+      throw BridgeMCPQueryError.writeNotAllowed
     }
+    try await requireDirectApproval(
+      project: project,
+      kind: .pathAction,
+      summary: "\(request.action) \(request.relativePath)",
+      payload: request,
+      clientRequestID: request.clientRequestID
+    )
     let operationID = "op-" + UUID().uuidString.lowercased()
     let lease = try await acquireDirectLease(
       project: project, owner: .directFileOperation(operationID: operationID))

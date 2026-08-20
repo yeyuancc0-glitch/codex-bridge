@@ -1,13 +1,135 @@
 import BridgeCodexRPC
+import BridgeCodexService
 import BridgeDomain
 import BridgeIPC
 import BridgeProjects
 import BridgeServiceCore
-import BridgeServiceHost
 import Foundation
 import XCTest
+@testable import BridgeServiceHost
 
 final class ConversationStreamingHostTests: XCTestCase {
+  func testConcurrentConversationSubscriptionsReplaceWithoutExhaustingSlots() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let projectRoot = fixture.root.appending(
+      path: "Concurrent Project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let project = try await fixture.composition.projects.register(
+      name: "Concurrent Project",
+      rootURL: projectRoot,
+      accessPolicy: ProjectAccessPolicy(
+        read: .allowed,
+        write: .allowed,
+        network: .denied
+      )
+    )
+    let task = try await fixture.composition.tasks.submit(
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .macOSApp,
+        prompt: "Exercise concurrent conversation subscriptions.",
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .workspaceWrite
+      )
+    )
+    let proxy = TestConversationStreamProxy()
+    let controller = BridgeServiceXPCController(
+      composition: fixture.composition,
+      streamProxy: proxy,
+      maximumConcurrentRequests: 16
+    )
+    let requestIDs = (0..<16).map { "subscribe-\($0)" }
+    let requests = try requestIDs.map { requestID in
+      try BridgeServiceIPCCodec.request(
+        operation: .subscribeTaskConversation,
+        payload: IPCTaskConversationRequest(taskID: task.task.id.rawValue),
+        requestID: requestID
+      )
+    }
+
+    let responses = await withTaskGroup(of: (String, Data).self, returning: [(String, Data)].self) {
+      group in
+      for (requestID, request) in zip(requestIDs, requests) {
+        group.addTask {
+          (requestID, await performXPC(controller, request: request))
+        }
+      }
+      var values: [(String, Data)] = []
+      for await value in group {
+        values.append(value)
+      }
+      return values
+    }
+
+    XCTAssertEqual(responses.count, requestIDs.count)
+    for (requestID, response) in responses {
+      let subscription = try BridgeServiceIPCCodec.decodeResponse(
+        IPCTaskConversationSubscription.self,
+        data: response,
+        requestID: requestID
+      )
+      XCTAssertGreaterThanOrEqual(subscription.subscriptionID, 0)
+    }
+    XCTAssertEqual(controller.streams.count(), 1)
+    controller.stopStreaming()
+  }
+
+  func testConversationSubscriptionResponseFailureReclaimsForwarder() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let projectRoot = fixture.root.appending(path: "Oversized Project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let project = try await fixture.composition.projects.register(
+      name: "Oversized Project",
+      rootURL: projectRoot,
+      accessPolicy: ProjectAccessPolicy(
+        read: .allowed,
+        write: .allowed,
+        network: .denied
+      )
+    )
+    let task = try await fixture.composition.tasks.submit(
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .macOSApp,
+        prompt: "Exercise oversized conversation response cleanup.",
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .workspaceWrite
+      )
+    )
+    let content = String(repeating: "x", count: TaskConversationBuffer.maximumMessageBytes)
+    for index in 0..<40 {
+      try await fixture.composition.tasks.upsertTaskMessage(
+        taskID: task.task.id,
+        key: "agent:oversized-\(index)",
+        role: .agent,
+        content: content
+      )
+    }
+
+    let controller = BridgeServiceXPCController(
+      composition: fixture.composition,
+      streamProxy: TestConversationStreamProxy()
+    )
+    let requestID = "oversized-subscribe"
+    let request = try BridgeServiceIPCCodec.request(
+      operation: .subscribeTaskConversation,
+      payload: IPCTaskConversationRequest(taskID: task.task.id.rawValue),
+      requestID: requestID
+    )
+    let response = await performXPC(controller, request: request)
+
+    XCTAssertThrowsError(
+      try BridgeServiceIPCCodec.decodeResponse(
+        IPCTaskConversationSubscription.self,
+        data: response,
+        requestID: requestID
+      )
+    )
+    XCTAssertEqual(controller.streams.count(), 0)
+  }
+
   func testConversationSubscriptionStreamsDeltasFromServiceExecution() async throws {
     let root = FileManager.default.temporaryDirectory.appending(
       path: "bridge-conversation-streaming-\(UUID().uuidString)",
@@ -342,6 +464,23 @@ final class ConversationStreamingHostTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(10))
     }
     throw HostTestError.timedOut
+  }
+}
+
+private final class TestConversationStreamProxy: NSObject, CodexBridgeTaskStreamListener {
+  func push(_ payload: Data) {
+    _ = payload
+  }
+}
+
+private func performXPC(
+  _ controller: BridgeServiceXPCController,
+  request: Data
+) async -> Data {
+  await withCheckedContinuation { continuation in
+    controller.perform(request) { response in
+      continuation.resume(returning: response)
+    }
   }
 }
 

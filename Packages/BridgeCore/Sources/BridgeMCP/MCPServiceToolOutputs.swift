@@ -357,17 +357,21 @@ struct ServiceDirectWriteStdinOutput: Codable, Sendable {
 }
 
 struct ServiceDirectGitCommitOutput: Codable, Sendable {
-  let schemaVersion = 1
+  let schemaVersion = 2
   let commitHash: String?
   let changedFiles: [String]
   let summary: String
   let exitCode: Int
+  let indexSynchronized: Bool
+  let indexSynchronizationError: String?
 
   init(receipt: MCPDirectGitCommitReceipt) {
     commitHash = receipt.commitHash
     changedFiles = receipt.changedFiles
     summary = receipt.summary
     exitCode = receipt.exitCode
+    indexSynchronized = receipt.indexSynchronized
+    indexSynchronizationError = receipt.indexSynchronizationError
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -376,5 +380,7 @@ struct ServiceDirectGitCommitOutput: Codable, Sendable {
     case changedFiles = "changed_files"
     case summary
     case exitCode = "exit_code"
+    case indexSynchronized = "index_synchronized"
+    case indexSynchronizationError = "index_synchronization_error"
   }
 }

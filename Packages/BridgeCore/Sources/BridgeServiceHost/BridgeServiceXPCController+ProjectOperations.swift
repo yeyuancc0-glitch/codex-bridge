@@ -6,14 +6,12 @@ import Foundation
 
 extension BridgeServiceXPCController {
   func handleListProjects(_ request: BridgeServiceIPCRequest) async throws -> Data {
-    let page = try await composition.application.serviceProjects(
-      cursor: nil,
-      limit: 100,
+    let projects = try await composition.application.serviceManagedProjects(
       deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
-      payload: IPCProjectListResponse(projects: page.projects)
+      payload: IPCProjectListResponse(projects: projects)
     )
   }
 
@@ -32,7 +30,7 @@ extension BridgeServiceXPCController {
       rootURL: try Self.absoluteDirectoryURL(payload.absolutePath),
       accessPolicy: policy
     )
-    let detail = try await composition.application.serviceProject(
+    let detail = try await composition.application.serviceManagedProject(
       projectID: project.id.rawValue,
       deadline: Self.deadline()
     )
@@ -55,7 +53,7 @@ extension BridgeServiceXPCController {
       ),
       projectID: ProjectID(rawValue: payload.projectID)
     )
-    let detail = try await composition.application.serviceProject(
+    let detail = try await composition.application.serviceManagedProject(
       projectID: payload.projectID,
       deadline: Self.deadline()
     )
@@ -70,7 +68,7 @@ extension BridgeServiceXPCController {
       IPCProjectCommandsRequest.self,
       from: request
     )
-    let detail = try await composition.application.serviceProject(
+    let detail = try await composition.application.serviceManagedProject(
       projectID: payload.projectID,
       deadline: Self.deadline()
     )
@@ -90,7 +88,7 @@ extension BridgeServiceXPCController {
       commandBlacklist: try Self.blacklistRules(payload.commandBlacklist),
       projectID: ProjectID(rawValue: payload.projectID)
     )
-    let updatedCommands = try await composition.application.serviceProject(
+    let updatedCommands = try await composition.application.serviceManagedProject(
       projectID: payload.projectID,
       deadline: Self.deadline()
     )
@@ -112,7 +110,7 @@ extension BridgeServiceXPCController {
       mode,
       projectID: ProjectID(rawValue: payload.projectID)
     )
-    let updatedMode = try await composition.application.serviceProject(
+    let updatedMode = try await composition.application.serviceManagedProject(
       projectID: payload.projectID,
       deadline: Self.deadline()
     )
@@ -127,13 +125,6 @@ extension BridgeServiceXPCController {
       IPCProjectIDRequest.self,
       from: request
     )
-    let taskList = try await composition.tasks.tasks(
-      projectID: ProjectID(rawValue: payload.projectID),
-      limit: 500
-    )
-    guard taskList.allSatisfy({ $0.state.status.isTerminal }) else {
-      throw ServiceStoreError.invalidArgument("project.activeTasks")
-    }
     try await composition.projects.remove(
       projectID: ProjectID(rawValue: payload.projectID)
     )

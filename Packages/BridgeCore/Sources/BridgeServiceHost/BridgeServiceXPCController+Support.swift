@@ -412,45 +412,76 @@ extension BridgeServiceXPCController {
   }
 }
 
+struct StreamRegistration: Sendable {
+  let forwarder: Task<Void, Never>
+  let subscriptionID: Int
+}
+
 final class StreamRegistry: @unchecked Sendable {
   private let lock = NSLock()
-  private var forwarders: [TaskID: Task<Void, Never>] = [:]
-  private var subscriptionIDs: [TaskID: Int] = [:]
+  private var registrations: [TaskID: StreamRegistration] = [:]
 
-  func takeForwarder(_ taskID: TaskID) -> Task<Void, Never>? {
+  func take(_ taskID: TaskID) -> StreamRegistration? {
     lock.lock()
     defer { lock.unlock() }
-    return forwarders.removeValue(forKey: taskID)
+    return registrations.removeValue(forKey: taskID)
   }
 
-  func takeSubscription(_ taskID: TaskID) -> Int? {
+  func take(_ taskID: TaskID, subscriptionID: Int) -> StreamRegistration? {
     lock.lock()
     defer { lock.unlock() }
-    return subscriptionIDs.removeValue(forKey: taskID)
+    guard registrations[taskID]?.subscriptionID == subscriptionID else { return nil }
+    return registrations.removeValue(forKey: taskID)
   }
 
-  func put(taskID: TaskID, forwarder: Task<Void, Never>, subscriptionID: Int) {
+  @discardableResult
+  func install(taskID: TaskID, registration: StreamRegistration) -> StreamRegistration? {
     lock.lock()
-    forwarders[taskID] = forwarder
-    subscriptionIDs[taskID] = subscriptionID
+    let previous = registrations.updateValue(registration, forKey: taskID)
     lock.unlock()
+    return previous
   }
 
-  func removeForwarder(_ taskID: TaskID) {
-    lock.lock()
-    forwarders.removeValue(forKey: taskID)
-    subscriptionIDs.removeValue(forKey: taskID)
-    lock.unlock()
-  }
-
-  func takeAll() -> ([TaskID: Task<Void, Never>], [TaskID: Int]) {
+  func takeAll() -> [TaskID: StreamRegistration] {
     lock.lock()
     defer { lock.unlock() }
-    let activeForwarders = forwarders
-    let activeSubscriptions = subscriptionIDs
-    forwarders.removeAll(keepingCapacity: false)
-    subscriptionIDs.removeAll(keepingCapacity: false)
-    return (activeForwarders, activeSubscriptions)
+    let active = registrations
+    registrations.removeAll(keepingCapacity: false)
+    return active
+  }
+
+  func count() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return registrations.count
+  }
+}
+
+final class AsyncMutex: @unchecked Sendable {
+  private let stateLock = NSLock()
+  private var locked = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func acquire() async {
+    await withCheckedContinuation { continuation in
+      stateLock.lock()
+      if locked {
+        waiters.append(continuation)
+        stateLock.unlock()
+        return
+      }
+      locked = true
+      stateLock.unlock()
+      continuation.resume()
+    }
+  }
+
+  func release() {
+    stateLock.lock()
+    let waiter = waiters.isEmpty ? nil : waiters.removeFirst()
+    if waiter == nil { locked = false }
+    stateLock.unlock()
+    waiter?.resume()
   }
 }
 

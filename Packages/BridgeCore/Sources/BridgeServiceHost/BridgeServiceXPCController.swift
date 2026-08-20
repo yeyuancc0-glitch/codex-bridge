@@ -8,6 +8,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
   let admission: XPCRequestAdmission
   let streamProxy: CodexBridgeTaskStreamListener?
   let streams = StreamRegistry()
+  let conversationStreamGate = AsyncMutex()
 
   public init(
     composition: ServiceComposition,
@@ -64,17 +65,21 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
   }
 
   public func stopStreaming() {
-    let (activeForwarders, activeSubscriptions) = streams.takeAll()
-    for task in activeForwarders.values {
-      task.cancel()
+    Task { [self] in
+      await stopStreamingAsync()
     }
-    for (taskID, subscriptionID) in activeSubscriptions {
-      Task {
-        await composition.coordinator.unsubscribeConversation(
-          taskID: taskID,
-          subscriptionID: subscriptionID
-        )
-      }
+  }
+
+  private func stopStreamingAsync() async {
+    await conversationStreamGate.acquire()
+    defer { conversationStreamGate.release() }
+    let active = streams.takeAll()
+    for (taskID, registration) in active {
+      registration.forwarder.cancel()
+      await composition.coordinator.unsubscribeConversation(
+        taskID: taskID,
+        subscriptionID: registration.subscriptionID
+      )
     }
   }
 
