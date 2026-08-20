@@ -193,6 +193,25 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
   }
 
+  func testDeleteConversationRoutesItsTaskToTheServiceClient() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.deleteTask("task-1")
+
+    try await waitUntil {
+      await client.deletedTaskIDsValue() == ["task-1"]
+    }
+  }
+
   func testTunnelActionsRouteWithoutRetainingRuntimeKeyInViewState() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

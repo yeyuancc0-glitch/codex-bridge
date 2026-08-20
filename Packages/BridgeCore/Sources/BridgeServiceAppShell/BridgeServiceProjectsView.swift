@@ -4,6 +4,7 @@ import SwiftUI
 
 struct BridgeServiceProjectsView: View {
   @ObservedObject var model: BridgeServiceAppModel
+  @State private var taskPendingDeletion: MCPServiceTaskSnapshot?
 
   var body: some View {
     HStack(spacing: 0) {
@@ -18,6 +19,26 @@ struct BridgeServiceProjectsView: View {
       if model.selectedProjectID == nil, let firstID = model.projects.first?.projectID {
         model.selectProject(firstID)
       }
+    }
+    .alert(
+      "删除会话？",
+      isPresented: Binding(
+        get: { taskPendingDeletion != nil },
+        set: { visible in
+          if !visible { taskPendingDeletion = nil }
+        }
+      ),
+      presenting: taskPendingDeletion
+    ) { task in
+      Button("删除", role: .destructive) {
+        taskPendingDeletion = nil
+        model.deleteTask(task.taskID)
+      }
+      Button("取消", role: .cancel) {
+        taskPendingDeletion = nil
+      }
+    } message: { _ in
+      Text("该操作会删除此会话在 Codex Bridge 中保存的任务、事件和对话记录，无法撤销。")
     }
   }
 
@@ -148,7 +169,8 @@ struct BridgeServiceProjectsView: View {
           ProjectWorkspaceEditor(model: model, project: project)
             .id(project.projectID)
 
-          skillsSection
+          ProjectSkillsSection(model: model)
+            .id(project.projectID)
 
           VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -204,42 +226,63 @@ struct BridgeServiceProjectsView: View {
       } else {
         VStack(spacing: 8) {
           ForEach(model.threads, id: \.threadID) { thread in
-            Button {
-              model.openThread(thread.threadID)
-            } label: {
-              HStack(spacing: 12) {
-                Image(systemName: "bubble.left.fill")
-                  .font(.system(size: 14))
-                  .foregroundStyle(.tint)
+            HStack(spacing: 0) {
+              Button {
+                model.openThread(thread.threadID)
+              } label: {
+                HStack(spacing: 12) {
+                  Image(systemName: "bubble.left.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.tint)
 
-                VStack(alignment: .leading, spacing: 2) {
-                  Text(thread.title ?? thread.preview ?? thread.threadID)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text(thread.title ?? thread.preview ?? thread.threadID)
+                      .font(.body.weight(.medium))
+                      .lineLimit(1)
+                      .foregroundStyle(.primary)
 
-                  Text(thread.threadID)
-                    .font(.system(size: 11, design: .monospaced))
+                    Text(thread.threadID)
+                      .font(.system(size: 11, design: .monospaced))
+                      .foregroundStyle(.secondary)
+                  }
+
+                  Spacer()
+
+                  StatusBadge(thread.status, tone: thread.status == "busy" ? .running : .neutral)
+
+                  Image(systemName: "chevron.right")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 }
-
-                Spacer()
-
-                StatusBadge(thread.status, tone: thread.status == "busy" ? .running : .neutral)
-
-                Image(systemName: "chevron.right")
-                  .font(.caption2)
-                  .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .leading)
               }
-              .padding(12)
-              .background(Color(nsColor: .controlBackgroundColor))
-              .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-              .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                  .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
-              )
+              .buttonStyle(.plain)
+
+              if let task = task(for: thread) {
+                Divider()
+                  .frame(height: 28)
+                  .padding(.horizontal, 10)
+
+                Button(role: .destructive) {
+                  taskPendingDeletion = task
+                } label: {
+                  Image(systemName: "trash")
+                    .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!task.isTerminal)
+                .help(task.isTerminal ? "删除会话" : "运行中的会话不能删除")
+                .accessibilityLabel("删除会话")
+              }
             }
-            .buttonStyle(.plain)
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
+            )
           }
         }
       }
@@ -250,60 +293,9 @@ struct BridgeServiceProjectsView: View {
     }
   }
 
-  private var skillsSection: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text("已发现 Skills")
-          .font(.headline)
-          .foregroundStyle(.secondary)
-        Spacer()
-        Button {
-          model.refresh()
-        } label: {
-          Label("刷新", systemImage: "arrow.clockwise")
-        }
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-        .disabled(model.isRefreshing)
-      }
-      if model.skills.isEmpty {
-        NativeCard {
-          Label("该项目没有发现可用 Skill", systemImage: "sparkles")
-            .foregroundStyle(.secondary)
-            .padding(.vertical, 8)
-        }
-      } else {
-        LazyVStack(spacing: 8) {
-          ForEach(model.skills) { skill in
-            NativeCard {
-              HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "sparkles")
-                  .foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 4) {
-                  HStack {
-                    Text(skill.name).font(.subheadline.weight(.semibold))
-                    Text(skill.scope.rawValue)
-                      .font(.caption2)
-                      .foregroundStyle(.secondary)
-                  }
-                  if !skill.description.isEmpty {
-                    Text(skill.description)
-                      .font(.caption)
-                      .foregroundStyle(.secondary)
-                      .lineLimit(2)
-                  }
-                  if !skill.actions.isEmpty {
-                    Text("动作：\(skill.actions.count) 个")
-                      .font(.caption2)
-                      .foregroundStyle(.secondary)
-                  }
-                }
-                Spacer()
-              }
-            }
-          }
-        }
-      }
+  private func task(for thread: MCPThreadSummary) -> MCPServiceTaskSnapshot? {
+    model.tasks.first {
+      $0.projectID == model.selectedProjectID && $0.threadID == thread.threadID
     }
   }
 
@@ -346,6 +338,116 @@ struct BridgeServiceProjectsView: View {
     panel.canCreateDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
     model.registerProject(at: url)
+  }
+}
+
+private struct ProjectSkillsSection: View {
+  @ObservedObject var model: BridgeServiceAppModel
+  @State private var isExpanded = false
+
+  private static let collapsedLimit = 4
+  private let columns = [
+    GridItem(.adaptive(minimum: 240), spacing: 8, alignment: .top)
+  ]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack {
+        Text("已发现 Skills")
+          .font(.headline)
+          .foregroundStyle(.secondary)
+
+        if !model.skills.isEmpty {
+          Text("\(model.skills.count)")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+
+        Spacer()
+
+        if model.skills.count > Self.collapsedLimit {
+          Button(isExpanded ? "收起" : "查看全部") {
+            withAnimation(.easeInOut(duration: 0.2)) {
+              isExpanded.toggle()
+            }
+          }
+          .buttonStyle(.borderless)
+          .controlSize(.small)
+        }
+
+        Button {
+          model.refresh()
+        } label: {
+          Label("刷新", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .disabled(model.isRefreshing)
+      }
+
+      if model.skills.isEmpty {
+        NativeCard {
+          Label("该项目没有发现可用 Skill", systemImage: "sparkles")
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 8)
+        }
+      } else {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+          ForEach(visibleSkills) { skill in
+            skillCard(skill)
+          }
+        }
+
+        if !isExpanded, hiddenSkillCount > 0 {
+          Text("另有 \(hiddenSkillCount) 个 Skill，点击“查看全部”展开。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+  }
+
+  private var visibleSkills: ArraySlice<MCPServiceSkill> {
+    model.skills.prefix(isExpanded ? model.skills.count : Self.collapsedLimit)
+  }
+
+  private var hiddenSkillCount: Int {
+    max(0, model.skills.count - Self.collapsedLimit)
+  }
+
+  private func skillCard(_ skill: MCPServiceSkill) -> some View {
+    NativeCard {
+      HStack(alignment: .top, spacing: 10) {
+        Image(systemName: "sparkles")
+          .foregroundStyle(.tint)
+
+        VStack(alignment: .leading, spacing: 3) {
+          HStack(spacing: 6) {
+            Text(skill.name)
+              .font(.subheadline.weight(.semibold))
+              .lineLimit(1)
+            Text(skill.scope.rawValue)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+
+          if !skill.description.isEmpty {
+            Text(skill.description)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(isExpanded ? 2 : 1)
+          }
+
+          if !skill.actions.isEmpty {
+            Text("动作：\(skill.actions.count) 个")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Spacer(minLength: 0)
+      }
+    }
   }
 }
 
