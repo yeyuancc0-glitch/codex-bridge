@@ -36,12 +36,17 @@ V1 的用户结果是：ChatGPT 网页版可以读取用户明确注册的本地
 - 任务对话消息已进入 Service SQLite（`bridge_service_task_messages`，V4 schema）：每条消息按 `(task_id, message_key)` 去重，随任务级联删除；消息带 `kind`（`user`/`agent`/`reasoning`/`tool_call`）及 `tool_name`/`tool_status`/`tool_arguments` 列，用户消息、Codex agent 文本、reasoning 思考链与工具调用增量在 `TaskConversationBuffer` 中按 key 归并，最终以权威全文落库。
 - `BridgeCodexService` 已提供独立 ExecutionManager、SupervisorManager、本机 Codex 审批、ServiceExecutionCoordinator 和对话订阅推送（`item/agentMessage/delta`、`item/reasoning/textDelta`、`item/mcpToolCall/progress` 流式入 buffer，tool call 经 `item/started`/`item/completed` 更新状态，`turn/completed` 归并权威文本）。
 - `BridgeMCP` 已接入轻量 Service API，支持只读与完整动作两种 MCP 暴露模式。工具语义明确区分默认 Codex 路径（`submit_task`/`steer_task`/`interrupt_task`）与显式 Direct 路径（`direct_write_project_file`/`direct_edit_project_file`/`direct_apply_project_patch`/`direct_manage_project_path`/`direct_exec_project_command`/`direct_read_command`/`direct_write_stdin`/`direct_interrupt_command`）；Direct 工具仅当用户明确要求 ChatGPT 直接执行时使用。
-- `BridgeDirectCommand` 提供完整 Direct Process Session：每项目单活跃会话、命令策略（`denied`/`safe`/`full`，安全模式仅放行内置安全前缀、项目根内脚本（如 `Scripts/`）与用户允许命令规则，黑名单在安全与完全模式均生效，旧 `registered` 已迁移为 `safe`）、结构化 argv 精确/前缀匹配、进程组、有界超时/stdin/输出（head/tail）、孤儿 PID 文件重启清理；Direct 会话与 Codex 写任务共用同一 workspace gate 互斥。
-- `DirectGitRunner` + `serviceDirectGitCommit` 提供受控 Git 提交（`direct_git_commit`）：只允许 `git add`（指定文件或全部）与 `git commit -m`，显式文件列表与提交信息，禁止 amend/reset/改写历史与 push，复用 workspace gate 与本机审批。
-- `DirectActionApprovalCenter` 提供 Direct 本机审批：pending approvals 经 XPC 推送到 App 展示，approve/deny 由本机用户决定；approval 绑定 payload digest + `client_request_id` 一次性消费、内存态、可过期，Service 重启后失效不可重放；`direct.approval_mode` 设置为 `auto` 时 Direct 文件写入与命令执行跳过本机审批直接放行，可在 App Connections 中切换回 `require`。
-- `CodexBridgeService` 已作为 bundled LaunchAgent 后台进程运行，并通过版本化 XPC 向 App 提供本机操作接口；XPC 增加任务删除、对话分页与对话流式订阅（`CodexBridgeTaskStreamListener` 推送），App 端 `TaskConversationModel` + `TaskConversationSheet` 实时渲染打字机式对话，包含可折叠思考链区块与工具调用卡片。
+- `BridgeSkills` 提供只读 Skill 目录能力与 Action 执行：SKILL.md 用真实 YAML Frontmatter 解析（`SkillFrontmatter`，支持含段落空行的 `>`/`|` block scalar、block sequence、嵌套 map、inline 数组与引号）；Skill 以 Action 契约暴露，优先读显式 `actions:` 元数据，兼容自动发现只暴露 SKILL.md 明确引用的 `scripts/` 顶层脚本，不能仅凭扩展名或 shebang 把内部库当入口；无脚本/Action 的 `agent-reach` 通过 Bridge 内置只读 Action adapter 暴露固定 `doctor` 与各平台查询前缀，不开放安装、配置或任意 shell；Action 网络要求为 `denied`/`required`/`unspecified` 三态，只有显式 `denied` 才进入 `sandbox-exec (deny network*)`，`unspecified` 保守地按可能联网走项目权限与本机审批；`run_skill_action` 复用 Direct Command 会话，解释器解析为绝对路径，调用方不能覆盖网络声明。
+- `BridgeDirectCommand` 提供完整 Direct Process Session：每项目单活跃会话、命令策略（`denied`/`safe`/`full`，safe 内置命令使用参数级 capability validator，项目根内脚本和用户允许命令仍按显式规则授权，未声明网络能力默认进入 deny-network sandbox）、结构化 argv 精确/前缀匹配、`posix_spawn` 原子创建进程组、有界超时/stdin/head-tail 输出、带进程启动身份的孤儿清理，以及完成会话 TTL/LRU；`list_project_commands` 分别返回实际生效的 `built_in_commands` 与 `registered_commands`，并保留旧 `commands` 字段兼容；Direct 会话与 Codex 写任务共用 token 化 workspace gate 互斥。
+- `DirectGitRunner` + `serviceDirectGitCommit` 提供受控 Git 提交（`direct_git_commit`）：只允许显式文件或全部变更的本地提交，使用临时 index 隔离提交边界、提交成功后仅同步已提交路径到真实 index，并在暂存和提交前执行敏感路径与凭证检测；禁止 amend/reset/改写历史与 push，复用 workspace gate 与本机审批。
+- `DirectActionApprovalCenter` 提供 Direct 本机审批：pending approvals 经 XPC 推送到 App 展示，approve/deny 由本机用户决定；approval 绑定规范化 sorted-key JSON payload digest + `client_request_id` 一次性消费，pending 与 approved grant 均会过期，deny 在冷却期内阻止等价请求重复弹窗，Service 重启后全部失效不可重放；`direct.approval_mode` 可由用户显式切换 `auto`/`require`。
+- `CodexBridgeService` 已作为 bundled LaunchAgent 后台进程运行，并通过版本化 XPC 向 App 提供本机操作接口；V1 的 XPC 信任边界明确为同 UID、同用户 LaunchAgent 会话，而非只允许官方 App 签名；XPC 增加任务删除、对话分页与对话流式订阅（`CodexBridgeTaskStreamListener` 推送），App 端 `TaskConversationModel` + `TaskConversationSheet` 实时渲染打字机式对话，包含可折叠思考链区块与工具调用卡片。
 - App 的 2 秒后台轮询只刷新轻量 Service/任务/审批状态；Codex Thread Catalog 在连接、手动刷新、项目切换、任务生命周期变化或 60 秒低频兜底到期时读取，启动后不再自动读取首个 Thread 全文。
+- 原生 App 的 Thread 列表与读取只接受 Service SQLite 中 `source == chatgpt.mcp` 且已绑定 `codex_thread_id` 的任务；同项目中由 Codex App/CLI 手动创建的 Thread 不进入 App。当前最近 500 条任务是有意的有界 UI 策略，不承诺 App 展示全部历史；MCP 的 `list_threads`/`read_thread` 保持原有同项目查询语义。
+- App 的 Codex 活动反馈以 Service 任务状态为生命周期边界，并用未完成的 reasoning、tool call 与 agent 消息区分“思考”“执行工具”“输出”；任务进入终态前不得因暂时没有文本增量而提前停止活动提示，减少动态效果模式使用静态光球。
+- 项目页 Skill 区域默认只显示 4 个紧凑预览并提供总数、剩余数和“查看全部/收起”，不能让完整 Skill 清单挤压权限、命令与 Thread 内容；Thread 行必须保留可发现的会话删除入口，只有终态任务可删除且必须二次确认。
 - 工作台内嵌 `WKWebView` 离开工作台后保留 3 分钟复用窗口，期间返回取消休眠；持续离开后释放 WebView，但继续使用默认持久化 `WKWebsiteDataStore` 保留网站登录数据。
+- 工作台内嵌浏览器继续拒绝会交给 LaunchServices 的外部 Scheme；用户触发的 HTTP(S) 及 `blob:`/`data:` 下载必须走 `WKDownload` 并显示本机保存面板，响应侧同时识别不可展示 MIME 与 `Content-Disposition: attachment`，不能把下载和登录防外跳混为同一拦截规则。
 - App 对话流在 `TaskConversationModel` 侧按约 40 ms 合并 push 后一次发布 UI 状态，工作台历史与实时消息使用 `LazyVStack`，避免逐 token 触发完整 SwiftUI 刷新。
 - 正式 App Target 已使用 `BridgeServiceAppShell`，不再启动旧 App 内控制平面。退出 UI 只断开 XPC，不注销 Service，不停止任务。
 - Secure MCP Tunnel 已由后台 Service 持有。Tunnel ID 与 enabled 状态进入 Service SQLite；Runtime Key 与本地 MCP Header Secret只进入 Keychain。
@@ -91,23 +96,26 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - `BridgeLegacyImport`：一次性只读旧配置迁移，不承担长期双写。
 - `BridgeSecurity`、`BridgeFiles`、`BridgeProjects`：继续复用的安全边界。
 
+`BridgeServiceApplication` 的查询、任务、Direct 文件、Direct 命令和审批实现可按同一 actor 的 extension 拆分，但状态仍只由该 actor 持有；Host 关闭 Direct 会话与审批时应调用 Application 的 package 内生命周期门面，不能重新直接编排其内部组件。
+
 禁止 UI 持有 Codex、MCP、Tunnel 或 Supervisor 生命周期。禁止新架构重新依赖旧 Coordinator/Pipeline，也禁止把 MCP DTO 变成领域状态来源。
 
 ## V1 安全边界
 
 - MCP 只接受不透明项目 ID 和相对路径。
 - 项目根必须由用户选择并捕获规范路径、device、inode。
-- 文件读取必须拒绝绝对路径、符号链接逃逸、`.env*`、私钥、浏览器数据和 Codex 认证文件。
+- 文件读取必须拒绝绝对路径、符号链接逃逸、`.env*`、私钥、浏览器数据和 Codex 认证文件；V1 没有 read approval 流程，因此 App 与 XPC 都不允许把 read 配置成 `requiresLocalApproval`，只能选择 allowed 或 denied。
 - MCP、XPC、Codex、Supervisor、迁移文件、文本、数组、事件队列、进程输出、请求和响应都有硬上限。
-- ChatGPT、Supervisor 和 Bridge 都不能批准 Codex 操作；只有本机用户能允许或拒绝。
+- ChatGPT、Supervisor 和 Bridge 都不能批准 Codex 操作；只有本机用户能允许或拒绝。权限优先级固定为项目硬策略 > 单任务请求 > 全局 access mode，后两者都不能越过项目或任务明确拒绝的写入、网络与读取边界。
 - 未识别的审批类型一律拒绝。
 - 同一项目最多一个活动 workspace-write 任务；read-only 任务可并行。
 - Supervisor 失败只降低监督状态，不能终止 Execution。
-- Service 崩溃后任务诚实进入 `unknown` 或 `interrupted`，不得启动新 Turn 冒充旧 Turn 恢复。
+- `submit_task` 提交后立即启动，不存在任务级本机批准；只有执行中的危险操作进入本机审批。Service 崩溃后，已开始执行的任务诚实进入 `unknown`，尚未 begin 的短暂 `awaiting_local_approval` 兼容状态进入 `interrupted` 并释放写槽，不得启动新 Turn 冒充旧 Turn 恢复。
 - Tunnel 断线只阻止新的远程提交，不取消已经运行的本地任务。
-- Direct 命令按结构化 argv 精确/前缀匹配，不拼 shell：`denied` 禁止一切命令；`safe` 仅放行内置安全前缀、项目根内脚本（相对路径或解析后仍在项目根内的绝对路径）与用户「允许命令」规则（可执行文件+参数前缀，空前缀=任意参数，可带风险/网络/工作目录元数据），并受用户黑名单约束；`full` 放行所有命令但仍受项目网络/写入权限与审批约束，且黑名单同样生效。项目相对可执行文件启动前解析为项目根内绝对路径并校验符号链接包含；裸可执行名（如 `git`/`pwd`）在固定可信 PATH 中解析为绝对路径后再交给 Process，全程不调用 shell。
-- Direct 错误细分到可重试码：`process_launch_failed`（进程启动失败）、`command_denied`（策略拒绝）、`approval_required`、`project_busy`（workspace gate 占用）、`command_timeout`、`git_operation_failed`；`direct_edit_project_file`/`direct_apply_project_patch` 的 SHA 冲突返回 `revision_conflict` 并携带 `current_sha256`、`changed_since_revision` 与有界当前内容摘录；patch 文本校验只走密钥模式（`*** Add File:`/`*** Update File:` 中的 `file:` 标记不会被路径启发式误伤，路径仍由 ProjectPatchParser + sensitivePolicy 把关）；`working_directory` 的 `nil`/`""`/`"."` 统一为项目根，`./X` 归一为 `X`，非法值返回结构化 `path_denied` 而非泄漏异常；`read_project_file` 的 `line_count` 与 schema 统一为上限 10000 行、单响应 200 KiB，超限自动收窄并返回 `next_start_line`，不报错；文件末尾换行是终止符而非幻影空行，不触发多余分页。
-- Direct 命令在独立进程组内运行，有界超时/stdin/输出；中断、Service 关闭和 Service 崩溃孤儿清理都会终止进程组。
+- Direct 命令按结构化 argv 精确/前缀匹配，不拼 shell：`denied` 禁止一切命令；`safe` 的内置 `ls/find/grep/rg` 必须逐参数验证项目根 containment 并拒绝执行器、删除和预处理选项，项目根内脚本与用户「允许命令」规则按显式契约放行，注册命令的 working directory 是授权的一部分且调用方不能覆盖；`full` 放行所有命令但仍受项目网络/写入权限与审批约束，且黑名单同样生效。cwd 与项目内 executable 均在解析符号链接后验证 containment；裸可执行名在固定可信 PATH 中解析为绝对路径后再交给 Process。
+- Direct 错误细分到可重试码：`process_launch_failed`（进程启动失败）、`command_denied`（策略拒绝）、`approval_required`、`project_busy`（workspace gate 占用）、`command_timeout`、`git_operation_failed`；合法但不存在的路径返回 `path_not_found`，越权/逃逸才返回 `path_denied`；Direct Write/Edit 输入只用密钥模式检测凭证，源码中的绝对路径不误伤，真实凭证材料返回结构化 `unsafe_content_detected`；`direct_edit_project_file`/`direct_apply_project_patch` 的 SHA 冲突返回 `revision_conflict` 并携带 `current_sha256`、`changed_since_revision` 与有界当前内容摘录；patch 文本校验只走密钥模式（`*** Add File:`/`*** Update File:` 中的 `file:` 标记不会被路径启发式误伤，路径仍由 ProjectPatchParser + sensitivePolicy 把关）；`working_directory` 的 `nil`/`""`/`"."` 统一为项目根，`./X` 归一为 `X`，非法值返回结构化 `path_denied` 而非泄漏异常；`read_project_file` 的 `line_count` 与 schema 统一为上限 10000 行、单响应 200 KiB，超限自动收窄并返回 `next_start_line`，不报错；文件末尾换行是终止符而非幻影空行，不触发多余分页。
+- 命名空间变更已发生但目录 fsync 失败时返回 `durability_uncertain`，调用方必须先重读路径而非盲目重试。
+- Direct 命令与 Git 子进程都在创建时原子进入独立进程组，有界超时/stdin/输出；中断、Service 关闭和超时执行 TERM→宽限→KILL→wait，Service 崩溃孤儿清理只有在 PID、启动时间和进程组身份仍匹配时才终止进程组。
 - Direct 会话常驻后台 Service，退出 App 不停止运行中的本地命令；Direct 审批在内存中一次性消费、可过期、重启失效。
 - 不读取、记录、导出或回传 Key、Token、Cookie、登录 URL、验证码、Runtime Key、本地 MCP Header Secret 或认证文件。
 - 旧配置迁移只能读取私有、当前用户所有、非符号链接的源目录和文件；迁移失败不得修改旧源或留下半迁移新数据。
@@ -134,7 +142,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - 当前任务状态直接存储；`task_events` 只用于展示和诊断，不参与事件归约。
 - 任务对话以 `(task_id, message_key)` 幂等落库；同一项目写任务完成后才允许删除任务记录（`deleteTask`），活动任务删除一律拒绝；删除走 FK 级联清事件与消息。
 - 对话增量推送采用确定合并协议：按 `message_key` 归并，`fullContent` 权威替换，`delta` 仅在 `baseContentLength` 与当前内容匹配时追加；客户端订阅先应用原子快照页再消费增量流，订阅与分页在同一 actor 内完成，避免竞态。
-- `TaskConversationBuffer` 是对话流的唯一拥有者：用户消息即时 fullContent 通知，agent 文本与 reasoning 增量按 key 累积，tool call 按 `tool:<itemID>` 更新状态与追加进度，`turn/completed` 以权威全文 finalize，close/purge 只由 Coordinator 在任务终态触发；flush 只写 dirty revision，成功落库且 final 的历史消息从活动内存淘汰，单任务常驻最近 64 条窗口，完整历史继续以 SQLite 为权威来源。
+- `TaskConversationBuffer` 是对话流的唯一拥有者：用户消息即时 fullContent 通知，agent 文本与 reasoning 增量按 key 累积，tool call 按 `tool:<itemID>` 更新状态与追加进度，`turn/completed` 以权威全文 finalize，close/purge 只由 Coordinator 在任务终态触发；flush 只写 dirty revision，写入失败必须保留 dirty state 并阻止静默 close，成功落库且 final 的历史消息才从活动内存淘汰，单任务常驻最近 64 条窗口，完整历史继续以 SQLite 为权威来源。
 - XPC 流式推送按连接持有：Listener 为每个连接建独立 Controller 与 `StreamRegistry`（forwarder 任务 + subscriptionID），连接失效即取消 forwarder 并退订；客户端 `CodexBridgeTaskStreamHub` 是锁保护的注册表，不用 actor，避免区域隔离编译错误。
 - 使用数据库约束消除并发特例，避免多个模块复制锁状态。
 - 函数嵌套不超过 3 层；一个状态只有一个拥有者。
@@ -157,6 +165,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 - Tunnel 验证 helper 身份、FD 密钥传递、回环健康端口所有权、严格 readiness、重连和密钥不外泄。
 - 迁移验证旧文件不变、事务回滚、重复执行、冲突、不安全源、离线项目和无源重试。
 - Inspector 通过不能替代真实 ChatGPT Developer Mode 验收。
+- `ProductionArchitectureBoundaryTests` 必须持续验证正式 Service/App 依赖闭包不直接 import 旧 Coordinator、Pipeline、Persistence、Runtime 或旧 AppShell 控制平面；新增生产 target 时同步更新守卫列表。
 
 常用命令：
 
@@ -201,12 +210,16 @@ Scripts/test-tunnel-helper-config.sh
 ## 常见坑
 
 - `codex app-server` 是实验接口，只信当前 schema 和真实 fixture。
+- Codex 本地安装的 Skill 目录名与 `name` 可能包含空格；Bridge 发现层只要求名称有界、无首尾空白且不含控制字符，不能在读取 `SKILL.md` 前套用命令标识符正则而漏掉合法安装。
 - 一个 app-server 事件流只能有一个消费方；需要广播时由上层 actor 分发。
 - `turn/start` 响应不等于 active turn，必须等待匹配的 `turn/started`。
 - Thread 只能按精确 cwd 绑定项目，不能按标题或最近记录猜测。
 - `CODE_SIGNING_ALLOWED=NO` 构建不能用于真实 Secure Tunnel。
 - ChatGPT 不能访问 localhost，真实使用仍需要 Secure MCP Tunnel 或用户控制的远程 HTTPS MCP。
 - ChatGPT 工作区可能限制 Full MCP 动作工具；不能把动作工具伪装成只读工具绕过平台策略。
+- ChatGPT Web 可能缓存当前 MCP 会话的工具 Schema；Service 升级改变工具参数或输出契约后，旧会话可能仍使用旧 Schema，需重新发现工具或重连 MCP。进程内工具目录是静态的，不能用 `listChanged` 伪装成 Bridge 能控制客户端缓存刷新。
+- SwiftPM target 必须显式声明源码直接 `import` 的内部模块，不能依赖传递依赖恰好让当前构建通过；删除依赖前同样要核对该 target 的全部源码 import。
+- Direct 搜索命令中会读取文件的 value option（例如 `grep`/`rg` 的 `-f`/`--file`）必须同时校验分离参数与 `--option=path` 内联形式的项目根 containment，不能只验证下一个 argv。
 - Supervisor 持久 Profile 是个人受信任运行模式，不得宣传为已证明的凭证隔离。
 - `ServiceCompositionConfiguration.legacyDataRootURL == nil` 应表示禁用旧数据读取，避免测试误读真实用户目录。
 - 旧 SQLite 迁移必须通过已验证文件描述符读取，并拒绝 `journal`、`WAL`、`SHM` 旁路文件；不能先验证路径再让 GRDB 按原路径重新打开。 威胁模型接受同 UID 进程边界：fd-backed 校验减小但不能完全消除“校验后到重新打开之间”的路径替换窗口。
@@ -215,6 +228,7 @@ Scripts/test-tunnel-helper-config.sh
 - macOS `SMAppService` 依赖 Team ID 签名，在未签名或 Ad-hoc 构建下返回 `.notFound`；`SystemBridgeServiceRegistration` 已支持自动降级至用户级 `~/Library/LaunchAgents/org.codexbridge.service.plist` 与 `launchctl bootstrap` 保证本地开发可用。
 - LaunchAgent 运行环境下系统 `PATH` 仅包含基础系统目录，`AppServerProcess` 已内置对官方 `/Applications/ChatGPT.app/Contents/Resources/codex` 及常见包管理器路径的自动探测，确保服务能正确调用 `codex app-server`。
 - Secure Tunnel Helper 签名校验已支持在 Ad-hoc / 本地开发环境下自动适应无 Apple Team ID 签名，结合严格的 Universal 2 官方 SHA256 摘要进行完整性保护。
+- Tunnel helper 的签名后 SHA256 清单必须放在 `Contents/Resources/TunnelClient/`，不能与可执行文件同放 `Contents/Helpers/`；否则 macOS 外层 bundle 签名会把清单误判为未签名嵌套代码，或深度重签 helper 后造成运行时摘要不匹配。
 - OpenAI 官方 `tunnel-client` 在启动时会探测 `/.well-known/oauth-protected-resource/mcp`。本地 MCP Server 必须返回保护资源元数据（`authorization_servers: []`）以使 `tunnel-client` 就绪检查通过；在 Swift NIO 中处理该请求时必须在 `receiveEnd` 阶段统一应答，避免在 `receiveHead` 中过早应答引发 NIO `HTTPServerPipelineHandler` 重复写断言崩溃。
 - OpenAI 官方 `tunnel-client` 包含 Harpoon 自动注册组件，对于本地 loopback `http://` 目标必须传入 `--harpoon.allow-plaintext-http=true` 避免 Harpoon 报错拦截长轮询通道；启动阶段当 Prometheus `commands_poll_last_successful_timestamp_seconds` 为 0 时，应以 `/readyz` 200 OK 作为基础就绪信号。
 - 经由 OpenAI 隧道接收 ChatGPT Web 端的 MCP 探测时，`MCPSessionRegistry` 的 `OriginValidator` 必须允许 `https://chatgpt.com`、`https://chat.openai.com` 与 `https://platform.openai.com`，`AcceptHeaderValidator` 使用 `mode: .jsonOnly` 以兼顾标准客户端请求头；`MCPServiceServerFactory` 使用 `.default` 配置确保平滑握手。

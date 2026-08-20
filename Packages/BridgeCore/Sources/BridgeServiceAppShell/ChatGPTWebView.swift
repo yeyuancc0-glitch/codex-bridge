@@ -54,34 +54,37 @@ public struct ChatGPTWebView: NSViewRepresentable {
 
   public func updateNSView(_ nsView: WKWebView, context: Context) {}
 
-  public final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+  public final class Coordinator: NSObject, WKDownloadDelegate, WKNavigationDelegate, WKUIDelegate {
     let parent: ChatGPTWebView
 
     init(_ parent: ChatGPTWebView) {
       self.parent = parent
     }
 
-    // Direct all new window requests back into the same WKWebView
+    // Direct new-window navigations back into the same WKWebView. Download
+    // requests still pass through the navigation delegate, which converts them
+    // to WKDownload without handing them to an external browser.
     public func webView(
       _ webView: WKWebView,
       createWebViewWith configuration: WKWebViewConfiguration,
       for navigationAction: WKNavigationAction,
       windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-      if let url = navigationAction.request.url,
-        let scheme = url.scheme?.lowercased(),
-        scheme == "http" || scheme == "https"
-      {
-        webView.load(navigationAction.request)
+      guard Self.allows(navigationAction) else { return nil }
+      if navigationAction.shouldPerformDownload {
+        webView.startDownload(using: navigationAction.request) { [weak self] download in
+          download.delegate = self
+        }
+        return nil
       }
+      webView.load(navigationAction.request)
       return nil
     }
 
-    // Block every non-http(s) navigation so WKWebView never hands external URL
-    // schemes (e.g. chatgpt:// or x-webkit-app-launch://) to LaunchServices,
-    // which would open the user's installed ChatGPT Safari Web App instead of
-    // keeping the login flow inside this webview. http(s) navigations are always
-    // allowed: WKWebView keeps them in-process and never routes them elsewhere.
+    // Block external URL schemes (e.g. chatgpt:// or x-webkit-app-launch://) so
+    // WKWebView never hands login navigation to LaunchServices. http(s) stays
+    // in-process; blob/data URLs are accepted only when WebKit marks them as a
+    // download.
     //
     // NOTE: implemented as the async variant because this SDK's WKNavigationDelegate
     // imports the requirement via WK_SWIFT_ASYNC; the decisionHandler-style method
@@ -92,13 +95,50 @@ public struct ChatGPTWebView: NSViewRepresentable {
       decidePolicyFor navigationAction: WKNavigationAction,
       preferences: WKWebpagePreferences
     ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
-      guard let url = navigationAction.request.url,
-        let scheme = url.scheme?.lowercased(),
-        scheme == "http" || scheme == "https"
-      else {
+      guard Self.allows(navigationAction) else {
         return (.cancel, preferences)
       }
+      if navigationAction.shouldPerformDownload {
+        return (.download, preferences)
+      }
       return (.allow, preferences)
+    }
+
+    public func webView(
+      _ webView: WKWebView,
+      decidePolicyFor navigationResponse: WKNavigationResponse
+    ) async -> WKNavigationResponsePolicy {
+      Self.shouldDownload(navigationResponse) ? .download : .allow
+    }
+
+    public func webView(
+      _ webView: WKWebView,
+      navigationAction: WKNavigationAction,
+      didBecome download: WKDownload
+    ) {
+      download.delegate = self
+    }
+
+    public func webView(
+      _ webView: WKWebView,
+      navigationResponse: WKNavigationResponse,
+      didBecome download: WKDownload
+    ) {
+      download.delegate = self
+    }
+
+    public func download(
+      _ download: WKDownload,
+      decideDestinationUsing response: URLResponse,
+      suggestedFilename: String
+    ) async -> URL? {
+      let panel = NSSavePanel()
+      panel.title = "保存下载文件"
+      panel.prompt = "下载"
+      panel.nameFieldStringValue = Self.safeFilename(suggestedFilename)
+      panel.canCreateDirectories = true
+      guard await panel.begin() == .OK else { return nil }
+      return Self.prepareDestination(panel.url)
     }
 
     public func webView(
@@ -108,6 +148,43 @@ public struct ChatGPTWebView: NSViewRepresentable {
     ) {
       let nsError = error as NSError
       if nsError.code == NSURLErrorCancelled { return }
+    }
+
+    static func safeFilename(_ suggestedFilename: String) -> String {
+      let filename = (suggestedFilename as NSString).lastPathComponent
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      return filename.isEmpty || filename == "." ? "下载文件" : filename
+    }
+
+    static func shouldDownload(_ navigationResponse: WKNavigationResponse) -> Bool {
+      shouldDownload(
+        canShowMIMEType: navigationResponse.canShowMIMEType,
+        response: navigationResponse.response)
+    }
+
+    static func shouldDownload(canShowMIMEType: Bool, response: URLResponse) -> Bool {
+      if !canShowMIMEType { return true }
+      guard let response = response as? HTTPURLResponse else { return false }
+      return response.value(forHTTPHeaderField: "Content-Disposition")?
+        .lowercased()
+        .contains("attachment") == true
+    }
+
+    private static func allows(_ navigationAction: WKNavigationAction) -> Bool {
+      guard let scheme = navigationAction.request.url?.scheme?.lowercased() else { return false }
+      if scheme == "http" || scheme == "https" { return true }
+      return navigationAction.shouldPerformDownload && (scheme == "blob" || scheme == "data")
+    }
+
+    private static func prepareDestination(_ url: URL?) -> URL? {
+      guard let url else { return nil }
+      guard FileManager.default.fileExists(atPath: url.path) else { return url }
+      do {
+        try FileManager.default.removeItem(at: url)
+        return url
+      } catch {
+        return nil
+      }
     }
   }
 }
