@@ -33,6 +33,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case projectNotFound
   case threadNotFound
   case pathDenied
+  case pathNotFound
   case taskNotFound
   case idempotencyConflict
   case turnMismatch
@@ -62,6 +63,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case skillActionNotFound
   case skillActionNotRunnable
   case networkIsolationUnavailable
+  case unsafeContentDetected
 }
 
 public struct RevisionConflictDetail: Codable, Equatable, Sendable {

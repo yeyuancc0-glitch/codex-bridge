@@ -65,6 +65,7 @@ public actor DirectActionApprovalCenter {
 
   public static func payloadDigest(_ payload: some Encodable) -> String {
     let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let data = (try? encoder.encode(payload)) ?? Data()
     let digest = SHA256.hash(data: data)
     return digest.map { String(format: "%02x", $0) }.joined()

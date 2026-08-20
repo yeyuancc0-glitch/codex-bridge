@@ -160,6 +160,7 @@ public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable 
   public let name: String
   public let scriptPath: String
   public let interpreter: String?
+  public let commandPrefix: [String]?
   public let requiresNetwork: Bool
   public let networkRequirement: SkillActionNetworkRequirement
   public let description: String
@@ -168,6 +169,7 @@ public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable 
     name = action.name
     scriptPath = action.scriptPath
     interpreter = action.interpreter
+    commandPrefix = action.commandPrefix
     requiresNetwork = action.requiresNetwork
     networkRequirement = action.networkRequirement
     description = action.description
@@ -177,6 +179,7 @@ public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable 
     case name
     case scriptPath = "script_path"
     case interpreter
+    case commandPrefix = "command_prefix"
     case requiresNetwork = "requires_network"
     case networkRequirement = "network_requirement"
     case description
@@ -230,6 +233,7 @@ public struct MCPServiceSkillDocument: Codable, Equatable, Sendable {
     case name, subpath, content
     case byteCount = "byte_count"
   }
+
 }
 
 public struct MCPRunSkillActionRequest: Codable, Equatable, Sendable {
@@ -781,20 +785,29 @@ public struct MCPDirectManagePathRequest: Codable, Equatable, Sendable {
 
 public struct MCPDirectManagePathReceipt: Codable, Equatable, Sendable {
   public let relativePath: String
+  public let sourceRelativePath: String
+  public let destinationRelativePath: String?
   public let operation: String
+  public let sha256: String?
   public let oldSHA256: String?
   public let newSHA256: String?
   public let byteCount: Int
 
   public init(
     relativePath: String,
+    sourceRelativePath: String? = nil,
+    destinationRelativePath: String? = nil,
     operation: String,
+    sha256: String? = nil,
     oldSHA256: String? = nil,
     newSHA256: String? = nil,
     byteCount: Int = 0
   ) {
     self.relativePath = relativePath
+    self.sourceRelativePath = sourceRelativePath ?? relativePath
+    self.destinationRelativePath = destinationRelativePath
     self.operation = operation
+    self.sha256 = sha256
     self.oldSHA256 = oldSHA256
     self.newSHA256 = newSHA256
     self.byteCount = byteCount
@@ -802,10 +815,27 @@ public struct MCPDirectManagePathReceipt: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case relativePath = "relative_path"
+    case sourceRelativePath = "source_relative_path"
+    case destinationRelativePath = "destination_relative_path"
     case operation
+    case sha256
     case oldSHA256 = "old_sha256"
     case newSHA256 = "new_sha256"
     case byteCount = "byte_count"
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    relativePath = try container.decode(String.self, forKey: .relativePath)
+    sourceRelativePath =
+      try container.decodeIfPresent(String.self, forKey: .sourceRelativePath) ?? relativePath
+    destinationRelativePath = try container.decodeIfPresent(
+      String.self, forKey: .destinationRelativePath)
+    operation = try container.decode(String.self, forKey: .operation)
+    sha256 = try container.decodeIfPresent(String.self, forKey: .sha256)
+    oldSHA256 = try container.decodeIfPresent(String.self, forKey: .oldSHA256)
+    newSHA256 = try container.decodeIfPresent(String.self, forKey: .newSHA256)
+    byteCount = try container.decode(Int.self, forKey: .byteCount)
   }
 }
 
@@ -849,16 +879,57 @@ public struct MCPProjectCommand: Codable, Equatable, Sendable {
 
 public struct MCPProjectCommands: Codable, Equatable, Sendable {
   public let commandMode: String
+  public let builtInCommands: [MCPBuiltInCommand]
   public let commands: [MCPProjectCommand]
 
-  public init(commandMode: String, commands: [MCPProjectCommand]) {
+  public init(
+    commandMode: String,
+    builtInCommands: [MCPBuiltInCommand] = [],
+    commands: [MCPProjectCommand]
+  ) {
     self.commandMode = commandMode
+    self.builtInCommands = builtInCommands
     self.commands = commands
   }
 
   private enum CodingKeys: String, CodingKey {
     case commandMode = "command_mode"
+    case builtInCommands = "built_in_commands"
     case commands
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    commandMode = try container.decode(String.self, forKey: .commandMode)
+    builtInCommands =
+      try container.decodeIfPresent([MCPBuiltInCommand].self, forKey: .builtInCommands) ?? []
+    commands = try container.decode([MCPProjectCommand].self, forKey: .commands)
+  }
+}
+
+public struct MCPBuiltInCommand: Codable, Equatable, Sendable {
+  public let executable: String
+  public let argumentsPrefix: [String]
+  public let allowsAdditionalArguments: Bool
+  public let requiresNetwork: Bool
+
+  public init(
+    executable: String,
+    argumentsPrefix: [String],
+    allowsAdditionalArguments: Bool = true,
+    requiresNetwork: Bool = false
+  ) {
+    self.executable = executable
+    self.argumentsPrefix = argumentsPrefix
+    self.allowsAdditionalArguments = allowsAdditionalArguments
+    self.requiresNetwork = requiresNetwork
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case executable
+    case argumentsPrefix = "arguments_prefix"
+    case allowsAdditionalArguments = "allows_additional_arguments"
+    case requiresNetwork = "requires_network"
   }
 }
 

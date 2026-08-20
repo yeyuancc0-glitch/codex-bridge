@@ -258,6 +258,8 @@ extension BridgeServiceApplication {
         return .projectNotFound
       case .readNotAllowed, .forbiddenPath:
         return .pathDenied
+      case .pathMissing:
+        return .pathNotFound
       case .invalidLineRange, .invalidSearchRequest, .invalidCursor:
         return .contractRejected
       case .invalidLimits, .candidateLimitExceeded, .enumerationLimitExceeded,
@@ -345,7 +347,9 @@ extension BridgeServiceApplication {
       return .writeNotAllowed
     case .forbiddenPath:
       return .pathForbidden
-    case .invalidRequest, .pathExists, .pathMissing, .contentTooLarge:
+    case .pathMissing:
+      return .pathNotFound
+    case .invalidRequest, .pathExists, .contentTooLarge:
       return .contractRejected
     case .revisionConflict:
       return .fileRevisionConflict

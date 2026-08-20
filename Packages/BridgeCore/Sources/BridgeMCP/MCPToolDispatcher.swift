@@ -174,6 +174,12 @@ public struct MCPToolDispatcher: Sendable {
         message: "The requested data is outside the approved project boundary.",
         retryable: false
       )
+    case .pathNotFound:
+      description = .init(
+        code: "path_not_found",
+        message: "The path does not exist.",
+        retryable: false
+      )
     case .taskNotFound:
       description = .init(
         code: "task_not_found",
@@ -354,6 +360,12 @@ public struct MCPToolDispatcher: Sendable {
       description = .init(
         code: "network_isolation_unavailable",
         message: "Network isolation could not be applied for this Skill action.",
+        retryable: false
+      )
+    case .unsafeContentDetected:
+      description = .init(
+        code: "unsafe_content_detected",
+        message: "The content contains restricted credential material.",
         retryable: false
       )
     }

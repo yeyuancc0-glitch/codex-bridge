@@ -156,6 +156,7 @@ public struct BoundedDiff: Codable, Equatable, Sendable {
 
 public struct ProjectMutationResult: Codable, Equatable, Sendable {
   public let relativePath: String
+  public let destinationRelativePath: String?
   public let operation: String
   public let oldSHA256: String?
   public let newSHA256: String?
@@ -164,6 +165,7 @@ public struct ProjectMutationResult: Codable, Equatable, Sendable {
 
   public init(
     relativePath: String,
+    destinationRelativePath: String? = nil,
     operation: String,
     oldSHA256: String? = nil,
     newSHA256: String? = nil,
@@ -171,6 +173,7 @@ public struct ProjectMutationResult: Codable, Equatable, Sendable {
     boundedDiff: BoundedDiff = .empty
   ) {
     self.relativePath = relativePath
+    self.destinationRelativePath = destinationRelativePath
     self.operation = operation
     self.oldSHA256 = oldSHA256
     self.newSHA256 = newSHA256

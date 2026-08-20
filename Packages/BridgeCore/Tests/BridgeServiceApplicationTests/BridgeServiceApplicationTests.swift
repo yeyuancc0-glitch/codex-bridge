@@ -419,6 +419,14 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
     XCTAssertEqual(initial.commandMode, "safe")
     XCTAssertTrue(initial.commands.isEmpty)
+    XCTAssertTrue(
+      initial.builtInCommands.contains {
+        $0.executable == "git" && $0.argumentsPrefix == ["status"]
+      })
+    XCTAssertTrue(
+      initial.builtInCommands.contains {
+        $0.executable == "npm" && $0.argumentsPrefix == ["run", "build"]
+      })
 
     _ = try await fixture.projects.updateWorkspaceConfiguration(
       directCommandMode: .safe,
@@ -460,6 +468,136 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(workspace.fileWritePermission, "requiresLocalApproval")
     XCTAssertEqual(workspace.commandMode, "safe")
     XCTAssertEqual(workspace.commands.count, 2)
+  }
+
+  func testAdditiveDirectResponseFieldsDecodeLegacyPayloads() throws {
+    let commands = try JSONDecoder().decode(
+      MCPProjectCommands.self,
+      from: Data(#"{"command_mode":"safe","commands":[]}"#.utf8)
+    )
+    XCTAssertTrue(commands.builtInCommands.isEmpty)
+
+    let move = try JSONDecoder().decode(
+      MCPDirectManagePathReceipt.self,
+      from: Data(
+        #"{"relative_path":"old.txt","operation":"move_file","byte_count":3}"#.utf8)
+    )
+    XCTAssertEqual(move.sourceRelativePath, "old.txt")
+    XCTAssertNil(move.destinationRelativePath)
+  }
+
+  func testDirectWriteAllowsSourceCodePathsAndReturnsStructuredCredentialError() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
+
+    let source = #"execFileSync("/bin/sh", ["-c", input]);"#
+    let success = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directWriteProjectFile.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "relative_path": .string("command.js"),
+          "mode": .string("create"),
+          "content": .string(source),
+        ]
+      ))
+    XCTAssertEqual(success.isError, false)
+    XCTAssertEqual(
+      try String(contentsOf: fixture.root.appendingPathComponent("command.js"), encoding: .utf8),
+      source
+    )
+
+    let denied = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directWriteProjectFile.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "relative_path": .string("credential.js"),
+          "mode": .string("create"),
+          "content": .string(#"const api_key = "definitely-secret";"#),
+        ]
+      ))
+    XCTAssertEqual(denied.isError, true)
+    XCTAssertEqual(
+      denied.structuredContent?.objectValue?["error"]?.objectValue?["code"],
+      .string("unsafe_content_detected")
+    )
+  }
+
+  func testMissingReadablePathIsNotReportedAsPolicyDenial() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    do {
+      _ = try await application.serviceReadProjectFile(
+        projectID: fixture.project.id.rawValue,
+        relativePath: "missing.txt",
+        startLine: 1,
+        lineCount: 10,
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected pathNotFound")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .pathNotFound)
+    }
+  }
+
+  func testMoveReceiptIncludesNormalizedDestinationAndContentRevision() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let write = try await application.serviceDirectWriteFile(
+      MCPDirectWriteRequest(
+        projectID: fixture.project.id.rawValue,
+        relativePath: "source.txt",
+        mode: "create",
+        content: "move me"
+      ),
+      deadline: deadline
+    )
+    let moved = try await application.serviceDirectManagePath(
+      MCPDirectManagePathRequest(
+        projectID: fixture.project.id.rawValue,
+        action: "move_file",
+        relativePath: "source.txt",
+        destinationRelativePath: "destination.txt",
+        sourceExpectedSHA256: write.newSHA256,
+        clientRequestID: "move-receipt"
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(moved.sourceRelativePath, "source.txt")
+    XCTAssertEqual(moved.destinationRelativePath, "destination.txt")
+    XCTAssertEqual(moved.sha256, write.newSHA256)
+  }
+
+  func testAgentReachGetsControlledBuiltInActions() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let root = fixture.root.appending(path: "skills/agent-reach", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("---\nname: agent-reach\ndescription: test\n---\n".utf8)
+      .write(to: root.appendingPathComponent("SKILL.md"))
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    let list = try await application.serviceListSkills(
+      projectID: fixture.project.id.rawValue,
+      deadline: ContinuousClock.now.advanced(by: .seconds(3))
+    )
+    let agentReach = try XCTUnwrap(list.skills.first { $0.name == "agent-reach" })
+    XCTAssertTrue(
+      agentReach.actions.contains { action in
+        action.name == "doctor" && action.commandPrefix == ["agent-reach", "doctor", "--json"]
+          && action.networkRequirement == .required
+      })
+    XCTAssertTrue(agentReach.actions.contains { $0.name == "reddit_search" })
+    XCTAssertFalse(agentReach.actions.contains { $0.name == "install" })
   }
 
   func testStrictSDKClientCallsLightweightServiceOverLoopbackHTTP() async throws {

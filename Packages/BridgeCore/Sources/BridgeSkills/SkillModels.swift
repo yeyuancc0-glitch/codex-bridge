@@ -23,6 +23,9 @@ public struct SkillAction: Codable, Equatable, Identifiable, Sendable {
   /// Interpreter used to launch the script (e.g. `node`, `python3`), or `nil`
   /// when the script carries a valid shebang and can be launched directly.
   public let interpreter: String?
+  /// Fixed executable and argument prefix for a Bridge-provided action adapter.
+  /// Script actions leave this nil.
+  public let commandPrefix: [String]?
   public let networkRequirement: SkillActionNetworkRequirement
   /// Backward-compatible capability projection. Unspecified actions are treated
   /// as network-capable so project policy and local approval remain enforced.
@@ -39,6 +42,7 @@ public struct SkillAction: Codable, Equatable, Identifiable, Sendable {
     self.name = name
     self.scriptPath = scriptPath
     self.interpreter = interpreter
+    commandPrefix = nil
     networkRequirement = requiresNetwork ? .required : .denied
     self.description = description
   }
@@ -53,6 +57,21 @@ public struct SkillAction: Codable, Equatable, Identifiable, Sendable {
     self.name = name
     self.scriptPath = scriptPath
     self.interpreter = interpreter
+    commandPrefix = nil
+    self.networkRequirement = networkRequirement
+    self.description = description
+  }
+
+  public init(
+    name: String,
+    commandPrefix: [String],
+    networkRequirement: SkillActionNetworkRequirement,
+    description: String = ""
+  ) {
+    self.name = name
+    scriptPath = ""
+    interpreter = nil
+    self.commandPrefix = commandPrefix
     self.networkRequirement = networkRequirement
     self.description = description
   }

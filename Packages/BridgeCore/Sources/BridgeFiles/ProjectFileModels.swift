@@ -246,6 +246,7 @@ public enum ProjectFileError: Error, LocalizedError, Equatable, Sendable {
   case invalidSearchRequest
   case invalidCursor
   case forbiddenPath
+  case pathMissing
   case candidateLimitExceeded
   case enumerationLimitExceeded
   case directoryDepthExceeded
@@ -270,6 +271,8 @@ public enum ProjectFileError: Error, LocalizedError, Equatable, Sendable {
       "The search cursor does not belong to this query."
     case .forbiddenPath:
       "The path is blocked by the project policy."
+    case .pathMissing:
+      "The target does not exist."
     case .candidateLimitExceeded:
       "The project contains too many candidate files for one search."
     case .enumerationLimitExceeded:

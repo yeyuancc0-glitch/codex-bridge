@@ -490,12 +490,15 @@ public struct MCPServiceToolCatalog: Sendable {
   private static let directManagePathOutputSchema = outputSchema(
     properties: [
       "relative_path": stringSchema,
+      "source_relative_path": stringSchema,
+      "destination_relative_path": stringSchema,
       "operation": stringSchema,
+      "sha256": stringSchema,
       "old_sha256": stringSchema,
       "new_sha256": stringSchema,
       "byte_count": integerSchema(minimum: 0),
     ],
-    required: ["relative_path", "operation", "byte_count"]
+    required: ["relative_path", "source_relative_path", "operation", "byte_count"]
   )
 
   private static let getProjectChanges = Tool(
@@ -523,16 +526,18 @@ public struct MCPServiceToolCatalog: Sendable {
     name: MCPServiceToolName.listProjectCommands.rawValue,
     title: "List project commands",
     description:
-      "Read the registered Direct commands and the command mode for an approved project. "
+      "Read the built-in safe rules, registered Direct commands, and command mode for an approved project. "
       + "These commands only run when the user explicitly asks ChatGPT to execute them locally.",
     inputSchema: projectIDInput,
     annotations: readAnnotations,
     outputSchema: outputSchema(
       properties: [
-        "command_mode": ["type": "string", "enum": ["denied", "registered", "safe"]],
+        "command_mode": ["type": "string", "enum": ["denied", "safe", "full"]],
+        "built_in_commands": arraySchema(builtInCommandSchema),
+        "registered_commands": arraySchema(projectCommandSchema),
         "commands": arraySchema(projectCommandSchema),
       ],
-      required: ["command_mode", "commands"]
+      required: ["command_mode", "built_in_commands", "registered_commands", "commands"]
     )
   )
 
@@ -831,7 +836,7 @@ public struct MCPServiceToolCatalog: Sendable {
       "direct_workspace": objectSchema(
         properties: [
           "file_write_permission": stringSchema,
-          "command_mode": ["type": "string", "enum": ["denied", "registered", "safe"]],
+          "command_mode": ["type": "string", "enum": ["denied", "safe", "full"]],
           "commands": arraySchema(projectCommandSchema),
         ],
         required: ["file_write_permission", "command_mode", "commands"]
@@ -861,6 +866,18 @@ public struct MCPServiceToolCatalog: Sendable {
       "risk": ["type": "string", "enum": ["normal", "elevated"]],
     ],
     required: ["command_id", "name", "executable", "arguments", "risk"]
+  )
+
+  private static let builtInCommandSchema = objectSchema(
+    properties: [
+      "executable": stringSchema,
+      "arguments_prefix": arraySchema(stringSchema),
+      "allows_additional_arguments": boolSchema,
+      "requires_network": boolSchema,
+    ],
+    required: [
+      "executable", "arguments_prefix", "allows_additional_arguments", "requires_network",
+    ]
   )
 
   private static let threadSchema = objectSchema(
@@ -914,6 +931,7 @@ public struct MCPServiceToolCatalog: Sendable {
       "name": stringSchema,
       "script_path": stringSchema,
       "interpreter": nullableStringSchema(maximum: 4_096),
+      "command_prefix": arraySchema(stringSchema),
       "requires_network": boolSchema,
       "network_requirement": [
         "type": "string", "enum": ["denied", "required", "unspecified"],

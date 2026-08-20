@@ -115,7 +115,7 @@ extension BridgeServiceApplication {
     } catch {
       throw Self.publicSkillError(error)
     }
-    let argv = [launch.interpreter, launch.resolvedScriptPath] + request.arguments
+    let argv = launch.argvPrefix + request.arguments
     let requiresNetwork = launch.action.networkRequirement != .denied
     // Only an explicit denial enters the network sandbox. Unspecified actions
     // are conservatively treated as network-capable by project policy and local
@@ -264,9 +264,12 @@ extension BridgeServiceApplication {
   }
 
   /// Fixed trusted PATH used to resolve bare binary names without invoking a shell.
-  static let trustedPathDirectories = [
-    "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-  ]
+  static var trustedPathDirectories: [String] {
+    [
+      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
+      "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    ]
+  }
 
   static func executableInTrustedPath(_ name: String) -> String? {
     guard !name.isEmpty, !name.contains("/"), name.utf8.count <= 4_096 else { return nil }

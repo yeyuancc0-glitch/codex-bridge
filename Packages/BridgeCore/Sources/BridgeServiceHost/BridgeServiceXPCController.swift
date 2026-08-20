@@ -882,6 +882,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(code: "task_not_found", message: "The task is unavailable.")
       case .pathDenied:
         return .init(code: "path_denied", message: "The path is not allowed.")
+      case .pathNotFound:
+        return .init(code: "path_not_found", message: "The path does not exist.")
       case .turnMismatch:
         return .init(code: "turn_mismatch", message: "The active Turn changed.")
       case .busy:
@@ -986,6 +988,11 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(
           code: "network_isolation_unavailable",
           message: "Network isolation could not be applied for this Skill action."
+        )
+      case .unsafeContentDetected:
+        return .init(
+          code: "unsafe_content_detected",
+          message: "The content contains restricted credential material."
         )
       }
     }

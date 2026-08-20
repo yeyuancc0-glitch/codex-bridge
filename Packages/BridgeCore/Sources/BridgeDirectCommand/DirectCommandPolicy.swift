@@ -73,14 +73,21 @@ public struct DirectCommandResolution: Equatable, Sendable {
 private struct SafeRule: Equatable {
   let executable: String
   let argumentsPrefix: [String]
+  let requiresNetwork: Bool
 }
 
 public struct DirectCommandPolicy: Sendable {
   private let builtInSafeRules: [SafeRule]
+  public let safeCommandRules: [DirectSafeCommandRule]
 
   public init(builtInSafeRules: [DirectSafeCommandRule] = DirectCommandPolicy.defaultSafeRules) {
+    safeCommandRules = builtInSafeRules
     self.builtInSafeRules = builtInSafeRules.map {
-      SafeRule(executable: $0.executable, argumentsPrefix: $0.argumentsPrefix)
+      SafeRule(
+        executable: $0.executable,
+        argumentsPrefix: $0.argumentsPrefix,
+        requiresNetwork: $0.requiresNetwork
+      )
     }
   }
 
@@ -89,10 +96,16 @@ public struct DirectCommandPolicy: Sendable {
   public struct DirectSafeCommandRule: Sendable, Equatable {
     public let executable: String
     public let argumentsPrefix: [String]
+    public let requiresNetwork: Bool
 
-    public init(executable: String, argumentsPrefix: [String] = []) {
+    public init(
+      executable: String,
+      argumentsPrefix: [String] = [],
+      requiresNetwork: Bool = false
+    ) {
       self.executable = executable
       self.argumentsPrefix = argumentsPrefix
+      self.requiresNetwork = requiresNetwork
     }
   }
 
@@ -118,6 +131,18 @@ public struct DirectCommandPolicy: Sendable {
     DirectSafeCommandRule(executable: "/usr/bin/git", argumentsPrefix: ["rev-parse"]),
     DirectSafeCommandRule(executable: "git", argumentsPrefix: ["ls-files"]),
     DirectSafeCommandRule(executable: "/usr/bin/git", argumentsPrefix: ["ls-files"]),
+    DirectSafeCommandRule(executable: "git", argumentsPrefix: ["--version"]),
+    DirectSafeCommandRule(executable: "/usr/bin/git", argumentsPrefix: ["--version"]),
+    DirectSafeCommandRule(executable: "node", argumentsPrefix: ["--version"]),
+    DirectSafeCommandRule(executable: "npm", argumentsPrefix: ["--version"]),
+    DirectSafeCommandRule(executable: "npm", argumentsPrefix: ["test"]),
+    DirectSafeCommandRule(executable: "npm", argumentsPrefix: ["run", "build"]),
+    DirectSafeCommandRule(executable: "npm", argumentsPrefix: ["run", "lint"]),
+    DirectSafeCommandRule(executable: "npm", argumentsPrefix: ["run", "typecheck"]),
+    DirectSafeCommandRule(executable: "npm", argumentsPrefix: ["run", "test"]),
+    DirectSafeCommandRule(executable: "grep"),
+    DirectSafeCommandRule(executable: "/usr/bin/grep"),
+    DirectSafeCommandRule(executable: "rg"),
     DirectSafeCommandRule(executable: "swift", argumentsPrefix: ["test"]),
     DirectSafeCommandRule(executable: "/usr/bin/swift", argumentsPrefix: ["test"]),
     DirectSafeCommandRule(executable: "swift", argumentsPrefix: ["build"]),
@@ -236,13 +261,14 @@ public struct DirectCommandPolicy: Sendable {
       return .denied(.blacklisted)
     }
 
+    let matchedBuiltInRule = builtInSafeRules.first { matchesSafeRule($0, argv: request.argv) }
     switch project.directCommandMode {
     case .denied:
       return .denied(.commandModeDenied)
     case .safe:
       let allowed =
         matched != nil
-        || builtInSafeRules.contains { matchesSafeRule($0, argv: request.argv) }
+        || matchedBuiltInRule != nil
         || isProjectLocalExecutable(
           executable, projectRoot: project.root.canonicalPath)
         || request.isValidatedSkillScript
@@ -251,7 +277,9 @@ public struct DirectCommandPolicy: Sendable {
       break
     }
 
-    let needsNetwork = matched?.requiresNetwork == true || request.requiresNetwork
+    let needsNetwork =
+      matched?.requiresNetwork == true || matchedBuiltInRule?.requiresNetwork == true
+      || request.requiresNetwork
     if needsNetwork {
       guard project.accessPolicy.network != .denied else { return .denied(.networkNotAllowed) }
     }

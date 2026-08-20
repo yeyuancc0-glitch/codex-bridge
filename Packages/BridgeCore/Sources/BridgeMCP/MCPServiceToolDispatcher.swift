@@ -550,8 +550,8 @@ public struct MCPServiceToolDispatcher: Sendable {
       throw MCPError.invalidParams("Argument 'mode' is invalid.")
     }
     let content = try values.requiredText("content", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafe(content) else {
-      throw MCPError.invalidParams("Write content contains restricted local data.")
+    guard OutboundContentSecurity.isSafeSecrets(content) else {
+      throw BridgeMCPQueryError.unsafeContentDetected
     }
     let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
     guard OutboundContentSecurity.isSafeRelativePath(path) else {
@@ -582,8 +582,10 @@ public struct MCPServiceToolDispatcher: Sendable {
     )
     let oldText = try values.requiredText("old_text", maximumUTF8Bytes: 256 * 1_024)
     let newText = try values.requiredText("new_text", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafe(oldText), OutboundContentSecurity.isSafe(newText) else {
-      throw MCPError.invalidParams("Edit text contains restricted local data.")
+    guard OutboundContentSecurity.isSafeSecrets(oldText),
+      OutboundContentSecurity.isSafeSecrets(newText)
+    else {
+      throw BridgeMCPQueryError.unsafeContentDetected
     }
     let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
     guard OutboundContentSecurity.isSafeRelativePath(path) else {
@@ -826,6 +828,8 @@ public struct MCPServiceToolDispatcher: Sendable {
       )
     case .pathDenied:
       dto = .init(code: "path_denied", message: "The path is not allowed.", retryable: false)
+    case .pathNotFound:
+      dto = .init(code: "path_not_found", message: "The path does not exist.", retryable: false)
     case .taskNotFound:
       dto = .init(code: "task_not_found", message: "The task is unavailable.", retryable: false)
     case .idempotencyConflict:
@@ -978,6 +982,12 @@ public struct MCPServiceToolDispatcher: Sendable {
       dto = .init(
         code: "network_isolation_unavailable",
         message: "Network isolation could not be applied for this Skill action.",
+        retryable: false
+      )
+    case .unsafeContentDetected:
+      dto = .init(
+        code: "unsafe_content_detected",
+        message: "The content contains restricted credential material.",
         retryable: false
       )
     }
@@ -1202,16 +1212,22 @@ private struct ServiceProjectChangesOutput: Codable, Sendable {
 private struct ServiceProjectCommandsOutput: Codable, Sendable {
   let schemaVersion = 1
   let commandMode: String
+  let builtInCommands: [MCPBuiltInCommand]
+  let registeredCommands: [MCPProjectCommand]
   let commands: [MCPProjectCommand]
 
   init(commands: MCPProjectCommands) {
     commandMode = commands.commandMode
+    builtInCommands = commands.builtInCommands
+    registeredCommands = commands.commands
     self.commands = commands.commands
   }
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case commandMode = "command_mode"
+    case builtInCommands = "built_in_commands"
+    case registeredCommands = "registered_commands"
     case commands
   }
 }
@@ -1265,14 +1281,20 @@ private struct ServiceDirectPatchOutput: Codable, Sendable {
 private struct ServiceDirectManagePathOutput: Codable, Sendable {
   let schemaVersion = 1
   let relativePath: String
+  let sourceRelativePath: String
+  let destinationRelativePath: String?
   let operation: String
+  let sha256: String?
   let oldSHA256: String?
   let newSHA256: String?
   let byteCount: Int
 
   init(receipt: MCPDirectManagePathReceipt) {
     relativePath = receipt.relativePath
+    sourceRelativePath = receipt.sourceRelativePath
+    destinationRelativePath = receipt.destinationRelativePath
     operation = receipt.operation
+    sha256 = receipt.sha256
     oldSHA256 = receipt.oldSHA256
     newSHA256 = receipt.newSHA256
     byteCount = receipt.byteCount
@@ -1281,7 +1303,10 @@ private struct ServiceDirectManagePathOutput: Codable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
     case relativePath = "relative_path"
+    case sourceRelativePath = "source_relative_path"
+    case destinationRelativePath = "destination_relative_path"
     case operation
+    case sha256
     case oldSHA256 = "old_sha256"
     case newSHA256 = "new_sha256"
     case byteCount = "byte_count"

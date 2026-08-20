@@ -88,13 +88,22 @@ public actor SkillScanner {
     guard let action = manifest.actions.first(where: { $0.name == actionName }) else {
       throw SkillError.actionNotFound
     }
+    if let commandPrefix = action.commandPrefix {
+      guard let executable = commandPrefix.first,
+        let resolvedExecutable = Self.resolveInterpreter(executable)
+      else { throw SkillError.actionNotRunnable }
+      return SkillActionLaunch(
+        action: action,
+        argvPrefix: [resolvedExecutable] + commandPrefix.dropFirst()
+      )
+    }
     let scriptPath = try validatedScriptPath(action.scriptPath, in: manifest)
     if let interpreter = action.interpreter {
       guard let resolvedInterpreter = Self.resolveInterpreter(interpreter) else {
         throw SkillError.actionNotRunnable
       }
       return SkillActionLaunch(
-        action: action, interpreter: resolvedInterpreter, resolvedScriptPath: scriptPath
+        action: action, argvPrefix: [resolvedInterpreter, scriptPath]
       )
     }
     guard
@@ -105,7 +114,7 @@ public actor SkillScanner {
       throw SkillError.actionNotRunnable
     }
     return SkillActionLaunch(
-      action: action, interpreter: shebang, resolvedScriptPath: scriptPath
+      action: action, argvPrefix: [shebang, scriptPath]
     )
   }
 
@@ -121,10 +130,11 @@ public actor SkillScanner {
 
   public struct SkillActionLaunch: Sendable {
     public let action: SkillAction
-    /// Absolute path of the interpreter used to launch the script.
-    public let interpreter: String
-    /// Absolute, symlink-resolved path of the script.
-    public let resolvedScriptPath: String
+    /// Fixed, fully resolved executable and argument prefix. Caller arguments
+    /// are appended without shell interpretation.
+    public let argvPrefix: [String]
+    public var interpreter: String { argvPrefix.first ?? "" }
+    public var resolvedScriptPath: String { argvPrefix.count > 1 ? argvPrefix[1] : "" }
   }
 
   private func validatedScriptPath(_ scriptPath: String, in manifest: SkillManifest) throws
@@ -177,7 +187,10 @@ public actor SkillScanner {
       let declaredName =
         metadata.scalar("name").flatMap { Self.isValidSkillName($0) ? $0 : nil } ?? name
       let description = Self.description(from: metadata)
-      let actions = try actions(for: entry, metadata: metadata, documentText: text)
+      var actions = try actions(for: entry, metadata: metadata, documentText: text)
+      if actions.isEmpty {
+        actions = Self.builtInActions(for: declaredName)
+      }
       let references = fileManager.fileExists(
         atPath: entry.appendingPathComponent("references").path)
       manifests.append(
@@ -420,6 +433,7 @@ public actor SkillScanner {
   private static func resolveExecutable(_ name: String) -> String? {
     guard !name.isEmpty, !name.contains("/"), name.utf8.count <= 4_096 else { return nil }
     let directories = [
+      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
       "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
     ]
     for directory in directories {
@@ -429,6 +443,36 @@ public actor SkillScanner {
       }
     }
     return nil
+  }
+
+  private static func builtInActions(for skillName: String) -> [SkillAction] {
+    guard skillName == "agent-reach" else { return [] }
+    let definitions: [(String, [String], String)] = [
+      ("doctor", ["agent-reach", "doctor", "--json"], "Inspect active Agent Reach backends."),
+      ("check_update", ["agent-reach", "check-update"], "Check for an Agent Reach update."),
+      ("reddit_search", ["opencli", "reddit", "search"], "Search Reddit."),
+      ("reddit_read", ["opencli", "reddit", "read"], "Read a Reddit post."),
+      ("reddit_subreddit", ["opencli", "reddit", "subreddit"], "Read a subreddit."),
+      ("twitter_search", ["opencli", "twitter", "search"], "Search Twitter/X."),
+      ("xiaohongshu_search", ["opencli", "xiaohongshu", "search"], "Search Xiaohongshu."),
+      ("xiaohongshu_note", ["opencli", "xiaohongshu", "note"], "Read a Xiaohongshu note."),
+      ("bilibili_search", ["opencli", "bilibili", "search"], "Search Bilibili."),
+      ("bilibili_video", ["opencli", "bilibili", "video"], "Read Bilibili video metadata."),
+      ("bilibili_subtitle", ["opencli", "bilibili", "subtitle"], "Read Bilibili subtitles."),
+      ("facebook_search", ["opencli", "facebook", "search"], "Search Facebook."),
+      ("facebook_profile", ["opencli", "facebook", "profile"], "Read a Facebook profile."),
+      ("instagram_search", ["opencli", "instagram", "search"], "Search Instagram."),
+      ("instagram_profile", ["opencli", "instagram", "profile"], "Read an Instagram profile."),
+      ("instagram_user", ["opencli", "instagram", "user"], "Read Instagram user posts."),
+    ]
+    return definitions.map { name, prefix, description in
+      SkillAction(
+        name: name,
+        commandPrefix: prefix,
+        networkRequirement: .required,
+        description: description
+      )
+    }
   }
 
   private static func legacyNetworkRequirement(

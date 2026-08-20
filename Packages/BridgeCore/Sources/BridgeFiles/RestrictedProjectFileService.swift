@@ -26,7 +26,14 @@ public struct RestrictedProjectFileService: Sendable {
       maximumBytes: limits.maximumFileBytes,
       maximumLines: .max
     )
-    let file = try reader.read(path, through: ProjectPathResolver(root: project.primaryRoot))
+    let file: SecureTextFile
+    do {
+      file = try reader.read(path, through: ProjectPathResolver(root: project.primaryRoot))
+    } catch PathSecurityError.pathDoesNotExist {
+      throw ProjectFileError.pathMissing
+    } catch PathSecurityError.readFailed(let code) where code == ENOENT || code == ENOTDIR {
+      throw ProjectFileError.pathMissing
+    }
     guard !containsUnsupportedControl(file.text) else {
       throw PathSecurityError.binaryFileBlocked
     }

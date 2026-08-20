@@ -265,6 +265,7 @@ public struct RestrictedProjectMutationService: Sendable {
     }
     return ProjectMutationResult(
       relativePath: path.value,
+      destinationRelativePath: destination?.value,
       operation: request.action.rawValue,
       oldSHA256: result.revision?.sha256,
       newSHA256: nil,

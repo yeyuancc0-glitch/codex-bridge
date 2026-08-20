@@ -143,8 +143,20 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     let project = try await readableProject(projectID)
     return MCPProjectCommands(
       commandMode: project.directCommandMode.rawValue,
+      builtInCommands: builtInCommands(),
       commands: project.workspaceCommands.map(Self.projectCommand)
     )
+  }
+
+  private func builtInCommands() -> [MCPBuiltInCommand] {
+    commandPolicy.safeCommandRules.compactMap { rule in
+      guard !rule.executable.hasPrefix("/") else { return nil }
+      return MCPBuiltInCommand(
+        executable: rule.executable,
+        argumentsPrefix: rule.argumentsPrefix,
+        requiresNetwork: rule.requiresNetwork
+      )
+    }
   }
 
   public func serviceSearchProjectFiles(
@@ -763,7 +775,10 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       await lease.release()
       return MCPDirectManagePathReceipt(
         relativePath: result.relativePath,
+        sourceRelativePath: result.relativePath,
+        destinationRelativePath: result.destinationRelativePath,
         operation: result.operation,
+        sha256: result.oldSHA256,
         oldSHA256: result.oldSHA256,
         newSHA256: result.newSHA256,
         byteCount: result.byteCount
