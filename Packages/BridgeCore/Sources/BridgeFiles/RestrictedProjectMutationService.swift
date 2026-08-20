@@ -127,10 +127,17 @@ public struct RestrictedProjectMutationService: Sendable {
     let project = try await requireProject(request.projectID)
     guard !request.operations.isEmpty else { throw ProjectMutationError.invalidRequest }
     let resolver = ProjectPathResolver(root: project.primaryRoot)
+    let staged = try stagePatch(request.operations, resolver: resolver)
+    return try commitPatch(staged: staged, resolver: resolver)
+  }
 
+  private func stagePatch(
+    _ operations: [ProjectPatchFileOperation],
+    resolver: ProjectPathResolver
+  ) throws -> [StagedFile] {
     var staged: [StagedFile] = []
     var paths = Set<String>()
-    for operation in request.operations {
+    for operation in operations {
       let path = try securePath(operation.relativePath)
       guard paths.insert(path.value).inserted else {
         throw ProjectMutationError.invalidPatch
@@ -138,97 +145,103 @@ public struct RestrictedProjectMutationService: Sendable {
       guard resolver.sensitivePolicy.allows(path) else {
         throw ProjectMutationError.forbiddenPath
       }
-      switch operation.action {
-      case "add":
-        let additions = operation.hunks.flatMap(\.additions)
-        let content = additions.joined(separator: "\n") + (additions.isEmpty ? "" : "\n")
-        let data = try textContent(content)
-        let existing = try mutationErrors({
-          try writer.readContent(relativePath: path, through: resolver)
-        })
-        if existing != nil { throw ProjectMutationError.pathExists }
-        staged.append(
-          StagedFile(
-            path: path,
-            mode: .create,
-            newContent: data,
-            oldRevision: nil,
-            oldContent: nil,
-            expectedSHA256: nil
-          )
-        )
-      case "update":
-        guard
-          let raw = try mutationErrors({
-            try writer.readContent(relativePath: path, through: resolver)
-          })
-        else {
-          throw ProjectMutationError.pathMissing
-        }
-        guard let current = String(data: raw, encoding: .utf8) else {
-          throw ProjectMutationError.binaryContent
-        }
-        let oldRevision = SecureFileRevision.digest(of: raw)
-        if let expectedSHA256 = operation.expectedSHA256,
-          expectedSHA256 != oldRevision.sha256
-        {
-          throw ProjectMutationError.revisionConflictWithContext(
-            relativePath: path.value,
-            currentSHA256: oldRevision.sha256,
-            boundedDiff: BoundedDiffMaker.make(old: "", new: current)
-          )
-        }
-        var updated = current
-        for hunk in operation.hunks {
-          updated = try apply(hunk: hunk, to: updated)
-        }
-        let newData = try textContent(updated)
-        staged.append(
-          StagedFile(
-            path: path,
-            mode: .replace,
-            newContent: newData,
-            oldRevision: oldRevision,
-            oldContent: raw,
-            expectedSHA256: oldRevision.sha256
-          )
-        )
-      default:
-        throw ProjectMutationError.invalidPatch
-      }
+      staged.append(try stage(operation, at: path, resolver: resolver))
     }
+    return staged
+  }
 
+  private func stage(
+    _ operation: ProjectPatchFileOperation,
+    at path: SecureRelativePath,
+    resolver: ProjectPathResolver
+  ) throws -> StagedFile {
+    switch operation.action {
+    case "add":
+      return try stageAdd(operation, at: path, resolver: resolver)
+    case "update":
+      return try stageUpdate(operation, at: path, resolver: resolver)
+    default:
+      throw ProjectMutationError.invalidPatch
+    }
+  }
+
+  private func stageAdd(
+    _ operation: ProjectPatchFileOperation,
+    at path: SecureRelativePath,
+    resolver: ProjectPathResolver
+  ) throws -> StagedFile {
+    let additions = operation.hunks.flatMap(\.additions)
+    let content = additions.joined(separator: "\n") + (additions.isEmpty ? "" : "\n")
+    let data = try textContent(content)
+    let existing = try mutationErrors {
+      try writer.readContent(relativePath: path, through: resolver)
+    }
+    if existing != nil { throw ProjectMutationError.pathExists }
+    return StagedFile(
+      path: path,
+      mode: .create,
+      newContent: data,
+      oldRevision: nil,
+      oldContent: nil,
+      expectedSHA256: nil
+    )
+  }
+
+  private func stageUpdate(
+    _ operation: ProjectPatchFileOperation,
+    at path: SecureRelativePath,
+    resolver: ProjectPathResolver
+  ) throws -> StagedFile {
+    guard
+      let raw = try mutationErrors({
+        try writer.readContent(relativePath: path, through: resolver)
+      })
+    else {
+      throw ProjectMutationError.pathMissing
+    }
+    guard let current = String(data: raw, encoding: .utf8) else {
+      throw ProjectMutationError.binaryContent
+    }
+    let oldRevision = SecureFileRevision.digest(of: raw)
+    if let expectedSHA256 = operation.expectedSHA256,
+      expectedSHA256 != oldRevision.sha256
+    {
+      throw ProjectMutationError.revisionConflictWithContext(
+        relativePath: path.value,
+        currentSHA256: oldRevision.sha256,
+        boundedDiff: BoundedDiffMaker.make(old: "", new: current)
+      )
+    }
+    let updated = try apply(hunks: operation.hunks, to: current)
+    let newData = try textContent(updated)
+    return StagedFile(
+      path: path,
+      mode: .replace,
+      newContent: newData,
+      oldRevision: oldRevision,
+      oldContent: raw,
+      expectedSHA256: oldRevision.sha256
+    )
+  }
+
+  private func apply(hunks: [ProjectPatchHunk], to content: String) throws -> String {
+    var updated = content
+    for hunk in hunks {
+      updated = try apply(hunk: hunk, to: updated)
+    }
+    return updated
+  }
+
+  private func commitPatch(
+    staged: [StagedFile],
+    resolver: ProjectPathResolver
+  ) throws -> [ProjectMutationResult] {
     var committed: [ProjectMutationResult] = []
     var committedFiles: [StagedFile] = []
     do {
       for file in staged {
-        let result: SecureWriteResult
-        do {
-          result = try writer.write(
-            relativePath: file.path,
-            through: resolver,
-            mode: file.mode,
-            content: file.newContent,
-            expectedSHA256: file.expectedSHA256,
-            createParents: true
-          )
-        } catch let PathSecurityError.mutationAppliedDurabilityUncertain(code) {
-          committedFiles.append(file)
-          throw PathSecurityError.mutationAppliedDurabilityUncertain(code)
-        }
-        committedFiles.append(file)
         committed.append(
-          ProjectMutationResult(
-            relativePath: file.path.value,
-            operation: file.mode == .create ? "create" : "update",
-            oldSHA256: file.oldRevision?.sha256,
-            newSHA256: result.newRevision.sha256,
-            byteCount: result.newRevision.byteCount,
-            boundedDiff: BoundedDiffMaker.make(
-              old: file.oldContent.flatMap { String(data: $0, encoding: .utf8) } ?? "",
-              new: String(data: file.newContent, encoding: .utf8) ?? ""
-            )
-          )
+          try commitStagedFile(file, resolver: resolver, committedFiles: &committedFiles)
         )
       }
       return committed
@@ -240,6 +253,39 @@ public struct RestrictedProjectMutationService: Sendable {
         rollbackStatus: rolledBack == true ? "rolled_back" : "rollback_failed"
       )
     }
+  }
+
+  private func commitStagedFile(
+    _ file: StagedFile,
+    resolver: ProjectPathResolver,
+    committedFiles: inout [StagedFile]
+  ) throws -> ProjectMutationResult {
+    let result: SecureWriteResult
+    do {
+      result = try writer.write(
+        relativePath: file.path,
+        through: resolver,
+        mode: file.mode,
+        content: file.newContent,
+        expectedSHA256: file.expectedSHA256,
+        createParents: true
+      )
+    } catch let PathSecurityError.mutationAppliedDurabilityUncertain(code) {
+      committedFiles.append(file)
+      throw PathSecurityError.mutationAppliedDurabilityUncertain(code)
+    }
+    committedFiles.append(file)
+    return ProjectMutationResult(
+      relativePath: file.path.value,
+      operation: file.mode == .create ? "create" : "update",
+      oldSHA256: file.oldRevision?.sha256,
+      newSHA256: result.newRevision.sha256,
+      byteCount: result.newRevision.byteCount,
+      boundedDiff: BoundedDiffMaker.make(
+        old: file.oldContent.flatMap { String(data: $0, encoding: .utf8) } ?? "",
+        new: String(data: file.newContent, encoding: .utf8) ?? ""
+      )
+    )
   }
 
   public func managePath(_ request: ProjectManagePathRequest) async throws

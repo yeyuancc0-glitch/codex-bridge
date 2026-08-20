@@ -2,6 +2,7 @@ import BridgeCodexRPC
 import BridgeProjects
 import BridgeServiceCore
 import XCTest
+
 @testable import BridgeCodexService
 
 final class ExecutionApprovalBuilderTests: XCTestCase {

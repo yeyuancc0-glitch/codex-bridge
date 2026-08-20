@@ -95,7 +95,7 @@ public actor TaskConversationBuffer {
   public static let maximumRetainedMessagesPerTask = 64
   public static let maximumSubscribersPerTask = 8
 
-  private final class TaskState {
+  final class TaskState {
     var entries: [Entry] = []
     var index: [String: Int] = [:]
     var dirtyRevisions: [String: Int] = [:]
@@ -109,11 +109,11 @@ public actor TaskConversationBuffer {
     var nextSubscriberID = 0
   }
 
-  private let tasks: ServiceTaskManager
+  let tasks: ServiceTaskManager
   private let flushDeltaCount: Int
   private let flushInFlightCount: Int
   private let flushIntervalNanoseconds: UInt64
-  private var states: [TaskID: TaskState] = [:]
+  var states: [TaskID: TaskState] = [:]
 
   public init(
     tasks: ServiceTaskManager,
@@ -125,222 +125,6 @@ public actor TaskConversationBuffer {
     self.flushDeltaCount = max(1, flushDeltaCount)
     self.flushInFlightCount = max(1, flushInFlightCount)
     self.flushIntervalNanoseconds = max(1, flushIntervalNanoseconds)
-  }
-
-  public func appendUserMessage(taskID: TaskID, content: String) async {
-    guard !content.isEmpty else { return }
-    let state = state(taskID: taskID)
-    guard state.entries.count < Self.maximumMessagesPerTask else { return }
-    let key = "user:" + UUID().uuidString.lowercased()
-    append(Entry(key: key, role: .user, kind: .user, content: content, isFinal: true), in: state)
-    markDirty(key: key, in: state)
-    notify(
-      ConversationChange(
-        taskID: taskID,
-        key: key,
-        role: .user,
-        kind: .user,
-        delta: nil,
-        baseContentLength: 0,
-        fullContent: content,
-        final: true
-      ),
-      in: state
-    )
-    _ = await flush(taskID: taskID)
-  }
-
-  public func appendAgentMessage(taskID: TaskID, content: String) async {
-    guard !content.isEmpty else { return }
-    let state = state(taskID: taskID)
-    guard state.entries.count < Self.maximumMessagesPerTask else { return }
-    let key = "agent:bridge:" + UUID().uuidString.lowercased()
-    append(Entry(key: key, role: .agent, kind: .agent, content: content, isFinal: true), in: state)
-    markDirty(key: key, in: state)
-    notify(
-      ConversationChange(
-        taskID: taskID,
-        key: key,
-        role: .agent,
-        kind: .agent,
-        delta: nil,
-        baseContentLength: 0,
-        fullContent: content,
-        final: true
-      ),
-      in: state
-    )
-    _ = await flush(taskID: taskID)
-  }
-
-  public func appendDelta(
-    taskID: TaskID,
-    itemID: String,
-    delta: String,
-    kind: ServiceTaskMessageKind = .agent
-  ) async {
-    guard kind == .agent || kind == .reasoning else { return }
-    guard !delta.isEmpty else { return }
-    let state = state(taskID: taskID)
-    let key = Self.keyPrefix(for: kind) + itemID
-    if let entry = state.index[key].flatMap({
-      state.entries.indices.contains($0) ? state.entries[$0] : nil
-    }) {
-      guard !entry.isFinal else { return }
-      guard entry.content.utf8.count < Self.maximumMessageBytes else { return }
-      let content = Self.cappedAppend(entry.content, delta)
-      guard content != entry.content else { return }
-      let baseContentLength = entry.content.count
-      state.entries[state.index[key]!] = Entry(
-        key: entry.key,
-        role: .agent,
-        kind: kind,
-        content: content,
-        isFinal: false
-      )
-      markDirty(key: key, in: state)
-      notify(
-        ConversationChange(
-          taskID: taskID,
-          key: entry.key,
-          role: .agent,
-          kind: kind,
-          delta: delta,
-          baseContentLength: baseContentLength,
-          fullContent: nil,
-          final: false
-        ),
-        in: state
-      )
-    } else {
-      guard state.entries.count < Self.maximumMessagesPerTask else { return }
-      let content = Self.capped(delta)
-      append(
-        Entry(key: key, role: .agent, kind: kind, content: content, isFinal: false),
-        in: state
-      )
-      markDirty(key: key, in: state)
-      notify(
-        ConversationChange(
-          taskID: taskID,
-          key: key,
-          role: .agent,
-          kind: kind,
-          delta: nil,
-          baseContentLength: 0,
-          fullContent: content,
-          final: false
-        ),
-        in: state
-      )
-    }
-    if await shouldFlush(state) {
-      _ = await flush(taskID: taskID)
-    }
-  }
-
-  public func upsertToolCall(taskID: TaskID, call: ExecutionToolCall) async {
-    let state = state(taskID: taskID)
-    let key = "tool:" + call.itemID
-    let isFinal = call.status != .inProgress
-    let content: String
-    if let index = state.index[key],
-      state.entries.indices.contains(index),
-      !state.entries[index].content.isEmpty
-    {
-      content = state.entries[index].content
-    } else {
-      content = Self.capped(Self.toolCallContent(call.arguments, toolName: call.tool))
-    }
-    let entry = Entry(
-      key: key,
-      role: .agent,
-      kind: .toolCall,
-      content: content,
-      toolName: call.tool,
-      toolStatus: call.status.rawValue,
-      toolArguments: call.arguments,
-      isFinal: isFinal
-    )
-    guard apply(entry, taskID: taskID, in: state) else { return }
-    markDirty(key: key, in: state)
-    notify(
-      ConversationChange(
-        taskID: taskID,
-        key: key,
-        role: .agent,
-        kind: .toolCall,
-        delta: nil,
-        baseContentLength: 0,
-        fullContent: content,
-        final: isFinal,
-        toolName: call.tool,
-        toolStatus: call.status.rawValue,
-        toolArguments: call.arguments
-      ),
-      in: state
-    )
-    if await shouldFlush(state) {
-      _ = await flush(taskID: taskID)
-    }
-  }
-
-  public func appendToolCallProgress(taskID: TaskID, itemID: String, progress: String) async {
-    guard !progress.isEmpty else { return }
-    let state = state(taskID: taskID)
-    let key = "tool:" + itemID
-    guard let index = state.index[key], state.entries.indices.contains(index) else { return }
-    let existing = state.entries[index]
-    guard !existing.isFinal else { return }
-    guard existing.content.utf8.count < Self.maximumMessageBytes else { return }
-    let line = existing.content.isEmpty ? progress : "\n" + progress
-    let content = Self.cappedAppend(existing.content, line)
-    guard content != existing.content else { return }
-    let entry = Entry(
-      key: key,
-      role: .agent,
-      kind: .toolCall,
-      content: content,
-      toolName: existing.toolName,
-      toolStatus: existing.toolStatus,
-      toolArguments: existing.toolArguments,
-      isFinal: false
-    )
-    state.entries[index] = entry
-    markDirty(key: key, in: state)
-    notify(
-      ConversationChange(
-        taskID: taskID,
-        key: key,
-        role: .agent,
-        kind: .toolCall,
-        delta: line,
-        baseContentLength: existing.content.count,
-        fullContent: nil,
-        final: false,
-        toolName: existing.toolName,
-        toolStatus: existing.toolStatus,
-        toolArguments: existing.toolArguments
-      ),
-      in: state
-    )
-    if await shouldFlush(state) {
-      _ = await flush(taskID: taskID)
-    }
-  }
-
-  public func finalize(taskID: TaskID, messages: [ExecutionAgentMessage]) async {
-    guard !messages.isEmpty else { return }
-    let state = state(taskID: taskID)
-    var didUpdate = false
-    for message in messages where message.role == .agent {
-      if finalizeOne(message, taskID: taskID, in: state) {
-        didUpdate = true
-      }
-    }
-    if didUpdate {
-      _ = await flush(taskID: taskID)
-    }
   }
 
   @discardableResult
@@ -434,7 +218,7 @@ public actor TaskConversationBuffer {
     return failed
   }
 
-  private func state(taskID: TaskID) -> TaskState {
+  func state(taskID: TaskID) -> TaskState {
     if let state = states[taskID] {
       return state
     }
@@ -443,68 +227,7 @@ public actor TaskConversationBuffer {
     return state
   }
 
-  private func append(_ entry: Entry, in state: TaskState) {
-    state.index[entry.key] = state.entries.count
-    state.entries.append(entry)
-  }
-
-  private func apply(_ entry: Entry, taskID: TaskID, in state: TaskState) -> Bool {
-    if let index = state.index[entry.key] {
-      guard !state.entries[index].isFinal else { return false }
-      state.entries[index] = entry
-      return true
-    }
-    guard state.entries.count < Self.maximumMessagesPerTask else { return false }
-    append(entry, in: state)
-    return true
-  }
-
-  private func finalizeOne(
-    _ message: ExecutionAgentMessage,
-    taskID: TaskID,
-    in state: TaskState
-  ) -> Bool {
-    let kind = message.kind
-    guard kind == .agent || kind == .reasoning || kind == .toolCall else { return false }
-    let key = message.key
-    guard key.hasPrefix(Self.keyPrefix(for: kind)) else { return false }
-    var content = Self.capped(message.content)
-    if kind == .toolCall {
-      content = Self.capped(Self.toolCallContent(content, toolName: message.toolName))
-    }
-    guard !content.isEmpty else { return false }
-    let entry = Entry(
-      key: key,
-      role: .agent,
-      kind: kind,
-      content: content,
-      toolName: message.toolName,
-      toolStatus: message.toolStatus,
-      toolArguments: message.toolArguments,
-      isFinal: true
-    )
-    guard apply(entry, taskID: taskID, in: state) else { return false }
-    markDirty(key: key, in: state)
-    notify(
-      ConversationChange(
-        taskID: taskID,
-        key: key,
-        role: .agent,
-        kind: kind,
-        delta: nil,
-        baseContentLength: 0,
-        fullContent: content,
-        final: true,
-        toolName: message.toolName,
-        toolStatus: message.toolStatus,
-        toolArguments: message.toolArguments
-      ),
-      in: state
-    )
-    return true
-  }
-
-  private func notify(_ change: ConversationChange, in state: TaskState) {
+  func notify(_ change: ConversationChange, in state: TaskState) {
     for subscriber in state.subscribers.values {
       switch subscriber.yield(change) {
       case .enqueued, .dropped, .terminated:
@@ -521,7 +244,7 @@ public actor TaskConversationBuffer {
     }
   }
 
-  private func shouldFlush(_ state: TaskState) async -> Bool {
+  func shouldFlush(_ state: TaskState) async -> Bool {
     if state.unflushedCount >= flushDeltaCount { return true }
     if state.unflushedCount >= flushInFlightCount { return true }
     if let lastFlush = state.lastFlush {
@@ -531,7 +254,7 @@ public actor TaskConversationBuffer {
     return false
   }
 
-  private func flush(taskID: TaskID, force: Bool = false) async -> Bool {
+  func flush(taskID: TaskID, force: Bool = false) async -> Bool {
     guard let state = states[taskID] else { return true }
     while state.isFlushing {
       await withCheckedContinuation { continuation in
@@ -594,7 +317,7 @@ public actor TaskConversationBuffer {
     return persisted.count == snapshot.count
   }
 
-  private func markDirty(key: String, in state: TaskState) {
+  func markDirty(key: String, in state: TaskState) {
     state.nextRevision &+= 1
     state.dirtyRevisions[key] = state.nextRevision
     state.unflushedCount += 1
@@ -630,34 +353,4 @@ public actor TaskConversationBuffer {
     }
   }
 
-  private static func keyPrefix(for kind: ServiceTaskMessageKind) -> String {
-    switch kind {
-    case .user: "user:"
-    case .agent: "agent:"
-    case .reasoning: "reasoning:"
-    case .toolCall: "tool:"
-    }
-  }
-
-  private static func toolCallContent(_ arguments: String?, toolName: String?) -> String {
-    if let arguments, !arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return arguments
-    }
-    if let toolName, !toolName.isEmpty {
-      return toolName
-    }
-    return "工具调用"
-  }
-
-  private static func capped(_ content: String) -> String {
-    guard content.utf8.count > maximumMessageBytes else { return content }
-    return String(decoding: content.utf8.prefix(maximumMessageBytes), as: UTF8.self)
-  }
-
-  private static func cappedAppend(_ content: String, _ delta: String) -> String {
-    guard content.utf8.count + delta.utf8.count <= maximumMessageBytes else {
-      return content
-    }
-    return content + delta
-  }
 }

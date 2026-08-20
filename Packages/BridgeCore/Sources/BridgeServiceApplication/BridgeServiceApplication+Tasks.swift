@@ -47,13 +47,37 @@ extension BridgeServiceApplication {
     deadline: ContinuousClock.Instant
   ) async throws -> MCPServiceTaskSubmissionReceipt {
     try Self.checkDeadline(deadline)
+    let prepared = try await prepareTaskSubmission(submission, deadline: deadline)
+    let result = try await submitTaskWithAdmission(
+      prepared.request,
+      projectID: prepared.projectID
+    )
+    if !result.reusedExistingTask {
+      try await beginAndStartTask(result.task.id)
+    }
+    let task = try await tasks.task(id: result.task.id)
+    let latest = task ?? result.task
+    return MCPServiceTaskSubmissionReceipt(
+      taskID: latest.id.rawValue,
+      status: latest.state.status.rawValue,
+      reusedExistingTask: result.reusedExistingTask,
+      localApprovalRequired: false
+    )
+  }
+
+  private struct PreparedTaskSubmission {
+    let projectID: ProjectID
+    let request: ServiceTaskRequest
+  }
+
+  private func prepareTaskSubmission(
+    _ submission: MCPServiceTaskSubmission,
+    deadline: ContinuousClock.Instant
+  ) async throws -> PreparedTaskSubmission {
     let project = try await readableProject(submission.projectID)
     let models = try await catalog.listModels(deadline: deadline).models
     let selections = try await modelSelections(submission: submission, models: models)
-    let permission = try Self.permissionMode(
-      submission.permissionMode,
-      project: project
-    )
+    let permission = try Self.permissionMode(submission.permissionMode, project: project)
     let accessMode = try await settings.accessMode()
     let fastMode =
       try await settings.isFastModeEnabled()
@@ -62,7 +86,33 @@ extension BridgeServiceApplication {
     guard !submission.networkAccess || project.accessPolicy.network != .denied else {
       throw BridgeMCPQueryError.contractRejected
     }
-    var taskPrompt = Self.prompt(
+    let taskPrompt = try await taskPrompt(for: submission, project: project, deadline: deadline)
+    return PreparedTaskSubmission(
+      projectID: project.id,
+      request: ServiceTaskRequest(
+        projectID: project.id,
+        source: .chatGPT,
+        clientRequestID: submission.clientRequestID,
+        prompt: taskPrompt,
+        requestedThreadID: submission.threadID,
+        executionModel: selections.execution.model,
+        executionEffort: selections.execution.effort,
+        supervisorModel: selections.supervisor?.model,
+        supervisorEffort: selections.supervisor?.effort,
+        permissionMode: permission,
+        networkAllowed: submission.networkAccess,
+        accessMode: accessMode,
+        fastMode: fastMode
+      )
+    )
+  }
+
+  private func taskPrompt(
+    for submission: MCPServiceTaskSubmission,
+    project: ServiceProjectRecord,
+    deadline: ContinuousClock.Instant
+  ) async throws -> String {
+    var prompt = Self.prompt(
       submission.prompt,
       acceptanceCriteria: submission.acceptanceCriteria
     )
@@ -74,72 +124,56 @@ extension BridgeServiceApplication {
         deadline: deadline
       )
       let instructions = String(skill.content.prefix(8 * 1_024))
-      taskPrompt =
-        "Skill instructions for \(skill.name):\n\n\(instructions)\n\nUser task:\n\(taskPrompt)"
+      prompt =
+        "Skill instructions for \(skill.name):\n\n\(instructions)\n\nUser task:\n\(prompt)"
     }
-    guard taskPrompt.utf8.count <= 32 * 1_024 else {
+    guard prompt.utf8.count <= 32 * 1_024 else {
       throw BridgeMCPQueryError.contractRejected
     }
-    let result: ServiceTaskCreationResult
+    return prompt
+  }
+
+  private func submitTaskWithAdmission(
+    _ request: ServiceTaskRequest,
+    projectID: ProjectID
+  ) async throws -> ServiceTaskCreationResult {
     do {
-      try await workspaceGate.beginCodexAdmission(projectID: project.id)
+      try await workspaceGate.beginCodexAdmission(projectID: projectID)
     } catch {
       throw Self.publicWorkspaceBusyError(error)
     }
     do {
-      result = try await tasks.submit(
-        ServiceTaskRequest(
-          projectID: project.id,
-          source: .chatGPT,
-          clientRequestID: submission.clientRequestID,
-          prompt: taskPrompt,
-          requestedThreadID: submission.threadID,
-          executionModel: selections.execution.model,
-          executionEffort: selections.execution.effort,
-          supervisorModel: selections.supervisor?.model,
-          supervisorEffort: selections.supervisor?.effort,
-          permissionMode: permission,
-          networkAllowed: submission.networkAccess,
-          accessMode: accessMode,
-          fastMode: fastMode
-        )
-      )
-      await workspaceGate.endCodexAdmission(projectID: project.id)
+      let result = try await tasks.submit(request)
+      await workspaceGate.endCodexAdmission(projectID: projectID)
+      return result
     } catch {
-      await workspaceGate.endCodexAdmission(projectID: project.id)
+      await workspaceGate.endCodexAdmission(projectID: projectID)
       if let storeError = error as? ServiceStoreError {
         throw Self.publicStoreError(storeError)
       }
       throw error
     }
-    if !result.reusedExistingTask {
-      let started: ServiceTaskRecord
-      do {
-        started = try await tasks.begin(taskID: result.task.id)
-      } catch {
-        _ = try? await tasks.interrupt(
-          taskID: result.task.id,
-          summary: "Codex execution could not enter the starting state."
-        )
-        if let storeError = error as? ServiceStoreError {
-          throw Self.publicStoreError(storeError)
-        }
-        throw error
+  }
+
+  private func beginAndStartTask(_ taskID: TaskID) async throws {
+    let started: ServiceTaskRecord
+    do {
+      started = try await tasks.begin(taskID: taskID)
+    } catch {
+      _ = try? await tasks.interrupt(
+        taskID: taskID,
+        summary: "Codex execution could not enter the starting state."
+      )
+      if let storeError = error as? ServiceStoreError {
+        throw Self.publicStoreError(storeError)
       }
-      do {
-        try await coordinator.start(taskID: started.id)
-      } catch {
-        throw Self.publicExecutionError(error)
-      }
+      throw error
     }
-    let task = try await tasks.task(id: result.task.id)
-    let latest = task ?? result.task
-    return MCPServiceTaskSubmissionReceipt(
-      taskID: latest.id.rawValue,
-      status: latest.state.status.rawValue,
-      reusedExistingTask: result.reusedExistingTask,
-      localApprovalRequired: false
-    )
+    do {
+      try await coordinator.start(taskID: started.id)
+    } catch {
+      throw Self.publicExecutionError(error)
+    }
   }
 
   public func serviceSteerTask(

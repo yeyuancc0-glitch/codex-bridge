@@ -55,7 +55,7 @@ final class ExecutionConversationTests: XCTestCase {
     XCTAssertEqual(page[1].key, "agent:item-message")
     XCTAssertEqual(page[1].content, "Final authoritative agent text.")
 
-    try await coordinator.unsubscribeConversation(
+    await coordinator.unsubscribeConversation(
       taskID: task.id,
       subscriptionID: subscription.subscriptionID
     )
@@ -188,7 +188,7 @@ final class ExecutionConversationTests: XCTestCase {
     XCTAssertTrue(
       tool?.content.contains("Reading Sources/Tokenizer.swift") == true)
 
-    try await coordinator.unsubscribeConversation(
+    await coordinator.unsubscribeConversation(
       taskID: task.id,
       subscriptionID: subscription.subscriptionID
     )

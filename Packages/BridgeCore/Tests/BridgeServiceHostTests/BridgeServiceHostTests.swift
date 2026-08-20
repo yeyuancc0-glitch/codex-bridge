@@ -365,7 +365,7 @@ final class BridgeServiceHostTests: XCTestCase {
 
     // Tunnel disconnecting must only block new remote submissions, never touch running local work.
     try await fixture.composition.disconnectTunnel()
-    try await fixture.composition.tunnelStatus()
+    _ = await fixture.composition.tunnelStatus()
 
     let deadline = Date().addingTimeInterval(10)
     var finished: DirectCommandSession?

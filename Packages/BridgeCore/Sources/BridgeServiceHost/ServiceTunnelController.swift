@@ -172,31 +172,66 @@ public actor ServiceTunnelController {
   }
 
   private func startConfigured() async throws {
+    let context = try configuredStartContext()
+    if try await currentManagerIsUsable() { return }
+    try await requireAvailableHelper(tunnelID: context.tunnelID)
+    let runGeneration = await prepareStart(tunnelID: context.tunnelID)
+    do {
+      try await launchCandidate(context: context, generation: runGeneration)
+    } catch {
+      await recordStartFailure(error, generation: runGeneration)
+      if let serviceError = error as? ServiceTunnelError {
+        throw serviceError
+      }
+      throw ServiceTunnelError.startFailed
+    }
+  }
+
+  private typealias StartContext = (
+    tunnelID: TunnelID,
+    localMCPURL: URL,
+    localMCPHeaderSecret: String
+  )
+
+  private func configuredStartContext() throws -> StartContext {
     guard !isShutdown else { throw ServiceTunnelError.serviceStopped }
     guard let tunnelID else { throw ServiceTunnelError.notConfigured }
     guard let localMCPURL, let localMCPHeaderSecret else {
       throw ServiceTunnelError.localMCPUnavailable
     }
-    if let current = manager {
-      let state = await current.state()
-      if state == .ready {
-        return
-      }
-      if state == .starting || state == .authenticating || state == .connecting {
-        for _ in 0..<150 {
-          try await Task.sleep(for: .milliseconds(200))
-          guard !isShutdown, let active = manager else { break }
-          let activeState = await active.state()
-          if activeState == .ready {
-            await refresh(manager: active, scheduleRestart: true)
-            return
-          }
-          if activeState == .failed || activeState == .stopped {
-            break
-          }
-        }
+    return (tunnelID, localMCPURL, localMCPHeaderSecret)
+  }
+
+  private func currentManagerIsUsable() async throws -> Bool {
+    guard let current = manager else { return false }
+    switch await current.state() {
+    case .ready:
+      return true
+    case .starting, .authenticating, .connecting:
+      return try await waitForCurrentManager()
+    case .stopped, .failed, .degraded:
+      return false
+    }
+  }
+
+  private func waitForCurrentManager() async throws -> Bool {
+    for _ in 0..<150 {
+      try await Task.sleep(for: .milliseconds(200))
+      guard !isShutdown, let active = manager else { return false }
+      switch await active.state() {
+      case .ready:
+        await refresh(manager: active, scheduleRestart: true)
+        return true
+      case .failed, .stopped:
+        return false
+      case .starting, .authenticating, .connecting, .degraded:
+        continue
       }
     }
+    return false
+  }
+
+  private func requireAvailableHelper(tunnelID: TunnelID) async throws {
     guard factory.helperAvailable() else {
       let failure = ServiceTunnelSnapshot(
         configured: hasRuntimeKey(),
@@ -211,14 +246,14 @@ public actor ServiceTunnelController {
       await publish(failure, degradation: "The signed tunnel-client helper is unavailable.")
       throw ServiceTunnelError.helperUnavailable
     }
+  }
 
+  private func prepareStart(tunnelID: TunnelID) async -> UInt64 {
     generation &+= 1
-    let runGeneration = generation
     cancelBackgroundTasks()
     let previous = manager
     manager = nil
     await previous?.stop()
-
     let starting = ServiceTunnelSnapshot(
       configured: true,
       enabled: enabled,
@@ -230,49 +265,43 @@ public actor ServiceTunnelController {
     )
     snapshot = starting
     await publish(starting)
+    return generation
+  }
 
-    let candidate: any ServiceTunnelManaging
-    do {
-      candidate = try await factory.make(
-        tunnelID: tunnelID,
-        runtimeKeyReference: Self.runtimeKeyReference,
-        localMCPURL: localMCPURL,
-        localMCPHeaderSecret: localMCPHeaderSecret
-      )
-      manager = candidate
-      try await candidate.start()
-      guard runGeneration == generation, !isShutdown else {
-        await candidate.stop()
-        throw ServiceTunnelError.serviceStopped
-      }
-      await refresh(manager: candidate, scheduleRestart: true)
-      beginMonitor(generation: runGeneration)
-    } catch let error as ServiceTunnelError {
-      NSLog(
-        "[ServiceTunnelController] Tunnel start failed with ServiceTunnelError: %@",
-        String(describing: error)
-      )
-      if runGeneration == generation {
-        await failStart(candidate: manager, error: error)
-      }
-      throw error
-    } catch {
-      NSLog(
-        "[ServiceTunnelController] Tunnel start failed with error: %@",
-        String(describing: error)
-      )
-      if let diag = await manager?.diagnostics() {
-        NSLog(
-          "[ServiceTunnelController] Diagnostics: stdout=%@, stderr=%@",
-          diag.standardOutput,
-          diag.standardError
-        )
-      }
-      if runGeneration == generation {
-        await failStart(candidate: manager, error: error)
-      }
-      throw ServiceTunnelError.startFailed
+  private func launchCandidate(
+    context: StartContext,
+    generation runGeneration: UInt64
+  ) async throws {
+    let candidate = try await factory.make(
+      tunnelID: context.tunnelID,
+      runtimeKeyReference: Self.runtimeKeyReference,
+      localMCPURL: context.localMCPURL,
+      localMCPHeaderSecret: context.localMCPHeaderSecret
+    )
+    manager = candidate
+    try await candidate.start()
+    guard runGeneration == generation, !isShutdown else {
+      await candidate.stop()
+      throw ServiceTunnelError.serviceStopped
     }
+    await refresh(manager: candidate, scheduleRestart: true)
+    beginMonitor(generation: runGeneration)
+  }
+
+  private func recordStartFailure(_ error: any Error, generation runGeneration: UInt64) async {
+    NSLog(
+      "[ServiceTunnelController] Tunnel start failed: %@",
+      String(describing: error)
+    )
+    if !(error is ServiceTunnelError), let diagnostics = await manager?.diagnostics() {
+      NSLog(
+        "[ServiceTunnelController] Diagnostics: stdout=%@, stderr=%@",
+        diagnostics.standardOutput,
+        diagnostics.standardError
+      )
+    }
+    guard runGeneration == generation else { return }
+    await failStart(candidate: manager, error: error)
   }
 
   private func failStart(
