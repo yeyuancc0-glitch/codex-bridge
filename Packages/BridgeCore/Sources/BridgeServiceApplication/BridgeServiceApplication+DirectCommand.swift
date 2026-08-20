@@ -6,6 +6,11 @@ import BridgeSkills
 import Foundation
 
 extension BridgeServiceApplication {
+  package func shutdownDirectOperations() async {
+    await directCommands.cancelAll()
+    await approvals.cancelAll()
+  }
+
   public func serviceDirectExecCommand(
     _ request: MCPDirectExecRequest,
     deadline: ContinuousClock.Instant

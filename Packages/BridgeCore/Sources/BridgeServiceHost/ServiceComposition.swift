@@ -296,8 +296,7 @@ public actor ServiceComposition {
     await tunnel.shutdown()
     await stopMCP()
     await coordinator.shutdown()
-    await application.directCommands.cancelAll()
-    await application.approvals.cancelAll()
+    await application.shutdownDirectOperations()
     await runtimeStatus.updateMCP(state: "stopped")
   }
 
