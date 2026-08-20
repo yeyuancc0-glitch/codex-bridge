@@ -356,8 +356,9 @@ public actor SkillScanner {
   }
 
   private static func isValidSkillName(_ name: String) -> Bool {
-    !name.isEmpty && name.utf8.count <= 128
-      && name.range(of: "^[A-Za-z0-9][A-Za-z0-9._-]*$", options: .regularExpression) != nil
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name == trimmed && !name.isEmpty && name.utf8.count <= 128
+      && name.rangeOfCharacter(from: .controlCharacters) == nil
   }
 
   private static func isValidActionName(_ name: String) -> Bool {

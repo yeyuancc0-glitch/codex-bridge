@@ -277,6 +277,27 @@ final class BridgeServiceAppModelTests: XCTestCase {
     await model.shutdownUI()
   }
 
+  func testLowFrequencyCatalogRefreshReloadsInstalledSkills() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+    XCTAssertTrue(model.skills.isEmpty)
+
+    await client.setSkills(["code review"])
+    model.lastThreadCatalogRefreshAt = Date(timeIntervalSinceNow: -61)
+    await model.refresh(silent: true, includeCatalog: false)
+
+    XCTAssertEqual(model.skills.map(\.name), ["code review"])
+  }
+
   func testChatBrowserSleepsOnlyAfterLeavingWorkbenchForDelay() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

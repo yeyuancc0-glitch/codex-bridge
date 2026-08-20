@@ -252,9 +252,20 @@ struct BridgeServiceProjectsView: View {
 
   private var skillsSection: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("已发现 Skills")
-        .font(.headline)
-        .foregroundStyle(.secondary)
+      HStack {
+        Text("已发现 Skills")
+          .font(.headline)
+          .foregroundStyle(.secondary)
+        Spacer()
+        Button {
+          model.refresh()
+        } label: {
+          Label("刷新", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .disabled(model.isRefreshing)
+      }
       if model.skills.isEmpty {
         NativeCard {
           Label("该项目没有发现可用 Skill", systemImage: "sparkles")

@@ -211,12 +211,6 @@ extension BridgeServiceAppModel {
       }
     }
 
-    if includeThreads, let projectID = selectedProjectID,
-      let value = await optional({ try await client.skills(projectID: projectID) })
-    {
-      skills = value.skills
-    }
-
     var shouldRefreshThreads = includeThreads || threadCatalogRefreshDue()
     if let value = await taskResult {
       shouldRefreshThreads =
@@ -234,8 +228,12 @@ extension BridgeServiceAppModel {
 
     if shouldRefreshThreads, let projectID = selectedProjectID {
       lastThreadCatalogRefreshAt = Date()
+      async let skillResult = optional { try await client.skills(projectID: projectID) }
       let threadPage = await optional {
         try await client.threads(IPCThreadListRequest(projectID: projectID, limit: 100))
+      }
+      if selectedProjectID == projectID, let value = await skillResult {
+        skills = value.skills
       }
       if selectedProjectID == projectID, let threadPage {
         threads = threadPage.threads

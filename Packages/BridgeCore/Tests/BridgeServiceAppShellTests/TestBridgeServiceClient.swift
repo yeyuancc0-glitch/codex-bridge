@@ -1,5 +1,6 @@
 import BridgeIPC
 import BridgeMCP
+import BridgeSkills
 import Foundation
 
 @testable import BridgeServiceAppShell
@@ -30,6 +31,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var failSubscription = false
   private var threadListCalls = 0
   private var threadReadCalls = 0
+  private var skillsValue: [MCPServiceSkill] = []
   private var deletedTaskIDs: [String] = []
   private var subscribeCalls = 0
   private var unsubscribedSubscriptionIDs: [Int] = []
@@ -71,6 +73,18 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setConversationPages(_ pages: [TaskConversationQuery: IPCTaskConversationPage]) {
     conversationPages = pages
+  }
+
+  func setSkills(_ names: [String]) {
+    skillsValue = names.map {
+      MCPServiceSkill(
+        manifest: SkillManifest(
+          name: $0,
+          description: "Fixture skill",
+          scope: .global,
+          rootPath: "/fixture/\($0)"
+        ))
+    }
   }
 
   func status() async throws -> IPCServiceStatusResponse {
@@ -226,7 +240,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func skills(projectID _: String) async throws -> MCPServiceSkillList {
-    MCPServiceSkillList(skills: [])
+    MCPServiceSkillList(skills: skillsValue)
   }
 
   func modelCatalog() async throws -> IPCModelCatalogResponse {

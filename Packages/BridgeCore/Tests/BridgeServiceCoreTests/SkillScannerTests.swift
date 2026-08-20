@@ -3,6 +3,21 @@ import Foundation
 import XCTest
 
 final class SkillScannerTests: XCTestCase {
+  func testDiscoversInstalledSkillWhoseDirectoryAndDeclaredNameContainSpaces() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let skill = root.appendingPathComponent("skills/code review")
+    try makeSkill(at: skill, description: "Two-axis review")
+
+    let scanner = SkillScanner(globalRoots: [root.appendingPathComponent("skills")])
+    let manifests = try await scanner.scanSkills(for: nil)
+
+    XCTAssertEqual(manifests.map(\.name), ["code review"])
+    XCTAssertEqual(manifests.first?.description, "Two-axis review")
+    let document = try await scanner.readSkillDocument(XCTUnwrap(manifests.first))
+    XCTAssertTrue(document.content.contains("name: code review"))
+  }
+
   func testProjectSkillOverridesGlobalAndReadsReference() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
