@@ -25,7 +25,8 @@ readonly require_helper="${REQUIRE_TUNNEL_HELPER:-NO}"
 readonly helpers_destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
 readonly resources_destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/TunnelClient"
 readonly staged_helper="${helpers_destination}/tunnel-client"
-readonly staged_digest="${helpers_destination}/tunnel-client.sha256"
+readonly staged_digest="${resources_destination}/tunnel-client.sha256"
+readonly legacy_staged_digest="${helpers_destination}/tunnel-client.sha256"
 
 remove_if_present() {
   local path="$1"
@@ -35,6 +36,7 @@ remove_if_present() {
 clear_staged_helper() {
   remove_if_present "${staged_helper}"
   remove_if_present "${staged_digest}"
+  remove_if_present "${legacy_staged_digest}"
   for name in LICENSE NOTICE tunnel-client.manifest; do
     remove_if_present "${resources_destination}/${name}"
   done
@@ -61,11 +63,12 @@ readonly resolved_helper_directory="${helper_directory:A}"
   "${resolved_helper_directory}" \
   "${trusted_unsigned_sha256}"
 
+remove_if_present "${legacy_staged_digest}"
 /bin/mkdir -p "${helpers_destination}" "${resources_destination}"
 /bin/chmod 0755 "${helpers_destination}" "${resources_destination}"
 
 readonly temporary_helper="${helpers_destination}/.tunnel-client.${$}"
-readonly temporary_digest="${helpers_destination}/.tunnel-client.sha256.${$}"
+readonly temporary_digest="${resources_destination}/.tunnel-client.sha256.${$}"
 cleanup() {
   remove_if_present "${temporary_helper}"
   remove_if_present "${temporary_digest}"

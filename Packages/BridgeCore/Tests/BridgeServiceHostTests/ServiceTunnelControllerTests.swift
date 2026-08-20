@@ -154,6 +154,40 @@ final class ServiceTunnelControllerTests: XCTestCase {
     XCTAssertEqual(runtime.tunnelState, "failed")
   }
 
+  func testBundledFactoryReadsDigestFromResourcesInsteadOfHelpers() async throws {
+    let fixture = try await makeTunnelFixture(self)
+    let bundle = FileManager.default.temporaryDirectory.appending(
+      path: "service-tunnel-bundle-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    defer { try? FileManager.default.removeItem(at: bundle) }
+    let helpers = bundle.appending(path: "Contents/Helpers", directoryHint: .isDirectory)
+    let resources = bundle.appending(
+      path: "Contents/Resources/TunnelClient",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+    let helper = helpers.appending(path: "tunnel-client")
+    try Data("fixture".utf8).write(to: helper)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+    let digest = resources.appending(path: "tunnel-client.sha256")
+    try Data((String(repeating: "a", count: 64) + "\n").utf8).write(to: digest)
+
+    let factory = BundledServiceTunnelManagerFactory(
+      appBundleURL: bundle,
+      runtimeDirectory: fixture.root.appending(path: "TunnelRuntime"),
+      secretStore: fixture.secrets
+    )
+    XCTAssertTrue(factory.helperAvailable())
+
+    try FileManager.default.moveItem(
+      at: digest,
+      to: helpers.appending(path: "tunnel-client.sha256")
+    )
+    XCTAssertFalse(factory.helperAvailable())
+  }
+
   func testMCPAddressChangeStopsOldTunnelAndStartsReplacement() async throws {
     let fixture = try await makeTunnelFixture(self)
     let first = TestServiceTunnelManager()

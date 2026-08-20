@@ -5,7 +5,7 @@ import Foundation
 
 struct BundledDesktopTunnelManagerFactory: DesktopTunnelManagerBuilding {
   private static let helperRelativePath = "Contents/Helpers/tunnel-client"
-  private static let digestRelativePath = "Contents/Helpers/tunnel-client.sha256"
+  private static let digestRelativePath = "Contents/Resources/TunnelClient/tunnel-client.sha256"
 
   private let bundleURL: URL
   private let runtimeDirectory: URL

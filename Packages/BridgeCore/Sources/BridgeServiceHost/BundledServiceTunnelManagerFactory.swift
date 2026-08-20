@@ -5,7 +5,7 @@ import Foundation
 
 public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {
   private static let helperRelativePath = "Contents/Helpers/tunnel-client"
-  private static let digestRelativePath = "Contents/Helpers/tunnel-client.sha256"
+  private static let digestRelativePath = "Contents/Resources/TunnelClient/tunnel-client.sha256"
 
   private let appBundleURL: URL
   private let runtimeDirectory: URL

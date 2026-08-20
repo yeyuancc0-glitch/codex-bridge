@@ -75,7 +75,7 @@ cd "${repository_root}"
 }
 readonly app_binary="${archived_app}/Contents/MacOS/CodexBridge"
 readonly bundled_helper="${archived_app}/Contents/Helpers/tunnel-client"
-readonly bundled_digest="${archived_app}/Contents/Helpers/tunnel-client.sha256"
+readonly bundled_digest="${archived_app}/Contents/Resources/TunnelClient/tunnel-client.sha256"
 for binary in "${app_binary}" "${bundled_helper}"; do
   /usr/bin/lipo "${binary}" -verify_arch arm64
   /usr/bin/lipo "${binary}" -verify_arch x86_64
