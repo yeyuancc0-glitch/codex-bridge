@@ -63,25 +63,11 @@ extension BridgeServiceXPCController {
         IPCTaskListRequest.self,
         from: request
       ) ?? IPCTaskListRequest()
-    guard (1...500).contains(payload.limit) else {
-      throw ServiceStoreError.invalidArgument("tasks.limit")
-    }
-    let projectID = payload.projectID.map(ProjectID.init(rawValue:))
-    let taskList = try await composition.tasks.tasks(
-      projectID: projectID,
-      limit: payload.limit
+    let snapshots = try await composition.application.serviceTasks(
+      projectID: payload.projectID,
+      limit: payload.limit,
+      deadline: Self.deadline()
     )
-    var snapshots: [MCPServiceTaskSnapshot] = []
-    snapshots.reserveCapacity(taskList.count)
-    for task in taskList {
-      snapshots.append(
-        try await composition.application.serviceTask(
-          taskID: task.id.rawValue,
-          recentEventLimit: 10,
-          deadline: Self.deadline()
-        )
-      )
-    }
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCTaskListResponse(tasks: snapshots)
@@ -103,15 +89,19 @@ extension BridgeServiceXPCController {
 
   func handleStopTask(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
-    await composition.coordinator.stop(taskID: TaskID(rawValue: payload.taskID))
+    try await composition.application.serviceStopTask(
+      taskID: payload.taskID,
+      deadline: Self.deadline()
+    )
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }
 
   func handleDeleteTask(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCTaskRequest.self, from: request)
-    let taskID = TaskID(rawValue: payload.taskID)
-    try await composition.tasks.remove(taskID: taskID)
-    await composition.coordinator.purgeConversation(taskID: taskID)
+    try await composition.application.serviceDeleteTask(
+      taskID: payload.taskID,
+      deadline: Self.deadline()
+    )
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }
 }

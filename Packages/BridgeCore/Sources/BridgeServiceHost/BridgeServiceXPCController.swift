@@ -76,7 +76,7 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
     let active = streams.takeAll()
     for (taskID, registration) in active {
       registration.forwarder.cancel()
-      await composition.coordinator.unsubscribeConversation(
+      await composition.application.serviceUnsubscribeConversation(
         taskID: taskID,
         subscriptionID: registration.subscriptionID
       )

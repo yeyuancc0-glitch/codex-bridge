@@ -29,44 +29,83 @@ public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case directGitCommit = "direct_git_commit"
 }
 
+enum MCPServiceToolRoute: Sendable {
+  case readOnly
+  case task
+  case direct
+}
+
+struct MCPServiceToolContract: Sendable {
+  let name: MCPServiceToolName
+  let definition: Tool
+  let minimumExposure: MCPServiceExposureMode
+  let route: MCPServiceToolRoute
+
+  func isExposed(in mode: MCPServiceExposureMode) -> Bool {
+    minimumExposure == .readOnly || mode == .full
+  }
+}
+
 public struct MCPServiceToolCatalog: Sendable {
   public let definitions: [Tool]
 
   public init(exposureMode: MCPServiceExposureMode) {
-    var tools = [
-      Self.bridgeStatus,
-      Self.listProjects,
-      Self.getProject,
-      Self.searchProjectFiles,
-      Self.readProjectFile,
-      Self.listThreads,
-      Self.readThread,
-      Self.listModels,
-      Self.listSkills,
-      Self.readSkill,
-      Self.getTask,
-      Self.getProjectChanges,
-      Self.listProjectCommands,
-    ]
-    if exposureMode == .full {
-      tools.append(
-        contentsOf: [
-          Self.submitTask,
-          Self.runSkillAction,
-          Self.steerTask,
-          Self.interruptTask,
-          Self.directWriteProjectFile,
-          Self.directEditProjectFile,
-          Self.directApplyProjectPatch,
-          Self.directManageProjectPath,
-          Self.directExecProjectCommand,
-          Self.directReadCommand,
-          Self.directWriteStdin,
-          Self.directInterruptCommand,
-          Self.directGitCommit,
-        ]
-      )
-    }
-    definitions = tools
+    definitions = Self.contracts
+      .filter { $0.isExposed(in: exposureMode) }
+      .map(\.definition)
+  }
+
+  static func contract(named rawName: String) -> MCPServiceToolContract? {
+    contractsByName[rawName]
+  }
+
+  private static let contractsByName: [String: MCPServiceToolContract] = {
+    let pairs = contracts.map { ($0.name.rawValue, $0) }
+    precondition(Set(pairs.map(\.0)).count == pairs.count)
+    precondition(pairs.allSatisfy { $0.0 == $0.1.definition.name })
+    return Dictionary(uniqueKeysWithValues: pairs)
+  }()
+
+  private static let contracts: [MCPServiceToolContract] = [
+    contract(.bridgeStatus, bridgeStatus, exposure: .readOnly, route: .readOnly),
+    contract(.listProjects, listProjects, exposure: .readOnly, route: .readOnly),
+    contract(.getProject, getProject, exposure: .readOnly, route: .readOnly),
+    contract(.searchProjectFiles, searchProjectFiles, exposure: .readOnly, route: .readOnly),
+    contract(.readProjectFile, readProjectFile, exposure: .readOnly, route: .readOnly),
+    contract(.listThreads, listThreads, exposure: .readOnly, route: .readOnly),
+    contract(.readThread, readThread, exposure: .readOnly, route: .readOnly),
+    contract(.listModels, listModels, exposure: .readOnly, route: .readOnly),
+    contract(.listSkills, listSkills, exposure: .readOnly, route: .readOnly),
+    contract(.readSkill, readSkill, exposure: .readOnly, route: .readOnly),
+    contract(.getTask, getTask, exposure: .readOnly, route: .task),
+    contract(.getProjectChanges, getProjectChanges, exposure: .readOnly, route: .readOnly),
+    contract(.listProjectCommands, listProjectCommands, exposure: .readOnly, route: .readOnly),
+    contract(.submitTask, submitTask, exposure: .full, route: .task),
+    contract(.runSkillAction, runSkillAction, exposure: .full, route: .task),
+    contract(.steerTask, steerTask, exposure: .full, route: .task),
+    contract(.interruptTask, interruptTask, exposure: .full, route: .task),
+    contract(.directWriteProjectFile, directWriteProjectFile, exposure: .full, route: .direct),
+    contract(.directEditProjectFile, directEditProjectFile, exposure: .full, route: .direct),
+    contract(.directApplyProjectPatch, directApplyProjectPatch, exposure: .full, route: .direct),
+    contract(.directManageProjectPath, directManageProjectPath, exposure: .full, route: .direct),
+    contract(.directExecCommand, directExecProjectCommand, exposure: .full, route: .direct),
+    contract(.directReadCommand, directReadCommand, exposure: .full, route: .direct),
+    contract(.directWriteStdin, directWriteStdin, exposure: .full, route: .direct),
+    contract(.directInterruptCommand, directInterruptCommand, exposure: .full, route: .direct),
+    contract(.directGitCommit, directGitCommit, exposure: .full, route: .direct),
+  ]
+
+  private static func contract(
+    _ name: MCPServiceToolName,
+    _ definition: Tool,
+    exposure: MCPServiceExposureMode,
+    route: MCPServiceToolRoute
+  ) -> MCPServiceToolContract {
+    MCPServiceToolContract(
+      name: name,
+      definition: definition,
+      minimumExposure: exposure,
+      route: route
+    )
   }
 }

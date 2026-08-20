@@ -224,18 +224,29 @@ extension MCPServiceToolCatalog {
 
   static func outputSchema(
     properties: [String: Value],
-    required: [String]
+    required: [String],
+    successSchemaVersion: Int = 1
   ) -> Value {
     var fields = properties
-    fields["schema_version"] = ["type": "integer", "const": 1]
+    fields["schema_version"] = integerSchema(minimum: 1)
     fields["error"] = errorSchema
     guard case .object(var result) = objectSchema(properties: fields, required: ["schema_version"])
     else {
       preconditionFailure("Output schema must be an object.")
     }
+    var success: [String: Value] = [
+      "properties": ["schema_version": ["const": .int(successSchemaVersion)]],
+      "not": ["required": ["error"]],
+    ]
+    if !required.isEmpty {
+      success["required"] = .array(required.map(Value.string))
+    }
     result["oneOf"] = [
-      ["required": .array(required.map(Value.string))],
-      ["required": ["error"]],
+      .object(success),
+      [
+        "properties": ["schema_version": ["const": 1]],
+        "required": ["error"],
+      ],
     ]
     return .object(result)
   }

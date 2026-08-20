@@ -62,14 +62,14 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
 
   private static let pushBatchDelay: Duration = .milliseconds(40)
 
-  private let client: any BridgeServiceClientProtocol
+  private let client: any BridgeTaskConversationClient
   private var index: [String: Int] = [:]
   private var hasAppliedPage = false
   private var streamingTask: Task<Void, Never>?
   private var pushFlushTask: Task<Void, Never>?
   private var pendingPushes: [IPCTaskConversationPush] = []
 
-  public init(taskID: String, client: any BridgeServiceClientProtocol) {
+  public init(taskID: String, client: any BridgeTaskConversationClient) {
     self.taskID = taskID
     self.client = client
   }

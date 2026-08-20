@@ -33,10 +33,7 @@ extension BridgeServiceApplication {
     else {
       throw BridgeMCPQueryError.contractRejected
     }
-    let project = try await readableProject(request.projectID)
-    guard project.accessPolicy.write != .denied else {
-      throw BridgeMCPQueryError.writeNotAllowed
-    }
+    let project = try await writableProject(request.projectID)
     let resolution = commandPolicy.resolve(
       project: project,
       request: DirectCommandRequest(

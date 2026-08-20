@@ -54,6 +54,33 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     }
   }
 
+  func testXPCControllerDoesNotBypassApplicationRuntimeFacade() throws {
+    let hostRoot = Self.packageRoot.appending(
+      path: "Sources/BridgeServiceHost",
+      directoryHint: .isDirectory
+    )
+    let forbidden = [
+      "composition.coordinator",
+      "composition.projects",
+      "composition.settings",
+      "composition.store",
+      "composition.tasks",
+    ]
+    let controllerFiles = try Self.swiftFiles(in: hostRoot).filter {
+      $0.lastPathComponent.hasPrefix("BridgeServiceXPCController")
+    }
+    XCTAssertFalse(controllerFiles.isEmpty)
+    for sourceFile in controllerFiles {
+      let source = try String(contentsOf: sourceFile, encoding: .utf8)
+      for access in forbidden {
+        XCTAssertFalse(
+          source.contains(access),
+          "XPC controller bypasses the application runtime facade with \(access) in \(sourceFile.lastPathComponent)"
+        )
+      }
+    }
+  }
+
   private static var packageRoot: URL {
     URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()

@@ -584,6 +584,31 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
   }
 
+  func testReadOnlyDispatcherRejectsEveryFullOnlyToolEvenWhenCalledByName() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .readOnly)
+    let visible = Set(
+      MCPServiceToolCatalog(exposureMode: .readOnly).definitions.map(\.name)
+    )
+    let hidden = MCPServiceToolName.allCases.filter { !visible.contains($0.rawValue) }
+
+    XCTAssertFalse(hidden.isEmpty)
+    for name in hidden {
+      do {
+        _ = try await dispatcher.call(.init(name: name.rawValue))
+        XCTFail("Read-only mode accepted hidden tool \(name.rawValue)")
+      } catch let error as MCPError {
+        guard case .invalidParams = error else {
+          return XCTFail("Unexpected error for \(name.rawValue): \(error)")
+        }
+      }
+    }
+  }
+
   func testMissingReadablePathIsNotReportedAsPolicyDenial() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

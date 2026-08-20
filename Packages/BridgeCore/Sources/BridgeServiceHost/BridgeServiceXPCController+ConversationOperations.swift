@@ -11,13 +11,11 @@ extension BridgeServiceXPCController {
       IPCTaskConversationRequest.self,
       from: request
     )
-    guard (1...500).contains(payload.limit) else {
-      throw ServiceStoreError.invalidArgument("conversation.limit")
-    }
-    let records = try await composition.coordinator.conversationPage(
-      taskID: TaskID(rawValue: payload.taskID),
+    let records = try await composition.application.serviceConversationPage(
+      taskID: payload.taskID,
       beforeMessageID: payload.beforeMessageID,
-      limit: payload.limit
+      limit: payload.limit,
+      deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
@@ -49,20 +47,18 @@ extension BridgeServiceXPCController {
       IPCTaskConversationRequest.self,
       from: request
     )
-    guard (1...500).contains(payload.limit) else {
-      throw ServiceStoreError.invalidArgument("conversation.limit")
-    }
     let taskID = TaskID(rawValue: payload.taskID)
     if let previous = streams.take(taskID) {
       previous.forwarder.cancel()
-      await composition.coordinator.unsubscribeConversation(
+      await composition.application.serviceUnsubscribeConversation(
         taskID: taskID,
         subscriptionID: previous.subscriptionID
       )
     }
-    let subscription = try await composition.coordinator.subscribeConversation(
-      taskID: taskID,
-      limit: payload.limit
+    let subscription = try await composition.application.serviceSubscribeConversation(
+      taskID: payload.taskID,
+      limit: payload.limit,
+      deadline: Self.deadline()
     )
     guard subscription.subscriptionID >= 0 else {
       return try BridgeServiceIPCCodec.success(
@@ -102,7 +98,7 @@ extension BridgeServiceXPCController {
       if let failed = streams.take(taskID, subscriptionID: subscription.subscriptionID) {
         await cancelRegistration(failed, taskID: taskID)
       } else {
-        await composition.coordinator.unsubscribeConversation(
+        await composition.application.serviceUnsubscribeConversation(
           taskID: taskID,
           subscriptionID: subscription.subscriptionID
         )
@@ -121,7 +117,7 @@ extension BridgeServiceXPCController {
     let taskID = TaskID(rawValue: payload.taskID)
     let registration = streams.take(taskID)
     registration?.forwarder.cancel()
-    await composition.coordinator.unsubscribeConversation(
+    await composition.application.serviceUnsubscribeConversation(
       taskID: taskID,
       subscriptionID: registration?.subscriptionID ?? payload.subscriptionID
     )
@@ -220,7 +216,7 @@ extension BridgeServiceXPCController {
     taskID: TaskID
   ) async {
     registration.forwarder.cancel()
-    await composition.coordinator.unsubscribeConversation(
+    await composition.application.serviceUnsubscribeConversation(
       taskID: taskID,
       subscriptionID: registration.subscriptionID
     )

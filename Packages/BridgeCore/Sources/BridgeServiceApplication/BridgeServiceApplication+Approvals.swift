@@ -3,6 +3,32 @@ import BridgeServiceCore
 import Foundation
 
 extension BridgeServiceApplication {
+  func approvedDirectProject(
+    projectID: String,
+    kind: DirectApprovalKind,
+    summary: String,
+    payload: some Encodable,
+    clientRequestID: String?
+  ) async throws -> ServiceProjectRecord {
+    let project = try await writableProject(projectID)
+    try await requireDirectApproval(
+      project: project,
+      kind: kind,
+      summary: summary,
+      payload: payload,
+      clientRequestID: clientRequestID
+    )
+    return project
+  }
+
+  func writableProject(_ projectID: String) async throws -> ServiceProjectRecord {
+    let project = try await readableProject(projectID)
+    guard project.accessPolicy.write != .denied else {
+      throw BridgeMCPQueryError.writeNotAllowed
+    }
+    return project
+  }
+
   public func servicePendingDirectApprovals(
     deadline: ContinuousClock.Instant
   ) async throws -> [PendingDirectApproval] {

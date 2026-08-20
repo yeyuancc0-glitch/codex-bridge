@@ -15,33 +15,27 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.contractRejected
     }
     guard request.files.count <= 128 else { throw BridgeMCPQueryError.contractRejected }
-    let project = try await readableProject(request.projectID)
-    guard project.accessPolicy.write != .denied else {
-      throw BridgeMCPQueryError.writeNotAllowed
-    }
-    try await requireDirectApproval(
-      project: project,
+    let project = try await approvedDirectProject(
+      projectID: request.projectID,
       kind: .command,
       summary: "Git commit: \(String(message.prefix(120)))",
       payload: request,
       clientRequestID: request.clientRequestID
     )
     let operationID = "op-" + UUID().uuidString.lowercased()
-    let lease = try await acquireDirectLease(
-      project: project,
-      owner: .directGitCommit(operationID: operationID)
-    )
     do {
-      let receipt = try await Self.runGitCommit(
+      return try await withDirectLease(
         project: project,
-        message: message,
-        files: request.files,
-        runner: DirectGitRunner()
-      )
-      await lease.release()
-      return receipt
+        owner: .directGitCommit(operationID: operationID)
+      ) {
+        try await Self.runGitCommit(
+          project: project,
+          message: message,
+          files: request.files,
+          runner: DirectGitRunner()
+        )
+      }
     } catch {
-      await lease.release()
       throw Self.publicGitError(error)
     }
   }

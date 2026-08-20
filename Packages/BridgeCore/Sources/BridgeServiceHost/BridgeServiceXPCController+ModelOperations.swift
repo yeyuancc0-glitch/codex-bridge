@@ -10,7 +10,7 @@ extension BridgeServiceXPCController {
       deadline: Self.deadline()
     )
     let endpoint = await composition.endpoint()?.localURL.absoluteString
-    let exposureMode = try await composition.settings.exposureMode()
+    let exposureMode = try await composition.application.serviceExposureMode()
     let tunnel = await composition.tunnelStatus()
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
@@ -44,7 +44,7 @@ extension BridgeServiceXPCController {
           executionEffort: catalog.preferences.executionEffort,
           supervisorModel: catalog.preferences.supervisorModel,
           supervisorEffort: catalog.preferences.supervisorEffort,
-          supervisorEnabled: try await composition.settings.isSupervisorEnabled(),
+          supervisorEnabled: try await composition.application.serviceSupervisorEnabled(),
           accessMode: catalog.preferences.accessMode.rawValue,
           fastModeEnabled: catalog.preferences.fastModeEnabled
         )
@@ -63,7 +63,7 @@ extension BridgeServiceXPCController {
         executionEffort: preferences.executionEffort,
         supervisorModel: preferences.supervisorModel,
         supervisorEffort: preferences.supervisorEffort,
-        supervisorEnabled: try await composition.settings.isSupervisorEnabled(),
+        supervisorEnabled: try await composition.application.serviceSupervisorEnabled(),
         accessMode: preferences.accessMode.rawValue,
         fastModeEnabled: preferences.fastModeEnabled
       )

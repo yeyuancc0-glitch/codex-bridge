@@ -206,7 +206,7 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: directCommandOutputSchema
+    outputSchema: directExecOutputSchema
   )
 
   static let directReadCommand = Tool(
@@ -244,7 +244,7 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: objectSchema(properties: [:])
+    outputSchema: outputSchema(properties: [:], required: [])
   )
 
   static let directInterruptCommand = Tool(
@@ -266,11 +266,11 @@ extension MCPServiceToolCatalog {
     outputSchema: directCommandOutputSchema
   )
 
-  static let directCommandOutputSchema = objectSchema(
+  static let directCommandPayloadSchema = objectSchema(
     properties: [
       "session_id": stringSchema,
       "status": stringSchema,
-      "exit_code": nullableStringSchema(maximum: 32),
+      "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
       "timed_out": boolSchema,
       "head": stringSchema,
       "tail": stringSchema,
@@ -278,6 +278,31 @@ extension MCPServiceToolCatalog {
       "truncated": boolSchema,
     ],
     required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
+  )
+
+  static let directCommandOutputSchema = outputSchema(
+    properties: [
+      "session_id": stringSchema,
+      "status": stringSchema,
+      "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
+      "timed_out": boolSchema,
+      "head": stringSchema,
+      "tail": stringSchema,
+      "byte_count": integerSchema(minimum: 0),
+      "truncated": boolSchema,
+    ],
+    required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
+  )
+
+  static let directExecOutputSchema = outputSchema(
+    properties: [
+      "session_id": stringSchema,
+      "status": stringSchema,
+      "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
+      "started_at": stringSchema,
+      "output": directCommandPayloadSchema,
+    ],
+    required: ["session_id", "status"]
   )
 
   static let directGitCommit = Tool(
@@ -304,7 +329,7 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: objectSchema(
+    outputSchema: outputSchema(
       properties: [
         "commit_hash": nullableStringSchema(maximum: 64),
         "changed_files": arraySchema(boundedStringSchema(maximum: 1_024)),
@@ -313,7 +338,8 @@ extension MCPServiceToolCatalog {
         "index_synchronized": boolSchema,
         "index_synchronization_error": nullableStringSchema(maximum: 4_096),
       ],
-      required: ["changed_files", "summary", "exit_code", "index_synchronized"]
+      required: ["changed_files", "summary", "exit_code", "index_synchronized"],
+      successSchemaVersion: 2
     )
   )
 }

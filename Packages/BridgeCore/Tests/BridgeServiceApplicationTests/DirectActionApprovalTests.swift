@@ -819,6 +819,43 @@ final class DirectApprovalFlowTests: XCTestCase {
     XCTAssertTrue(content.contains("func patched() {}"))
   }
 
+  func testInvalidPatchReleasesWorkspaceLease() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    do {
+      _ = try await application.serviceDirectApplyPatch(
+        MCPDirectPatchRequest(
+          projectID: fixture.project.id.rawValue,
+          patch: "not a project patch",
+          clientRequestID: "req-invalid-patch"
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected invalid patch")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .invalidPatch)
+    }
+
+    let receipt = try await application.serviceDirectWriteFile(
+      MCPDirectWriteRequest(
+        projectID: fixture.project.id.rawValue,
+        relativePath: "AfterInvalidPatch.txt",
+        mode: "create",
+        content: "lease released",
+        clientRequestID: "req-after-invalid-patch"
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(receipt.relativePath, "AfterInvalidPatch.txt")
+  }
+
   func testDirectGitCommitCreatesLocalCommit() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

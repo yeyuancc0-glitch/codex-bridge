@@ -2,7 +2,17 @@ import BridgeIPC
 import BridgeMCP
 import Foundation
 
-public protocol BridgeServiceClientProtocol: Sendable {
+public protocol BridgeTaskConversationClient: Sendable {
+  func taskConversation(_ request: IPCTaskConversationRequest) async throws
+    -> IPCTaskConversationPage
+  func subscribeTaskConversation(
+    taskID: String,
+    limit: Int
+  ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>)
+  func unsubscribeTaskConversation(taskID: String, subscriptionID: Int) async throws
+}
+
+public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Sendable {
   func status() async throws -> IPCServiceStatusResponse
   func projects() async throws -> [MCPProjectSummary]
   func registerProject(_ request: IPCProjectRegistrationRequest) async throws -> MCPProjectDetail
@@ -28,13 +38,6 @@ public protocol BridgeServiceClientProtocol: Sendable {
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot
   func stopTask(taskID: String) async throws
   func deleteTask(taskID: String) async throws
-  func taskConversation(_ request: IPCTaskConversationRequest) async throws
-    -> IPCTaskConversationPage
-  func subscribeTaskConversation(
-    taskID: String,
-    limit: Int
-  ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>)
-  func unsubscribeTaskConversation(taskID: String, subscriptionID: Int) async throws
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws
   func pendingDirectApprovals() async throws -> [IPCPendingDirectApproval]

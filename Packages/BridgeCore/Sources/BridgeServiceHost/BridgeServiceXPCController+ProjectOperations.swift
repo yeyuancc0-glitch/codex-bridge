@@ -25,13 +25,10 @@ extension BridgeServiceXPCController {
       write: payload.writePermission,
       network: payload.networkPermission
     )
-    let project = try await composition.projects.register(
+    let detail = try await composition.application.serviceRegisterManagedProject(
       name: payload.name,
       rootURL: try Self.absoluteDirectoryURL(payload.absolutePath),
-      accessPolicy: policy
-    )
-    let detail = try await composition.application.serviceManagedProject(
-      projectID: project.id.rawValue,
+      accessPolicy: policy,
       deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(
@@ -45,16 +42,13 @@ extension BridgeServiceXPCController {
       IPCProjectPolicyRequest.self,
       from: request
     )
-    _ = try await composition.projects.updateAccessPolicy(
-      try Self.projectPolicy(
+    let detail = try await composition.application.serviceUpdateManagedProjectPolicy(
+      projectID: payload.projectID,
+      policy: try Self.projectPolicy(
         read: payload.readPermission,
         write: payload.writePermission,
         network: payload.networkPermission
       ),
-      projectID: ProjectID(rawValue: payload.projectID)
-    )
-    let detail = try await composition.application.serviceManagedProject(
-      projectID: payload.projectID,
       deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(
@@ -83,13 +77,10 @@ extension BridgeServiceXPCController {
       IPCProjectCommandsUpdateRequest.self,
       from: request
     )
-    _ = try await composition.projects.updateWorkspaceCommands(
-      try Self.workspaceCommands(payload.commands),
-      commandBlacklist: try Self.blacklistRules(payload.commandBlacklist),
-      projectID: ProjectID(rawValue: payload.projectID)
-    )
-    let updatedCommands = try await composition.application.serviceManagedProject(
+    let updatedCommands = try await composition.application.serviceUpdateManagedProjectCommands(
       projectID: payload.projectID,
+      commands: try Self.workspaceCommands(payload.commands),
+      blacklist: try Self.blacklistRules(payload.commandBlacklist),
       deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(
@@ -106,12 +97,9 @@ extension BridgeServiceXPCController {
     guard let mode = ServiceDirectCommandMode(rawValue: payload.commandMode) else {
       throw ServiceStoreError.invalidArgument("project.commandMode")
     }
-    _ = try await composition.projects.updateDirectCommandMode(
-      mode,
-      projectID: ProjectID(rawValue: payload.projectID)
-    )
-    let updatedMode = try await composition.application.serviceManagedProject(
+    let updatedMode = try await composition.application.serviceSetManagedProjectCommandMode(
       projectID: payload.projectID,
+      mode: mode,
       deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(
@@ -125,8 +113,9 @@ extension BridgeServiceXPCController {
       IPCProjectIDRequest.self,
       from: request
     )
-    try await composition.projects.remove(
-      projectID: ProjectID(rawValue: payload.projectID)
+    try await composition.application.serviceRemoveManagedProject(
+      projectID: payload.projectID,
+      deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }

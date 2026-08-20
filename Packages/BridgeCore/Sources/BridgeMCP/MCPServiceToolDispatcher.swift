@@ -56,7 +56,9 @@ public struct MCPServiceToolDispatcher: Sendable {
     _ parameters: CallTool.Parameters,
     sessionID: String = "direct"
   ) async throws -> CallTool.Result {
-    guard let name = MCPServiceToolName(rawValue: parameters.name), isExposed(name) else {
+    guard let contract = MCPServiceToolCatalog.contract(named: parameters.name),
+      contract.isExposed(in: exposureMode)
+    else {
       throw MCPError.invalidParams("Unknown tool name.")
     }
     let key = sessionID.isEmpty ? "direct" : sessionID
@@ -66,7 +68,7 @@ public struct MCPServiceToolDispatcher: Sendable {
     defer { Task { await admission.release(sessionID: key) } }
 
     do {
-      return try await callAdmitted(name, arguments: parameters.arguments)
+      return try await callAdmitted(contract, arguments: parameters.arguments)
     } catch let error as BridgeMCPQueryError {
       return try encodeQueryError(error)
     } catch let error as MCPToolResultEncodingError {
@@ -86,28 +88,16 @@ public struct MCPServiceToolDispatcher: Sendable {
   }
 
   private func callAdmitted(
-    _ name: MCPServiceToolName,
+    _ contract: MCPServiceToolContract,
     arguments: [String: Value]?
   ) async throws -> CallTool.Result {
-    switch name {
-    case .bridgeStatus, .listProjects, .getProject, .searchProjectFiles, .readProjectFile,
-      .listThreads, .readThread, .listModels, .listSkills, .readSkill, .getProjectChanges,
-      .listProjectCommands:
-      return try await callReadOnly(name, arguments: arguments)
-    case .runSkillAction, .getTask, .submitTask, .steerTask, .interruptTask:
-      return try await callTask(name, arguments: arguments)
-    case .directWriteProjectFile, .directEditProjectFile, .directApplyProjectPatch,
-      .directManageProjectPath, .directExecCommand, .directGitCommit, .directReadCommand,
-      .directWriteStdin, .directInterruptCommand:
-      return try await callDirect(name, arguments: arguments)
+    switch contract.route {
+    case .readOnly:
+      return try await callReadOnly(contract.name, arguments: arguments)
+    case .task:
+      return try await callTask(contract.name, arguments: arguments)
+    case .direct:
+      return try await callDirect(contract.name, arguments: arguments)
     }
-  }
-
-  private func isExposed(_ name: MCPServiceToolName) -> Bool {
-    exposureMode == .full
-      || ![
-        .submitTask, .steerTask, .interruptTask, .directWriteProjectFile, .directEditProjectFile,
-        .directApplyProjectPatch, .directManageProjectPath, .runSkillAction,
-      ].contains(name)
   }
 }

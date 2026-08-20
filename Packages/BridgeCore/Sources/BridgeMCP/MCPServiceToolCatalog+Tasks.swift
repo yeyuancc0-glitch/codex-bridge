@@ -25,16 +25,7 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: outputSchema(
-      properties: [
-        "session_id": stringSchema,
-        "status": stringSchema,
-        "exit_code": nullableStringSchema(maximum: 32),
-        "started_at": stringSchema,
-        "output": directCommandOutputSchema,
-      ],
-      required: ["session_id", "status"]
-    )
+    outputSchema: directExecOutputSchema
   )
 
   static let getTask = Tool(
