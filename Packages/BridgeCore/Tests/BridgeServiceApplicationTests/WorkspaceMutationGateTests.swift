@@ -154,7 +154,7 @@ final class WorkspaceMutationGateTests: XCTestCase {
       rootURL: FileManager.default.temporaryDirectory,
       id: projectID("prj-gate")
     )
-    _ = try await tasks.submit(
+    let submitted = try await tasks.submit(
       ServiceTaskRequest(
         projectID: projectID("prj-gate"),
         source: .chatGPT,
@@ -164,6 +164,7 @@ final class WorkspaceMutationGateTests: XCTestCase {
         permissionMode: .workspaceWrite
       )
     )
+    _ = try await tasks.begin(taskID: submitted.task.id)
     try await tasks.recoverIncompleteTasks()
 
     do {
@@ -240,6 +241,37 @@ final class WorkspaceMutationGateTests: XCTestCase {
     }
     let activeOwner = await gate.activeDirectOwner(projectID: projectID("prj-concurrent"))
     XCTAssertNil(activeOwner)
+  }
+
+  func testConcurrentCodexAdmissionsUseReferenceCountedTokens() async throws {
+    let gate = ServiceWorkspaceMutationGate()
+    let project = projectID("prj-admission-tokens")
+
+    try await gate.beginCodexAdmission(projectID: project)
+    try await gate.beginCodexAdmission(projectID: project)
+    await gate.endCodexAdmission(projectID: project)
+
+    do {
+      _ = try await gate.acquireDirectLease(
+        projectID: project,
+        owner: .directFileOperation(operationID: "op-still-pending"),
+        activeCodexWriteTask: { nil }
+      )
+      XCTFail("One remaining Codex admission must keep the workspace busy")
+    } catch let error as ProjectWorkspaceBusyError {
+      guard case .busy(let detail) = error else {
+        return XCTFail("Unexpected busy error")
+      }
+      XCTAssertEqual(detail.owner, "codex_task")
+    }
+
+    await gate.endCodexAdmission(projectID: project)
+    let lease = try await gate.acquireDirectLease(
+      projectID: project,
+      owner: .directFileOperation(operationID: "op-after-admissions"),
+      activeCodexWriteTask: { nil }
+    )
+    await lease.release()
   }
 
   func testReadProjectFileReturnsFullFileDigestAndRevision() async throws {

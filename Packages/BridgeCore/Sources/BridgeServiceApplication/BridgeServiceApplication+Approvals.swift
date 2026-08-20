@@ -58,6 +58,12 @@ extension BridgeServiceApplication {
     let digest = DirectActionApprovalCenter.payloadDigest(payload)
     let granted = await approvals.consume(payloadDigest: digest, clientRequestID: clientRequestID)
     if granted { return }
+    if await approvals.denialIsActive(
+      payloadDigest: digest,
+      clientRequestID: clientRequestID
+    ) {
+      throw BridgeMCPQueryError.approvalDenied
+    }
     let approvalID = await approvals.request(
       projectID: project.id.rawValue,
       kind: kind,

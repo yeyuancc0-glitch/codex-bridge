@@ -147,7 +147,7 @@ public actor TaskConversationBuffer {
       ),
       in: state
     )
-    await flush(taskID: taskID)
+    _ = await flush(taskID: taskID)
   }
 
   public func appendAgentMessage(taskID: TaskID, content: String) async {
@@ -170,7 +170,7 @@ public actor TaskConversationBuffer {
       ),
       in: state
     )
-    await flush(taskID: taskID)
+    _ = await flush(taskID: taskID)
   }
 
   public func appendDelta(
@@ -235,7 +235,7 @@ public actor TaskConversationBuffer {
       )
     }
     if await shouldFlush(state) {
-      await flush(taskID: taskID)
+      _ = await flush(taskID: taskID)
     }
   }
 
@@ -281,7 +281,7 @@ public actor TaskConversationBuffer {
       in: state
     )
     if await shouldFlush(state) {
-      await flush(taskID: taskID)
+      _ = await flush(taskID: taskID)
     }
   }
 
@@ -325,7 +325,7 @@ public actor TaskConversationBuffer {
       in: state
     )
     if await shouldFlush(state) {
-      await flush(taskID: taskID)
+      _ = await flush(taskID: taskID)
     }
   }
 
@@ -339,12 +339,13 @@ public actor TaskConversationBuffer {
       }
     }
     if didUpdate {
-      await flush(taskID: taskID)
+      _ = await flush(taskID: taskID)
     }
   }
 
-  public func close(taskID: TaskID) async {
-    guard let state = states[taskID] else { return }
+  @discardableResult
+  public func close(taskID: TaskID) async -> Bool {
+    guard let state = states[taskID] else { return true }
     for (index, entry) in state.entries.enumerated() where !entry.isFinal {
       state.entries[index] = Entry(
         key: entry.key,
@@ -373,9 +374,10 @@ public actor TaskConversationBuffer {
         in: state
       )
     }
-    await flush(taskID: taskID, force: true)
+    guard await flush(taskID: taskID, force: true) else { return false }
     states.removeValue(forKey: taskID)
     finishStreams(in: state)
+    return true
   }
 
   public func purge(taskID: TaskID) async {
@@ -420,11 +422,16 @@ public actor TaskConversationBuffer {
     return state.entries
   }
 
-  public func closeAll() async {
+  @discardableResult
+  public func closeAll() async -> [TaskID] {
     let taskIDs = Array(states.keys)
+    var failed: [TaskID] = []
     for taskID in taskIDs {
-      await close(taskID: taskID)
+      if !(await close(taskID: taskID)) {
+        failed.append(taskID)
+      }
     }
+    return failed
   }
 
   private func state(taskID: TaskID) -> TaskState {
@@ -524,13 +531,13 @@ public actor TaskConversationBuffer {
     return false
   }
 
-  private func flush(taskID: TaskID, force: Bool = false) async {
-    guard let state = states[taskID] else { return }
+  private func flush(taskID: TaskID, force: Bool = false) async -> Bool {
+    guard let state = states[taskID] else { return true }
     while state.isFlushing {
       await withCheckedContinuation { continuation in
         state.flushWaiters.append(continuation)
       }
-      guard states[taskID] === state else { return }
+      guard states[taskID] === state else { return true }
     }
     let revisions = state.dirtyRevisions
     let snapshot: [(Entry, Int?)]
@@ -542,7 +549,7 @@ public actor TaskConversationBuffer {
         return (entry, Optional(revision))
       }
     }
-    guard !snapshot.isEmpty else { return }
+    guard !snapshot.isEmpty else { return true }
 
     state.isFlushing = true
     let flushedDeltaCount = state.unflushedCount
@@ -584,6 +591,7 @@ public actor TaskConversationBuffer {
     for waiter in waiters {
       waiter.resume()
     }
+    return persisted.count == snapshot.count
   }
 
   private func markDirty(key: String, in state: TaskState) {

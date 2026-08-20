@@ -351,7 +351,7 @@ public struct MCPServiceToolCatalog: Sendable {
     name: MCPServiceToolName.submitTask.rawValue,
     title: "Submit task",
     description:
-      "Create a Codex task that remains pending until the local user approves it. "
+      "Create and start a Codex task. Risky Codex operations still require local approval. "
       + "Codex is the default execution path. Prefer this tool unless the user explicitly asked "
       + "ChatGPT to modify files or run commands directly.",
     inputSchema: objectSchema(

@@ -315,7 +315,7 @@ extension BridgeServiceApplication {
       return .turnMismatch
     case .sessionLimitReached, .activeSession:
       return .busy
-    case .invalidRequest, .projectPermissionDenied, .modelUnavailable,
+    case .invalidRequest, .projectPermissionDenied, .approvalExceedsPolicy, .modelUnavailable,
       .effortUnavailable, .serviceTierUnavailable:
       return .contractRejected
     case .projectUnavailable:
@@ -324,6 +324,8 @@ extension BridgeServiceApplication {
       return .threadNotFound
     case .sessionUnavailable, .sessionEnded, .projectIdentityChanged, .turnUnavailable,
       .turnStartTimedOut, .approvalUnavailable, .protocolViolation, .processUnavailable:
+      return .unavailable
+    case .conversationPersistenceFailed:
       return .unavailable
     }
   }
@@ -373,6 +375,8 @@ extension BridgeServiceApplication {
       return .invalidPatch
     case .partialCommit:
       return .unavailable
+    case .durabilityUncertain:
+      return .durabilityUncertain
     case .notGitRepository:
       return .notGitRepository
     }

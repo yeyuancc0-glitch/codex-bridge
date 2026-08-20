@@ -22,6 +22,7 @@ public actor ExecutionManager {
       taskID: taskID,
       configuration: configuration,
       projectRoot: request.project.root.canonicalPath,
+      approvalLimits: ExecutionApprovalLimits(request: request),
       onTermination: { [weak self] taskID, session in
         await self?.remove(taskID: taskID, matching: session)
       }

@@ -17,39 +17,52 @@ public struct DirectCommandOutputBuffer: Equatable, Sendable {
 public final class DirectCommandOutputCollector: @unchecked Sendable {
   public let maximumBytes: Int
   private let lock = NSLock()
-  private var storage = Data()
+  private var headStorage = Data()
+  private var tailStorage = Data()
+  private var totalByteCount = 0
   private var overflowed = false
+  private static let maximumHeadBytes = 4 * 1_024
+  private static let maximumTailBytes = 32 * 1_024
 
   public init(maximumBytes: Int = 1_048_576) {
     self.maximumBytes = max(1, maximumBytes)
   }
 
   public func append(_ data: Data) {
+    guard !data.isEmpty else { return }
     lock.lock()
     defer { lock.unlock() }
-    guard !overflowed else { return }
-    if storage.count + data.count > maximumBytes {
-      storage.append(data)
-      storage = storage.suffix(maximumBytes)
-      overflowed = true
-      return
+
+    let headLimit = min(maximumBytes, Self.maximumHeadBytes)
+    if headStorage.count < headLimit {
+      let remaining = headLimit - headStorage.count
+      headStorage.append(data.prefix(remaining))
     }
-    storage.append(data)
+
+    if data.count >= maximumBytes {
+      tailStorage = Data(data.suffix(maximumBytes))
+    } else {
+      tailStorage.append(data)
+      if tailStorage.count > maximumBytes {
+        tailStorage = Data(tailStorage.suffix(maximumBytes))
+      }
+    }
+
+    let (nextCount, didOverflow) = totalByteCount.addingReportingOverflow(data.count)
+    totalByteCount = didOverflow ? Int.max : nextCount
+    overflowed = overflowed || totalByteCount > maximumBytes
   }
 
   public func snapshot() -> DirectCommandOutputBuffer {
     lock.lock()
     defer { lock.unlock() }
-    let bounded = storage.suffix(maximumBytes)
-    let text = String(decoding: bounded, as: UTF8.self)
-    let headLength = min(text.count, 4_096)
-    let tailLength = min(text.count, 32 * 1_024)
-    let head = String(text.prefix(headLength))
-    let tail = String(text.suffix(tailLength))
+    let head = String(decoding: headStorage, as: UTF8.self)
+    let tail = String(
+      decoding: tailStorage.suffix(min(maximumBytes, Self.maximumTailBytes)), as: UTF8.self)
     return DirectCommandOutputBuffer(
       head: head,
       tail: tail,
-      byteCount: bounded.count,
+      byteCount: min(totalByteCount, maximumBytes),
       truncated: overflowed
     )
   }
@@ -57,6 +70,6 @@ public final class DirectCommandOutputCollector: @unchecked Sendable {
   public var isEmpty: Bool {
     lock.lock()
     defer { lock.unlock() }
-    return storage.isEmpty
+    return totalByteCount == 0
   }
 }

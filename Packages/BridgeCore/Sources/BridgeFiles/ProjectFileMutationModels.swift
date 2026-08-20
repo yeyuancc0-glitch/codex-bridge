@@ -224,6 +224,7 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
   case contentTooLarge
   case invalidPatch
   case partialCommit(changedFiles: [String], rollbackStatus: String)
+  case durabilityUncertain
   case unsafeFilesystemState
   case notGitRepository
 
@@ -259,6 +260,8 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
       "The patch could not be parsed or applied."
     case .partialCommit:
       "Some files changed before a write failed; the service attempted a rollback."
+    case .durabilityUncertain:
+      "The mutation was applied, but its crash durability could not be confirmed. Read the path before retrying."
     case .unsafeFilesystemState:
       "The project changed during the mutation."
     case .notGitRepository:

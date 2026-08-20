@@ -51,11 +51,14 @@ public actor ServiceExecutionCoordinator {
     } catch {
       await execution.stop(taskID: taskID)
       await stopSupervisor(taskID: taskID)
-      await conversation.close(taskID: taskID)
+      let conversationPersisted = await conversation.close(taskID: taskID)
       _ = try? await tasks.fail(
         taskID: taskID,
-        failureCode: "execution_start_failed",
-        summary: "Codex could not start the task."
+        failureCode: conversationPersisted
+          ? "execution_start_failed" : "conversation_persistence_failed",
+        summary: conversationPersisted
+          ? "Codex could not start the task."
+          : "The task conversation could not be persisted."
       )
       throw error
     }
@@ -208,8 +211,15 @@ public actor ServiceExecutionCoordinator {
     collectors.removeValue(forKey: taskID)?.cancel()
     await execution.stop(taskID: taskID)
     await stopSupervisor(taskID: taskID)
-    await conversation.close(taskID: taskID)
-    _ = try? await tasks.interrupt(taskID: taskID, summary: summary)
+    if await conversation.close(taskID: taskID) {
+      _ = try? await tasks.interrupt(taskID: taskID, summary: summary)
+    } else {
+      _ = try? await tasks.fail(
+        taskID: taskID,
+        failureCode: "conversation_persistence_failed",
+        summary: "The task conversation could not be persisted."
+      )
+    }
   }
 
   public func shutdown() async {
@@ -221,7 +231,14 @@ public actor ServiceExecutionCoordinator {
     for task in supervisorTasks { task.cancel() }
     await execution.shutdown()
     await supervisor?.shutdown()
-    await conversation.closeAll()
+    let failedConversationTasks = await conversation.closeAll()
+    for taskID in failedConversationTasks {
+      _ = try? await tasks.fail(
+        taskID: taskID,
+        failureCode: "conversation_persistence_failed",
+        summary: "The task conversation could not be persisted before service shutdown."
+      )
+    }
   }
 
   private func consume(_ event: ExecutionEvent, taskID: TaskID) async {
@@ -285,6 +302,7 @@ public actor ServiceExecutionCoordinator {
         await conversation.finalize(taskID: taskID, messages: messages)
 
       case .completed(let resultSummary):
+        try await closeConversation(taskID: taskID)
         let current = try await requiredTask(taskID)
         let completed = try await tasks.complete(
           taskID: taskID,
@@ -296,9 +314,9 @@ public actor ServiceExecutionCoordinator {
           kind: .final,
           summary: "Codex completed the task."
         )
-        await conversation.close(taskID: taskID)
 
       case .interrupted:
+        try await closeConversation(taskID: taskID)
         let interrupted = try await tasks.interrupt(
           taskID: taskID,
           summary: "Codex confirmed that the active Turn was interrupted."
@@ -308,27 +326,32 @@ public actor ServiceExecutionCoordinator {
           kind: .final,
           summary: "Codex was interrupted before normal completion."
         )
-        await conversation.close(taskID: taskID)
 
       case .failed(let code, let summary):
+        await conversation.appendAgentMessage(taskID: taskID, content: summary)
+        try await closeConversation(taskID: taskID)
         let failed = try await tasks.fail(
           taskID: taskID,
           failureCode: code,
           summary: summary
         )
         await observeSupervisor(task: failed, kind: .final, summary: summary)
-        await conversation.appendAgentMessage(taskID: taskID, content: summary)
-        await conversation.close(taskID: taskID)
       }
     } catch {
       await execution.stop(taskID: taskID)
       await stopSupervisor(taskID: taskID)
-      await conversation.close(taskID: taskID)
+      _ = await conversation.close(taskID: taskID)
       _ = try? await tasks.fail(
         taskID: taskID,
         failureCode: "execution_state_update_failed",
         summary: Self.persistenceFailureSummary(error)
       )
+    }
+  }
+
+  private func closeConversation(taskID: TaskID) async throws {
+    guard await conversation.close(taskID: taskID) else {
+      throw ExecutionServiceError.conversationPersistenceFailed
     }
   }
 

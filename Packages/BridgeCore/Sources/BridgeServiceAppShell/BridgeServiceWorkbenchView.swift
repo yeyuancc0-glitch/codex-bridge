@@ -449,7 +449,10 @@ private struct ApprovalCard: View {
         .font(.caption)
 
       if let displayCommand = approval.displayCommand {
-        CodeSnippetBlock(text: displayCommand, label: "即将执行的终端命令")
+        CodeSnippetBlock(
+          text: displayCommand,
+          label: approval.kind == "permissions" ? "请求的权限范围" : "即将执行的终端命令"
+        )
       }
 
       if !approval.relativePaths.isEmpty {

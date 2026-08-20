@@ -3,6 +3,7 @@ import BridgeDomain
 import BridgeProjects
 import BridgeSecurity
 import BridgeServiceCore
+import Darwin
 import Foundation
 import XCTest
 
@@ -12,12 +13,13 @@ final class DirectCommandPolicyTests: XCTestCase {
     write: ProjectPermission = .requiresLocalApproval,
     network: ProjectPermission = .denied,
     commands: [ServiceWorkspaceCommand] = [],
-    commandBlacklist: [ServiceCommandBlacklistRule] = []
+    commandBlacklist: [ServiceCommandBlacklistRule] = [],
+    root: URL = FileManager.default.temporaryDirectory
   ) throws -> ServiceProjectRecord {
     try ServiceProjectRecord(
       id: ProjectID(rawValue: "prj-policy"),
       name: "Policy",
-      root: ServiceRootIdentity(capturing: FileManager.default.temporaryDirectory),
+      root: ServiceRootIdentity(capturing: root),
       accessPolicy: ProjectAccessPolicy(
         read: .allowed,
         write: write,
@@ -275,6 +277,88 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.reason, .commandNotRegistered)
   }
 
+  func testSafeBuiltInsRejectOutsidePathsAndEscapeOptions() throws {
+    let policy = DirectCommandPolicy()
+    let project = try project(mode: .safe, write: .allowed)
+    let requests = [
+      ["ls", "/private"],
+      ["find", "/private", "-print"],
+      ["find", ".", "-exec", "/bin/echo", "{}", ";"],
+      ["find", ".", "-delete"],
+      ["grep", "needle", "/private"],
+      ["grep", "-e", "needle", "/private"],
+      ["rg", "needle", "/private"],
+      ["rg", "--regexp=needle", "/private"],
+      ["rg", "--pre", "/bin/cat", "needle", "."],
+    ]
+    for argv in requests {
+      let result = policy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id,
+          commandID: nil,
+          argv: argv
+        )
+      )
+      XCTAssertEqual(result.reason, .invalidArguments, argv.joined(separator: " "))
+      XCTAssertFalse(result.allowed, argv.joined(separator: " "))
+    }
+  }
+
+  func testSafeModeRejectsAbsoluteProjectSymlinkToOutsideExecutable() throws {
+    let policy = DirectCommandPolicy()
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("direct-policy-root-\(UUID().uuidString)")
+    let outside = FileManager.default.temporaryDirectory
+      .appendingPathComponent("direct-policy-outside-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      try? FileManager.default.removeItem(at: outside)
+    }
+    let executable = outside.appendingPathComponent("run.sh")
+    try Data("#!/bin/sh\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    let link = root.appendingPathComponent("run.sh")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: executable)
+
+    let project = try project(mode: .safe, write: .allowed, root: root)
+    let result = policy.resolve(
+      project: project,
+      request: DirectCommandRequest(
+        projectID: project.id,
+        commandID: nil,
+        argv: [link.path]
+      )
+    )
+    XCTAssertFalse(result.allowed)
+    XCTAssertEqual(result.reason, .commandNotRegistered)
+  }
+
+  func testRegisteredCommandWorkingDirectoryCannotBeOverridden() throws {
+    let policy = DirectCommandPolicy()
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-cwd",
+      name: "CWD",
+      executable: "pwd",
+      arguments: [],
+      workingDirectory: "scripts"
+    )
+    let project = try project(mode: .safe, write: .allowed, commands: [command])
+    let result = policy.resolve(
+      project: project,
+      request: DirectCommandRequest(
+        projectID: project.id,
+        commandID: "wcmd-cwd",
+        argv: [],
+        workingDirectory: "outside"
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertEqual(result.workingDirectory, "scripts")
+  }
+
   func testFullModeAllowsProjectLocalScript() throws {
     let policy = DirectCommandPolicy()
     let result = policy.resolve(
@@ -464,6 +548,11 @@ final class DirectCommandOutputCollectorTests: XCTestCase {
     XCTAssertEqual(snapshot.byteCount, 256)
     XCTAssertTrue(snapshot.truncated)
     XCTAssertTrue(snapshot.tail.hasSuffix("b"))
+
+    collector.append(Data(String(repeating: "c", count: 200).utf8))
+    snapshot = collector.snapshot()
+    XCTAssertTrue(snapshot.head.hasPrefix(String(repeating: "a", count: 200)))
+    XCTAssertTrue(snapshot.tail.hasSuffix(String(repeating: "c", count: 200)))
   }
 
   func testHeadAndTailAreBounded() {
@@ -476,6 +565,53 @@ final class DirectCommandOutputCollectorTests: XCTestCase {
 }
 
 final class DirectCommandSessionManagerTests: XCTestCase {
+  func testNetworkSandboxBlocksUndeclaredLoopbackConnection() async throws {
+    let listener = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+    XCTAssertGreaterThanOrEqual(listener, 0)
+    defer { Darwin.close(listener) }
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = 0
+    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+    let bindStatus = withUnsafePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    XCTAssertEqual(bindStatus, 0)
+    XCTAssertEqual(Darwin.listen(listener, 4), 0)
+    var bound = sockaddr_in()
+    var boundLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let nameStatus = withUnsafeMutablePointer(to: &bound) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        Darwin.getsockname(listener, $0, &boundLength)
+      }
+    }
+    XCTAssertEqual(nameStatus, 0)
+    let port = Int(UInt16(bigEndian: bound.sin_port))
+
+    let manager = DirectCommandSessionManager(
+      runner: DirectCommandRunner(defaultTimeout: .seconds(5))
+    )
+    defer { Task { await manager.cancelAll() } }
+    _ = try await manager.launch(
+      sessionID: "dcmd-network-denied",
+      projectID: ProjectID(rawValue: "prj-network-denied"),
+      argv: ["/usr/bin/nc", "-z", "127.0.0.1", String(port)],
+      workingDirectory: nil,
+      requiresNetwork: false,
+      usePTY: false,
+      denyNetwork: true
+    )
+
+    let result = try await waitForFinishedSession(
+      manager,
+      sessionID: "dcmd-network-denied"
+    )
+    XCTAssertNotEqual(result.exitCode, 0)
+  }
+
   func testRunsCommandAndCapturesOutput() async throws {
     let root = FileManager.default.temporaryDirectory.appending(
       path: "direct-command-tests-\(UUID().uuidString)",
@@ -682,7 +818,10 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     try spawned.run()
     let orphanPID = spawned.processIdentifier
     _ = Darwin.setpgid(orphanPID, orphanPID)
-    try Data("orphan-session\t\(orphanPID)\n".utf8).write(to: orphanPIDFile, options: .atomic)
+    let identity = try XCTUnwrap(DirectProcessLifetime.identity(of: orphanPID))
+    let record =
+      "orphan-session\t\(identity.pid)\t\(identity.startTimeMicros)\t\(identity.processGroupID)\n"
+    try Data(record.utf8).write(to: orphanPIDFile, options: .atomic)
 
     // Service restarts and constructs a new manager; it must reap the orphaned process group.
     let manager = DirectCommandSessionManager(
@@ -703,5 +842,84 @@ final class DirectCommandSessionManagerTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(50))
     }
     XCTAssertTrue(reaped, "orphaned direct command process must be reaped on restart")
+  }
+
+  func testManagerDoesNotReapPIDWhenStartIdentityChanged() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "direct-command-stale-pid-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let orphanPIDFile = root.appending(path: "orphan-pids.txt")
+    let survivor = Process()
+    survivor.executableURL = URL(fileURLWithPath: "/bin/sh")
+    survivor.arguments = ["-c", "while true; do sleep 1; done"]
+    survivor.standardOutput = FileHandle.nullDevice
+    survivor.standardError = FileHandle.nullDevice
+    survivor.standardInput = FileHandle.nullDevice
+    try survivor.run()
+    _ = Darwin.setpgid(survivor.processIdentifier, survivor.processIdentifier)
+    let identity = try XCTUnwrap(
+      DirectProcessLifetime.identity(of: survivor.processIdentifier)
+    )
+    defer {
+      _ = Darwin.kill(-survivor.processIdentifier, SIGKILL)
+      survivor.waitUntilExit()
+    }
+
+    let staleRecord =
+      "stale-session\t\(identity.pid)\t\(identity.startTimeMicros + 1)\t\(identity.processGroupID)\n"
+    try Data(staleRecord.utf8).write(to: orphanPIDFile, options: .atomic)
+    _ = DirectCommandSessionManager(orphanPIDFileURL: orphanPIDFile)
+
+    XCTAssertEqual(kill(identity.pid, 0), 0, "PID reuse must not kill a different process")
+  }
+
+  func testCompletedSessionsAreBoundedByLRU() async throws {
+    let manager = DirectCommandSessionManager(
+      runner: DirectCommandRunner(defaultTimeout: .seconds(5)),
+      completedSessionTTL: .seconds(60),
+      maximumCompletedSessions: 1
+    )
+    defer { Task { await manager.cancelAll() } }
+
+    for (sessionID, projectID) in [("dcmd-lru-1", "prj-lru-1"), ("dcmd-lru-2", "prj-lru-2")] {
+      _ = try await manager.launch(
+        sessionID: sessionID,
+        projectID: ProjectID(rawValue: projectID),
+        argv: ["/bin/echo", sessionID],
+        workingDirectory: nil,
+        requiresNetwork: false,
+        usePTY: false
+      )
+      var deadline = Date().addingTimeInterval(5)
+      while Date() < deadline {
+        if let session = await manager.snapshot(sessionID: sessionID), session.status == "ended" {
+          break
+        }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+    }
+
+    let first = await manager.snapshot(sessionID: "dcmd-lru-1")
+    let second = await manager.snapshot(sessionID: "dcmd-lru-2")
+    XCTAssertNil(first)
+    XCTAssertNotNil(second)
+  }
+
+  private func waitForFinishedSession(
+    _ manager: DirectCommandSessionManager,
+    sessionID: String
+  ) async throws -> DirectCommandSession {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while ContinuousClock.now < deadline {
+      if let session = await manager.snapshot(sessionID: sessionID), session.status != "running" {
+        return session
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    throw DirectCommandSessionError.sessionNotFound
   }
 }

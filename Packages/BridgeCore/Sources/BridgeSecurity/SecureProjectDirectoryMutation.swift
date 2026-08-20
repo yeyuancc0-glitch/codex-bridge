@@ -101,7 +101,9 @@ public struct SecureProjectDirectoryMutation: Sendable {
     guard name.withCString({ unlinkat(parentFD, $0, 0) }) == 0 else {
       throw PathSecurityError.writeFailed(errno)
     }
-    guard fsync(parentFD) == 0 else { throw PathSecurityError.writeFailed(errno) }
+    guard fsync(parentFD) == 0 else {
+      throw PathSecurityError.mutationAppliedDurabilityUncertain(errno)
+    }
     return SecureDirectoryMutationResult(
       action: .deleteFile(expectedSHA256: expectedSHA256), revision: revision)
   }
@@ -157,7 +159,7 @@ public struct SecureProjectDirectoryMutation: Sendable {
       throw PathSecurityError.writeFailed(errno)
     }
     guard fsync(destinationParentFD) == 0, fsync(sourceParentFD) == 0 else {
-      throw PathSecurityError.writeFailed(errno)
+      throw PathSecurityError.mutationAppliedDurabilityUncertain(errno)
     }
     return SecureDirectoryMutationResult(
       action: .moveFile(
@@ -184,7 +186,9 @@ public struct SecureProjectDirectoryMutation: Sendable {
     guard validateDirectoryDescriptor(created, root: root) else {
       throw PathSecurityError.pathEscapeBlocked
     }
-    guard fsync(parentFD) == 0 else { throw PathSecurityError.writeFailed(errno) }
+    guard fsync(parentFD) == 0 else {
+      throw PathSecurityError.mutationAppliedDurabilityUncertain(errno)
+    }
     return SecureDirectoryMutationResult(action: .createDirectory, revision: nil)
   }
 
@@ -212,7 +216,9 @@ public struct SecureProjectDirectoryMutation: Sendable {
     guard name.withCString({ unlinkat(parentFD, $0, AT_REMOVEDIR) }) == 0 else {
       throw PathSecurityError.writeFailed(errno)
     }
-    guard fsync(parentFD) == 0 else { throw PathSecurityError.writeFailed(errno) }
+    guard fsync(parentFD) == 0 else {
+      throw PathSecurityError.mutationAppliedDurabilityUncertain(errno)
+    }
     return SecureDirectoryMutationResult(action: .deleteEmptyDirectory, revision: nil)
   }
 

@@ -288,6 +288,12 @@ public struct MCPToolDispatcher: Sendable {
         message: "The local approval expired.",
         retryable: true
       )
+    case .approvalDenied:
+      description = .init(
+        code: "approval_denied",
+        message: "The local user denied this action.",
+        retryable: true
+      )
     case .invalidPatch:
       description = .init(
         code: "invalid_patch",
@@ -336,6 +342,13 @@ public struct MCPToolDispatcher: Sendable {
       description = .init(
         code: "output_limit_exceeded",
         message: "The command output exceeded the bounded limit.",
+        retryable: false
+      )
+    case .durabilityUncertain:
+      description = .init(
+        code: "durability_uncertain",
+        message:
+          "The mutation was applied, but crash durability was not confirmed. Read the path before retrying.",
         retryable: false
       )
     case .skillNotFound:

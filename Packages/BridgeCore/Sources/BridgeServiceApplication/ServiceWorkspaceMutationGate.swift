@@ -35,37 +35,48 @@ public struct DirectWorkspaceLease: Sendable {
   public let projectID: ProjectID
   public let owner: ServiceWorkspaceOwner
   private let gate: ServiceWorkspaceMutationGate
+  private let token: String
 
   init(
     projectID: ProjectID,
     owner: ServiceWorkspaceOwner,
-    gate: ServiceWorkspaceMutationGate
+    gate: ServiceWorkspaceMutationGate,
+    token: String
   ) {
     self.projectID = projectID
     self.owner = owner
     self.gate = gate
+    self.token = token
   }
 
   public func release() async {
-    await gate.releaseDirect(projectID: projectID, owner: owner)
+    await gate.releaseDirect(projectID: projectID, owner: owner, token: token)
   }
 }
 
 public actor ServiceWorkspaceMutationGate {
-  private var directLeases: [ProjectID: ServiceWorkspaceOwner] = [:]
-  private var pendingCodexAdmissions: Set<ProjectID> = []
+  private struct DirectReservation: Sendable {
+    let token: String
+    let owner: ServiceWorkspaceOwner
+  }
+
+  // A direct reservation is installed before the active Codex task lookup
+  // awaits. That makes the reservation the single source of truth across the
+  // actor re-entry point instead of relying on a check-then-set sequence.
+  private var directReservations: [ProjectID: DirectReservation] = [:]
+  private var codexAdmissions: [ProjectID: Set<String>] = [:]
 
   public init() {}
 
   public func activeDirectOwner(projectID: ProjectID) -> ServiceWorkspaceOwner? {
-    directLeases[projectID]
+    directReservations[projectID]?.owner
   }
 
   public func workspaceBusyDetail(projectID: ProjectID) async throws -> WorkspaceBusyDetail? {
-    if let direct = directLeases[projectID] {
-      return direct.busyDetail
+    if let direct = directReservations[projectID] {
+      return direct.owner.busyDetail
     }
-    if pendingCodexAdmissions.contains(projectID) {
+    if !(codexAdmissions[projectID] ?? []).isEmpty {
       return .codexAdmissionPending()
     }
     return nil
@@ -76,39 +87,69 @@ public actor ServiceWorkspaceMutationGate {
     owner: ServiceWorkspaceOwner,
     activeCodexWriteTask: @Sendable () async throws -> ServiceTaskRecord?
   ) async throws -> DirectWorkspaceLease {
-    if let direct = directLeases[projectID] {
-      throw ProjectWorkspaceBusyError.busy(direct.busyDetail)
+    if let direct = directReservations[projectID] {
+      throw ProjectWorkspaceBusyError.busy(direct.owner.busyDetail)
     }
-    if pendingCodexAdmissions.contains(projectID) {
+    if !(codexAdmissions[projectID] ?? []).isEmpty {
       throw ProjectWorkspaceBusyError.busy(.codexAdmissionPending())
     }
-    if let task = try await activeCodexWriteTask() {
-      throw ProjectWorkspaceBusyError.busy(.codex(taskID: task.id.rawValue))
+    let token = UUID().uuidString
+    directReservations[projectID] = DirectReservation(token: token, owner: owner)
+
+    do {
+      if let task = try await activeCodexWriteTask() {
+        removeDirectReservation(projectID: projectID, token: token)
+        throw ProjectWorkspaceBusyError.busy(.codex(taskID: task.id.rawValue))
+      }
+    } catch {
+      removeDirectReservation(projectID: projectID, token: token)
+      throw error
     }
-    directLeases[projectID] = owner
-    return DirectWorkspaceLease(projectID: projectID, owner: owner, gate: self)
+    return DirectWorkspaceLease(projectID: projectID, owner: owner, gate: self, token: token)
   }
 
   public func beginCodexAdmission(projectID: ProjectID) async throws {
-    if let direct = directLeases[projectID] {
-      throw ProjectWorkspaceBusyError.busy(direct.busyDetail)
+    if let direct = directReservations[projectID] {
+      throw ProjectWorkspaceBusyError.busy(direct.owner.busyDetail)
     }
-    pendingCodexAdmissions.insert(projectID)
+    codexAdmissions[projectID, default: []].insert(UUID().uuidString)
   }
 
   public func endCodexAdmission(projectID: ProjectID) {
-    pendingCodexAdmissions.remove(projectID)
+    guard var tokens = codexAdmissions[projectID], let token = tokens.first else { return }
+    tokens.remove(token)
+    codexAdmissions[projectID] = tokens.isEmpty ? nil : tokens
   }
 
   public func releaseDirect(projectID: ProjectID, owner: ServiceWorkspaceOwner) {
-    if directLeases[projectID] == owner {
-      directLeases[projectID] = nil
+    // Keep this source-compatible fallback for older callers. New leases use
+    // their opaque token so a stale lease cannot release a later reservation
+    // owned by the same operation value.
+    if directReservations[projectID]?.owner == owner {
+      directReservations[projectID] = nil
     }
   }
 
+  fileprivate func releaseDirect(
+    projectID: ProjectID,
+    owner: ServiceWorkspaceOwner,
+    token: String
+  ) {
+    guard let reservation = directReservations[projectID],
+      reservation.token == token,
+      reservation.owner == owner
+    else { return }
+    directReservations[projectID] = nil
+  }
+
+  private func removeDirectReservation(projectID: ProjectID, token: String) {
+    guard directReservations[projectID]?.token == token else { return }
+    directReservations[projectID] = nil
+  }
+
   public func releaseAll() {
-    directLeases = [:]
-    pendingCodexAdmissions = []
+    directReservations = [:]
+    codexAdmissions = [:]
   }
 }
 

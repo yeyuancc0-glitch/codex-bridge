@@ -1,5 +1,6 @@
 import BridgeDomain
 import BridgeProjects
+import BridgeSecurity
 import BridgeServiceCore
 import Foundation
 
@@ -42,6 +43,7 @@ public struct DirectCommandResolution: Equatable, Sendable {
   public let allowed: Bool
   public let requiresApproval: Bool
   public let argv: [String]
+  public let workingDirectory: String?
   public let requiresNetwork: Bool
   public let reason: DirectCommandDenialReason?
 
@@ -49,12 +51,14 @@ public struct DirectCommandResolution: Equatable, Sendable {
     allowed: Bool,
     requiresApproval: Bool,
     argv: [String],
+    workingDirectory: String? = nil,
     requiresNetwork: Bool,
     reason: DirectCommandDenialReason?
   ) {
     self.allowed = allowed
     self.requiresApproval = requiresApproval
     self.argv = argv
+    self.workingDirectory = workingDirectory
     self.requiresNetwork = requiresNetwork
     self.reason = reason
   }
@@ -64,6 +68,7 @@ public struct DirectCommandResolution: Equatable, Sendable {
       allowed: false,
       requiresApproval: false,
       argv: [],
+      workingDirectory: nil,
       requiresNetwork: false,
       reason: reason
     )
@@ -155,20 +160,316 @@ public struct DirectCommandPolicy: Sendable {
   ]
 
   private func isProjectLocalExecutable(_ executable: String, projectRoot: String) -> Bool {
-    // Only path-qualified executables (e.g. `Scripts/with-xcode.sh`) are project-local;
-    // bare binary names resolve through PATH and are covered by the built-in safe rules.
     guard executable.contains("/") else { return false }
-    let standardizedRoot = (projectRoot as NSString).standardizingPath
-    let candidate: String
-    if executable.hasPrefix("/") {
-      candidate = (executable as NSString).standardizingPath
-    } else {
-      candidate =
-        ((projectRoot as NSString).appendingPathComponent(executable) as NSString)
-        .standardizingPath
+    guard
+      let resolved = projectContainedPath(
+        executable,
+        projectRoot: projectRoot,
+        workingDirectory: nil
+      )
+    else { return false }
+    let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
+      .standardizedFileURL.resolvingSymlinksInPath().path
+    return resolved != root || FileManager.default.isExecutableFile(atPath: resolved)
+  }
+
+  private func projectContainedPath(
+    _ value: String,
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> String? {
+    guard !value.isEmpty, !value.hasPrefix("~"), !value.lowercased().hasPrefix("file:") else {
+      return nil
     }
-    return candidate == standardizedRoot
-      || candidate.hasPrefix(standardizedRoot + "/")
+    let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
+      .standardizedFileURL.resolvingSymlinksInPath().path
+    let base: String
+    if let workingDirectory, !workingDirectory.isEmpty {
+      if workingDirectory == "." || workingDirectory == "./" {
+        base = root
+      } else {
+        let secure = try? SecureRelativePath(workingDirectory)
+        guard let secure else { return nil }
+        base =
+          URL(fileURLWithPath: root, isDirectory: true)
+          .appendingPathComponent(secure.value, isDirectory: true)
+          .standardizedFileURL.resolvingSymlinksInPath().path
+      }
+    } else {
+      base = root
+    }
+    let candidate: URL
+    if value.hasPrefix("/") {
+      candidate = URL(fileURLWithPath: value)
+    } else {
+      guard
+        !value.split(separator: "/", omittingEmptySubsequences: false)
+          .contains(where: { $0 == ".." || $0.isEmpty })
+      else { return nil }
+      candidate = URL(fileURLWithPath: base, isDirectory: true).appendingPathComponent(value)
+    }
+    let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath().path
+    guard resolved == root || resolved.hasPrefix(root + "/") else { return nil }
+    return resolved
+  }
+
+  private func safePathArgument(
+    _ value: String,
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    value == "-"
+      || projectContainedPath(
+        value,
+        projectRoot: projectRoot,
+        workingDirectory: workingDirectory
+      ) != nil
+  }
+
+  private func listArgumentsAreSafe(
+    _ arguments: ArraySlice<String>,
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    var pathsEnabled = false
+    for argument in arguments {
+      if pathsEnabled {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+      } else if argument == "--" {
+        pathsEnabled = true
+      } else if argument.hasPrefix("-") && argument != "-" {
+        continue
+      } else {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+      }
+    }
+    return true
+  }
+
+  private func findArgumentsAreSafe(
+    _ arguments: ArraySlice<String>,
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    let denied = Set([
+      "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls", "-fprint", "-fprint0",
+      "-fprintf", "-L", "-H", "-follow",
+    ])
+    let valuePredicates = Set([
+      "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex",
+      "-iregex", "-type", "-size", "-mtime", "-atime", "-ctime", "-mmin", "-amin",
+      "-cmin", "-user", "-group", "-perm", "-maxdepth", "-mindepth", "-fstype",
+      "-inum", "-links", "-used", "-uid", "-gid",
+    ])
+    let predicates = Set([
+      "!", "-not", "-a", "-and", "-o", "-or", "(", ")", "-print", "-print0", "-ls",
+      "-xdev", "-mount", "-depth", "-d", "-prune", "-daystart", "-ignore_readdir_race",
+      "-noignore_readdir_race", "-true", "-false", "-empty", "-readable", "-writable",
+      "-executable",
+    ])
+    var expressionStarted = false
+    var expectsValue = false
+    var pathsEnabled = false
+    for argument in arguments {
+      if expectsValue {
+        expectsValue = false
+        continue
+      }
+      if pathsEnabled {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+        continue
+      }
+      if argument == "--" {
+        pathsEnabled = true
+        continue
+      }
+      if !expressionStarted && !argument.hasPrefix("-") && argument != "!" && argument != "(" {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+        continue
+      }
+      expressionStarted = true
+      guard !denied.contains(argument) else { return false }
+      if valuePredicates.contains(argument) {
+        expectsValue = true
+      } else if !predicates.contains(argument) {
+        return false
+      }
+    }
+    return !expectsValue
+  }
+
+  private func searchArgumentsAreSafe(
+    executable: String,
+    _ arguments: ArraySlice<String>,
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    let valueOptions = Set([
+      "-e", "--regexp", "-f", "--file", "-g", "--glob", "--iglob", "--type", "-t",
+      "--type-not", "-T", "--max-count", "-m", "--context", "-C", "-A", "-B",
+      "--after-context", "--before-context", "--max-columns", "--max-depth",
+      "--max-filesize", "--sort", "--sortr", "--threads", "-j", "--path-separator",
+      "--glob-case", "--colors", "--color", "--include", "--exclude", "--exclude-dir",
+    ])
+    let pathOptions = Set(["-f", "--file"])
+    let flags = Set([
+      "-a", "--text", "-b", "--byte-offset", "-c", "--count", "-h", "--no-filename",
+      "-H", "--with-filename", "-i", "--ignore-case", "-l", "--files-with-matches",
+      "-L", "--files-without-match", "-n", "--line-number", "-q", "--quiet", "-r",
+      "--replace", "-R", "--follow", "-s", "--no-messages", "-v", "--invert-match",
+      "-w", "--word-regexp", "-x", "--line-regexp", "-F", "--fixed-strings", "-E",
+      "--encoding", "--hidden", "--no-ignore", "--no-ignore-vcs", "--files",
+      "--glob-case-insensitive", "--stats", "--json", "--heading", "--no-heading",
+      "--trim", "--crlf", "--null", "--null-data", "--passthru", "--binary-files",
+    ])
+    let deniedPrefix = ["--pre", "--hostname-bin"]
+    var patternSeen = false
+    var filesMode = false
+    var expectsValueIsPath: Bool?
+    var pathsEnabled = false
+    for argument in arguments {
+      if let valueKind = expectsValueIsPath {
+        if valueKind {
+          guard
+            safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+          else { return false }
+        }
+        if !valueKind { patternSeen = true }
+        expectsValueIsPath = nil
+        continue
+      }
+      if pathsEnabled {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+        continue
+      }
+      if argument == "--" {
+        pathsEnabled = true
+        continue
+      }
+      if argument == "--files" && executable == "rg" {
+        filesMode = true
+        continue
+      }
+      if argument.hasPrefix("-") && argument != "-" {
+        guard !deniedPrefix.contains(where: { argument == $0 || argument.hasPrefix($0 + "=") })
+        else { return false }
+        let option = argument.split(separator: "=", maxSplits: 1).first.map(String.init) ?? argument
+        if argument.contains("="), ["-e", "--regexp"].contains(option) {
+          patternSeen = true
+        }
+        if valueOptions.contains(option) && !argument.contains("=") {
+          expectsValueIsPath = pathOptions.contains(option)
+        } else if !valueOptions.contains(option) && !flags.contains(option) {
+          // Permit short flag clusters only when every character is a known
+          // flag.  Options that take values must use their separated form.
+          if option.count > 2, option.first == "-", !option.hasPrefix("--") {
+            let cluster = option.dropFirst()
+            guard cluster.allSatisfy({ flags.contains("-\($0)") }) else { return false }
+          } else {
+            return false
+          }
+        }
+        continue
+      }
+      if filesMode || patternSeen {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+      } else {
+        patternSeen = true
+      }
+    }
+    return expectsValueIsPath == nil
+  }
+
+  private func safeBuiltInInvocation(
+    _ argv: [String],
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    guard let executable = argv.first else { return false }
+    let basename = executable.split(separator: "/").last.map(String.init) ?? executable
+    switch basename {
+    case "pwd":
+      return argv.dropFirst().allSatisfy { ["-L", "-P"].contains($0) }
+    case "ls":
+      return listArgumentsAreSafe(
+        argv.dropFirst(), projectRoot: projectRoot, workingDirectory: workingDirectory)
+    case "find":
+      return findArgumentsAreSafe(
+        argv.dropFirst(), projectRoot: projectRoot, workingDirectory: workingDirectory)
+    case "grep", "rg":
+      return searchArgumentsAreSafe(
+        executable: basename,
+        argv.dropFirst(),
+        projectRoot: projectRoot,
+        workingDirectory: workingDirectory
+      )
+    case "git":
+      let denied = [
+        "--git-dir", "--work-tree", "--no-index", "--output", "--ext-diff", "--textconv",
+        "--exec-path", "--config-env", "-C", "-c", "-p", "--paginate",
+      ]
+      return !argv.dropFirst().contains { argument in
+        denied.contains(argument)
+          || denied.dropLast().contains(where: { argument.hasPrefix($0 + "=") })
+      }
+    case "npm":
+      let denied = ["--prefix", "--userconfig", "--globalconfig"]
+      return !argv.dropFirst().contains { argument in
+        denied.contains(argument) || denied.contains { argument.hasPrefix($0 + "=") }
+      }
+    case "swift":
+      return pathOptionsAreContained(
+        argv.dropFirst(), options: ["--package-path"], projectRoot: projectRoot,
+        workingDirectory: workingDirectory
+      )
+    case "xcodebuild":
+      return pathOptionsAreContained(
+        argv.dropFirst(), options: ["-project", "-workspace", "-derivedDataPath"],
+        projectRoot: projectRoot, workingDirectory: workingDirectory
+      )
+    default:
+      return true
+    }
+  }
+
+  private func pathOptionsAreContained(
+    _ arguments: ArraySlice<String>,
+    options: Set<String>,
+    projectRoot: String,
+    workingDirectory: String?
+  ) -> Bool {
+    var expectsPath = false
+    for argument in arguments {
+      if expectsPath {
+        guard
+          safePathArgument(argument, projectRoot: projectRoot, workingDirectory: workingDirectory)
+        else { return false }
+        expectsPath = false
+      } else if let option = options.first(where: { argument == $0 || argument.hasPrefix($0 + "=") }
+      ) {
+        if argument == option {
+          expectsPath = true
+        } else {
+          let value = String(argument.dropFirst(option.count + 1))
+          guard
+            safePathArgument(value, projectRoot: projectRoot, workingDirectory: workingDirectory)
+          else { return false }
+        }
+      }
+    }
+    return !expectsPath
   }
 
   private func matchesSafeRule(_ rule: SafeRule, argv: [String]) -> Bool {
@@ -261,7 +562,7 @@ public struct DirectCommandPolicy: Sendable {
       return .denied(.blacklisted)
     }
 
-    let matchedBuiltInRule = builtInSafeRules.first { matchesSafeRule($0, argv: request.argv) }
+    let matchedBuiltInRule = builtInSafeRules.first { matchesSafeRule($0, argv: effectiveArgv) }
     switch project.directCommandMode {
     case .denied:
       return .denied(.commandModeDenied)
@@ -273,6 +574,15 @@ public struct DirectCommandPolicy: Sendable {
           executable, projectRoot: project.root.canonicalPath)
         || request.isValidatedSkillScript
       guard allowed else { return .denied(.commandNotRegistered) }
+      if matchedBuiltInRule != nil,
+        !safeBuiltInInvocation(
+          effectiveArgv,
+          projectRoot: project.root.canonicalPath,
+          workingDirectory: matched?.workingDirectory ?? request.workingDirectory
+        )
+      {
+        return .denied(.invalidArguments)
+      }
     case .full:
       break
     }
@@ -294,6 +604,7 @@ public struct DirectCommandPolicy: Sendable {
       allowed: true,
       requiresApproval: requiresApproval,
       argv: effectiveArgv,
+      workingDirectory: matched?.workingDirectory ?? request.workingDirectory,
       requiresNetwork: needsNetwork,
       reason: nil
     )

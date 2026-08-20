@@ -290,7 +290,8 @@ extension ExecutionSession {
         request: decoded,
         itemEvidence: itemEvidence,
         rawParameters: rpcRequest.params,
-        projectRoot: projectRoot
+        projectRoot: projectRoot,
+        limits: approvalLimits
       )
       usedApprovalRequests.insert(requestKey)
       pendingApprovals[id] = PendingApproval(

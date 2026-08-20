@@ -128,10 +128,10 @@ public struct SecureProjectFileWriter: Sendable {
 
     var current = rootFD
     do {
-      for component in relativePath.components {
-        let next = component.withCString {
-          openat(current, $0, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_DIRECTORY)
-        }
+      for (index, component) in relativePath.components.enumerated() {
+        let isLast = index == relativePath.components.count - 1
+        let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
+        let next = component.withCString { openat(current, $0, flags) }
         let openError = errno
         if current != rootFD { close(current) }
         current = -1
@@ -173,7 +173,9 @@ public struct SecureProjectFileWriter: Sendable {
       guard fsync(created) == 0 else { throw PathSecurityError.writeFailed(errno) }
       close(created)
       created = -1
-      guard fsync(parentFD) == 0 else { throw PathSecurityError.writeFailed(errno) }
+      guard fsync(parentFD) == 0 else {
+        throw PathSecurityError.mutationAppliedDurabilityUncertain(errno)
+      }
       return SecureWriteResult(mode: .create, oldRevision: nil, newRevision: .digest(of: content))
     } catch {
       if created >= 0 {
@@ -220,7 +222,9 @@ public struct SecureProjectFileWriter: Sendable {
         guard renameat(parentFD, staging, parentFD, name) == 0 else {
           throw PathSecurityError.writeFailed(errno)
         }
-        guard fsync(parentFD) == 0 else { throw PathSecurityError.writeFailed(errno) }
+        guard fsync(parentFD) == 0 else {
+          throw PathSecurityError.mutationAppliedDurabilityUncertain(errno)
+        }
       } catch {
         if staged >= 0 {
           close(staged)

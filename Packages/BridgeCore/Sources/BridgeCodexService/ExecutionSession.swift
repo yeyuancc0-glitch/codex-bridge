@@ -25,6 +25,7 @@ package actor ExecutionSession {
   let client: CodexAppServerClient
   let configuration: ExecutionManagerConfiguration
   let projectRoot: String
+  let approvalLimits: ExecutionApprovalLimits
   let onTermination: @Sendable (TaskID, ExecutionSession) async -> Void
   let continuation: AsyncStream<ExecutionEvent>.Continuation
 
@@ -47,6 +48,7 @@ package actor ExecutionSession {
     taskID: TaskID,
     configuration: ExecutionManagerConfiguration,
     projectRoot: String,
+    approvalLimits: ExecutionApprovalLimits,
     onTermination: @escaping @Sendable (TaskID, ExecutionSession) async -> Void
   ) {
     let pair = AsyncStream.makeStream(
@@ -56,6 +58,7 @@ package actor ExecutionSession {
     self.taskID = taskID
     self.configuration = configuration
     self.projectRoot = projectRoot
+    self.approvalLimits = approvalLimits
     self.onTermination = onTermination
     client = CodexAppServerClient(
       configuration: configuration.appServer,
@@ -431,6 +434,7 @@ package actor ExecutionSession {
     let fullAccess =
       task.accessMode == .fullAccess
       && task.permissionMode == .workspaceWrite
+      && task.networkAllowed
       && projectPolicy.write != .denied
       && projectPolicy.network != .denied
     let sandboxPolicy: CodexSandboxPolicy

@@ -50,7 +50,7 @@ public actor DirectActionApprovalCenter {
   }
 
   private var pendingByID: [String: Pending] = [:]
-  private var grantKeys: Set<String> = []
+  private var grantKeys: [String: Date] = [:]
   private var deniedKeys: [String: Date] = [:]
   public let approvalLifetime: TimeInterval
   public let denyLifetime: TimeInterval
@@ -82,17 +82,10 @@ public actor DirectActionApprovalCenter {
     let key = Self.key(payloadDigest: payloadDigest, clientRequestID: clientRequestID)
     if let deniedAt = deniedKeys[key] {
       if Date().timeIntervalSince(deniedAt) < denyLifetime {
-        // Still within the denial window; surface the denial again.
-        let approvalID = UUID().uuidString
-        pendingByID[approvalID] = Pending(
-          projectID: projectID,
-          kind: kind,
-          summary: summary,
-          key: key,
-          createdAt: Date()
-        )
-        deniedKeys[key] = nil
-        return approvalID
+        // A denial is a cooldown, not another approval request. Keep the
+        // source-compatible String return while returning an unapprovable
+        // marker to legacy callers; no pending item is created.
+        return Self.deniedApprovalID(for: key)
       }
       deniedKeys[key] = nil
     }
@@ -122,14 +115,16 @@ public actor DirectActionApprovalCenter {
   }
 
   public func approve(approvalID: String) -> Bool {
+    expireIfNeeded()
     guard let pending = pendingByID[approvalID] else { return false }
     pendingByID[approvalID] = nil
     deniedKeys[pending.key] = nil
-    grantKeys.insert(pending.key)
+    grantKeys[pending.key] = Date()
     return true
   }
 
   public func deny(approvalID: String) -> Bool {
+    expireIfNeeded()
     guard let pending = pendingByID[approvalID] else { return false }
     pendingByID[approvalID] = nil
     deniedKeys[pending.key] = Date()
@@ -142,14 +137,22 @@ public actor DirectActionApprovalCenter {
   ) -> Bool {
     expireIfNeeded()
     let key = Self.key(payloadDigest: payloadDigest, clientRequestID: clientRequestID)
-    guard grantKeys.contains(key) else { return false }
-    grantKeys.remove(key)
+    guard grantKeys.removeValue(forKey: key) != nil else { return false }
     return true
+  }
+
+  public func denialIsActive(
+    payloadDigest: String,
+    clientRequestID: String?
+  ) -> Bool {
+    expireIfNeeded()
+    let key = Self.key(payloadDigest: payloadDigest, clientRequestID: clientRequestID)
+    return deniedKeys[key] != nil
   }
 
   public func cancelAll() {
     pendingByID = [:]
-    grantKeys = []
+    grantKeys = [:]
     deniedKeys = [:]
   }
 
@@ -158,6 +161,9 @@ public actor DirectActionApprovalCenter {
     pendingByID = pendingByID.filter { _, pending in
       now.timeIntervalSince(pending.createdAt) < approvalLifetime
     }
+    grantKeys = grantKeys.filter { _, grantedAt in
+      now.timeIntervalSince(grantedAt) < approvalLifetime
+    }
     deniedKeys = deniedKeys.filter { _, date in
       now.timeIntervalSince(date) < denyLifetime
     }
@@ -165,5 +171,12 @@ public actor DirectActionApprovalCenter {
 
   private static func key(payloadDigest: String, clientRequestID: String?) -> String {
     "\(payloadDigest)|\(clientRequestID ?? "")"
+  }
+
+  private static func deniedApprovalID(for key: String) -> String {
+    let digest = SHA256.hash(data: Data(key.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+    return "denied-\(digest.prefix(16))"
   }
 }

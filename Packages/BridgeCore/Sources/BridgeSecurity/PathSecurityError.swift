@@ -13,6 +13,7 @@ public enum PathSecurityError: Error, LocalizedError, Sendable, Equatable {
   case binaryFileBlocked
   case readFailed(Int32)
   case writeFailed(Int32)
+  case mutationAppliedDurabilityUncertain(Int32)
   case targetAlreadyExists
   case targetNotRegularFile
   case unsupportedHardLink
@@ -45,6 +46,8 @@ public enum PathSecurityError: Error, LocalizedError, Sendable, Equatable {
       "The file could not be read (errno \(code))."
     case .writeFailed(let code):
       "The file could not be written (errno \(code))."
+    case .mutationAppliedDurabilityUncertain(let code):
+      "The mutation was applied, but directory durability could not be confirmed (errno \(code))."
     case .targetAlreadyExists:
       "The target already exists."
     case .targetNotRegularFile:

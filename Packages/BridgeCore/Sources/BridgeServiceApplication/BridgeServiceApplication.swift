@@ -518,7 +518,19 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       throw error
     }
     if !result.reusedExistingTask {
-      let started = try await tasks.begin(taskID: result.task.id)
+      let started: ServiceTaskRecord
+      do {
+        started = try await tasks.begin(taskID: result.task.id)
+      } catch {
+        _ = try? await tasks.interrupt(
+          taskID: result.task.id,
+          summary: "Codex execution could not enter the starting state."
+        )
+        if let storeError = error as? ServiceStoreError {
+          throw Self.publicStoreError(storeError)
+        }
+        throw error
+      }
       do {
         try await coordinator.start(taskID: started.id)
       } catch {

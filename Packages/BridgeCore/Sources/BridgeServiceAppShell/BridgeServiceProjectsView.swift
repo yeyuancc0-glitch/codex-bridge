@@ -468,7 +468,11 @@ private struct ProjectPermissionEditor: View {
       VStack(alignment: .leading, spacing: 14) {
         VStack(spacing: 12) {
           permissionPickerRow(
-            "读取权限", symbol: "doc.text.magnifyingglass", selection: $draft.readPermission)
+            "读取权限",
+            symbol: "doc.text.magnifyingglass",
+            selection: $draft.readPermission,
+            supportsLocalApproval: false
+          )
           Divider()
           permissionPickerRow(
             "写入权限", symbol: "pencil.and.outline", selection: $draft.writePermission)
@@ -533,7 +537,8 @@ private struct ProjectPermissionEditor: View {
   private func permissionPickerRow(
     _ title: String,
     symbol: String,
-    selection: Binding<String>
+    selection: Binding<String>,
+    supportsLocalApproval: Bool = true
   ) -> some View {
     HStack(alignment: .center) {
       Label(title, systemImage: symbol)
@@ -544,7 +549,12 @@ private struct ProjectPermissionEditor: View {
 
       Picker(title, selection: selection) {
         Text("拒绝").tag("denied")
-        Text("需要本机批准").tag("requiresLocalApproval")
+        if supportsLocalApproval {
+          Text("需要本机批准").tag("requiresLocalApproval")
+        } else if selection.wrappedValue == "requiresLocalApproval" {
+          Text("需批准（不支持）").tag("requiresLocalApproval")
+            .disabled(true)
+        }
         Text("允许").tag("allowed")
       }
       .pickerStyle(.segmented)

@@ -17,15 +17,17 @@ struct LoopbackHealthClient: Sendable {
   ) throws -> TunnelHealthSnapshot {
     let baseURL = try healthBaseURL(in: urlFileDirectory)
     guard Self.process(expectedPeerPID, ownsListeningPort: baseURL.port!) else {
-      Self.appendLog("[UnixHealthClient] ownsListeningPort failed for pid \(expectedPeerPID) on port \(baseURL.port ?? -1)")
       throw TunnelHealthError.unexpectedPeer
     }
     let ready = try request(path: "/readyz", baseURL: baseURL)
-    let readyBodyText = String(decoding: ready.body, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-    let isReady = ready.status == 200 && (readyBodyText == "ready" || readyBodyText == "ok" || readyBodyText.isEmpty)
+    let readyBodyText = String(decoding: ready.body, as: UTF8.self).trimmingCharacters(
+      in: .whitespacesAndNewlines)
+    let isReady =
+      ready.status == 200
+      && (readyBodyText == "ready" || readyBodyText == "ok" || readyBodyText.isEmpty)
     let metrics = try? request(path: "/metrics", baseURL: baseURL)
-    let pollTime = metrics != nil && metrics!.status == 200 ? Self.pollTimestamp(in: metrics!.body) : nil
-    Self.appendLog("[UnixHealthClient] snapshot success: isReady=\(isReady) (status=\(ready.status), body='\(readyBodyText)'), pollTime=\(String(describing: pollTime))")
+    let pollTime =
+      metrics != nil && metrics!.status == 200 ? Self.pollTimestamp(in: metrics!.body) : nil
     return TunnelHealthSnapshot(
       isReady: isReady,
       pollTimestamp: pollTime
@@ -71,7 +73,6 @@ struct LoopbackHealthClient: Sendable {
     guard let port = baseURL.port else { throw TunnelHealthError.invalidURLFile }
     let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
     guard descriptor >= 0 else {
-      Self.appendLog("socket creation failed errno=\(errno)")
       throw TunnelHealthError.unavailable
     }
     defer { Darwin.close(descriptor) }
@@ -90,7 +91,6 @@ struct LoopbackHealthClient: Sendable {
     guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
       setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0
     else {
-      Self.appendLog("setsockopt failed errno=\(errno)")
       throw TunnelHealthError.unavailable
     }
   }
@@ -107,7 +107,6 @@ struct LoopbackHealthClient: Sendable {
       }
     }
     guard status == 0 else {
-      Self.appendLog("connect failed port=\(port) errno=\(errno)")
       throw TunnelHealthError.unavailable
     }
   }
@@ -124,7 +123,6 @@ struct LoopbackHealthClient: Sendable {
           MSG_NOSIGNAL
         )
         guard count > 0 else {
-          Self.appendLog("send failed errno=\(errno)")
           throw TunnelHealthError.unavailable
         }
         offset += count
@@ -142,34 +140,17 @@ struct LoopbackHealthClient: Sendable {
         if errno == EAGAIN || errno == EWOULDBLOCK {
           break
         }
-        Self.appendLog("recv failed count=\(count) errno=\(errno) responseCount=\(response.count)")
         throw TunnelHealthError.unavailable
       }
       response.append(chunk, count: count)
     }
     guard response.count <= maximumResponseBytes else {
-      Self.appendLog("response too large: \(response.count)")
       throw TunnelHealthError.responseTooLarge
     }
     guard !response.isEmpty else {
       throw TunnelHealthError.invalidResponse
     }
     return try HTTPResponse(data: response)
-  }
-
-  package static func appendLog(_ message: String) {
-    let url = URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")
-    let line = message + "\n"
-    guard let data = line.data(using: .utf8) else { return }
-    if FileManager.default.fileExists(atPath: url.path) {
-      if let handle = try? FileHandle(forWritingTo: url) {
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: data)
-        try? handle.close()
-      }
-    } else {
-      try? data.write(to: url)
-    }
   }
 
   package static func pollTimestamp(in body: Data) -> TimeInterval? {
@@ -279,12 +260,14 @@ package struct HTTPResponse {
       guard let crlf = data[index...].range(of: Data("\r\n".utf8)) else {
         break
       }
-      let sizeLine = String(decoding: data[index..<crlf.lowerBound], as: UTF8.self).trimmingCharacters(in: .whitespaces)
+      let sizeLine = String(decoding: data[index..<crlf.lowerBound], as: UTF8.self)
+        .trimmingCharacters(in: .whitespaces)
       guard let chunkSize = Int(sizeLine, radix: 16), chunkSize > 0 else {
         break
       }
       let chunkStart = crlf.upperBound
-      guard let chunkEnd = data.index(chunkStart, offsetBy: chunkSize, limitedBy: data.endIndex) else {
+      guard let chunkEnd = data.index(chunkStart, offsetBy: chunkSize, limitedBy: data.endIndex)
+      else {
         break
       }
       result.append(data[chunkStart..<chunkEnd])

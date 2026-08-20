@@ -73,25 +73,9 @@ public struct DirectCommandRunner: Sendable {
     timedOut: Bool,
     onExit: (() -> Void)?
   ) async -> DirectCommandRunResult {
-    process.terminateGroup()
-    let clock = ContinuousClock()
-    let graceDeadline = clock.now.advanced(by: gracePeriod)
-    while clock.now < graceDeadline {
-      if let termination = process.reapIfExited() {
-        process.drainRemainingOutput()
-        process.close()
-        onExit?()
-        return DirectCommandRunResult(
-          sessionID: sessionID,
-          termination: termination,
-          output: output.snapshot(),
-          timedOut: timedOut
-        )
-      }
-      try? await Task.sleep(for: .milliseconds(20))
-    }
-    process.killGroup()
-    let termination = process.waitForExit(timeout: .seconds(2)) ?? .killed(SIGKILL)
+    let termination =
+      process.terminateAndWait(gracePeriod: gracePeriod)
+      ?? .killed(SIGKILL)
     process.drainRemainingOutput()
     process.close()
     onExit?()

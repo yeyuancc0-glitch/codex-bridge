@@ -103,24 +103,24 @@ public actor SimpleServiceStore {
 
   public func updateWorkspaceConfiguration(
     projectID: ProjectID,
-    directCommandMode: ServiceDirectCommandMode,
-    workspaceCommands: [ServiceWorkspaceCommand],
-    commandBlacklist: [ServiceCommandBlacklistRule],
+    directCommandMode: ServiceDirectCommandMode?,
+    workspaceCommands: [ServiceWorkspaceCommand]?,
+    commandBlacklist: [ServiceCommandBlacklistRule]?,
     at date: Date
   ) throws {
     try ServiceValidation.date(date, field: "project.updatedAt")
-    guard workspaceCommands.count <= 128 else {
+    guard workspaceCommands?.count ?? 0 <= 128 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
     }
-    guard commandBlacklist.count <= 128 else {
+    guard commandBlacklist?.count ?? 0 <= 128 else {
       throw ServiceStoreError.invalidArgument("project.commandBlacklist")
     }
-    let workspaceCommandsData = try encoder.encode(workspaceCommands)
-    let commandBlacklistData = try encoder.encode(commandBlacklist)
-    guard workspaceCommandsData.count <= 262_144 else {
+    let workspaceCommandsData = try workspaceCommands.map { try encoder.encode($0) }
+    let commandBlacklistData = try commandBlacklist.map { try encoder.encode($0) }
+    guard workspaceCommandsData?.count ?? 0 <= 262_144 else {
       throw ServiceStoreError.invalidArgument("project.workspaceCommands")
     }
-    guard commandBlacklistData.count <= 262_144 else {
+    guard commandBlacklistData?.count ?? 0 <= 262_144 else {
       throw ServiceStoreError.invalidArgument("project.commandBlacklist")
     }
     do {
@@ -135,12 +135,13 @@ public actor SimpleServiceStore {
         try db.execute(
           sql: """
             UPDATE bridge_service_projects
-            SET direct_command_mode = ?, workspace_commands_json = ?,
-                direct_blacklist_json = ?, updated_at = ?
+            SET direct_command_mode = COALESCE(?, direct_command_mode),
+                workspace_commands_json = COALESCE(?, workspace_commands_json),
+                direct_blacklist_json = COALESCE(?, direct_blacklist_json), updated_at = ?
             WHERE project_id = ?
             """,
           arguments: [
-            directCommandMode.rawValue,
+            directCommandMode?.rawValue,
             workspaceCommandsData,
             commandBlacklistData,
             date.timeIntervalSince1970,
@@ -498,7 +499,9 @@ public actor SimpleServiceStore {
           db,
           sql: """
             SELECT * FROM bridge_service_tasks
-            WHERE status IN ('starting', 'running', 'waiting_for_codex_approval')
+            WHERE status IN (
+              'awaiting_local_approval', 'starting', 'running', 'waiting_for_codex_approval'
+            )
             ORDER BY created_at, task_id
             """
         )
@@ -506,12 +509,14 @@ public actor SimpleServiceStore {
         updated.reserveCapacity(rows.count)
         for row in rows {
           let task = try Self.decodeTask(row)
+          let wasNotStarted = task.state.status == .awaitingLocalApproval
+          let recoveredStatus: ServiceTaskStatus = wasNotStarted ? .interrupted : .unknown
           let supervisorStatus: ServiceSupervisorStatus =
             task.state.supervisorStatus == .disabled ? .disabled : .degraded
           let state = try ServiceTaskState(
             codexThreadID: task.state.codexThreadID,
             codexTurnID: task.state.codexTurnID,
-            status: .unknown,
+            status: recoveredStatus,
             supervisorStatus: supervisorStatus,
             currentStep: task.state.currentStep,
             changedFiles: task.state.changedFiles,
@@ -520,12 +525,14 @@ public actor SimpleServiceStore {
             failureCode: task.state.failureCode
           )
           let recovered = try task.replacingState(state, updatedAt: date)
-          try Self.validateTransition(from: task.state.status, to: .unknown)
+          try Self.validateTransition(from: task.state.status, to: recoveredStatus)
           try updateTaskRow(recovered, in: db)
           try Self.insert(
             ServiceTaskEventDraft(
-              kind: .taskMarkedUnknown,
-              summary: "The service restarted without an attached Codex turn.",
+              kind: wasNotStarted ? .taskInterrupted : .taskMarkedUnknown,
+              summary: wasNotStarted
+                ? "The service restarted before Codex execution began."
+                : "The service restarted without an attached Codex turn.",
               createdAt: date
             ),
             taskID: task.id,

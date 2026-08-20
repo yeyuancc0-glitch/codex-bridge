@@ -278,6 +278,128 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
     )
   }
 
+  func testApplyPatchRejectsDuplicatePathsBeforeWriting() async throws {
+    let fixture = try await writeFixture(self)
+    let operations = [
+      ProjectPatchFileOperation(
+        action: "add",
+        relativePath: "duplicate.txt",
+        hunks: [ProjectPatchHunk(context: "", removals: [], additions: ["first"])]
+      ),
+      ProjectPatchFileOperation(
+        action: "add",
+        relativePath: "duplicate.txt",
+        hunks: [ProjectPatchHunk(context: "", removals: [], additions: ["second"])]
+      ),
+    ]
+
+    await assertMutationError(
+      try await fixture.service.applyPatch(
+        ProjectApplyPatchRequest(projectID: fixture.projectID, operations: operations)
+      )
+    ) { error in
+      XCTAssertEqual(error, .invalidPatch)
+    }
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: fixture.root.appending(path: "duplicate.txt").path))
+  }
+
+  func testApplyPatchRollsBackOnlyFilesThatWereWritten() async throws {
+    let fixture = try await writeFixture(self)
+    let operations = [
+      ProjectPatchFileOperation(
+        action: "add",
+        relativePath: "created.txt",
+        hunks: [ProjectPatchHunk(context: "", removals: [], additions: ["first"])]
+      ),
+      ProjectPatchFileOperation(
+        action: "add",
+        relativePath: "created.txt/child.txt",
+        hunks: [ProjectPatchHunk(context: "", removals: [], additions: ["second"])]
+      ),
+    ]
+
+    await assertMutationError(
+      try await fixture.service.applyPatch(
+        ProjectApplyPatchRequest(projectID: fixture.projectID, operations: operations)
+      )
+    ) { error in
+      guard case .partialCommit(let changedFiles, let rollbackStatus) = error else {
+        return XCTFail("Expected partialCommit, got \(error)")
+      }
+      XCTAssertEqual(changedFiles, ["created.txt"])
+      XCTAssertEqual(rollbackStatus, "rolled_back")
+    }
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: fixture.root.appending(path: "created.txt").path))
+  }
+
+  func testApplyPatchRejectsAmbiguousHunkAndUsesContextToSelectUniqueMatch() async throws {
+    let fixture = try await writeFixture(self)
+    let path = fixture.root.appending(path: "repeated.txt")
+    let original = "func first\ntarget\nfunc second\ntarget\n"
+    try Data(original.utf8).write(to: path)
+    let revision = sha256(of: Data(original.utf8))
+
+    let ambiguous = ProjectPatchFileOperation(
+      action: "update",
+      relativePath: "repeated.txt",
+      expectedSHA256: revision,
+      hunks: [ProjectPatchHunk(context: "", removals: ["target"], additions: ["changed"])]
+    )
+    await assertMutationError(
+      try await fixture.service.applyPatch(
+        ProjectApplyPatchRequest(projectID: fixture.projectID, operations: [ambiguous])
+      )
+    ) { error in
+      XCTAssertEqual(error, .invalidPatch)
+    }
+    XCTAssertEqual(try String(contentsOf: path, encoding: .utf8), original)
+
+    let contextual = ProjectPatchFileOperation(
+      action: "update",
+      relativePath: "repeated.txt",
+      expectedSHA256: revision,
+      hunks: [
+        ProjectPatchHunk(context: "func second", removals: ["target"], additions: ["changed"])
+      ]
+    )
+    _ = try await fixture.service.applyPatch(
+      ProjectApplyPatchRequest(projectID: fixture.projectID, operations: [contextual])
+    )
+    XCTAssertEqual(
+      try String(contentsOf: path, encoding: .utf8),
+      "func first\ntarget\nfunc second\nchanged\n"
+    )
+  }
+
+  func testPatchParserRejectsDuplicatePaths() {
+    let patch = """
+      *** Begin Patch
+      *** Add File: duplicate.txt
+      +one
+      *** Add File: duplicate.txt
+      +two
+      *** End Patch
+      """
+    XCTAssertThrowsError(try ProjectPatchParser.parse(patch)) { error in
+      XCTAssertEqual(error as? ProjectPatchParserError, .duplicatePath)
+    }
+  }
+
+  func testRevisionReadsRegularFileWithoutDirectoryFlag() async throws {
+    let fixture = try await writeFixture(self)
+    let data = Data("revision content\n".utf8)
+    try data.write(to: fixture.root.appending(path: "revision.txt"))
+    let resolver = ProjectPathResolver(root: try RegisteredRoot(capturing: fixture.root))
+
+    let revision = try SecureProjectFileWriter().revision(
+      relativePath: try SecureRelativePath("revision.txt"),
+      through: resolver
+    )
+    XCTAssertEqual(revision, SecureFileRevision.digest(of: data))
+  }
+
   func testDeleteFileRequiresRevision() async throws {
     let fixture = try await writeFixture(self)
     try Data("to delete".utf8).write(to: fixture.root.appending(path: "gone.txt"))

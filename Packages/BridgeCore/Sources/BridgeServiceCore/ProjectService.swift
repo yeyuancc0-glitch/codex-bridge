@@ -80,6 +80,43 @@ public actor ServiceProjectService {
     return updated
   }
 
+  @discardableResult
+  public func updateWorkspaceCommands(
+    _ workspaceCommands: [ServiceWorkspaceCommand],
+    commandBlacklist: [ServiceCommandBlacklistRule],
+    projectID: ProjectID
+  ) async throws -> ServiceProjectRecord {
+    try await store.updateWorkspaceConfiguration(
+      projectID: projectID,
+      directCommandMode: nil,
+      workspaceCommands: workspaceCommands,
+      commandBlacklist: commandBlacklist,
+      at: now()
+    )
+    guard let updated = try await store.project(id: projectID) else {
+      throw ServiceStoreError.unknownProject(projectID)
+    }
+    return updated
+  }
+
+  @discardableResult
+  public func updateDirectCommandMode(
+    _ mode: ServiceDirectCommandMode,
+    projectID: ProjectID
+  ) async throws -> ServiceProjectRecord {
+    try await store.updateWorkspaceConfiguration(
+      projectID: projectID,
+      directCommandMode: mode,
+      workspaceCommands: nil,
+      commandBlacklist: nil,
+      at: now()
+    )
+    guard let updated = try await store.project(id: projectID) else {
+      throw ServiceStoreError.unknownProject(projectID)
+    }
+    return updated
+  }
+
   public func remove(projectID: ProjectID) async throws {
     try await store.removeProject(id: projectID)
   }

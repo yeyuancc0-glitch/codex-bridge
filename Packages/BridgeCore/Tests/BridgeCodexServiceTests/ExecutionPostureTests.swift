@@ -53,7 +53,8 @@ final class ExecutionPostureTests: XCTestCase {
     let task = try await submitStartedExecutionTask(
       fixture: fixture,
       taskID: "tsk-full-access",
-      accessMode: .fullAccess
+      accessMode: .fullAccess,
+      networkAllowed: true
     )
     let script = postureExecutionScript(
       root: root,
@@ -71,6 +72,45 @@ final class ExecutionPostureTests: XCTestCase {
       approvalsReviewer: "user"
     )
     let manager = makeExecutionManager(script: script)
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    _ = try await coordinator.start(taskID: task.id)
+    let completed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(
+      completed.state.resultSummary,
+      "The task completed under the configured posture."
+    )
+  }
+
+  func testFullAccessModeCannotOverrideTaskNetworkDenial() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let root = fixture.root.path
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-full-access-task-network-denied",
+      accessMode: .fullAccess,
+      networkAllowed: false
+    )
+    let manager = makeExecutionManager(
+      script: postureExecutionScript(
+        root: root,
+        threadStartChecks: [
+          #""sandbox":"workspace-write""#,
+          #""approvalPolicy":"on-request""#,
+        ],
+        turnStartChecks: [#""approvalPolicy":"on-request""#],
+        sandboxJSON: workspaceWriteSandboxJSON(root: root),
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user"
+      )
+    )
     let coordinator = ServiceExecutionCoordinator(
       tasks: fixture.tasks,
       projects: fixture.projects,

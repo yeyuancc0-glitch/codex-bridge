@@ -254,8 +254,8 @@ enum ServiceStoreSchema {
       let projectID = row["project_id"] as String
       let commandsData: Data = row["workspace_commands_json"]
       let whitelistData: Data = row["direct_safe_whitelist_json"]
-      let commands = (try? decoder.decode([LegacyWorkspaceCommand].self, from: commandsData)) ?? []
-      let whitelist = (try? decoder.decode([LegacySafeRule].self, from: whitelistData)) ?? []
+      let commands = try decoder.decode([LegacyWorkspaceCommand].self, from: commandsData)
+      let whitelist = try decoder.decode([LegacySafeRule].self, from: whitelistData)
       guard !whitelist.isEmpty else { continue }
       let merged =
         commands

@@ -6,6 +6,7 @@ public enum ProjectPatchParserError: Error, Equatable, Sendable {
   case missingEndMarker
   case malformedFileHeader
   case absolutePath
+  case duplicatePath
   case emptyPatch
 }
 
@@ -22,6 +23,7 @@ public enum ProjectPatchParser {
     }
 
     var operations: [ProjectPatchFileOperation] = []
+    var paths = Set<String>()
     var index = beginIndex + 1
     while index < endIndex {
       let header = lines[index]
@@ -35,6 +37,9 @@ public enum ProjectPatchParser {
       else {
         index += 1
         continue
+      }
+      guard paths.insert(operation.operation.relativePath).inserted else {
+        throw ProjectPatchParserError.duplicatePath
       }
       operations.append(operation.operation)
       index = operation.endLine + 1

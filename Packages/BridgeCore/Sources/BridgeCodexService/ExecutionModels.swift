@@ -58,6 +58,8 @@ public enum ExecutionServiceError: Error, Equatable, LocalizedError, Sendable {
   case turnStartTimedOut
   case bindingMismatch
   case approvalUnavailable(String)
+  case approvalExceedsPolicy
+  case conversationPersistenceFailed
   case protocolViolation(String)
   case processUnavailable
 
@@ -97,6 +99,10 @@ public enum ExecutionServiceError: Error, Equatable, LocalizedError, Sendable {
       "The Codex Thread or Turn did not match the active task."
     case .approvalUnavailable:
       "The Codex approval request is unavailable."
+    case .approvalExceedsPolicy:
+      "The Codex approval request exceeds the project or task policy."
+    case .conversationPersistenceFailed:
+      "The task conversation could not be persisted."
     case .protocolViolation(let message):
       "Codex returned an invalid protocol event: \(message)."
     case .processUnavailable:

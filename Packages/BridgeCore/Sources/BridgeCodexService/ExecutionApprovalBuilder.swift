@@ -1,5 +1,7 @@
 import BridgeCodexRPC
 import BridgeDomain
+import BridgeProjects
+import BridgeServiceCore
 import Foundation
 
 package enum ExecutionApprovalResponse: Sendable {
@@ -27,6 +29,18 @@ package struct PreparedExecutionApproval: Sendable {
   let response: ExecutionApprovalResponse
 }
 
+package struct ExecutionApprovalLimits: Sendable {
+  let projectPolicy: ProjectAccessPolicy
+  let taskPermissionMode: ServicePermissionMode
+  let taskNetworkAllowed: Bool
+
+  init(request: ExecutionRequest) {
+    projectPolicy = request.project.accessPolicy
+    taskPermissionMode = request.task.permissionMode
+    taskNetworkAllowed = request.task.networkAllowed
+  }
+}
+
 package enum ExecutionApprovalBuilder {
   static func build(
     approvalID: String,
@@ -35,7 +49,8 @@ package enum ExecutionApprovalBuilder {
     request: CodexApprovalRequest,
     itemEvidence: CodexApprovalItemEvidence,
     rawParameters: JSONValue?,
-    projectRoot: String
+    projectRoot: String,
+    limits: ExecutionApprovalLimits
   ) throws -> PreparedExecutionApproval {
     let correlation = request.correlation.item
     guard correlation.threadID == binding.threadID,
@@ -49,6 +64,11 @@ package enum ExecutionApprovalBuilder {
     case .command(let command):
       guard case .commandExecution(let evidence) = itemEvidence else {
         throw ExecutionServiceError.protocolViolation("command approval item")
+      }
+      if command.networkContext != nil
+        || command.proposedNetworkPolicyAmendments?.contains(where: { $0.action == .allow }) == true
+      {
+        try requireNetworkPermission(limits)
       }
       let displayCommand =
         ExecutionValidation.redacted(
@@ -73,6 +93,7 @@ package enum ExecutionApprovalBuilder {
       guard case .fileChange(let evidence) = itemEvidence else {
         throw ExecutionServiceError.protocolViolation("file approval item")
       }
+      try requireWritePermission(limits)
       var paths: [String] = []
       for change in evidence.changes {
         paths.append(try ExecutionValidation.relativePath(change.path, root: projectRoot))
@@ -102,6 +123,11 @@ package enum ExecutionApprovalBuilder {
         throw ExecutionServiceError.protocolViolation("permissions approval item")
       }
       let reason = ExecutionValidation.redacted(permissions.reason, maximumBytes: 4 * 1_024)
+      let scope = try permissionScope(
+        permissions.permissions,
+        projectRoot: projectRoot,
+        limits: limits
+      )
       let rawPermissions = rawParameters?.objectValue?["permissions"] ?? .object([:])
       let approval = try ExecutionApprovalRequest(
         id: approvalID,
@@ -110,13 +136,127 @@ package enum ExecutionApprovalBuilder {
         itemID: correlation.itemID,
         kind: .permissions,
         title: "Grant additional permissions",
-        summary: "Codex requests additional file-system or network permissions.",
+        summary: scope.summary,
+        displayCommand: scope.details.joined(separator: "\n"),
+        relativePaths: scope.relativePaths,
         reason: reason
       )
       return PreparedExecutionApproval(
         request: approval,
         response: .permissions(rawPermissions)
       )
+    }
+  }
+
+  private struct PermissionScope {
+    let summary: String
+    let details: [String]
+    let relativePaths: [String]
+  }
+
+  private static func permissionScope(
+    _ permissions: CodexRequestPermissionProfile,
+    projectRoot: String,
+    limits: ExecutionApprovalLimits
+  ) throws -> PermissionScope {
+    var details: [String] = []
+    var paths: [String] = []
+    if let fileSystem = permissions.fileSystem {
+      try appendFileSystemScope(
+        fileSystem,
+        projectRoot: projectRoot,
+        limits: limits,
+        details: &details,
+        paths: &paths
+      )
+    }
+    if permissions.network?.enabled == true {
+      try requireNetworkPermission(limits)
+      details.append("Network access: enabled for this turn")
+    }
+    if details.isEmpty { details.append("No additional capabilities") }
+    paths = Array(Set(paths)).sorted()
+    let summary =
+      "Codex requests \(details.count) additional permission scope(s) for this turn."
+    return PermissionScope(summary: summary, details: details, relativePaths: paths)
+  }
+
+  private static func appendFileSystemScope(
+    _ fileSystem: CodexAdditionalFileSystemPermissions,
+    projectRoot: String,
+    limits: ExecutionApprovalLimits,
+    details: inout [String],
+    paths: inout [String]
+  ) throws {
+    for entry in fileSystem.entries ?? [] {
+      let path = try permissionPath(entry.path, projectRoot: projectRoot)
+      switch entry.access {
+      case .write:
+        try requireWritePermission(limits)
+        details.append("File-system write: \(path.display)")
+      case .read:
+        guard limits.projectPolicy.read == .allowed else {
+          throw ExecutionServiceError.approvalExceedsPolicy
+        }
+        details.append("File-system read: \(path.display)")
+      case .deny:
+        details.append("File-system deny: \(path.display)")
+      }
+      if let relative = path.relative { paths.append(relative) }
+    }
+    for path in fileSystem.legacyReadPaths ?? [] {
+      guard limits.projectPolicy.read == .allowed else {
+        throw ExecutionServiceError.approvalExceedsPolicy
+      }
+      let relative = try ExecutionValidation.relativePath(path, root: projectRoot)
+      details.append("File-system read: \(relative)")
+      paths.append(relative)
+    }
+    for path in fileSystem.legacyWritePaths ?? [] {
+      try requireWritePermission(limits)
+      let relative = try ExecutionValidation.relativePath(path, root: projectRoot)
+      details.append("File-system write: \(relative)")
+      paths.append(relative)
+    }
+  }
+
+  private static func requireWritePermission(_ limits: ExecutionApprovalLimits) throws {
+    guard limits.taskPermissionMode == .workspaceWrite,
+      limits.projectPolicy.write != .denied
+    else {
+      throw ExecutionServiceError.approvalExceedsPolicy
+    }
+  }
+
+  private static func requireNetworkPermission(_ limits: ExecutionApprovalLimits) throws {
+    guard limits.taskNetworkAllowed, limits.projectPolicy.network != .denied else {
+      throw ExecutionServiceError.approvalExceedsPolicy
+    }
+  }
+
+  private struct PermissionPath {
+    let display: String
+    let relative: String?
+  }
+
+  private static func permissionPath(
+    _ path: CodexFileSystemPath,
+    projectRoot: String
+  ) throws -> PermissionPath {
+    switch path {
+    case .path(let value):
+      let relative = try ExecutionValidation.relativePath(value, root: projectRoot)
+      return PermissionPath(display: relative, relative: relative)
+    case .globPattern:
+      throw ExecutionServiceError.protocolViolation("glob permission path")
+    case .special(.projectRoots(let subpath)):
+      guard let subpath, !subpath.isEmpty else {
+        return PermissionPath(display: "Project root", relative: nil)
+      }
+      let relative = try ExecutionValidation.relativePath(subpath, root: projectRoot)
+      return PermissionPath(display: relative, relative: relative)
+    case .special:
+      throw ExecutionServiceError.protocolViolation("special permission path")
     }
   }
 }

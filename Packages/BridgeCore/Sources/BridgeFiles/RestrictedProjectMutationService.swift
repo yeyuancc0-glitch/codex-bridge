@@ -129,8 +129,12 @@ public struct RestrictedProjectMutationService: Sendable {
     let resolver = ProjectPathResolver(root: project.primaryRoot)
 
     var staged: [StagedFile] = []
+    var paths = Set<String>()
     for operation in request.operations {
       let path = try securePath(operation.relativePath)
+      guard paths.insert(path.value).inserted else {
+        throw ProjectMutationError.invalidPatch
+      }
       guard resolver.sensitivePolicy.allows(path) else {
         throw ProjectMutationError.forbiddenPath
       }
@@ -195,16 +199,24 @@ public struct RestrictedProjectMutationService: Sendable {
     }
 
     var committed: [ProjectMutationResult] = []
+    var committedFiles: [StagedFile] = []
     do {
       for file in staged {
-        let result = try writer.write(
-          relativePath: file.path,
-          through: resolver,
-          mode: file.mode,
-          content: file.newContent,
-          expectedSHA256: file.expectedSHA256,
-          createParents: true
-        )
+        let result: SecureWriteResult
+        do {
+          result = try writer.write(
+            relativePath: file.path,
+            through: resolver,
+            mode: file.mode,
+            content: file.newContent,
+            expectedSHA256: file.expectedSHA256,
+            createParents: true
+          )
+        } catch let PathSecurityError.mutationAppliedDurabilityUncertain(code) {
+          committedFiles.append(file)
+          throw PathSecurityError.mutationAppliedDurabilityUncertain(code)
+        }
+        committedFiles.append(file)
         committed.append(
           ProjectMutationResult(
             relativePath: file.path.value,
@@ -221,8 +233,8 @@ public struct RestrictedProjectMutationService: Sendable {
       }
       return committed
     } catch {
-      let rolledBack = try? rollback(staged: staged, resolver: resolver)
-      let changedPaths = committed.map(\.relativePath)
+      let rolledBack = rollback(staged: committedFiles, resolver: resolver)
+      let changedPaths = committedFiles.map { $0.path.value }
       throw ProjectMutationError.partialCommit(
         changedFiles: changedPaths,
         rollbackStatus: rolledBack == true ? "rolled_back" : "rollback_failed"
@@ -302,6 +314,8 @@ public struct RestrictedProjectMutationService: Sendable {
       return .binaryContent
     case .readFailed, .writeFailed:
       return .unsafeFilesystemState
+    case .mutationAppliedDurabilityUncertain:
+      return .durabilityUncertain
     case .targetAlreadyExists:
       return .pathExists
     case .unsupportedHardLink:
@@ -315,7 +329,7 @@ public struct RestrictedProjectMutationService: Sendable {
 
   private func rollback(staged: [StagedFile], resolver: ProjectPathResolver) -> Bool {
     var succeeded = true
-    for file in staged {
+    for file in staged.reversed() {
       do {
         if let oldContent = file.oldContent {
           _ = try writer.write(
@@ -345,9 +359,17 @@ public struct RestrictedProjectMutationService: Sendable {
   private func apply(hunk: ProjectPatchHunk, to content: String) throws -> String {
     let before = hunk.removals
     let after = hunk.additions
-    if before.isEmpty && after.isEmpty { return content }
+    guard !before.isEmpty else { throw ProjectMutationError.invalidPatch }
     let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    guard let matchIndex = indexOf(sequence: before, in: lines) else {
+    let matches = indices(of: before, in: lines)
+    guard !matches.isEmpty else {
+      throw ProjectMutationError.invalidPatch
+    }
+    let candidates =
+      matches.count == 1
+      ? matches
+      : narrow(matches: matches, using: hunk.context, in: lines)
+    guard candidates.count == 1, let matchIndex = candidates.first else {
       throw ProjectMutationError.invalidPatch
     }
     var updated = lines
@@ -355,12 +377,44 @@ public struct RestrictedProjectMutationService: Sendable {
     return updated.joined(separator: "\n")
   }
 
-  private func indexOf(sequence: [String], in lines: [String]) -> Int? {
-    guard !sequence.isEmpty, sequence.count <= lines.count else { return nil }
+  private func indices(of sequence: [String], in lines: [String]) -> [Int] {
+    guard !sequence.isEmpty, sequence.count <= lines.count else { return [] }
+    var matches: [Int] = []
     for index in 0...(lines.count - sequence.count) {
-      if Array(lines[index..<(index + sequence.count)]) == sequence { return index }
+      if Array(lines[index..<(index + sequence.count)]) == sequence {
+        matches.append(index)
+      }
     }
-    return nil
+    return matches
+  }
+
+  private func narrow(matches: [Int], using context: String, in lines: [String]) -> [Int] {
+    let context = context.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !context.isEmpty else { return matches }
+
+    let parts = context.components(separatedBy: "@@")
+    let rangeParts = parts[0].split(whereSeparator: { $0 == " " || $0 == "\t" })
+    if rangeParts.count >= 2,
+      rangeParts[0].hasPrefix("-"),
+      rangeParts[1].hasPrefix("+")
+    {
+      let sourceStart = rangeParts[0].dropFirst().split(separator: ",").first
+        .flatMap { Int($0) }
+      guard let sourceStart, sourceStart > 0 else { return [] }
+      return matches.filter { $0 == sourceStart - 1 }
+    }
+
+    let label =
+      parts.count > 1
+      ? parts.dropFirst().joined(separator: "@@").trimmingCharacters(in: .whitespacesAndNewlines)
+      : context
+    guard !label.isEmpty else { return matches }
+    return matches.filter { index in
+      lines[..<index].contains { line in
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed == label || trimmed.contains(label)
+      }
+    }
   }
 
   private func countOccurrences(of needle: String, in haystack: String) -> Int {

@@ -272,10 +272,26 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(withMode.directWorkspace?.commands.map(\.commandID), ["wcmd-xpc"])
     XCTAssertEqual(withMode.capabilities.write, ProjectPermission.requiresLocalApproval.rawValue)
 
+    let preservedMode = try await client.updateProjectCommands(
+      projectID: registered.projectID,
+      commands: [
+        IPCWorkspaceCommand(
+          commandID: "wcmd-xpc-2",
+          name: "XPC Tests 2",
+          executable: "pwd",
+          arguments: [],
+          requiresNetwork: false,
+          risk: "normal"
+        )
+      ],
+      commandBlacklist: []
+    )
+    XCTAssertEqual(preservedMode.directWorkspace?.commandMode, "full")
+
     let reloaded = try await client.projectCommands(projectID: registered.projectID)
     XCTAssertEqual(reloaded.directWorkspace?.commandMode, "full")
-    XCTAssertEqual(reloaded.directWorkspace?.commands.map(\.name), ["XPC Tests"])
-    XCTAssertEqual(reloaded.directWorkspace?.commandBlacklist.map(\.ruleID), ["blk-xpc"])
+    XCTAssertEqual(reloaded.directWorkspace?.commands.map(\.name), ["XPC Tests 2"])
+    XCTAssertTrue(reloaded.directWorkspace?.commandBlacklist.isEmpty ?? false)
   }
 
   func testXPCDirectApprovalsRoundTripThroughTheService() async throws {

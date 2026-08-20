@@ -314,6 +314,44 @@ final class SimpleServiceStoreTests: XCTestCase {
     XCTAssertEqual(replacementResult.task.id, replacement.id)
   }
 
+  func testRestartInterruptsTaskThatCrashedBeforeExecutionBeganAndReleasesWriteGate()
+    async throws
+  {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let project = try makeServiceProject(
+      id: "prj-awaiting-recovery",
+      rootURL: fixture.firstProjectURL
+    )
+    try await store.insertProject(project)
+    let awaiting = try makeServiceTask(
+      id: "tsk-awaiting-before-restart",
+      projectID: project.id
+    )
+    _ = try await store.createTask(awaiting, event: creationEvent(at: awaiting.createdAt))
+    let recoveryDate = awaiting.updatedAt.addingTimeInterval(10)
+
+    let recovered = try await store.markIncompleteTasksUnknown(at: recoveryDate)
+
+    XCTAssertEqual(recovered.map(\.state.status), [.interrupted])
+    let recoveryEvents = try await store.events(taskID: awaiting.id)
+    XCTAssertEqual(
+      recoveryEvents.map(\.kind),
+      [.taskCreated, .taskInterrupted]
+    )
+    let replacement = try makeServiceTask(
+      id: "tsk-after-awaiting-recovery",
+      projectID: project.id,
+      date: recoveryDate.addingTimeInterval(1)
+    )
+    let created = try await store.createTask(
+      replacement,
+      event: creationEvent(at: replacement.createdAt)
+    )
+    XCTAssertEqual(created.task.id, replacement.id)
+  }
+
   func testProjectPolicyAndSettingsPersistWithoutASecondStore() async throws {
     let fixture = try ServiceCoreFixture()
     defer { fixture.remove() }

@@ -50,6 +50,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case writeNotAllowed
   case approvalRequired(approvalID: String)
   case approvalExpired
+  case approvalDenied
   case invalidPatch
   case notGitRepository
   case revisionConflict(RevisionConflictDetail)
@@ -59,6 +60,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case processLaunchFailed
   case gitOperationFailed(String)
   case outputLimitExceeded
+  case durabilityUncertain
   case skillNotFound
   case skillActionNotFound
   case skillActionNotRunnable

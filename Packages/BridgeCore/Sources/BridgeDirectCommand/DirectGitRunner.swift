@@ -36,57 +36,54 @@ public struct DirectGitRunner: Sendable {
   public func run(
     argv: [String],
     workingDirectory: String,
-    timeout: Duration = .seconds(60)
+    timeout: Duration? = nil,
+    environment overrides: [String: String]? = nil
   ) async throws -> DirectGitResult {
     guard let executable = argv.first, !executable.isEmpty, argv.count <= 128 else {
       throw DirectGitError.invalidArgument
     }
     return try await Task.detached(priority: .userInitiated) {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: executable)
-      process.arguments = Array(argv.dropFirst())
-      process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
       var environment = ProcessInfo.processInfo.environment
       environment["PATH"] = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-      process.environment = environment
-
-      let pipe = Pipe()
-      process.standardOutput = pipe
-      process.standardError = pipe
-      let collector = DirectCommandOutputCollector(maximumBytes: 256 * 1_024)
-      pipe.fileHandleForReading.readabilityHandler = { handle in
-        let data = handle.availableData
-        if !data.isEmpty {
-          collector.append(data)
-        }
+      if let overrides {
+        environment.merge(overrides) { _, replacement in replacement }
       }
-
+      let collector = DirectCommandOutputCollector(maximumBytes: 256 * 1_024)
+      let process: DirectProcessLifetime
       do {
-        try process.run()
+        process = try DirectProcessLifetime(
+          argv: argv,
+          workingDirectory: workingDirectory,
+          environment: environment,
+          usePTY: false,
+          output: collector
+        )
       } catch {
         throw DirectGitError.launchFailed
       }
 
-      let deadline = ContinuousClock.now.advanced(by: timeout)
+      let deadline = ContinuousClock.now.advanced(by: timeout ?? defaultTimeout)
       while process.isRunning && ContinuousClock.now < deadline {
         try? await Task.sleep(for: .milliseconds(20))
       }
       if process.isRunning {
-        _ = Darwin.kill(-process.processIdentifier, SIGKILL)
-        pipe.fileHandleForReading.readabilityHandler = nil
+        _ = process.terminateAndWait(gracePeriod: .seconds(1))
+        process.drainRemainingOutput()
+        process.close()
         throw DirectGitError.timedOut
       }
-      pipe.fileHandleForReading.readabilityHandler = nil
-      var remaining = Data()
-      while true {
-        let chunk = pipe.fileHandleForReading.readData(ofLength: 16 * 1_024)
-        if chunk.isEmpty { break }
-        remaining.append(chunk)
+      guard let termination = process.waitForExit(timeout: .seconds(1)) else {
+        _ = process.terminateAndWait(gracePeriod: .milliseconds(0))
+        process.drainRemainingOutput()
+        process.close()
+        throw DirectGitError.timedOut
       }
-      if !remaining.isEmpty {
-        collector.append(remaining)
+      process.drainRemainingOutput()
+      process.close()
+      guard case .exited(let exitCode) = termination else {
+        return DirectGitResult(exitCode: -1, output: collector.snapshot())
       }
-      return DirectGitResult(exitCode: process.terminationStatus, output: collector.snapshot())
+      return DirectGitResult(exitCode: exitCode, output: collector.snapshot())
     }.value
   }
 }

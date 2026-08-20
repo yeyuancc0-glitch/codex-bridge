@@ -79,6 +79,49 @@ final class TaskConversationBufferTests: XCTestCase {
     collect.cancel()
   }
 
+  func testFinalAuthoritativeContentResynchronizesAfterSubscriberBufferDrops() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-buffer-dropped-deltas"
+    )
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks,
+      flushDeltaCount: 256,
+      flushInFlightCount: 256
+    )
+    let subscription = await buffer.subscribe(taskID: task.id)
+    for index in 0..<96 {
+      await buffer.appendDelta(
+        taskID: task.id,
+        itemID: "item-overflow",
+        delta: "\(index),"
+      )
+    }
+    let authoritative = "authoritative final response"
+    await buffer.finalize(
+      taskID: task.id,
+      messages: [
+        try ExecutionAgentMessage(
+          key: "agent:item-overflow",
+          role: .agent,
+          content: authoritative
+        )
+      ]
+    )
+
+    var finalChange: ConversationChange?
+    for await change in subscription.updates {
+      if change.final {
+        finalChange = change
+        break
+      }
+    }
+    XCTAssertEqual(finalChange?.fullContent, authoritative)
+    XCTAssertEqual(finalChange?.baseContentLength, 0)
+    _ = await buffer.close(taskID: task.id)
+  }
+
   func testSubscribePageIsAtomicSnapshotBeforeNewChanges() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(fixture: fixture, taskID: "tsk-buffer-snapshot")
@@ -144,6 +187,29 @@ final class TaskConversationBufferTests: XCTestCase {
 
     persisted = try await fixture.store.taskMessages(taskID: task.id)
     XCTAssertEqual(persisted.map(\.content), ["abc"])
+  }
+
+  func testCloseRetainsConversationWhenFinalPersistenceFails() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-buffer-persistence-failure"
+    )
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks,
+      flushDeltaCount: 64,
+      flushInFlightCount: 64
+    )
+    await buffer.appendDelta(taskID: task.id, itemID: "item-1", delta: "not persisted")
+    _ = try await fixture.tasks.interrupt(taskID: task.id, summary: "test cleanup")
+    try await fixture.tasks.remove(taskID: task.id)
+
+    let closed = await buffer.close(taskID: task.id)
+
+    XCTAssertFalse(closed)
+    let retained = await buffer.entries(taskID: task.id)
+    XCTAssertEqual(retained.map(\.content), ["not persisted"])
+    XCTAssertEqual(retained.map(\.isFinal), [true])
   }
 
   func testPurgeStopsDeliveringChanges() async throws {

@@ -63,8 +63,8 @@ final class DirectActionApprovalCenterTests: XCTestCase {
     )
     let denied = await center.deny(approvalID: id)
     XCTAssertTrue(denied)
-    let consumed = await center.consume(payloadDigest: "digest-a", clientRequestID: "req-1")
-    XCTAssertFalse(consumed)
+    let retryConsumed = await center.consume(payloadDigest: "digest-a", clientRequestID: "req-1")
+    XCTAssertFalse(retryConsumed)
     let retryID = await center.request(
       projectID: "prj-1",
       kind: .fileWrite,
@@ -73,11 +73,33 @@ final class DirectActionApprovalCenterTests: XCTestCase {
       clientRequestID: "req-1"
     )
     XCTAssertNotEqual(retryID, id)
+    XCTAssertTrue(retryID.hasPrefix("denied-"))
     let approved = await center.approve(approvalID: retryID)
-    XCTAssertTrue(approved)
-    let consumedAfterApprove = await center.consume(
+    let pending = await center.pendingApprovals()
+    let consumedAfterRetry = await center.consume(
       payloadDigest: "digest-a", clientRequestID: "req-1")
-    XCTAssertTrue(consumedAfterApprove)
+    let denialActive = await center.denialIsActive(
+      payloadDigest: "digest-a", clientRequestID: "req-1")
+    XCTAssertFalse(approved)
+    XCTAssertTrue(pending.isEmpty)
+    XCTAssertFalse(consumedAfterRetry)
+    XCTAssertTrue(denialActive)
+  }
+
+  func testApprovedGrantExpiresWithoutBeingConsumed() async {
+    let center = DirectActionApprovalCenter(approvalLifetime: 0.1)
+    let id = await center.request(
+      projectID: "prj-1",
+      kind: .command,
+      summary: "Run",
+      payloadDigest: "digest-grant",
+      clientRequestID: nil
+    )
+    let approved = await center.approve(approvalID: id)
+    try? await Task.sleep(for: .milliseconds(150))
+    let consumed = await center.consume(payloadDigest: "digest-grant", clientRequestID: nil)
+    XCTAssertTrue(approved)
+    XCTAssertFalse(consumed)
   }
 
   func testExpiryInvalidatesPendingApprovals() async {
@@ -204,11 +226,9 @@ final class DirectApprovalFlowTests: XCTestCase {
     }
     do {
       _ = try await application.serviceDirectWriteFile(request, deadline: deadline)
-      XCTFail("Expected approval_required after denial")
+      XCTFail("Expected approval_denied after denial")
     } catch let error as BridgeMCPQueryError {
-      guard case .approvalRequired = error else {
-        return XCTFail("Expected approvalRequired, got \(error)")
-      }
+      XCTAssertEqual(error, .approvalDenied)
     }
     let target = fixture.root.appending(path: "DeniedFile.txt")
     XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
@@ -491,6 +511,87 @@ final class DirectApprovalFlowTests: XCTestCase {
     await application.directCommands.cancelAll()
   }
 
+  func testRegisteredCommandBindsWorkingDirectoryAndRejectsSymlinkCwd() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let scripts = fixture.root.appending(path: "scripts", directoryHint: .isDirectory)
+    let outside = fixture.root.deletingLastPathComponent()
+      .appending(path: "direct-cwd-outside-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: outside) }
+    let escape = fixture.root.appending(path: "escape", directoryHint: .isDirectory)
+    try FileManager.default.createSymbolicLink(at: escape, withDestinationURL: outside)
+
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .safe,
+      workspaceCommands: [
+        try ServiceWorkspaceCommand(
+          id: "wcmd-cwd",
+          name: "Write in bound cwd",
+          executable: "/bin/sh",
+          arguments: ["-c", "printf bound > cwd-marker.txt"],
+          workingDirectory: "scripts"
+        )
+      ],
+      projectID: fixture.project.id
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let receipt = try await application.serviceDirectExecCommand(
+      MCPDirectExecRequest(
+        projectID: fixture.project.id.rawValue,
+        commandID: "wcmd-cwd",
+        argv: [],
+        workingDirectory: "escape",
+        tty: false,
+        yieldTimeMS: 100,
+        timeoutMS: 5_000,
+        clientRequestID: "req-bound-cwd"
+      ),
+      deadline: deadline
+    )
+    var output = try XCTUnwrap(receipt.output)
+    while output.status == "running" && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+      output = try await application.serviceDirectReadCommand(
+        sessionID: receipt.sessionID,
+        deadline: deadline
+      )
+    }
+    XCTAssertEqual(output.status, "ended")
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: scripts.appending(path: "cwd-marker.txt").path)
+    )
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: outside.appending(path: "cwd-marker.txt").path)
+    )
+
+    do {
+      _ = try await application.serviceDirectExecCommand(
+        MCPDirectExecRequest(
+          projectID: fixture.project.id.rawValue,
+          commandID: nil,
+          argv: ["pwd"],
+          workingDirectory: "escape",
+          tty: false,
+          yieldTimeMS: 20,
+          timeoutMS: 5_000,
+          clientRequestID: "req-escape-cwd"
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected symlink cwd rejection")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .pathDenied)
+    }
+    await application.directCommands.cancelAll()
+  }
+
   func testReadProjectFileSupportsLargeLineCountPages() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(
@@ -574,6 +675,18 @@ final class DirectApprovalFlowTests: XCTestCase {
     try configName.run()
     configName.waitUntilExit()
 
+    let unrelated = fixture.root.appending(path: "UnrelatedStaged.txt")
+    try Data("keep staged\n".utf8).write(to: unrelated)
+    let stageUnrelated = Process()
+    stageUnrelated.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    stageUnrelated.arguments = ["add", "--", unrelated.lastPathComponent]
+    stageUnrelated.currentDirectoryURL = fixture.root
+    stageUnrelated.standardOutput = FileHandle.nullDevice
+    stageUnrelated.standardError = FileHandle.nullDevice
+    try stageUnrelated.run()
+    stageUnrelated.waitUntilExit()
+    XCTAssertEqual(stageUnrelated.terminationStatus, 0)
+
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
     _ = try await application.serviceDirectWriteFile(
       MCPDirectWriteRequest(
@@ -613,5 +726,112 @@ final class DirectApprovalFlowTests: XCTestCase {
     status.waitUntilExit()
     let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     XCTAssertFalse(output.contains("CommittedFile.txt"), "file should be committed: \(output)")
+    XCTAssertTrue(
+      output.contains("UnrelatedStaged.txt"), "unrelated staged file must remain: \(output)")
+
+    let staged = Process()
+    staged.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    staged.arguments = ["diff", "--cached", "--name-only"]
+    staged.currentDirectoryURL = fixture.root
+    let stagedPipe = Pipe()
+    staged.standardOutput = stagedPipe
+    staged.standardError = FileHandle.nullDevice
+    try staged.run()
+    staged.waitUntilExit()
+    let stagedOutput = String(
+      decoding: stagedPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    XCTAssertEqual(
+      stagedOutput.trimmingCharacters(in: .whitespacesAndNewlines), "UnrelatedStaged.txt")
+
+    let hook = fixture.root.appending(path: ".git/hooks/pre-commit")
+    try Data("#!/bin/sh\nexit 1\n".utf8).write(to: hook)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+    _ = try await application.serviceDirectWriteFile(
+      MCPDirectWriteRequest(
+        projectID: fixture.project.id.rawValue,
+        relativePath: "FailedCommit.txt",
+        mode: "create",
+        content: "failure\n",
+        expectedSHA256: nil,
+        createParents: false,
+        clientRequestID: "req-failed-commit-write"
+      ),
+      deadline: deadline
+    )
+    do {
+      _ = try await application.serviceDirectGitCommit(
+        MCPDirectGitCommitRequest(
+          projectID: fixture.project.id.rawValue,
+          message: "should fail hook",
+          files: ["FailedCommit.txt"]
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected pre-commit failure")
+    } catch let error as BridgeMCPQueryError {
+      guard case .gitOperationFailed = error else {
+        return XCTFail("Expected gitOperationFailed, got \(error)")
+      }
+    }
+    let stagedAfterFailure = Process()
+    stagedAfterFailure.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    stagedAfterFailure.arguments = ["diff", "--cached", "--name-only"]
+    stagedAfterFailure.currentDirectoryURL = fixture.root
+    let stagedAfterFailurePipe = Pipe()
+    stagedAfterFailure.standardOutput = stagedAfterFailurePipe
+    stagedAfterFailure.standardError = FileHandle.nullDevice
+    try stagedAfterFailure.run()
+    stagedAfterFailure.waitUntilExit()
+    let stagedAfterFailureOutput = String(
+      decoding: stagedAfterFailurePipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    XCTAssertEqual(
+      stagedAfterFailureOutput.trimmingCharacters(in: .whitespacesAndNewlines),
+      "UnrelatedStaged.txt"
+    )
+
+    try Data("TOKEN=secret\n".utf8).write(to: fixture.root.appending(path: ".env"))
+    do {
+      _ = try await application.serviceDirectGitCommit(
+        MCPDirectGitCommitRequest(
+          projectID: fixture.project.id.rawValue,
+          message: "should reject env",
+          files: [".env"]
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected sensitive path rejection")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .contractRejected)
+    }
+
+    try Data(#"api_key = "secret-value"\n"#.utf8)
+      .write(to: fixture.root.appending(path: "safe.txt"))
+    do {
+      _ = try await application.serviceDirectGitCommit(
+        MCPDirectGitCommitRequest(
+          projectID: fixture.project.id.rawValue,
+          message: "should reject secret",
+          files: ["safe.txt"]
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected sensitive content rejection")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .contractRejected)
+    }
+
+    do {
+      _ = try await application.serviceDirectGitCommit(
+        MCPDirectGitCommitRequest(
+          projectID: fixture.project.id.rawValue,
+          message: "should reject sensitive all-files commit",
+          files: []
+        ),
+        deadline: deadline
+      )
+      XCTFail("Expected all-files sensitive path rejection")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .contractRejected)
+    }
   }
 }

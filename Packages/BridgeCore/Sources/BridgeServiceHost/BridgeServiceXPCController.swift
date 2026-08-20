@@ -180,9 +180,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           IPCProjectCommandsUpdateRequest.self,
           from: request
         )
-        _ = try await composition.projects.updateWorkspaceConfiguration(
-          directCommandMode: .safe,
-          workspaceCommands: try Self.workspaceCommands(payload.commands),
+        _ = try await composition.projects.updateWorkspaceCommands(
+          try Self.workspaceCommands(payload.commands),
           commandBlacklist: try Self.blacklistRules(payload.commandBlacklist),
           projectID: ProjectID(rawValue: payload.projectID)
         )
@@ -203,16 +202,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         guard let mode = ServiceDirectCommandMode(rawValue: payload.commandMode) else {
           throw ServiceStoreError.invalidArgument("project.commandMode")
         }
-        let current = try await composition.projects.project(
-          id: ProjectID(rawValue: payload.projectID)
-        )
-        guard let current else {
-          throw ServiceStoreError.unknownProject(ProjectID(rawValue: payload.projectID))
-        }
-        _ = try await composition.projects.updateWorkspaceConfiguration(
-          directCommandMode: mode,
-          workspaceCommands: current.workspaceCommands,
-          commandBlacklist: current.commandBlacklist,
+        _ = try await composition.projects.updateDirectCommandMode(
+          mode,
           projectID: ProjectID(rawValue: payload.projectID)
         )
         let updatedMode = try await composition.application.serviceProject(
@@ -740,6 +731,9 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
     write: String,
     network: String
   ) throws -> ProjectAccessPolicy {
+    guard read != ProjectPermission.requiresLocalApproval.rawValue else {
+      throw ServiceStoreError.invalidArgument("project.policy.read")
+    }
     let values = [read, write, network]
     let allowed = Set([
       ProjectPermission.denied.rawValue,
@@ -947,6 +941,12 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
           message: "The local approval expired.",
           retryable: true
         )
+      case .approvalDenied:
+        return .init(
+          code: "approval_denied",
+          message: "The local user denied this action.",
+          retryable: true
+        )
       case .invalidPatch:
         return .init(code: "invalid_patch", message: "The patch could not be parsed or applied.")
       case .notGitRepository:
@@ -983,6 +983,12 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(
           code: "output_limit_exceeded",
           message: "The command output exceeded the bounded limit."
+        )
+      case .durabilityUncertain:
+        return .init(
+          code: "durability_uncertain",
+          message:
+            "The mutation was applied, but crash durability was not confirmed. Read the path before retrying."
         )
       case .networkIsolationUnavailable:
         return .init(

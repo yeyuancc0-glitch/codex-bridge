@@ -1,5 +1,6 @@
 import BridgeDomain
 import BridgeServiceCore
+import Darwin
 import Foundation
 import Logging
 
@@ -48,44 +49,62 @@ public enum DirectCommandSessionError: Error, Equatable, Sendable {
 }
 
 public actor DirectCommandSessionManager {
+  private struct TrackedPID: Sendable {
+    let identity: DirectProcessIdentity
+  }
+
   private let runner: DirectCommandRunner
   private let orphanPIDFileURL: URL?
   private let logger: Logger
+  private let completedSessionTTL: TimeInterval
+  private let maximumCompletedSessions: Int
   private var sessions: [String: DirectCommandSession] = [:]
+  private var completedSessionAccess: [String: Date] = [:]
   private var activeProjectSession: [String: String] = [:]
   private var taskHandles: [String: Task<Void, Never>] = [:]
   private var processes: [String: DirectProcessLifetime] = [:]
-  private var trackedPIDs: [String: Int32] = [:]
+  private var trackedPIDs: [String: TrackedPID] = [:]
   private var shutdown = false
 
   public init(
     runner: DirectCommandRunner = DirectCommandRunner(),
     orphanPIDFileURL: URL? = nil,
-    logger: Logger = Logger(label: "com.codexbridge.direct.command")
+    logger: Logger = Logger(label: "com.codexbridge.direct.command"),
+    completedSessionTTL: Duration = .seconds(600),
+    maximumCompletedSessions: Int = 128
   ) {
     self.runner = runner
     self.orphanPIDFileURL = orphanPIDFileURL
     self.logger = logger
+    self.completedSessionTTL = max(0, Self.timeInterval(completedSessionTTL))
+    self.maximumCompletedSessions = max(1, maximumCompletedSessions)
     self.trackedPIDs = Self.loadTrackedPIDs(orphanPIDFileURL)
     Self.reapOrphans(trackedPIDs: trackedPIDs, logger: logger)
     Self.clearTrackedPIDs(orphanPIDFileURL)
   }
 
   public func snapshot(sessionID: String) -> DirectCommandSession? {
-    sessions[sessionID]
+    pruneCompletedSessions()
+    if let session = sessions[sessionID], session.status != "running" {
+      completedSessionAccess[sessionID] = Date()
+    }
+    return sessions[sessionID]
   }
 
   public func activeSession(projectID: ProjectID) -> DirectCommandSession? {
+    pruneCompletedSessions()
     guard let sessionID = activeProjectSession[projectID.rawValue] else { return nil }
     return sessions[sessionID]
   }
 
   public func allSessions() -> [DirectCommandSession] {
-    sessions.values.sorted { $0.startedAt > $1.startedAt }
+    pruneCompletedSessions()
+    return sessions.values.sorted { $0.startedAt > $1.startedAt }
   }
 
   public func isBusy(projectID: ProjectID) -> Bool {
-    activeProjectSession[projectID.rawValue] != nil
+    pruneCompletedSessions()
+    return activeProjectSession[projectID.rawValue] != nil
   }
 
   public func launch(
@@ -99,6 +118,7 @@ public actor DirectCommandSessionManager {
     denyNetwork: Bool = false,
     onExit: (@Sendable () async -> Void)? = nil
   ) async throws -> DirectCommandSession {
+    pruneCompletedSessions()
     guard sessions[sessionID] == nil else { throw DirectCommandSessionError.sessionNotFound }
     guard activeProjectSession[projectID.rawValue] == nil else {
       throw DirectCommandSessionError.projectBusy
@@ -192,6 +212,8 @@ public actor DirectCommandSessionManager {
     processes[sessionID] = nil
     activeProjectSession[projectID.rawValue] = nil
     taskHandles[sessionID] = nil
+    completedSessionAccess[sessionID] = Date()
+    pruneCompletedSessions()
     if let onExit {
       await onExit()
     }
@@ -217,25 +239,35 @@ public actor DirectCommandSessionManager {
     guard let process = processes[sessionID] else {
       throw DirectCommandSessionError.notRunning
     }
-    process.terminateGroup()
+    guard process.terminateAndWait(gracePeriod: runner.gracePeriod) != nil else {
+      throw DirectCommandSessionError.notRunning
+    }
   }
 
   public func cancelAll() async {
     shutdown = true
-    for process in processes.values {
-      process.terminateGroup()
-    }
-    for sessionID in sessions.keys {
+    let active = processes
+    for (sessionID, process) in active {
+      let termination = process.terminateAndWait(gracePeriod: runner.gracePeriod)
+      if termination == nil {
+        logger.error("Unable to reap direct command session \(sessionID) pid \(process.pid)")
+        continue
+      }
       untrackPID(sessionID: sessionID)
+    }
+    for task in taskHandles.values {
+      task.cancel()
     }
     activeProjectSession = [:]
     taskHandles.removeAll()
     processes.removeAll()
     sessions.removeAll()
+    completedSessionAccess.removeAll()
   }
 
   private func trackPID(sessionID: String, pid: Int32) {
-    trackedPIDs[sessionID] = pid
+    guard let identity = processes[sessionID]?.identity, identity.pid == pid else { return }
+    trackedPIDs[sessionID] = TrackedPID(identity: identity)
     persistTrackedPIDs()
   }
 
@@ -246,34 +278,75 @@ public actor DirectCommandSessionManager {
 
   private func persistTrackedPIDs() {
     guard let url = orphanPIDFileURL else { return }
-    let lines = trackedPIDs.map { "\($0.key)\t\($0.value)" }.joined(separator: "\n")
+    let lines = trackedPIDs.map { sessionID, tracked in
+      let identity = tracked.identity
+      return
+        "\(sessionID)\t\(identity.pid)\t\(identity.startTimeMicros)\t\(identity.processGroupID)"
+    }.sorted().joined(separator: "\n")
     try? Data(lines.utf8).write(to: url, options: .atomic)
   }
 
-  private static func loadTrackedPIDs(_ url: URL?) -> [String: Int32] {
+  private static func loadTrackedPIDs(_ url: URL?) -> [String: TrackedPID] {
     guard let url, let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
-    var result: [String: Int32] = [:]
+    var result: [String: TrackedPID] = [:]
     for line in text.split(separator: "\n") {
       let parts = line.split(separator: "\t")
-      guard parts.count == 2, let pid = Int32(parts[1]) else { continue }
-      result[String(parts[0])] = pid
+      guard parts.count == 4,
+        let pid = Int32(parts[1]),
+        let startTimeMicros = Int64(parts[2]),
+        let processGroupID = Int32(parts[3]),
+        pid > 1,
+        processGroupID == pid
+      else { continue }
+      result[String(parts[0])] = TrackedPID(
+        identity: DirectProcessIdentity(
+          pid: pid,
+          startTimeMicros: startTimeMicros,
+          processGroupID: processGroupID
+        )
+      )
     }
     return result
   }
 
-  private static func reapOrphans(trackedPIDs: [String: Int32], logger: Logger) {
-    for (sessionID, pid) in trackedPIDs {
-      guard pid > 1 else { continue }
-      let exists = kill(pid, 0) == 0
-      if exists {
-        _ = Darwin.kill(-pid, SIGKILL)
-        logger.warning("Reaped orphan direct command session \(sessionID) pid \(pid)")
-      }
+  private static func reapOrphans(trackedPIDs: [String: TrackedPID], logger: Logger) {
+    for (sessionID, tracked) in trackedPIDs {
+      let identity = tracked.identity
+      guard DirectProcessLifetime.matchesCurrentProcess(identity) else { continue }
+      _ = Darwin.kill(-identity.processGroupID, SIGKILL)
+      logger.warning(
+        "Reaped orphan direct command session \(sessionID) pid \(identity.pid)"
+      )
     }
   }
 
   private static func clearTrackedPIDs(_ url: URL?) {
     guard let url else { return }
     try? Data().write(to: url, options: .atomic)
+  }
+
+  private func pruneCompletedSessions(now: Date = Date()) {
+    let expired = completedSessionAccess.compactMap { sessionID, lastAccess in
+      now.timeIntervalSince(lastAccess) >= completedSessionTTL ? sessionID : nil
+    }
+    for sessionID in expired {
+      completedSessionAccess[sessionID] = nil
+      sessions[sessionID] = nil
+    }
+
+    let completed = completedSessionAccess.keys.sorted {
+      (completedSessionAccess[$0] ?? .distantPast)
+        < (completedSessionAccess[$1] ?? .distantPast)
+    }
+    guard completed.count > maximumCompletedSessions else { return }
+    for sessionID in completed.prefix(completed.count - maximumCompletedSessions) {
+      completedSessionAccess[sessionID] = nil
+      sessions[sessionID] = nil
+    }
+  }
+
+  private static func timeInterval(_ duration: Duration) -> TimeInterval {
+    let parts = duration.components
+    return TimeInterval(parts.seconds) + TimeInterval(parts.attoseconds) / 1e18
   }
 }

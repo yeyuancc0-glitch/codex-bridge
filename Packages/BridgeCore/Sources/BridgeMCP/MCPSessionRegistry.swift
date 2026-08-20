@@ -73,51 +73,25 @@ public actor MCPSessionRegistry {
     }
     await expireSessions()
 
-    // Debug logging
-    let bodyPreview: String
-    if let body = request.body {
-      bodyPreview = String(data: body.prefix(512), encoding: .utf8) ?? "<binary \(body.count)B>"
-    } else {
-      bodyPreview = "<nil>"
-    }
-    let headersDesc = request.headers.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
-    Self.debugLog("[MCPSessionRegistry] handle method=\(request.method) path=\(request.path ?? "nil") headers=[\(headersDesc)] body=\(bodyPreview)")
-
     if let sessionID = extractSessionID(from: request) {
-      Self.debugLog("[MCPSessionRegistry] found sessionID=\(sessionID)")
       return await handleExisting(request, sessionID: sessionID)
     }
     if isDiscover(request) {
-      Self.debugLog("[MCPSessionRegistry] isDiscover=true, answering stateless discovery")
       return await handleDiscover(for: request)
     }
     if isModernRequest(request) {
-      Self.debugLog("[MCPSessionRegistry] modern request without session")
       return await handleModernRequest(request)
     }
     if isInitialize(request) {
-      Self.debugLog("[MCPSessionRegistry] isInitialize=true, creating session")
       return await createSession(for: request)
     }
     if request.body == nil || request.body?.isEmpty == true {
-      Self.debugLog("[MCPSessionRegistry] probe/empty request, returning 200 OK")
       return .data(Data("{}".utf8), headers: [HTTPHeaderName.contentType: "application/json"])
     }
-    Self.debugLog("[MCPSessionRegistry] isInitialize=false, returning 400")
     return .error(
       statusCode: 400,
       .invalidRequest("Bad Request: Missing MCP session identifier")
     )
-  }
-
-  private static func debugLog(_ msg: String) {
-    let logMsg = msg + "\n"
-    if let data = logMsg.data(using: .utf8),
-      let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/codex_bridge_tunnel.log")) {
-      _ = try? handle.seekToEnd()
-      try? handle.write(contentsOf: data)
-      try? handle.close()
-    }
   }
 
   private func extractSessionID(from request: HTTPRequest) -> String? {
@@ -132,7 +106,8 @@ public actor MCPSessionRegistry {
     }
     if let path = request.path,
       let urlComponents = URLComponents(string: path),
-      let queryItems = urlComponents.queryItems {
+      let queryItems = urlComponents.queryItems
+    {
       if let queryID = queryItems.first(where: {
         $0.name.caseInsensitiveCompare("sessionId") == .orderedSame
           || $0.name.caseInsensitiveCompare("session_id") == .orderedSame
@@ -188,10 +163,8 @@ public actor MCPSessionRegistry {
       try await server.start(transport: transport)
       let response = await transport.handleRequest(request)
       await server.stop()
-      Self.debugLog("[MCPSessionRegistry] modern response status=\(response.statusCode)")
       return response
     } catch {
-      Self.debugLog("[MCPSessionRegistry] modern request failed: \(error)")
       return .error(statusCode: 500, .internalError("Modern MCP request failed"))
     }
   }
@@ -213,7 +186,8 @@ public actor MCPSessionRegistry {
           "version": "1.0.0",
         ]
       ],
-      "instructions": "Codex Bridge exposes locally registered projects and Codex tasks. All actions are executed on the user's machine after local approval.",
+      "instructions":
+        "Codex Bridge exposes locally registered projects and Codex tasks. All actions are executed on the user's machine after local approval.",
     ]
     let response: [String: Any] = [
       "jsonrpc": "2.0",
@@ -223,9 +197,6 @@ public actor MCPSessionRegistry {
     guard let data = try? JSONSerialization.data(withJSONObject: response) else {
       return .error(statusCode: 500, .internalError("Discovery encoding failed"))
     }
-    Self.debugLog(
-      "[MCPSessionRegistry] discovery response status=200 body=\(String(decoding: data, as: UTF8.self))"
-    )
     return .data(data, headers: [HTTPHeaderName.contentType: "application/json"])
   }
 
@@ -384,11 +355,13 @@ public actor MCPSessionRegistry {
   private func isInitialize(_ request: HTTPRequest) -> Bool {
     guard request.method.uppercased() == "POST", let body = request.body else { return false }
     if let decoded = try? JSONDecoder().decode(Request<Initialize>.self, from: body),
-      decoded.method == Initialize.name {
+      decoded.method == Initialize.name
+    {
       return true
     }
     if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-      object["method"] as? String == Initialize.name {
+      object["method"] as? String == Initialize.name
+    {
       return true
     }
     return false

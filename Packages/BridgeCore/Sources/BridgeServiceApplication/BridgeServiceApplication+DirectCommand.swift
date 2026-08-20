@@ -58,7 +58,7 @@ extension BridgeServiceApplication {
     }
     let workingDirectory = try Self.resolvedWorkingDirectory(
       project: project,
-      relative: request.workingDirectory
+      relative: resolution.workingDirectory
     )
     let launchArgv = try Self.resolvedLaunchArgv(resolution.argv, project: project)
     let sessionID = "dcmd-\(UUID().uuidString)"
@@ -75,7 +75,8 @@ extension BridgeServiceApplication {
         requiresNetwork: resolution.requiresNetwork,
         usePTY: request.tty,
         timeout: .milliseconds(request.timeoutMS),
-        denyNetwork: denyNetwork,
+        denyNetwork: denyNetwork || !resolution.requiresNetwork
+          || project.accessPolicy.network == .denied,
         onExit: { await lease.release() }
       )
       let yieldDeadline = ContinuousClock.now.advanced(by: .milliseconds(request.yieldTimeMS))
@@ -235,7 +236,9 @@ extension BridgeServiceApplication {
     } catch {
       throw BridgeMCPQueryError.pathDenied
     }
-    return root + "/" + secure.components.joined(separator: "/")
+    let candidate = URL(fileURLWithPath: root, isDirectory: true)
+      .appendingPathComponent(secure.value, isDirectory: true)
+    return try containedResolvedPath(candidate, root: root)
   }
 
   /// Resolve a project-relative executable (e.g. `Scripts/with-xcode.sh`) to an absolute path
@@ -246,7 +249,19 @@ extension BridgeServiceApplication {
     project: ServiceProjectRecord
   ) throws -> [String] {
     guard let executable = argv.first, !executable.isEmpty else { return argv }
-    if executable.hasPrefix("/") { return argv }
+    if executable.hasPrefix("/") {
+      let rootURL = URL(fileURLWithPath: project.root.canonicalPath, isDirectory: true)
+        .standardizedFileURL.resolvingSymlinksInPath()
+      let candidate = URL(fileURLWithPath: executable).standardizedFileURL
+      let lexical = candidate.path
+      let rootPath = rootURL.path
+      // Trusted system binaries and full-mode absolute executables remain
+      // valid.  An absolute path lexically inside the project is different:
+      // resolve it before launch so a project-local symlink cannot escape.
+      guard lexical == rootPath || lexical.hasPrefix(rootPath + "/") else { return argv }
+      let resolved = try containedResolvedPath(candidate, root: rootPath)
+      return [resolved] + argv.dropFirst()
+    }
     if executable.contains("/") {
       let root = project.root.canonicalPath
       let candidate =
@@ -280,6 +295,16 @@ extension BridgeServiceApplication {
       }
     }
     return nil
+  }
+
+  private static func containedResolvedPath(_ candidate: URL, root: String) throws -> String {
+    let rootPath = URL(fileURLWithPath: root, isDirectory: true)
+      .standardizedFileURL.resolvingSymlinksInPath().path
+    let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath().path
+    guard resolved == rootPath || resolved.hasPrefix(rootPath + "/") else {
+      throw BridgeMCPQueryError.pathDenied
+    }
+    return resolved
   }
 
   public func serviceDirectGitCommit(
@@ -333,6 +358,13 @@ extension BridgeServiceApplication {
   ) async throws -> MCPDirectGitCommitReceipt {
     let root = project.root.canonicalPath
     let git = DirectGitRunner.gitPath
+    let temporaryIndex = FileManager.default.temporaryDirectory
+      .appendingPathComponent("codex-bridge-git-index-\(UUID().uuidString)")
+    let gitEnvironment = ["GIT_INDEX_FILE": temporaryIndex.path]
+    defer {
+      try? FileManager.default.removeItem(at: temporaryIndex)
+      try? FileManager.default.removeItem(at: temporaryIndex.appendingPathExtension("lock"))
+    }
 
     let verify = try await runner.run(
       argv: [git, "-C", root, "rev-parse", "--is-inside-work-tree"],
@@ -340,21 +372,51 @@ extension BridgeServiceApplication {
     )
     guard verify.exitCode == 0 else { throw DirectGitError.notGitRepository }
 
+    // Build the commit from a private index.  The user's existing index may
+    // contain unrelated staged work; committing through it would silently
+    // widen an explicit `files` request.  A temporary index also means every
+    // failure path leaves the user's staging area byte-for-byte untouched.
+    let head = try await runner.run(
+      argv: [git, "-C", root, "rev-parse", "--verify", "HEAD"],
+      workingDirectory: root
+    )
+    let indexSeed = head.exitCode == 0 ? ["HEAD"] : ["--empty"]
+    let seeded = try await runner.run(
+      argv: [git, "-C", root, "read-tree"] + indexSeed,
+      workingDirectory: root,
+      environment: gitEnvironment
+    )
+    guard seeded.exitCode == 0 else {
+      throw DirectGitCommitError.gitFailed(Self.gitSummary(seeded.output))
+    }
+
+    if !files.isEmpty {
+      try validateGitRelativePaths(files, root: root)
+    }
+
     let stageArgv: [String]
     if files.isEmpty {
       stageArgv = [git, "-C", root, "add", "-A"]
     } else {
       stageArgv = [git, "-C", root, "add", "--"] + files
     }
-    let staged = try await runner.run(argv: stageArgv, workingDirectory: root)
+    let staged = try await runner.run(
+      argv: stageArgv,
+      workingDirectory: root,
+      environment: gitEnvironment
+    )
     guard staged.exitCode == 0 else {
       throw DirectGitCommitError.gitFailed(Self.gitSummary(staged.output))
     }
 
     let changedResult = try await runner.run(
       argv: [git, "-C", root, "diff", "--cached", "--name-only"],
-      workingDirectory: root
+      workingDirectory: root,
+      environment: gitEnvironment
     )
+    guard changedResult.exitCode == 0 else {
+      throw DirectGitCommitError.gitFailed(Self.gitSummary(changedResult.output))
+    }
     let changedFiles = changedResult.output.tail
       .split(separator: "\n")
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -367,20 +429,40 @@ extension BridgeServiceApplication {
         exitCode: 0
       )
     }
+    try validateGitRelativePaths(changedFiles, root: root)
 
     let commit = try await runner.run(
       argv: [git, "-C", root, "commit", "-m", message],
-      workingDirectory: root
+      workingDirectory: root,
+      environment: gitEnvironment
     )
     guard commit.exitCode == 0 else {
       throw DirectGitCommitError.gitFailed(Self.gitSummary(commit.output))
     }
-    let hashResult = try await runner.run(
-      argv: [git, "-C", root, "rev-parse", "HEAD"],
+    let synchronizeIndexArgv =
+      files.isEmpty
+      ? [git, "-C", root, "add", "-A"]
+      : [git, "-C", root, "add", "-A", "--"] + changedFiles
+    let synchronized = try await runner.run(
+      argv: synchronizeIndexArgv,
       workingDirectory: root
     )
+    guard synchronized.exitCode == 0 else {
+      throw DirectGitCommitError.gitFailed(Self.gitSummary(synchronized.output))
+    }
+    let hashResult = try await runner.run(
+      argv: [git, "-C", root, "rev-parse", "HEAD"],
+      workingDirectory: root,
+      environment: gitEnvironment
+    )
+    guard hashResult.exitCode == 0 else {
+      throw DirectGitCommitError.gitFailed(Self.gitSummary(hashResult.output))
+    }
     let hash = hashResult.output.tail.split(separator: "\n").first.map {
       $0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    guard let hash, hash.count == 40, hash.allSatisfy(\.isHexDigit) else {
+      throw DirectGitCommitError.gitFailed("Git did not return the new commit identifier.")
     }
     return MCPDirectGitCommitReceipt(
       commitHash: hash,
@@ -393,6 +475,47 @@ extension BridgeServiceApplication {
   private static func gitSummary(_ output: DirectCommandOutputBuffer) -> String {
     let tail = output.tail.trimmingCharacters(in: .whitespacesAndNewlines)
     return tail.isEmpty ? output.head.trimmingCharacters(in: .whitespacesAndNewlines) : tail
+  }
+
+  private static func validateGitRelativePaths(_ paths: [String], root: String) throws {
+    let sensitive = SensitivePathPolicy()
+    for value in paths {
+      guard let relative = try? SecureRelativePath(value), sensitive.allows(relative) else {
+        throw DirectGitError.invalidArgument
+      }
+      let requested = URL(fileURLWithPath: root, isDirectory: true)
+        .appendingPathComponent(relative.value)
+      let resolvedRoot = URL(fileURLWithPath: root, isDirectory: true)
+        .standardizedFileURL.resolvingSymlinksInPath().path
+      let resolved = requested.standardizedFileURL.resolvingSymlinksInPath().path
+      guard resolved == resolvedRoot || resolved.hasPrefix(resolvedRoot + "/") else {
+        throw DirectGitError.invalidArgument
+      }
+      let canonicalRelative = String(resolved.dropFirst(resolvedRoot.count))
+        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      if let canonical = try? SecureRelativePath(canonicalRelative) {
+        guard sensitive.allows(canonical) else { throw DirectGitError.invalidArgument }
+      }
+      try validateGitFileContent(at: resolved)
+    }
+  }
+
+  private static func validateGitFileContent(at path: String) throws {
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+      !isDirectory.boolValue
+    else { return }
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+      throw DirectGitError.invalidArgument
+    }
+    if let size = attributes[.size] as? NSNumber, size.intValue > 8 * 1_024 * 1_024 {
+      throw DirectGitError.invalidArgument
+    }
+    let data = try Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe])
+    guard let text = String(data: data, encoding: .utf8) else { return }
+    guard OutboundContentSecurity.isSafeSecrets(text) else {
+      throw DirectGitError.invalidArgument
+    }
   }
 
   static func publicGitError(_ error: Error) -> BridgeMCPQueryError {

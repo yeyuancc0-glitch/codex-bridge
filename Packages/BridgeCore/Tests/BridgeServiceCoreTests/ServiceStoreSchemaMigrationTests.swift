@@ -393,4 +393,81 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
     let probe = try await reopened.setting(key: "probe")
     XCTAssertEqual(probe?.value, "ok")
   }
+
+  func testVersionSevenRejectsCorruptLegacyJSONAndRollsBackMigration() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-schema-migration-v7-corrupt-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "service.sqlite").path
+
+    let legacy = try DatabaseQueue(path: path)
+    try legacy.writeWithoutTransaction { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+          INSERT INTO grdb_migrations (identifier)
+          VALUES ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+                 ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4'),
+                 ('BridgeServiceCore.v5'), ('BridgeServiceCore.v6');
+          """
+      )
+      try ServiceStoreSchema.createVersionOne(in: db)
+      try ServiceStoreSchema.createVersionTwo(in: db)
+      try ServiceStoreSchema.createVersionThree(in: db)
+      try ServiceStoreSchema.createVersionFour(in: db)
+      try ServiceStoreSchema.createVersionFive(in: db)
+      try ServiceStoreSchema.createVersionSix(in: db)
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json,
+            direct_safe_whitelist_json, direct_blacklist_json,
+            created_at, updated_at
+          ) VALUES ('prj-corrupt', 'Corrupt', '/tmp/corrupt', '1', '2',
+            'allowed', 'allowed', 'denied', 'safe', CAST(? AS BLOB),
+            CAST('[]' AS BLOB), CAST('[]' AS BLOB), 1, 2)
+          """,
+        arguments: ["{not-json"]
+      )
+    }
+
+    XCTAssertThrowsError(try SimpleServiceStore(path: path))
+
+    let rolledBack = try DatabaseQueue(path: path)
+    let version = try rolledBack.read { db in
+      try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+    }
+    XCTAssertEqual(version, 6)
+    let hasLegacyColumn = try rolledBack.read { db in
+      try Row.fetchAll(db, sql: "PRAGMA table_info(bridge_service_projects)")
+        .contains { ($0["name"] as String?) == "direct_safe_whitelist_json" }
+    }
+    XCTAssertTrue(hasLegacyColumn)
+    let preservedJSON = try rolledBack.read { db in
+      try String.fetchOne(
+        db,
+        sql:
+          "SELECT CAST(workspace_commands_json AS TEXT) FROM bridge_service_projects WHERE project_id = ?",
+        arguments: ["prj-corrupt"]
+      )
+    }
+    XCTAssertEqual(preservedJSON, "{not-json")
+    let migrations = try rolledBack.read { db in
+      try String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
+    }
+    XCTAssertEqual(
+      migrations,
+      [
+        "BridgeServiceCore.v1", "BridgeServiceCore.v2", "BridgeServiceCore.v3",
+        "BridgeServiceCore.v4", "BridgeServiceCore.v5", "BridgeServiceCore.v6",
+      ])
+  }
 }
