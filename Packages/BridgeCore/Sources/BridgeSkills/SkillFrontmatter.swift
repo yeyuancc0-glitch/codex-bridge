@@ -100,9 +100,10 @@ enum SkillFrontmatter {
       } else if isBlockScalarMarker(trimmedRest) {
         let literal = trimmedRest.hasPrefix("|")
         var blockLines: [String] = []
-        while index < lines.count && !isContent(lines[index]) { index += 1 }
-        while index < lines.count && indentation(of: lines[index]) > indent {
-          blockLines.append(lines[index])
+        while index < lines.count {
+          let candidate = lines[index]
+          if isContent(candidate), indentation(of: candidate) <= indent { break }
+          blockLines.append(candidate)
           index += 1
         }
         result.append((key, .scalar(blockScalarValue(blockLines, literal: literal))))
@@ -278,13 +279,25 @@ enum SkillFrontmatter {
   }
 
   private static func blockScalarValue(_ lines: [String], literal: Bool) -> String {
-    let content = lines.map {
-      $0.trimmingCharacters(in: .whitespaces)
-    }.filter { !$0.isEmpty }
+    let contentIndent = lines.filter(isContent).map(indentation).min() ?? 0
+    let content = lines.map { line in
+      guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { return "" }
+      return String(line.dropFirst(min(contentIndent, line.count)))
+        .trimmingCharacters(in: .whitespaces)
+    }
     if literal {
       return content.joined(separator: "\n")
     }
-    return content.joined(separator: " ")
+    var folded = ""
+    for line in content {
+      if line.isEmpty {
+        if !folded.isEmpty, !folded.hasSuffix("\n") { folded.append("\n") }
+      } else {
+        if !folded.isEmpty, !folded.hasSuffix("\n") { folded.append(" ") }
+        folded.append(line)
+      }
+    }
+    return folded.trimmingCharacters(in: .newlines)
   }
 
   private static func isSequenceItem(_ trimmed: String) -> Bool {

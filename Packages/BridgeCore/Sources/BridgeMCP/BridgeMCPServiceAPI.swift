@@ -161,6 +161,7 @@ public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable 
   public let scriptPath: String
   public let interpreter: String?
   public let requiresNetwork: Bool
+  public let networkRequirement: SkillActionNetworkRequirement
   public let description: String
 
   public init(action: SkillAction) {
@@ -168,6 +169,7 @@ public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable 
     scriptPath = action.scriptPath
     interpreter = action.interpreter
     requiresNetwork = action.requiresNetwork
+    networkRequirement = action.networkRequirement
     description = action.description
   }
 
@@ -176,6 +178,7 @@ public struct MCPServiceSkillAction: Codable, Equatable, Identifiable, Sendable 
     case scriptPath = "script_path"
     case interpreter
     case requiresNetwork = "requires_network"
+    case networkRequirement = "network_requirement"
     case description
   }
 }

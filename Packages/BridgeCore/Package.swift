@@ -499,7 +499,8 @@ let package = Package(
         "BridgeServiceCore",
         "BridgeSecurity",
         .product(name: "GRDB", package: "GRDB.swift"),
-      ]
+      ],
+      resources: [.copy("Fixtures")]
     ),
     .testTarget(
       name: "BridgeLegacyImportTests",

@@ -915,9 +915,15 @@ public struct MCPServiceToolCatalog: Sendable {
       "script_path": stringSchema,
       "interpreter": nullableStringSchema(maximum: 4_096),
       "requires_network": boolSchema,
+      "network_requirement": [
+        "type": "string", "enum": ["denied", "required", "unspecified"],
+      ],
       "description": stringSchema,
     ],
-    required: ["name", "script_path", "interpreter", "requires_network", "description"]
+    required: [
+      "name", "script_path", "interpreter", "requires_network", "network_requirement",
+      "description",
+    ]
   )
 
   private static let taskEventSchema = objectSchema(

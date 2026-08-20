@@ -1,5 +1,6 @@
 import BridgeDomain
 import BridgeMCP
+import BridgeProjects
 import BridgeServiceApplication
 import BridgeServiceCore
 import MCP
@@ -541,12 +542,15 @@ final class BridgeServiceApplicationTests: XCTestCase {
       actions:
         - name: greet
           script: scripts/greet.sh
+          requires_network: false
         - name: sum
           script: scripts/sum.py
           interpreter: python3
+          requires_network: false
         - name: context
           script: scripts/context.mjs
           interpreter: node
+          requires_network: false
       ---
       """
     try Data(frontmatter.utf8).write(to: skills.appendingPathComponent("SKILL.md"))
@@ -576,9 +580,11 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ),
       deadline: deadline
     )
-    XCTAssertEqual(greet.status, "ended")
-    XCTAssertEqual(greet.exitCode, 0)
-    XCTAssertTrue(greet.output?.tail.contains("hello from sh") == true)
+    let greetOutput = try await waitForCommand(
+      application, sessionID: greet.sessionID, deadline: deadline)
+    XCTAssertEqual(greetOutput.status, "ended")
+    XCTAssertEqual(greetOutput.exitCode, 0)
+    XCTAssertTrue(greetOutput.tail.contains("hello from sh"))
 
     let sum = try await application.serviceRunSkillAction(
       MCPRunSkillActionRequest(
@@ -591,8 +597,10 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ),
       deadline: deadline
     )
-    XCTAssertEqual(sum.exitCode, 0)
-    XCTAssertTrue(sum.output?.tail.contains("sum=7") == true)
+    let sumOutput = try await waitForCommand(
+      application, sessionID: sum.sessionID, deadline: deadline)
+    XCTAssertEqual(sumOutput.exitCode, 0)
+    XCTAssertTrue(sumOutput.tail.contains("sum=7"))
 
     let context = try await application.serviceRunSkillAction(
       MCPRunSkillActionRequest(
@@ -605,8 +613,10 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ),
       deadline: deadline
     )
-    XCTAssertEqual(context.exitCode, 0)
-    XCTAssertTrue(context.output?.tail.contains("context-ok arg1") == true)
+    let contextOutput = try await waitForCommand(
+      application, sessionID: context.sessionID, deadline: deadline)
+    XCTAssertEqual(contextOutput.exitCode, 0)
+    XCTAssertTrue(contextOutput.tail.contains("context-ok arg1"))
 
     do {
       _ = try await application.serviceRunSkillAction(
@@ -620,13 +630,96 @@ final class BridgeServiceApplicationTests: XCTestCase {
         ),
         deadline: deadline
       )
-      XCTFail("Expected skillNotFound for unknown action")
+      XCTFail("Expected skillActionNotFound for unknown action")
     } catch let error as BridgeMCPQueryError {
-      guard case .skillNotFound = error else {
-        return XCTFail("Expected skillNotFound, got \(error)")
+      guard case .skillActionNotFound = error else {
+        return XCTFail("Expected skillActionNotFound, got \(error)")
       }
     }
 
     await application.directCommands.cancelAll()
+  }
+
+  func testSkillActionNetworkRequirementIsEnforcedForDeniedAndRequired() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateAccessPolicy(
+      ProjectAccessPolicy(read: .allowed, write: .allowed, network: .allowed),
+      projectID: fixture.project.id
+    )
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .full,
+      workspaceCommands: [],
+      projectID: fixture.project.id
+    )
+    let skill = fixture.root.appending(path: "skills/network-test", directoryHint: .isDirectory)
+    let scripts = skill.appending(path: "scripts", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    let frontmatter = """
+      ---
+      name: network-test
+      description: Network enforcement fixture.
+      actions:
+        - name: denied
+          script: scripts/socket.mjs
+          interpreter: node
+          requires_network: false
+        - name: required
+          script: scripts/socket.mjs
+          interpreter: node
+          requires_network: true
+      ---
+      """
+    try Data(frontmatter.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+    let script = """
+      import net from 'node:net';
+      const server = net.createServer();
+      server.on('error', error => { console.error(error.code); process.exit(42); });
+      server.listen(0, '127.0.0.1', () => { console.log('loopback-ok'); server.close(); });
+      """
+    try Data(script.utf8).write(to: scripts.appendingPathComponent("socket.mjs"))
+
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+
+    let denied = try await application.serviceRunSkillAction(
+      MCPRunSkillActionRequest(
+        skillName: "network-test", actionName: "denied", projectID: fixture.project.id.rawValue,
+        yieldTimeMS: 20, timeoutMS: 5_000),
+      deadline: deadline
+    )
+    let deniedOutput = try await waitForCommand(
+      application, sessionID: denied.sessionID, deadline: deadline)
+    XCTAssertNotEqual(deniedOutput.exitCode, 0)
+    XCTAssertFalse(deniedOutput.tail.contains("loopback-ok"))
+
+    let required = try await application.serviceRunSkillAction(
+      MCPRunSkillActionRequest(
+        skillName: "network-test", actionName: "required",
+        projectID: fixture.project.id.rawValue, yieldTimeMS: 20, timeoutMS: 5_000),
+      deadline: deadline
+    )
+    let requiredOutput = try await waitForCommand(
+      application, sessionID: required.sessionID, deadline: deadline)
+    XCTAssertEqual(requiredOutput.exitCode, 0)
+    XCTAssertTrue(requiredOutput.tail.contains("loopback-ok"))
+
+    await application.directCommands.cancelAll()
+  }
+
+  private func waitForCommand(
+    _ application: BridgeServiceApplication,
+    sessionID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandOutput {
+    while ContinuousClock.now < deadline {
+      let output = try await application.serviceDirectReadCommand(
+        sessionID: sessionID, deadline: deadline)
+      if output.status != "running" { return output }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    throw BridgeMCPQueryError.timeout
   }
 }

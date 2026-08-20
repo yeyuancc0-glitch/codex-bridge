@@ -165,6 +165,9 @@ final class MCPToolContractTests: XCTestCase {
       (.busy, "busy", true),
       (.timeout, "timeout", true),
       (.unavailable, "unavailable", true),
+      (.skillNotFound, "skill_not_found", false),
+      (.skillActionNotFound, "skill_action_not_found", false),
+      (.skillActionNotRunnable, "skill_action_not_runnable", false),
     ]
 
     for (failure, expectedCode, retryable) in cases {

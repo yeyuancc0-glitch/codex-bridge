@@ -868,6 +868,14 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
         return .init(code: "project_not_found", message: "The project is unavailable.")
       case .skillNotFound:
         return .init(code: "skill_not_found", message: "The Skill is unavailable.")
+      case .skillActionNotFound:
+        return .init(
+          code: "skill_action_not_found", message: "The requested Skill action does not exist.")
+      case .skillActionNotRunnable:
+        return .init(
+          code: "skill_action_not_runnable",
+          message: "The requested Skill action cannot be launched."
+        )
       case .threadNotFound:
         return .init(code: "thread_not_found", message: "The Thread is unavailable.")
       case .taskNotFound:

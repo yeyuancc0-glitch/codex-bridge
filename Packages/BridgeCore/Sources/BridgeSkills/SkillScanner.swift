@@ -177,7 +177,7 @@ public actor SkillScanner {
       let declaredName =
         metadata.scalar("name").flatMap { Self.isValidSkillName($0) ? $0 : nil } ?? name
       let description = Self.description(from: metadata)
-      let actions = try actions(for: entry, metadata: metadata)
+      let actions = try actions(for: entry, metadata: metadata, documentText: text)
       let references = fileManager.fileExists(
         atPath: entry.appendingPathComponent("references").path)
       manifests.append(
@@ -195,12 +195,14 @@ public actor SkillScanner {
     return manifests
   }
 
-  private func actions(for root: URL, metadata: SkillFrontmatter.Node) throws -> [SkillAction] {
+  private func actions(
+    for root: URL, metadata: SkillFrontmatter.Node, documentText: String
+  ) throws -> [SkillAction] {
     let entries = metadata.actionEntries("actions")
     if !entries.isEmpty {
       return try declaredActions(entries, root: root)
     }
-    return try discoveredActions(root: root)
+    return try discoveredActions(root: root, documentText: documentText)
   }
 
   /// Build actions from explicit `actions:` metadata. Each entry is either a
@@ -217,7 +219,7 @@ public actor SkillScanner {
       var name: String?
       var script: String?
       var interpreter: String?
-      var requiresNetwork = false
+      var networkRequirement = SkillActionNetworkRequirement.unspecified
       var description = ""
       if case .scalar(let scalar) = node {
         name = scalar
@@ -229,7 +231,16 @@ public actor SkillScanner {
           case "name": name = s
           case "script", "path", "script_path": script = s
           case "interpreter", "executable", "interpreter_executable": interpreter = s
-          case "requires_network", "network": requiresNetwork = Self.isTruthy(s)
+          case "network_requirement":
+            guard let requirement = SkillActionNetworkRequirement(rawValue: s.lowercased()) else {
+              throw SkillError.invalidManifest
+            }
+            networkRequirement = requirement
+          case "requires_network", "network":
+            guard let requirement = Self.legacyNetworkRequirement(s) else {
+              throw SkillError.invalidManifest
+            }
+            networkRequirement = requirement
           case "description": description = s
           default: break
           }
@@ -250,7 +261,7 @@ public actor SkillScanner {
           name: resolvedName,
           scriptPath: scriptPath,
           interpreter: interpreter,
-          requiresNetwork: requiresNetwork,
+          networkRequirement: networkRequirement,
           description: String(description.prefix(1_024))
         ))
       if result.count >= Self.maximumActionsPerSkill { break }
@@ -258,11 +269,10 @@ public actor SkillScanner {
     return result
   }
 
-  /// Discover entrypoints by scanning top-level `scripts/` files only. A file is
-  /// an action when it is a runnable script: either it has a valid shebang or a
-  /// known interpreter extension. Non-script files (JSON, data) and nested
-  /// internal libraries are excluded.
-  private func discoveredActions(root: URL) throws -> [SkillAction] {
+  /// Compatibility discovery only accepts a top-level script with an exact
+  /// `scripts/<filename>` reference in SKILL.md. A shebang or extension alone
+  /// cannot distinguish a public action from an internal helper or library.
+  private func discoveredActions(root: URL, documentText: String) throws -> [SkillAction] {
     let scripts = root.appendingPathComponent("scripts")
     guard
       let entries = try? fileManager.contentsOfDirectory(
@@ -280,6 +290,7 @@ public actor SkillScanner {
       let fileName = entry.lastPathComponent
       guard !fileName.hasPrefix(".") else { continue }
       let relative = "scripts/" + fileName
+      guard documentText.contains(relative) else { continue }
       guard
         let interpreter = try Self.interpreterForScript(
           url: entry, fileName: fileName, fileManager: fileManager
@@ -292,7 +303,7 @@ public actor SkillScanner {
           name: name,
           scriptPath: relative,
           interpreter: interpreter,
-          requiresNetwork: false,
+          networkRequirement: .unspecified,
           description: ""
         ))
       if result.count >= Self.maximumActionsPerSkill { break }
@@ -420,9 +431,14 @@ public actor SkillScanner {
     return nil
   }
 
-  private static func isTruthy(_ value: String) -> Bool {
+  private static func legacyNetworkRequirement(
+    _ value: String
+  ) -> SkillActionNetworkRequirement? {
     let lower = value.lowercased()
-    return lower == "true" || lower == "yes" || lower == "1" || lower == "on"
+    if ["true", "yes", "1", "on", "required"].contains(lower) { return .required }
+    if ["false", "no", "0", "off", "denied"].contains(lower) { return .denied }
+    if lower == "unspecified" { return .unspecified }
+    return nil
   }
 
   private static func description(from metadata: SkillFrontmatter.Node) -> String {

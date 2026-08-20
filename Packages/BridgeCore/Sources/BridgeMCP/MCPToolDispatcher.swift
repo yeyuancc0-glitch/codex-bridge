@@ -338,6 +338,18 @@ public struct MCPToolDispatcher: Sendable {
         message: "The Skill is unavailable.",
         retryable: false
       )
+    case .skillActionNotFound:
+      description = .init(
+        code: "skill_action_not_found",
+        message: "The requested Skill action does not exist.",
+        retryable: false
+      )
+    case .skillActionNotRunnable:
+      description = .init(
+        code: "skill_action_not_runnable",
+        message: "The requested Skill action cannot be launched.",
+        retryable: false
+      )
     case .networkIsolationUnavailable:
       description = .init(
         code: "network_isolation_unavailable",

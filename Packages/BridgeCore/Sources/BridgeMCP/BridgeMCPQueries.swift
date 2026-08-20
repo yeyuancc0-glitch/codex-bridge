@@ -59,6 +59,8 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case gitOperationFailed(String)
   case outputLimitExceeded
   case skillNotFound
+  case skillActionNotFound
+  case skillActionNotRunnable
   case networkIsolationUnavailable
 }
 

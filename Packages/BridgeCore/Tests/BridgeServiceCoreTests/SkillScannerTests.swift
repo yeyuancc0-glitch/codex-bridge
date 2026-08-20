@@ -31,34 +31,23 @@ final class SkillScannerTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let skill = root.appendingPathComponent("skills/agent-reach")
     try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
-    let frontmatter = """
-      ---
-      name: agent-reach
-      description: >
-        MUST USE when the user wants to research anything on the internet.
-        This is a folded block that spans multiple lines.
-      triggers:
-        - research: 调研/全网调研/帮我调研
-        - search: 搜/查/找/search
-        - social:
-          - Twitter: twitter/x.com
-          - Reddit: reddit
-      ---
-      # Body
-      """
-    try Data(frontmatter.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+    let fixture = Bundle.module.url(
+      forResource: "agent-reach-SKILL", withExtension: "md", subdirectory: "Fixtures")
+    let data = try Data(contentsOf: XCTUnwrap(fixture))
+    try data.write(to: skill.appendingPathComponent("SKILL.md"))
 
     let scanner = SkillScanner(globalRoots: [root.appendingPathComponent("skills")])
     let manifests = try await scanner.scanSkills(for: nil)
     let manifest = try XCTUnwrap(manifests.first)
-    print("DEBUG2 triggers=\(manifest.triggers)")
     XCTAssertEqual(manifest.name, "agent-reach")
-    XCTAssertTrue(manifest.description.contains("research anything"))
-    XCTAssertTrue(manifest.description.contains("multiple lines"))
-    XCTAssertTrue(manifest.triggers.contains("research: 调研/全网调研/帮我调研"))
-    XCTAssertTrue(manifest.triggers.contains("search: 搜/查/找/search"))
+    XCTAssertTrue(manifest.description.contains("MUST USE when user wants"))
+    XCTAssertTrue(manifest.description.contains("Also MUST USE"))
+    XCTAssertTrue(manifest.description.contains("15 platforms"))
+    XCTAssertTrue(manifest.description.contains("NOT for"))
+    XCTAssertTrue(manifest.triggers.contains { $0.hasPrefix("research: 调研/全网调研/帮我调研") })
+    XCTAssertTrue(manifest.triggers.contains { $0.hasPrefix("search: 搜/查/找/search") })
     XCTAssertTrue(manifest.triggers.contains("social:"))
-    XCTAssertTrue(manifest.triggers.contains("Twitter: twitter/x.com"))
+    XCTAssertTrue(manifest.triggers.contains { $0.hasPrefix("Twitter: twitter/推特/x.com") })
   }
 
   func testFrontmatterParsesInlineSequenceAndQuotedValues() async throws {
@@ -83,7 +72,7 @@ final class SkillScannerTests: XCTestCase {
     XCTAssertEqual(manifest.triggers, ["review", "audit", "/codereview"])
   }
 
-  func testActionsDiscoveredFromShebangAndExtensionExcludesInternals() async throws {
+  func testActionsDiscoveredOnlyWhenDocumentedAndExcludesInternals() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let skill = root.appendingPathComponent("skills/impeccable")
@@ -92,8 +81,14 @@ final class SkillScannerTests: XCTestCase {
       at: scripts.appendingPathComponent("lib"), withIntermediateDirectories: true)
     try FileManager.default.createDirectory(
       at: scripts.appendingPathComponent("detector/shared"), withIntermediateDirectories: true)
-    try Data("---\nname: impeccable\ndescription: Design skill.\n---\n".utf8)
-      .write(to: skill.appendingPathComponent("SKILL.md"))
+    let document = """
+      ---
+      name: impeccable
+      description: Design skill.
+      ---
+      Run scripts/context.mjs, scripts/palette.mjs, and scripts/setup.sh.
+      """
+    try Data(document.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
     // Top-level executable entrypoints.
     try Data("#!/usr/bin/env node\nconsole.log('context');\n".utf8)
       .write(to: scripts.appendingPathComponent("context.mjs"))
@@ -107,6 +102,10 @@ final class SkillScannerTests: XCTestCase {
       .write(to: scripts.appendingPathComponent("lib/shared.mjs"))
     try Data("injected\n".utf8)
       .write(to: scripts.appendingPathComponent("detector/shared/common.mjs"))
+    try Data("(function () {})();\n".utf8)
+      .write(to: scripts.appendingPathComponent("modern-screenshot.umd.js"))
+    try Data("#!/usr/bin/env node\nconsole.log('internal');\n".utf8)
+      .write(to: scripts.appendingPathComponent("live-server.mjs"))
 
     let scanner = SkillScanner(globalRoots: [root.appendingPathComponent("skills")])
     let manifests = try await scanner.scanSkills(for: nil)
@@ -116,7 +115,10 @@ final class SkillScannerTests: XCTestCase {
     XCTAssertFalse(names.contains("command-metadata"))
     XCTAssertFalse(names.contains("shared"))
     XCTAssertFalse(names.contains("common"))
+    XCTAssertFalse(names.contains("modern-screenshot.umd"))
+    XCTAssertFalse(names.contains("live-server"))
     XCTAssertTrue(manifest.actions.allSatisfy { $0.interpreter != nil })
+    XCTAssertTrue(manifest.actions.allSatisfy { $0.networkRequirement == .unspecified })
   }
 
   func testExplicitActionsMetadataOverridesDiscovery() async throws {
@@ -133,7 +135,7 @@ final class SkillScannerTests: XCTestCase {
         - name: generate
           script: scripts/gen.py
           interpreter: python3
-          requires_network: true
+          network_requirement: required
           description: Generate files
         - name: tidy
           path: scripts/tidy.py
@@ -152,9 +154,11 @@ final class SkillScannerTests: XCTestCase {
     XCTAssertEqual(generate.scriptPath, "scripts/gen.py")
     XCTAssertEqual(generate.interpreter, "python3")
     XCTAssertTrue(generate.requiresNetwork)
+    XCTAssertEqual(generate.networkRequirement, .required)
     XCTAssertEqual(generate.description, "Generate files")
     let tidy = try XCTUnwrap(manifest.actions.first { $0.name == "tidy" })
     XCTAssertEqual(tidy.scriptPath, "scripts/tidy.py")
+    XCTAssertEqual(tidy.networkRequirement, .unspecified)
   }
 
   func testResolveActionUsesInterpreterOrShebang() async throws {
@@ -163,8 +167,14 @@ final class SkillScannerTests: XCTestCase {
     let skill = root.appendingPathComponent("skills/demo")
     let scripts = skill.appendingPathComponent("scripts")
     try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
-    try Data("---\nname: demo\ndescription: Demo.\n---\n".utf8)
-      .write(to: skill.appendingPathComponent("SKILL.md"))
+    let document = """
+      ---
+      name: demo
+      description: Demo.
+      ---
+      Use scripts/run.mjs and scripts/plain.py.
+      """
+    try Data(document.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
     try Data("#!/usr/bin/env node\nconsole.log('hi');\n".utf8)
       .write(to: scripts.appendingPathComponent("run.mjs"))
     try Data("print('hi')".utf8).write(to: scripts.appendingPathComponent("plain.py"))

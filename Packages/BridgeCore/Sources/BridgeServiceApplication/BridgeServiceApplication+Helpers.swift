@@ -279,8 +279,10 @@ extension BridgeServiceApplication {
       return .contractRejected
     case SkillError.documentNotFound:
       return .skillNotFound
-    case SkillError.actionNotFound, SkillError.actionNotRunnable:
-      return .skillNotFound
+    case SkillError.actionNotFound:
+      return .skillActionNotFound
+    case SkillError.actionNotRunnable:
+      return .skillActionNotRunnable
     default:
       return .unavailable
     }

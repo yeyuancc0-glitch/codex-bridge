@@ -116,11 +116,11 @@ extension BridgeServiceApplication {
       throw Self.publicSkillError(error)
     }
     let argv = [launch.interpreter, launch.resolvedScriptPath] + request.arguments
-    let requiresNetwork = launch.action.requiresNetwork
-    // Enforce real network isolation: when the action declares no network, run it
-    // under a deny-network sandbox so the declaration cannot be bypassed by the
-    // script's own code. Fail closed if the sandbox is unavailable.
-    let denyNetwork = !requiresNetwork
+    let requiresNetwork = launch.action.networkRequirement != .denied
+    // Only an explicit denial enters the network sandbox. Unspecified actions
+    // are conservatively treated as network-capable by project policy and local
+    // approval; guessing `denied` would break legitimate loopback/network tools.
+    let denyNetwork = launch.action.networkRequirement == .denied
     let directRequest = MCPDirectExecRequest(
       projectID: request.projectID,
       argv: argv,
