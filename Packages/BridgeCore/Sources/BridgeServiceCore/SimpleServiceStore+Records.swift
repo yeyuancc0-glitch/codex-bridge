@@ -12,13 +12,13 @@ extension SimpleServiceStore {
     try db.execute(
       sql: """
         INSERT INTO bridge_service_tasks (
-          task_id, project_id, source, client_request_id, prompt, requested_thread_id,
+          task_id, project_id, source, source_client_id, client_request_id, prompt, requested_thread_id,
           codex_thread_id, codex_turn_id, status, supervisor_status, execution_model,
           execution_effort, supervisor_model, supervisor_effort, permission_mode,
           network_allowed, access_mode, fast_mode, current_step, changed_files_json,
           result_summary, supervisor_summary, failure_code, created_at, updated_at
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
       arguments: Self.taskArguments(task, changedFiles: changedFiles)
@@ -212,6 +212,7 @@ extension SimpleServiceStore {
       task.id.rawValue,
       task.projectID.rawValue,
       task.source.rawValue,
+      task.sourceClientID,
       task.clientRequestID,
       task.prompt,
       task.requestedThreadID,
@@ -274,9 +275,9 @@ extension SimpleServiceStore {
       db,
       sql: """
         SELECT * FROM bridge_service_tasks
-        WHERE source = ? AND client_request_id = ?
+        WHERE source = ? AND source_client_id = ? AND client_request_id = ?
         """,
-      arguments: [task.source.rawValue, clientRequestID]
+      arguments: [task.source.rawValue, task.sourceClientID, clientRequestID]
     ).map(Self.decodeTask)
   }
 
@@ -383,6 +384,7 @@ extension SimpleServiceStore {
       id: TaskID(rawValue: row["task_id"]),
       projectID: ProjectID(rawValue: row["project_id"]),
       source: source,
+      sourceClientID: row["source_client_id"],
       clientRequestID: row["client_request_id"],
       prompt: row["prompt"],
       requestedThreadID: row["requested_thread_id"],

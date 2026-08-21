@@ -85,6 +85,7 @@ extension BridgeServiceAppModel {
       projects = []
       tasks = []
       approvals = []
+      mcpClients = []
       models = []
       modelPreferences = nil
       modelCatalogError = nil
@@ -202,6 +203,7 @@ extension BridgeServiceAppModel {
     async let approvalResult = optional { try await client.approvals(taskID: nil) }
     async let directApprovalResult = optional { try await client.pendingDirectApprovals() }
     async let directApprovalModeResult = optional { try await client.directApprovalMode() }
+    async let mcpClientResult = optional { try await client.mcpClients() }
 
     if let value = await projectResult {
       projects = value
@@ -249,6 +251,9 @@ extension BridgeServiceAppModel {
     }
     if let value = await directApprovalModeResult {
       directApprovalMode = value
+    }
+    if let value = await mcpClientResult {
+      mcpClients = value
     }
     if includeCatalog {
       do {
@@ -338,7 +343,8 @@ extension BridgeServiceAppModel {
     self.serviceStatus = IPCServiceStatusResponse(
       status: serviceStatus.status,
       localMCPURL: serviceStatus.localMCPURL,
-      exposureMode: mode
+      exposureMode: mode,
+      tunnel: serviceStatus.tunnel
     )
   }
 

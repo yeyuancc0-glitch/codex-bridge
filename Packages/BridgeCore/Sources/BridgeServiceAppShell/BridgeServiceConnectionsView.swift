@@ -70,7 +70,7 @@ struct BridgeServiceConnectionsView: View {
         case .notRegistered:
           CalloutBanner(
             title: "后台服务尚未注册",
-            message: "注册后台服务后，Codex Bridge 可以在 App 关闭后持续响应 ChatGPT 并维持任务执行。",
+            message: "注册后台服务后，Codex Bridge 可以在 App 关闭后持续响应已启用的 MCP 客户端并维持任务执行。",
             symbol: "info.circle",
             tone: .info,
             actionTitle: "立即注册后台 Service"
@@ -111,75 +111,7 @@ struct BridgeServiceConnectionsView: View {
   }
 
   private var mcpSection: some View {
-    NativeCard {
-      VStack(alignment: .leading, spacing: 14) {
-        HStack {
-          Label("MCP 接口状态", systemImage: "network.badge.shield.half.filled")
-            .font(.headline)
-
-          Spacer()
-
-          StatusBadge(
-            model.serviceStatus?.status.mcpState ?? "未知",
-            tone: model.serviceStatus?.status.mcpState == "ready" ? .success : .neutral
-          )
-        }
-
-        if let localMCPURL = model.safeLocalMCPDescription {
-          CodeSnippetBlock(text: localMCPURL, label: "本机回环诊断端点 (需认证 Header)")
-
-          Text("该地址仅供本机进程与诊断使用，调用必须携带 X-Codex-Bridge-Token；不会向外泄露认证 Secret。")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-
-        Divider()
-
-        VStack(alignment: .leading, spacing: 8) {
-          Text("MCP 工具暴露模式")
-            .font(.subheadline.weight(.medium))
-
-          Picker(
-            "MCP 工具权限",
-            selection: Binding(
-              get: { model.exposureMode },
-              set: { model.setExposureMode($0) }
-            )
-          ) {
-            Text("只读模式 (仅查询)").tag(MCPServiceExposureMode.readOnly)
-            Text("完整操作 (任务提交与干预)").tag(MCPServiceExposureMode.full)
-          }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .frame(maxWidth: 420)
-
-          Text(
-            model.exposureMode == .full
-              ? "完整模式会向 ChatGPT 暴露：Codex 任务提交/纠偏/中断，以及用户明确要求直接执行时的 ChatGPT Direct 文件编辑与受控命令执行。所有危险写入与执行仍需本机授权。"
-              : "只读模式仅允许 ChatGPT 读取项目目录结构、文件内容、Thread、任务状态与已登记命令清单。"
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-          if model.exposureMode == .full {
-            Divider()
-            Toggle(
-              "Direct 操作自动批准",
-              isOn: Binding(
-                get: { model.directApprovalMode == "auto" },
-                set: { model.setDirectApprovalMode($0 ? "auto" : "require") }
-              )
-            )
-            .toggleStyle(.switch)
-            Text(
-              "开启后，ChatGPT 通过 direct_* 工具改文件、执行受控命令时不再弹本地审批，直接放行。仅建议在你信任本机、且不需要逐次确认时开启；关闭则每次操作仍要求本机批准。"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          }
-        }
-      }
-    }
+    MCPClientConnectionsView(model: model)
   }
 
   private var tunnelSection: some View {

@@ -30,6 +30,7 @@ public struct MCPServiceToolDeadlines: Sendable {
 public struct MCPServiceToolDispatcher: Sendable {
   let service: any BridgeMCPServiceAPI
   let exposureMode: MCPServiceExposureMode
+  let clientID: MCPClientID
   let resultEncoder: MCPToolResultEncoder
   let admission: MCPToolAdmission
   let deadlines: MCPServiceToolDeadlines
@@ -39,6 +40,7 @@ public struct MCPServiceToolDispatcher: Sendable {
   public init(
     service: any BridgeMCPServiceAPI,
     exposureMode: MCPServiceExposureMode,
+    clientID: MCPClientID = .chatGPT,
     resultEncoder: MCPToolResultEncoder = .init(),
     admission: MCPToolAdmission = .init(),
     deadlines: MCPServiceToolDeadlines = .production,
@@ -46,6 +48,7 @@ public struct MCPServiceToolDispatcher: Sendable {
   ) {
     self.service = service
     self.exposureMode = exposureMode
+    self.clientID = clientID
     self.resultEncoder = resultEncoder
     self.admission = admission
     self.deadlines = deadlines
@@ -68,7 +71,11 @@ public struct MCPServiceToolDispatcher: Sendable {
     defer { Task { await admission.release(sessionID: key) } }
 
     do {
-      return try await callAdmitted(contract, arguments: parameters.arguments)
+      return try await callAdmitted(
+        contract,
+        arguments: parameters.arguments,
+        sessionID: key
+      )
     } catch let error as BridgeMCPQueryError {
       return try encodeQueryError(error)
     } catch let error as MCPToolResultEncodingError {
@@ -89,13 +96,14 @@ public struct MCPServiceToolDispatcher: Sendable {
 
   private func callAdmitted(
     _ contract: MCPServiceToolContract,
-    arguments: [String: Value]?
+    arguments: [String: Value]?,
+    sessionID: String
   ) async throws -> CallTool.Result {
     switch contract.route {
     case .readOnly:
       return try await callReadOnly(contract.name, arguments: arguments)
     case .task:
-      return try await callTask(contract.name, arguments: arguments)
+      return try await callTask(contract.name, arguments: arguments, sessionID: sessionID)
     case .direct:
       return try await callDirect(contract.name, arguments: arguments)
     }

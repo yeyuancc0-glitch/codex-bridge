@@ -59,7 +59,7 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.directWriteProjectFile.rawValue,
     title: "Direct write project file",
     description:
-      "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
+      "Explicit Direct Workspace action. Use only when the user explicitly asks the MCP client "
       + "to edit the local project without delegating the work to Codex. Creates a new file or "
       + "atomically replaces an existing file inside the approved project root.",
     inputSchema: objectSchema(
@@ -87,7 +87,7 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.directEditProjectFile.rawValue,
     title: "Direct edit project file",
     description:
-      "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
+      "Explicit Direct Workspace action. Use only when the user explicitly asks the MCP client "
       + "to edit the local project without delegating the work to Codex. Applies an exact text "
       + "replacement guarded by the file revision read earlier.",
     inputSchema: objectSchema(
@@ -115,7 +115,7 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.directApplyProjectPatch.rawValue,
     title: "Direct apply project patch",
     description:
-      "Explicit Direct Workspace action. Use only when the user explicitly asks ChatGPT itself "
+      "Explicit Direct Workspace action. Use only when the user explicitly asks the MCP client "
       + "to edit the local project without delegating the work to Codex. Applies a multi-file "
       + "patch (*** Begin Patch / *** Add File / *** Update File) with per-file revision checks.",
     inputSchema: objectSchema(
@@ -152,7 +152,7 @@ extension MCPServiceToolCatalog {
     title: "Direct manage project path",
     description:
       "Explicit Direct Workspace destructive action. Use only when the user explicitly asks "
-      + "ChatGPT itself to move or delete files. Deleting and moving require the current file "
+      + "the MCP client to move or delete files. Deleting and moving require the current file "
       + "revision read earlier.",
     inputSchema: objectSchema(
       properties: [
@@ -185,7 +185,7 @@ extension MCPServiceToolCatalog {
     description:
       "Explicit Direct Workspace action that runs a user-registered project command (or a "
       + "built-in safe command) on the local machine. Use only when the user explicitly asks "
-      + "ChatGPT itself to run a command inside the project. The session streams bounded "
+      + "the MCP client to run a command inside the project. The session streams bounded "
       + "output and can be read with direct_read_command.",
     inputSchema: objectSchema(
       properties: [
@@ -214,7 +214,7 @@ extension MCPServiceToolCatalog {
     title: "Read direct command",
     description:
       "Read the latest bounded output of a direct command session. Use only when the user "
-      + "explicitly asked ChatGPT to run commands directly and this session was started with "
+      + "explicitly asked the MCP client to run commands directly and this session was started with "
       + "direct_exec_project_command.",
     inputSchema: objectSchema(
       properties: ["session_id": boundedStringSchema(maximum: 128)],
@@ -229,7 +229,7 @@ extension MCPServiceToolCatalog {
     title: "Write direct command stdin",
     description:
       "Write a bounded chunk of input to the stdin of a running interactive direct command "
-      + "session. Use only when the user explicitly asked ChatGPT to drive an interactive "
+      + "session. Use only when the user explicitly asked the MCP client to drive an interactive "
       + "command directly.",
     inputSchema: objectSchema(
       properties: [
@@ -252,7 +252,7 @@ extension MCPServiceToolCatalog {
     title: "Interrupt direct command",
     description:
       "Cancel a running direct command session, terminating its process group. Use only when "
-      + "the user explicitly asked ChatGPT to run commands directly and the session must stop.",
+      + "the user explicitly asked the MCP client to run commands directly and the session must stop.",
     inputSchema: objectSchema(
       properties: ["session_id": boundedStringSchema(maximum: 128)],
       required: ["session_id"]
@@ -310,7 +310,7 @@ extension MCPServiceToolCatalog {
     title: "Direct git commit",
     description:
       "Explicit Direct Workspace action that creates a local Git commit inside the project. "
-      + "Use only when the user explicitly asks ChatGPT itself to commit the changes. It stages "
+      + "Use only when the user explicitly asks the MCP client to commit the changes. It stages "
       + "the listed project files (or all changed files when empty) and runs `git commit` with "
       + "the provided message. History-rewriting operations (amend/reset/rebasing) and push are "
       + "never performed.",

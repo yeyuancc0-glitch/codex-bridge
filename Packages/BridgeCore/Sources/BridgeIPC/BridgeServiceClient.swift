@@ -306,6 +306,54 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func mcpClients() async throws -> [IPCMCPClientStatus] {
+    let response: IPCMCPClientListResponse = try await call(
+      operation: .listMCPClients,
+      payload: Optional<IPCMutationResponse>.none
+    )
+    return response.clients
+  }
+
+  public func setMCPClientEnabled(clientID: String, enabled: Bool) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setMCPClientEnabled,
+      payload: IPCMCPClientEnabledRequest(clientID: clientID, enabled: enabled)
+    )
+  }
+
+  public func setMCPClientExposureMode(
+    clientID: String,
+    mode: MCPServiceExposureMode
+  ) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setMCPClientExposureMode,
+      payload: IPCMCPClientExposureRequest(clientID: clientID, exposureMode: mode)
+    )
+  }
+
+  public func exportMCPClientConfiguration(clientID: String) async throws -> String {
+    let response: IPCMCPClientConfigurationExport = try await call(
+      operation: .exportMCPClientConfiguration,
+      payload: IPCMCPClientRequest(clientID: clientID)
+    )
+    return response.configurationJSON
+  }
+
+  public func rotateMCPClientCredential(clientID: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .rotateMCPClientCredential,
+      payload: IPCMCPClientRequest(clientID: clientID)
+    )
+  }
+
+  public func rotateLocalMCPEndpoint() async throws -> String {
+    let response: IPCLocalMCPEndpointResponse = try await call(
+      operation: .rotateLocalMCPEndpoint,
+      payload: Optional<IPCMutationResponse>.none
+    )
+    return response.localMCPURL
+  }
+
   public func configureTunnel(
     _ request: IPCTunnelConfigurationRequest
   ) async throws -> IPCTunnelStatus {

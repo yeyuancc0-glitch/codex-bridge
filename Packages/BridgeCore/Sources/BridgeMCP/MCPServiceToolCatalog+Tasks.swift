@@ -52,7 +52,7 @@ extension MCPServiceToolCatalog {
     description:
       "Create and start a Codex task. Risky Codex operations still require local approval. "
       + "Codex is the default execution path. Prefer this tool unless the user explicitly asked "
-      + "ChatGPT to modify files or run commands directly.",
+      + "the MCP client to modify files or run commands directly.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),

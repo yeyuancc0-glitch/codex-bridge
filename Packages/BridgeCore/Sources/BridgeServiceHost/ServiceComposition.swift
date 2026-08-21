@@ -10,6 +10,27 @@ import BridgeServiceCore
 import Foundation
 import Security
 
+public enum ServiceLocalMCPError: Error, Equatable, Sendable {
+  case localPortUnavailable(Int)
+  case endpointManagedByConfiguration
+}
+
+public struct ServiceMCPClientStatus: Equatable, Sendable {
+  public let profile: ServiceMCPClientProfile
+  public let activeSessionCount: Int
+  public let lastConnectedAt: Date?
+
+  public init(
+    profile: ServiceMCPClientProfile,
+    activeSessionCount: Int,
+    lastConnectedAt: Date?
+  ) {
+    self.profile = profile
+    self.activeSessionCount = activeSessionCount
+    self.lastConnectedAt = lastConnectedAt
+  }
+}
+
 public struct ServiceCompositionConfiguration: Sendable {
   public let appVersion: String
   public let dataRootURL: URL
@@ -59,13 +80,12 @@ public actor ServiceComposition {
   public let runtimeStatus: ServiceRuntimeStatus
   public let application: BridgeServiceApplication
   public let tunnel: ServiceTunnelController
+  public let mcpClients: ServiceMCPClientRegistry
   public let legacyImportReport: LegacyImportReport?
 
   private let configuration: ServiceCompositionConfiguration
-  private let secretProvider: ServiceMCPSecretProvider
   private var mcpServer: MCPBridgeServer?
   private var mcpEndpoint: MCPBridgeEndpoint?
-  private var exposureMode: MCPServiceExposureMode?
   private var tunnelBootstrapped = false
   private var isShutdown = false
 
@@ -148,6 +168,14 @@ public actor ServiceComposition {
       secretStore: secretStore,
       factory: resolvedTunnelFactory
     )
+    let secretProvider = ServiceMCPSecretProvider(
+      store: secretStore,
+      randomBytes: randomBytes
+    )
+    let mcpClients = try await ServiceMCPClientRegistry.make(
+      settings: settings,
+      secrets: secretProvider
+    )
     return ServiceComposition(
       configuration: configuration,
       paths: paths,
@@ -162,11 +190,8 @@ public actor ServiceComposition {
       runtimeStatus: runtimeStatus,
       application: application,
       tunnel: tunnel,
-      legacyImportReport: legacyImport.report,
-      secretProvider: ServiceMCPSecretProvider(
-        store: secretStore,
-        randomBytes: randomBytes
-      )
+      mcpClients: mcpClients,
+      legacyImportReport: legacyImport.report
     )
   }
 
@@ -184,8 +209,8 @@ public actor ServiceComposition {
     runtimeStatus: ServiceRuntimeStatus,
     application: BridgeServiceApplication,
     tunnel: ServiceTunnelController,
-    legacyImportReport: LegacyImportReport?,
-    secretProvider: ServiceMCPSecretProvider
+    mcpClients: ServiceMCPClientRegistry,
+    legacyImportReport: LegacyImportReport?
   ) {
     self.configuration = configuration
     self.paths = paths
@@ -200,26 +225,28 @@ public actor ServiceComposition {
     self.runtimeStatus = runtimeStatus
     self.application = application
     self.tunnel = tunnel
+    self.mcpClients = mcpClients
     self.legacyImportReport = legacyImportReport
-    self.secretProvider = secretProvider
   }
 
   @discardableResult
   public func startLocalMCP() async throws -> MCPBridgeEndpoint {
     guard !isShutdown else { throw CancellationError() }
-    let requestedMode = try await settings.exposureMode()
-    let mode = Self.mcpExposureMode(requestedMode)
-    if exposureMode == mode, let mcpEndpoint { return mcpEndpoint }
+    if let mcpEndpoint { return mcpEndpoint }
     await tunnel.pauseForMCPRestart()
     await stopMCP()
-    let secret = try await secretProvider.secret()
+    let persistedPort = configuration.mcpPort == 0 ? try await settings.localMCPPort() : nil
+    let requestedPort = configuration.mcpPort == 0 ? persistedPort ?? 0 : configuration.mcpPort
+    let chatGPTSecret = try await mcpClients.chatGPTCredential()
     let server = MCPBridgeServer(
       appVersion: configuration.appVersion,
       service: application,
-      exposureMode: mode,
+      exposureMode: { [mcpClients] clientID in
+        await mcpClients.exposureMode(for: clientID)
+      },
       httpConfiguration: try MCPHTTPConfiguration(
-        headerSecret: secret,
-        port: configuration.mcpPort
+        clientAuthenticator: mcpClients.authenticator,
+        port: requestedPort
       )
     )
     do {
@@ -228,28 +255,39 @@ public actor ServiceComposition {
         await server.stop()
         throw CancellationError()
       }
+      if configuration.mcpPort == 0, persistedPort == nil {
+        try await settings.setLocalMCPPort(endpoint.port)
+      }
       mcpServer = server
       mcpEndpoint = endpoint
-      exposureMode = mode
       await runtimeStatus.updateMCP(state: "ready")
       if tunnelBootstrapped {
         await tunnel.localMCPDidChange(
           endpoint.localURL,
-          localMCPHeaderSecret: secret
+          localMCPHeaderSecret: chatGPTSecret
         )
       } else {
         tunnelBootstrapped = true
         await tunnel.bootstrap(
           localMCPURL: endpoint.localURL,
-          localMCPHeaderSecret: secret
+          localMCPHeaderSecret: chatGPTSecret
         )
       }
       return endpoint
     } catch {
+      if mcpServer !== server {
+        await server.stop()
+      }
+      let state = requestedPort == 0 ? "failed" : "local_port_unavailable"
       await runtimeStatus.updateMCP(
-        state: "failed",
-        degradation: "Local MCP could not start."
+        state: state,
+        degradation: requestedPort == 0
+          ? "Local MCP could not start."
+          : "Local MCP port \(requestedPort) is unavailable."
       )
+      if requestedPort != 0 {
+        throw ServiceLocalMCPError.localPortUnavailable(requestedPort)
+      }
       throw error
     }
   }
@@ -259,8 +297,94 @@ public actor ServiceComposition {
     -> MCPBridgeEndpoint
   {
     try await settings.setExposureMode(Self.serviceExposureMode(mode))
-    exposureMode = nil
+    await mcpServer?.terminateSessions(for: .chatGPT)
     return try await startLocalMCP()
+  }
+
+  public func mcpClientStatuses() async throws -> [ServiceMCPClientStatus] {
+    let profiles = try await mcpClients.profiles()
+    var statuses: [ServiceMCPClientStatus] = []
+    statuses.reserveCapacity(profiles.count)
+    for profile in profiles {
+      statuses.append(
+        ServiceMCPClientStatus(
+          profile: profile,
+          activeSessionCount: await mcpServer?.activeSessionCount(for: profile.clientID) ?? 0,
+          lastConnectedAt: mcpClients.authenticator.lastAuthenticationDate(
+            for: profile.clientID
+          )
+        )
+      )
+    }
+    return statuses
+  }
+
+  public func setQwenStudioEnabled(_ enabled: Bool) async throws {
+    try await mcpClients.setQwenStudioEnabled(enabled)
+    await mcpServer?.terminateSessions(for: .qwenStudio)
+  }
+
+  public func setQwenStudioExposureMode(_ mode: MCPServiceExposureMode) async throws {
+    try await mcpClients.setQwenStudioExposureMode(mode)
+    await mcpServer?.terminateSessions(for: .qwenStudio)
+  }
+
+  public func rotateQwenStudioCredential() async throws {
+    try await mcpClients.rotateQwenStudioCredential()
+    await mcpServer?.terminateSessions(for: .qwenStudio)
+  }
+
+  public func exportQwenStudioConfiguration() async throws -> String {
+    let endpoint = try await startLocalMCP()
+    let credential = try await mcpClients.qwenStudioCredential()
+    let configuration: [String: Any] = [
+      "mcpServers": [
+        "Codex Bridge": [
+          "type": "streamable-http",
+          "url": endpoint.localURL.absoluteString,
+          "headers": [MCPHTTPConfiguration.tunnelAuthenticationHeader: credential],
+        ]
+      ]
+    ]
+    let data = try JSONSerialization.data(
+      withJSONObject: configuration,
+      options: [.prettyPrinted, .sortedKeys]
+    )
+    guard let value = String(data: data, encoding: .utf8) else {
+      throw ServiceMCPClientRegistryError.unsupportedClient
+    }
+    return value
+  }
+
+  public func rotateLocalMCPEndpoint() async throws -> MCPBridgeEndpoint {
+    guard configuration.mcpPort == 0 else {
+      throw ServiceLocalMCPError.endpointManagedByConfiguration
+    }
+    let previousPort: Int?
+    if let activePort = mcpEndpoint?.port {
+      previousPort = activePort
+    } else {
+      previousPort = try await settings.localMCPPort()
+    }
+    await tunnel.pauseForMCPRestart()
+    await stopMCP()
+    try await settings.setLocalMCPPort(nil)
+    do {
+      for _ in 0..<4 {
+        let endpoint = try await startLocalMCP()
+        guard endpoint.port == previousPort else { return endpoint }
+        await tunnel.pauseForMCPRestart()
+        await stopMCP()
+        try await settings.setLocalMCPPort(nil)
+      }
+      throw ServiceLocalMCPError.localPortUnavailable(previousPort ?? 0)
+    } catch {
+      if let previousPort {
+        try? await settings.setLocalMCPPort(previousPort)
+        _ = try? await startLocalMCP()
+      }
+      throw error
+    }
   }
 
   public func configureTunnel(
@@ -304,7 +428,6 @@ public actor ServiceComposition {
     let server = mcpServer
     mcpServer = nil
     mcpEndpoint = nil
-    exposureMode = nil
     await server?.stop()
   }
 

@@ -32,7 +32,7 @@ public actor MCPBridgeServer {
     )
   }
 
-  private let makeServer: @Sendable () async -> Server
+  private let makeServer: @Sendable (MCPClientID) async -> Server
   private let httpConfiguration: MCPHTTPConfiguration
   private let sessionLimits: MCPSessionRegistry.Limits
   private var lifecycle = Lifecycle.stopped
@@ -54,7 +54,7 @@ public actor MCPBridgeServer {
       taskOperations: taskOperations,
       projectOperations: projectOperations
     )
-    makeServer = { await factory.makeServer() }
+    makeServer = { _ in await factory.makeServer() }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
   }
@@ -72,7 +72,28 @@ public actor MCPBridgeServer {
       service: service,
       exposureMode: exposureMode
     )
-    makeServer = { await factory.makeServer() }
+    makeServer = { _ in await factory.makeServer() }
+    self.httpConfiguration = httpConfiguration
+    self.sessionLimits = sessionLimits
+  }
+
+  public init(
+    appVersion: String,
+    service: any BridgeMCPServiceAPI,
+    exposureMode: @escaping @Sendable (MCPClientID) async -> MCPServiceExposureMode,
+    httpConfiguration: MCPHTTPConfiguration,
+    sessionLimits: MCPSessionRegistry.Limits = .init()
+  ) {
+    precondition(!appVersion.isEmpty)
+    makeServer = { clientID in
+      let mode = await exposureMode(clientID)
+      return await MCPServiceServerFactory(
+        appVersion: appVersion,
+        service: service,
+        exposureMode: mode,
+        clientID: clientID
+      ).makeServer()
+    }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
   }
@@ -94,7 +115,7 @@ public actor MCPBridgeServer {
     let router = MCPRequestRouter()
     let listener = MCPHTTPListener(
       configuration: httpConfiguration,
-      handler: { request in await router.handle(request) },
+      authenticatedHandler: { request in await router.handle(request) },
       emissionObserver: { emission in await router.record(emission) }
     )
     lifecycle = .starting(identifier, listener, router)
@@ -110,11 +131,11 @@ public actor MCPBridgeServer {
       let registry = MCPSessionRegistry(
         boundPort: bound.port,
         limits: sessionLimits,
-        serverFactory: { _ in
-          await makeServer()
+        authenticatedServerFactory: { clientID, _ in
+          await makeServer(clientID)
         },
-        statelessServerFactory: {
-          await makeServer()
+        authenticatedStatelessServerFactory: { clientID in
+          await makeServer(clientID)
         }
       )
       await router.install(registry)
@@ -188,6 +209,16 @@ public actor MCPBridgeServer {
     return endpoint
   }
 
+  public func terminateSessions(for clientID: MCPClientID) async {
+    guard case .running(_, _, let router, _) = lifecycle else { return }
+    await router.terminateSessions(for: clientID)
+  }
+
+  public func activeSessionCount(for clientID: MCPClientID) async -> Int {
+    guard case .running(_, _, let router, _) = lifecycle else { return 0 }
+    return await router.activeSessionCount(for: clientID)
+  }
+
   private func isStarting(_ identifier: UUID) -> Bool {
     guard case .starting(let current, _, _) = lifecycle else { return false }
     return current == identifier
@@ -195,7 +226,7 @@ public actor MCPBridgeServer {
 
   private func makeEndpoint(_ bound: MCPHTTPBoundEndpoint) throws -> MCPBridgeEndpoint {
     let path =
-      httpConfiguration.headerSecret == nil
+      !httpConfiguration.usesHeaderAuthentication
       ? "/mcp/\(httpConfiguration.pathSecret)" : "/mcp"
     guard
       let url = URL(
@@ -215,11 +246,19 @@ private actor MCPRequestRouter {
     self.registry = registry
   }
 
-  func handle(_ request: HTTPRequest) async -> HTTPResponse {
+  func handle(_ request: AuthenticatedMCPRequest) async -> HTTPResponse {
     guard let registry else {
       return .error(statusCode: 503, .internalError("MCP service unavailable"))
     }
     return await registry.handle(request)
+  }
+
+  func terminateSessions(for clientID: MCPClientID) async {
+    await registry?.terminateSessions(for: clientID)
+  }
+
+  func activeSessionCount(for clientID: MCPClientID) async -> Int {
+    await registry?.activeSessionCount(for: clientID) ?? 0
   }
 
   func record(_ emission: MCPHTTPEmission) async {

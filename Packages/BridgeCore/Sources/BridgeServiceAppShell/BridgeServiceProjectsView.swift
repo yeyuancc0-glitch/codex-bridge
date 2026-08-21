@@ -69,7 +69,7 @@ struct BridgeServiceProjectsView: View {
         ContentUnavailableView(
           "尚未注册项目",
           systemImage: "folder.badge.plus",
-          description: Text("只有你明确添加的目录才能被 ChatGPT 和 Codex Bridge 访问。")
+          description: Text("只有你明确添加的目录才能被 MCP 客户端和 Codex Bridge 访问。")
         )
         .frame(maxHeight: .infinity)
       } else {

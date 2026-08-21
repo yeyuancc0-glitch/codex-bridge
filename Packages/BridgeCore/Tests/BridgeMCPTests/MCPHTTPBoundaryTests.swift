@@ -10,6 +10,33 @@ import XCTest
 final class MCPHTTPBoundaryTests: XCTestCase {
   private let secret = String(repeating: "A", count: 43)
 
+  func testCredentialAuthenticatorRotatesOneClientWithoutAffectingAnother() throws {
+    let chatSecret = String(repeating: "C", count: 43)
+    let oldQwenSecret = String(repeating: "Q", count: 43)
+    let newQwenSecret = String(repeating: "R", count: 43)
+    let chatCredential = try MCPClientCredential(clientID: .chatGPT, value: chatSecret)
+    let authenticator = try MCPClientCredentialAuthenticator(credentials: [
+      chatCredential,
+      MCPClientCredential(clientID: .qwenStudio, value: oldQwenSecret),
+    ])
+    XCTAssertFalse(String(describing: chatCredential).contains(chatSecret))
+    XCTAssertFalse(String(reflecting: chatCredential).contains(chatSecret))
+
+    XCTAssertEqual(authenticator.authenticate([chatSecret]), .chatGPT)
+    XCTAssertEqual(authenticator.authenticate([oldQwenSecret]), .qwenStudio)
+    XCTAssertNil(authenticator.authenticate([]))
+    XCTAssertNil(authenticator.authenticate([chatSecret, chatSecret]))
+
+    try authenticator.replaceCredentials([
+      MCPClientCredential(clientID: .chatGPT, value: chatSecret),
+      MCPClientCredential(clientID: .qwenStudio, value: newQwenSecret),
+    ])
+
+    XCTAssertEqual(authenticator.authenticate([chatSecret]), .chatGPT)
+    XCTAssertNil(authenticator.authenticate([oldQwenSecret]))
+    XCTAssertEqual(authenticator.authenticate([newQwenSecret]), .qwenStudio)
+  }
+
   func testBindsIPv4LoopbackAndForwardsOnlyExactRawRoute() async throws {
     let calls = CallCounter()
     let emissions = EmissionRecorder()
@@ -128,6 +155,58 @@ final class MCPHTTPBoundaryTests: XCTestCase {
     XCTAssertEqual(snapshot.count, 1)
     XCTAssertEqual(snapshot.lastPath, "/mcp")
     XCTAssertNil(snapshot.authenticationHeader)
+  }
+
+  func testMultipleClientCredentialsProduceTrustedIdentityAndRejectDuplicates() async throws {
+    let chatSecret = String(repeating: "C", count: 43)
+    let qwenSecret = String(repeating: "Q", count: 43)
+    let authenticator = try MCPClientCredentialAuthenticator(credentials: [
+      MCPClientCredential(clientID: .chatGPT, value: chatSecret),
+      MCPClientCredential(clientID: .qwenStudio, value: qwenSecret),
+    ])
+    let clients = ClientIdentityRecorder()
+    let listener = MCPHTTPListener(
+      configuration: try MCPHTTPConfiguration(clientAuthenticator: authenticator),
+      authenticatedHandler: { request in
+        await clients.record(request.clientID)
+        XCTAssertNil(
+          request.request.headers[MCPHTTPConfiguration.tunnelAuthenticationHeader]
+        )
+        return .ok()
+      }
+    )
+    addTeardownBlock { await listener.stop() }
+    let endpoint = try await listener.start()
+
+    for (secret, expected) in [(chatSecret, MCPClientID.chatGPT), (qwenSecret, .qwenStudio)] {
+      let response = try await rawRequest(
+        port: endpoint.port,
+        target: "/mcp",
+        method: "POST",
+        headers: [MCPHTTPConfiguration.tunnelAuthenticationHeader: secret],
+        body: Data("{}".utf8)
+      )
+      XCTAssertEqual(response.statusCode, 200)
+      let recordedClient = await clients.last()
+      XCTAssertEqual(recordedClient, expected)
+    }
+
+    let duplicateHead = Data(
+      """
+      POST /mcp HTTP/1.1\r
+      Host: 127.0.0.1:\(endpoint.port)\r
+      Connection: close\r
+      \(MCPHTTPConfiguration.tunnelAuthenticationHeader): \(chatSecret)\r
+      \(MCPHTTPConfiguration.tunnelAuthenticationHeader): \(chatSecret)\r
+      Content-Length: 2\r
+      \r
+      {}
+      """.utf8
+    )
+    let duplicate = try await sendRaw(port: endpoint.port, fragments: [duplicateHead])
+    XCTAssertEqual(duplicate.statusCode, 404)
+    let recordedCount = await clients.count()
+    XCTAssertEqual(recordedCount, 2)
   }
 
   func testMethodAndFixedAndChunkedBodyLimitsFailClosed() async throws {
@@ -499,6 +578,22 @@ private actor CallCounter {
 
   func snapshot() -> (count: Int, lastPath: String?, authenticationHeader: String?) {
     (count, lastPath, authenticationHeader)
+  }
+}
+
+private actor ClientIdentityRecorder {
+  private var clientIDs: [MCPClientID] = []
+
+  func record(_ clientID: MCPClientID) {
+    clientIDs.append(clientID)
+  }
+
+  func last() -> MCPClientID? {
+    clientIDs.last
+  }
+
+  func count() -> Int {
+    clientIDs.count
   }
 }
 

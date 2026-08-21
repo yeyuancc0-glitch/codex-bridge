@@ -9,6 +9,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
   private struct RequestState {
     let head: HTTPRequestHead
+    let clientID: MCPClientID
     let sessionID: String?
     var body: ByteBuffer
     var byteCount: Int
@@ -23,7 +24,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
   private let configuration: MCPHTTPConfiguration
   private let routeBytes: [UInt8]
-  private let handler: MCPHTTPRequestHandler
+  private let handler: MCPAuthenticatedHTTPRequestHandler
   private let emissionObserver: MCPHTTPEmissionObserver?
   private let admission: MCPHTTPAdmission
   private let writability = MCPHTTPWritability()
@@ -39,15 +40,29 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
 
   package init(
     configuration: MCPHTTPConfiguration,
-    handler: @escaping MCPHTTPRequestHandler,
+    authenticatedHandler: @escaping MCPAuthenticatedHTTPRequestHandler,
     emissionObserver: MCPHTTPEmissionObserver?,
     admission: MCPHTTPAdmission
   ) {
     self.configuration = configuration
     routeBytes = configuration.routeBytes
-    self.handler = handler
+    self.handler = authenticatedHandler
     self.emissionObserver = emissionObserver
     self.admission = admission
+  }
+
+  package convenience init(
+    configuration: MCPHTTPConfiguration,
+    handler: @escaping MCPHTTPRequestHandler,
+    emissionObserver: MCPHTTPEmissionObserver?,
+    admission: MCPHTTPAdmission
+  ) {
+    self.init(
+      configuration: configuration,
+      authenticatedHandler: { request in await handler(request.request) },
+      emissionObserver: emissionObserver,
+      admission: admission
+    )
   }
 
   package func channelActive(context: ChannelHandlerContext) {
@@ -108,19 +123,27 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       return
     }
     let isOAuth = head.method == .GET && isOAuthProtectedResourceRoute(head.uri)
+    let clientID: MCPClientID
     if !isOAuth {
       guard isExactRoute(head.uri) else {
         reject(status: .notFound, context: context)
         return
       }
-      guard hasValidAuthenticationHeader(head.headers) else {
+      guard let authenticatedClientID = authenticate(head.headers) else {
         reject(status: .notFound, context: context)
         return
       }
+      clientID = authenticatedClientID
       guard isAllowedMethod(head.method) else {
         reject(status: .methodNotAllowed, allow: "POST, GET, DELETE", context: context)
         return
       }
+    } else {
+      guard isAllowedOAuthAuthorityAndOrigin(head, channel: context.channel) else {
+        reject(status: .forbidden, context: context)
+        return
+      }
+      clientID = .chatGPT
     }
     guard aggregateHeaderBytes(head.headers) <= configuration.maximumHeaderBytes else {
       reject(status: .requestHeaderFieldsTooLarge, context: context)
@@ -145,6 +168,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     inputState = .receiving(
       RequestState(
         head: head,
+        clientID: clientID,
         sessionID: head.headers.first(name: HTTPHeaderName.sessionID),
         body: context.channel.allocator.buffer(capacity: capacity),
         byteCount: 0
@@ -216,6 +240,10 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     let sessionID = state.sessionID ?? responseSessionID(response)
     try? await eventLoop.submit {
       self.activeResponseSessionID = sessionID
+      if response.isStream {
+        self.responseTimeout?.cancel()
+        self.responseTimeout = nil
+      }
     }.get()
     do {
       try await write(
@@ -381,7 +409,7 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     }.get()
   }
 
-  private func makeRequest(_ state: RequestState) -> MCP.HTTPRequest {
+  private func makeRequest(_ state: RequestState) -> AuthenticatedMCPRequest {
     var headers: [String: String] = [:]
     for (name, value) in state.head.headers {
       guard name.lowercased() != MCPHTTPConfiguration.tunnelAuthenticationHeader.lowercased()
@@ -393,11 +421,14 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       }
     }
     let body = state.body.getBytes(at: 0, length: state.body.readableBytes).map(Data.init)
-    return MCP.HTTPRequest(
-      method: state.head.method.rawValue,
-      headers: headers,
-      body: body?.isEmpty == true ? nil : body,
-      path: state.head.uri
+    return AuthenticatedMCPRequest(
+      request: MCP.HTTPRequest(
+        method: state.head.method.rawValue,
+        headers: headers,
+        body: body?.isEmpty == true ? nil : body,
+        path: state.head.uri
+      ),
+      clientID: state.clientID
     )
   }
 
@@ -429,6 +460,26 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   private func isOAuthProtectedResourceRoute(_ uri: String) -> Bool {
     uri == "/.well-known/oauth-protected-resource/mcp"
       || uri == "/.well-known/oauth-protected-resource"
+  }
+
+  private func isAllowedOAuthAuthorityAndOrigin(
+    _ head: HTTPRequestHead,
+    channel: any Channel
+  ) -> Bool {
+    let port = channel.localAddress?.port ?? configuration.port
+    let authorities = ["127.0.0.1:\(port)", "localhost:\(port)", "[::1]:\(port)"]
+    if let host = head.headers.first(name: "Host"), !authorities.contains(host) {
+      return false
+    }
+    guard let origin = head.headers.first(name: "Origin") else { return true }
+    return [
+      "http://127.0.0.1:\(port)",
+      "http://localhost:\(port)",
+      "http://[::1]:\(port)",
+      "https://chatgpt.com",
+      "https://chat.openai.com",
+      "https://platform.openai.com",
+    ].contains(origin)
   }
 
   private func serveOAuthProtectedResource(
@@ -484,11 +535,12 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     return difference == 0
   }
 
-  private func hasValidAuthenticationHeader(_ headers: HTTPHeaders) -> Bool {
-    guard let expected = configuration.headerSecret else { return true }
+  private func authenticate(_ headers: HTTPHeaders) -> MCPClientID? {
+    guard let authenticator = configuration.clientAuthenticator else {
+      return .chatGPT
+    }
     let values = headers[canonicalForm: MCPHTTPConfiguration.tunnelAuthenticationHeader]
-    guard values.count == 1 else { return false }
-    return constantTimeEqual(Array(values[0].utf8), Array(expected.utf8))
+    return authenticator.authenticate(values.map(String.init))
   }
 
   private func isAllowedMethod(_ method: HTTPMethod) -> Bool {
@@ -589,5 +641,12 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     response.headers.first { name, _ in
       name.caseInsensitiveCompare(HTTPHeaderName.sessionID) == .orderedSame
     }?.value
+  }
+}
+
+extension MCP.HTTPResponse {
+  fileprivate var isStream: Bool {
+    if case .stream = self { return true }
+    return false
   }
 }

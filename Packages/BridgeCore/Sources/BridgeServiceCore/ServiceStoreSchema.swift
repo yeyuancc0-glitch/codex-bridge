@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import GRDB
 
@@ -19,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 7
+  static let version: Int64 = 8
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -28,8 +29,10 @@ enum ServiceStoreSchema {
   static let migrationV5 = "BridgeServiceCore.v5"
   static let migrationV6 = "BridgeServiceCore.v6"
   static let migrationV7 = "BridgeServiceCore.v7"
+  static let migrationV8 = "BridgeServiceCore.v8"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
+    migrationV8,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -41,6 +44,50 @@ enum ServiceStoreSchema {
       throw error
     } catch {
       throw ServiceStoreError.corruptSchema
+    }
+  }
+
+  static func createPreVersionEightBackupIfNeeded(
+    _ database: DatabaseQueue,
+    sourcePath: String
+  ) throws {
+    guard sourcePath != ":memory:" else { return }
+    let requiresBackup = try database.read { db -> Bool in
+      guard try db.tableExists("bridge_service_meta") else { return false }
+      return try Int64.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      ) == 7
+    }
+    guard requiresBackup else { return }
+    let backupPath = sourcePath + ".pre-v8"
+    if FileManager.default.fileExists(atPath: backupPath) {
+      try validatePrivateBackup(at: backupPath)
+      return
+    }
+    var configuration = Configuration()
+    configuration.foreignKeysEnabled = true
+    let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
+    do {
+      try database.backup(to: destination)
+      guard chmod(backupPath, 0o600) == 0 else {
+        throw ServiceStoreError.storageFailure
+      }
+      try validatePrivateBackup(at: backupPath)
+    } catch {
+      try? FileManager.default.removeItem(atPath: backupPath)
+      throw error
+    }
+  }
+
+  private static func validatePrivateBackup(at path: String) throws {
+    var metadata = stat()
+    guard lstat(path, &metadata) == 0,
+      metadata.st_uid == getuid(),
+      metadata.st_mode & S_IFMT == S_IFREG,
+      metadata.st_mode & 0o777 == 0o600
+    else {
+      throw ServiceStoreError.storageFailure
     }
   }
 
@@ -66,6 +113,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV7) { db in
       try createVersionSeven(in: db)
+    }
+    migrator.registerMigration(migrationV8) { db in
+      try createVersionEight(in: db)
     }
     return migrator
   }
@@ -283,6 +333,241 @@ enum ServiceStoreSchema {
         """)
   }
 
+  static func createVersionEight(in db: Database) throws {
+    let taskCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_tasks") ?? 0
+    let eventCount =
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_task_events") ?? 0
+    let messageCount =
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_task_messages") ?? 0
+    try db.execute(
+      sql: """
+        CREATE TABLE bridge_service_tasks_v8 (
+            task_id TEXT PRIMARY KEY NOT NULL,
+            project_id TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN (
+              'chatgpt.mcp', 'mcp.client', 'macos.app', 'legacy.import'
+            )),
+            source_client_id TEXT NOT NULL DEFAULT '',
+            client_request_id TEXT,
+            prompt TEXT NOT NULL,
+            requested_thread_id TEXT,
+            codex_thread_id TEXT,
+            codex_turn_id TEXT,
+            status TEXT NOT NULL CHECK (status IN (
+              'awaiting_local_approval', 'starting', 'running',
+              'waiting_for_codex_approval', 'completed', 'failed', 'interrupted', 'unknown'
+            )),
+            supervisor_status TEXT NOT NULL CHECK (supervisor_status IN (
+              'disabled', 'starting', 'running', 'degraded', 'completed'
+            )),
+            execution_model TEXT NOT NULL,
+            execution_effort TEXT NOT NULL,
+            supervisor_model TEXT,
+            supervisor_effort TEXT,
+            permission_mode TEXT NOT NULL
+              CHECK (permission_mode IN ('read-only', 'workspace-write')),
+            network_allowed INTEGER NOT NULL CHECK (network_allowed IN (0, 1)),
+            access_mode TEXT NOT NULL DEFAULT 'request-approval'
+              CHECK (access_mode IN ('request-approval', 'auto-review', 'full-access')),
+            fast_mode INTEGER NOT NULL DEFAULT 0 CHECK (fast_mode IN (0, 1)),
+            current_step TEXT,
+            changed_files_json BLOB NOT NULL,
+            result_summary TEXT,
+            supervisor_summary TEXT,
+            failure_code TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (project_id)
+              REFERENCES bridge_service_projects(project_id) ON DELETE RESTRICT,
+            UNIQUE (source, source_client_id, client_request_id),
+            CHECK (
+              (source = 'mcp.client'
+                AND length(CAST(source_client_id AS BLOB)) BETWEEN 1 AND 128)
+              OR (source <> 'mcp.client' AND source_client_id = '')
+            ),
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (client_request_id IS NULL OR
+              length(CAST(client_request_id AS BLOB)) BETWEEN 1 AND 512),
+            CHECK (length(CAST(prompt AS BLOB)) BETWEEN 1 AND 32768),
+            CHECK (requested_thread_id IS NULL OR
+              length(CAST(requested_thread_id AS BLOB)) BETWEEN 1 AND 1024),
+            CHECK (codex_thread_id IS NULL OR
+              length(CAST(codex_thread_id AS BLOB)) BETWEEN 1 AND 1024),
+            CHECK (codex_turn_id IS NULL OR
+              length(CAST(codex_turn_id AS BLOB)) BETWEEN 1 AND 1024),
+            CHECK (length(CAST(execution_model AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(execution_effort AS BLOB)) BETWEEN 1 AND 64),
+            CHECK ((supervisor_model IS NULL) = (supervisor_effort IS NULL)),
+            CHECK (supervisor_model IS NULL OR
+              length(CAST(supervisor_model AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (supervisor_effort IS NULL OR
+              length(CAST(supervisor_effort AS BLOB)) BETWEEN 1 AND 64),
+            CHECK (typeof(changed_files_json) = 'blob'),
+            CHECK (length(changed_files_json) BETWEEN 2 AND 262144),
+            CHECK (current_step IS NULL OR length(CAST(current_step AS BLOB)) <= 4096),
+            CHECK (result_summary IS NULL OR length(CAST(result_summary AS BLOB)) <= 32768),
+            CHECK (supervisor_summary IS NULL OR
+              length(CAST(supervisor_summary AS BLOB)) <= 16384),
+            CHECK (failure_code IS NULL OR
+              length(CAST(failure_code AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (updated_at >= created_at)
+        ) WITHOUT ROWID;
+
+        INSERT INTO bridge_service_tasks_v8 (
+            task_id, project_id, source, source_client_id, client_request_id, prompt,
+            requested_thread_id, codex_thread_id, codex_turn_id, status,
+            supervisor_status, execution_model, execution_effort, supervisor_model,
+            supervisor_effort, permission_mode, network_allowed, access_mode, fast_mode,
+            current_step, changed_files_json, result_summary, supervisor_summary,
+            failure_code, created_at, updated_at
+        )
+        SELECT
+            task_id, project_id, source, '', client_request_id, prompt,
+            requested_thread_id, codex_thread_id, codex_turn_id, status,
+            supervisor_status, execution_model, execution_effort, supervisor_model,
+            supervisor_effort, permission_mode, network_allowed, access_mode, fast_mode,
+            current_step, changed_files_json, result_summary, supervisor_summary,
+            failure_code, created_at, updated_at
+        FROM bridge_service_tasks;
+
+        CREATE TABLE bridge_service_task_events_v8_staging (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN (
+              'task.created', 'task.approved', 'execution.starting', 'execution.started',
+              'execution.plan_updated', 'execution.command_completed', 'execution.file_changed',
+              'approval.requested', 'approval.resolved', 'supervisor.started',
+              'supervisor.decision', 'supervisor.degraded', 'execution.turn_completed',
+              'task.completed', 'task.failed', 'task.interrupted', 'task.marked_unknown'
+            )),
+            summary TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(summary AS BLOB)) BETWEEN 1 AND 8192)
+        );
+
+        INSERT INTO bridge_service_task_events_v8_staging
+          (event_id, task_id, kind, summary, created_at)
+        SELECT event_id, task_id, kind, summary, created_at
+        FROM bridge_service_task_events;
+
+        CREATE TABLE bridge_service_task_messages_v8_staging (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            message_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
+            content TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'agent'
+              CHECK (kind IN ('user', 'agent', 'reasoning', 'tool_call')),
+            tool_name TEXT,
+            tool_status TEXT CHECK (tool_status IN ('inProgress', 'completed', 'failed')),
+            tool_arguments TEXT,
+            UNIQUE (task_id, message_key),
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(message_key AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 262144)
+        );
+
+        INSERT INTO bridge_service_task_messages_v8_staging (
+          message_id, task_id, message_key, role, content, created_at, kind,
+          tool_name, tool_status, tool_arguments
+        )
+        SELECT
+          message_id, task_id, message_key, role, content, created_at, kind,
+          tool_name, tool_status, tool_arguments
+        FROM bridge_service_task_messages;
+
+        DROP TABLE bridge_service_task_messages;
+        DROP TABLE bridge_service_task_events;
+        DROP TABLE bridge_service_tasks;
+
+        ALTER TABLE bridge_service_tasks_v8 RENAME TO bridge_service_tasks;
+
+        CREATE TABLE bridge_service_task_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN (
+              'task.created', 'task.approved', 'execution.starting', 'execution.started',
+              'execution.plan_updated', 'execution.command_completed', 'execution.file_changed',
+              'approval.requested', 'approval.resolved', 'supervisor.started',
+              'supervisor.decision', 'supervisor.degraded', 'execution.turn_completed',
+              'task.completed', 'task.failed', 'task.interrupted', 'task.marked_unknown'
+            )),
+            summary TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY (task_id)
+              REFERENCES bridge_service_tasks(task_id) ON DELETE CASCADE,
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(summary AS BLOB)) BETWEEN 1 AND 8192)
+        );
+
+        INSERT INTO bridge_service_task_events
+          (event_id, task_id, kind, summary, created_at)
+        SELECT event_id, task_id, kind, summary, created_at
+        FROM bridge_service_task_events_v8_staging;
+        DROP TABLE bridge_service_task_events_v8_staging;
+
+        CREATE TABLE bridge_service_task_messages (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            message_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
+            content TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'agent'
+              CHECK (kind IN ('user', 'agent', 'reasoning', 'tool_call')),
+            tool_name TEXT,
+            tool_status TEXT CHECK (tool_status IN ('inProgress', 'completed', 'failed')),
+            tool_arguments TEXT,
+            FOREIGN KEY (task_id)
+              REFERENCES bridge_service_tasks(task_id) ON DELETE CASCADE,
+            UNIQUE (task_id, message_key),
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(message_key AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 262144)
+        );
+
+        INSERT INTO bridge_service_task_messages (
+          message_id, task_id, message_key, role, content, created_at, kind,
+          tool_name, tool_status, tool_arguments
+        )
+        SELECT
+          message_id, task_id, message_key, role, content, created_at, kind,
+          tool_name, tool_status, tool_arguments
+        FROM bridge_service_task_messages_v8_staging;
+        DROP TABLE bridge_service_task_messages_v8_staging;
+
+        CREATE UNIQUE INDEX bridge_service_one_active_write_task
+        ON bridge_service_tasks(project_id)
+        WHERE permission_mode = 'workspace-write'
+          AND status IN (
+            'awaiting_local_approval', 'starting', 'running',
+            'waiting_for_codex_approval', 'unknown'
+          );
+        CREATE INDEX bridge_service_tasks_updated
+        ON bridge_service_tasks(updated_at DESC, task_id);
+        CREATE INDEX bridge_service_tasks_project_updated
+        ON bridge_service_tasks(project_id, updated_at DESC, task_id);
+        CREATE INDEX bridge_service_task_events_task
+        ON bridge_service_task_events(task_id, event_id DESC);
+        CREATE INDEX bridge_service_task_messages_task
+        ON bridge_service_task_messages(task_id, message_id);
+
+        UPDATE bridge_service_meta SET schema_version = 8 WHERE singleton = 1;
+        """)
+    guard
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_tasks") == taskCount,
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_task_events") == eventCount,
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_task_messages")
+        == messageCount,
+      try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty
+    else {
+      throw ServiceStoreError.corruptSchema
+    }
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -448,7 +733,7 @@ enum ServiceStoreSchema {
         ],
         "bridge_service_settings": ["setting_key", "setting_value", "updated_at"],
         "bridge_service_tasks": [
-          "task_id", "project_id", "source", "client_request_id", "prompt",
+          "task_id", "project_id", "source", "source_client_id", "client_request_id", "prompt",
           "requested_thread_id", "codex_thread_id", "codex_turn_id", "status",
           "supervisor_status", "execution_model", "execution_effort", "supervisor_model",
           "supervisor_effort", "permission_mode", "network_allowed", "access_mode",

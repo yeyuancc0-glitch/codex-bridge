@@ -46,6 +46,12 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func directApprovalMode() async throws -> String
   func setDirectApprovalMode(_ mode: String) async throws
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws
+  func mcpClients() async throws -> [IPCMCPClientStatus]
+  func setMCPClientEnabled(clientID: String, enabled: Bool) async throws
+  func setMCPClientExposureMode(clientID: String, mode: MCPServiceExposureMode) async throws
+  func exportMCPClientConfiguration(clientID: String) async throws -> String
+  func rotateMCPClientCredential(clientID: String) async throws
+  func rotateLocalMCPEndpoint() async throws -> String
   func configureTunnel(_ request: IPCTunnelConfigurationRequest) async throws -> IPCTunnelStatus
   func connectTunnel() async throws -> IPCTunnelStatus
   func disconnectTunnel() async throws
@@ -56,5 +62,34 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
 extension BridgeServiceClient: BridgeServiceClientProtocol {
   public func close() async {
     invalidate()
+  }
+}
+
+extension BridgeServiceClientProtocol {
+  public func mcpClients() async throws -> [IPCMCPClientStatus] {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setMCPClientEnabled(clientID: String, enabled: Bool) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setMCPClientExposureMode(
+    clientID: String,
+    mode: MCPServiceExposureMode
+  ) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func exportMCPClientConfiguration(clientID: String) async throws -> String {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func rotateMCPClientCredential(clientID: String) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func rotateLocalMCPEndpoint() async throws -> String {
+    throw BridgeServiceClientError.unavailable
   }
 }

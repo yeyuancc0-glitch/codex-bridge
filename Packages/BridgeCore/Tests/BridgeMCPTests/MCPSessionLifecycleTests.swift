@@ -188,6 +188,157 @@ final class MCPSessionLifecycleTests: XCTestCase {
     XCTAssertNotNil(initialized.headers[HTTPHeaderName.sessionID])
   }
 
+  func testSessionIsBoundToAuthenticatedClientAndMismatchClosesIt() async throws {
+    let registry = authenticatedRegistry(port: 19_328)
+    addTeardownBlock { await registry.stop() }
+    let initialized = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: initializeRequest(port: 19_328),
+        clientID: .qwenStudio
+      )
+    )
+    let sessionID = try XCTUnwrap(initialized.headers[HTTPHeaderName.sessionID])
+
+    let mismatch = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "GET",
+          headers: [
+            HTTPHeaderName.host: "127.0.0.1:19328",
+            HTTPHeaderName.accept: "text/event-stream",
+            HTTPHeaderName.sessionID: sessionID,
+          ]
+        ),
+        clientID: .chatGPT
+      )
+    )
+    XCTAssertEqual(mismatch.statusCode, 403)
+    let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
+    XCTAssertEqual(qwenCount, 0)
+  }
+
+  func testSessionLimitsAreEnforcedPerClientAndGlobally() async {
+    let registry = authenticatedRegistry(
+      port: 19_329,
+      limits: .init(maximumSessions: 2, maximumSessionsPerClient: 1)
+    )
+    addTeardownBlock { await registry.stop() }
+
+    let firstQwen = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: initializeRequest(port: 19_329),
+        clientID: .qwenStudio
+      )
+    )
+    let secondQwen = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: initializeRequest(port: 19_329),
+        clientID: .qwenStudio
+      )
+    )
+    let chatGPT = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: initializeRequest(port: 19_329),
+        clientID: .chatGPT
+      )
+    )
+    XCTAssertEqual(firstQwen.statusCode, 200)
+    XCTAssertEqual(secondQwen.statusCode, 503)
+    XCTAssertEqual(chatGPT.statusCode, 200)
+    let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
+    let chatGPTCount = await registry.activeSessionCount(for: .chatGPT)
+    XCTAssertEqual(qwenCount, 1)
+    XCTAssertEqual(chatGPTCount, 1)
+  }
+
+  func testModernDiscoveryIsAvailableToQwenWithItsOwnAuthenticatedContext() async throws {
+    let registry = authenticatedRegistry(port: 19_330)
+    addTeardownBlock { await registry.stop() }
+    let body = Data(
+      """
+      {"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}
+      """.utf8
+    )
+    let response = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "POST",
+          headers: [
+            HTTPHeaderName.host: "127.0.0.1:19330",
+            HTTPHeaderName.accept: "application/json, text/event-stream",
+            HTTPHeaderName.contentType: "application/json",
+            "Mcp-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "server/discover",
+          ],
+          body: body,
+          path: "/mcp"
+        ),
+        clientID: .qwenStudio
+      )
+    )
+    XCTAssertEqual(response.statusCode, 200)
+    let data = try XCTUnwrap(response.bodyData)
+    let object = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    XCTAssertEqual(object["id"] as? Int, 1)
+    let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
+    XCTAssertEqual(qwenCount, 0)
+  }
+
+  func testModernRoutingHeadersMustMatchRequestBody() async {
+    let registry = authenticatedRegistry(port: 19_332)
+    addTeardownBlock { await registry.stop() }
+    let body = Data(
+      """
+      {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
+      """.utf8
+    )
+    let response = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "POST",
+          headers: [
+            HTTPHeaderName.host: "127.0.0.1:19332",
+            HTTPHeaderName.accept: "application/json",
+            HTTPHeaderName.contentType: "application/json",
+            "Mcp-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/call",
+          ],
+          body: body,
+          path: "/mcp"
+        ),
+        clientID: .qwenStudio
+      )
+    )
+
+    XCTAssertEqual(response.statusCode, 400)
+  }
+
+  func testRemoteOpenAIOriginIsAllowedOnlyForChatGPTCredential() async {
+    let registry = authenticatedRegistry(port: 19_331)
+    addTeardownBlock { await registry.stop() }
+    let base = initializeRequest(port: 19_331)
+    let request = HTTPRequest(
+      method: base.method,
+      headers: base.headers.merging([
+        HTTPHeaderName.origin: "https://chatgpt.com"
+      ]) { _, replacement in replacement },
+      body: base.body,
+      path: base.path
+    )
+
+    let qwen = await registry.handle(
+      AuthenticatedMCPRequest(request: request, clientID: .qwenStudio)
+    )
+    let chatGPT = await registry.handle(
+      AuthenticatedMCPRequest(request: request, clientID: .chatGPT)
+    )
+
+    XCTAssertEqual(qwen.statusCode, 403)
+    XCTAssertEqual(chatGPT.statusCode, 200)
+  }
+
   private func makeRegistry(
     port: Int,
     limits: MCPSessionRegistry.Limits = .init()
@@ -195,6 +346,17 @@ final class MCPSessionLifecycleTests: XCTestCase {
     MCPSessionRegistry(boundPort: port, limits: limits) { _ in
       Self.makeServer()
     }
+  }
+
+  private func authenticatedRegistry(
+    port: Int,
+    limits: MCPSessionRegistry.Limits = .init()
+  ) -> MCPSessionRegistry {
+    MCPSessionRegistry(
+      boundPort: port,
+      limits: limits,
+      authenticatedServerFactory: { _, _ in Self.makeServer() }
+    )
   }
 
   private static func makeServer() -> Server {

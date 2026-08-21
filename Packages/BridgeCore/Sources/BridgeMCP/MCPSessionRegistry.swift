@@ -4,23 +4,30 @@ import MCP
 
 public actor MCPSessionRegistry {
   public typealias ServerFactory = @Sendable (StatefulHTTPServerTransport) async throws -> Server
+  public typealias AuthenticatedServerFactory =
+    @Sendable (MCPClientID, StatefulHTTPServerTransport) async throws -> Server
   public typealias StatelessServerFactory = @Sendable () async throws -> Server
+  public typealias AuthenticatedStatelessServerFactory =
+    @Sendable (MCPClientID) async throws -> Server
 
   public struct Limits: Equatable, Sendable {
     public let maximumSessions: Int
+    public let maximumSessionsPerClient: Int
     public let maximumEmittedBytes: Int
     public let maximumToolCalls: Int
     public let idleLifetime: Duration
     public let absoluteLifetime: Duration
 
     public init(
-      maximumSessions: Int = 4,
+      maximumSessions: Int = 16,
+      maximumSessionsPerClient: Int = 8,
       maximumEmittedBytes: Int = 16 * 1024 * 1024,
       maximumToolCalls: Int = 512,
       idleLifetime: Duration = .seconds(30 * 60),
       absoluteLifetime: Duration = .seconds(4 * 60 * 60)
     ) {
       self.maximumSessions = max(1, maximumSessions)
+      self.maximumSessionsPerClient = max(1, min(maximumSessionsPerClient, maximumSessions))
       self.maximumEmittedBytes = max(1, maximumEmittedBytes)
       self.maximumToolCalls = max(1, maximumToolCalls)
       self.idleLifetime = idleLifetime
@@ -29,6 +36,7 @@ public actor MCPSessionRegistry {
   }
 
   private struct SessionContext {
+    let clientID: MCPClientID
     let server: Server
     let transport: StatefulHTTPServerTransport
     let createdAt: ContinuousClock.Instant
@@ -48,11 +56,12 @@ public actor MCPSessionRegistry {
 
   private let boundPort: Int
   private let limits: Limits
-  private let serverFactory: ServerFactory
-  private let statelessServerFactory: StatelessServerFactory?
+  private let serverFactory: AuthenticatedServerFactory
+  private let statelessServerFactory: AuthenticatedStatelessServerFactory?
   private let clock = ContinuousClock()
   private var sessions: [String: SessionContext] = [:]
   private var pendingSessionCreations = 0
+  private var pendingSessionCreationsByClient: [MCPClientID: Int] = [:]
   private var isStopped = false
 
   public init(
@@ -63,27 +72,53 @@ public actor MCPSessionRegistry {
   ) {
     self.boundPort = boundPort
     self.limits = limits
-    self.serverFactory = serverFactory
-    self.statelessServerFactory = statelessServerFactory
+    self.serverFactory = { _, transport in try await serverFactory(transport) }
+    if let statelessServerFactory {
+      self.statelessServerFactory = { _ in try await statelessServerFactory() }
+    } else {
+      self.statelessServerFactory = nil
+    }
+  }
+
+  public init(
+    boundPort: Int,
+    limits: Limits = .init(),
+    authenticatedServerFactory: @escaping AuthenticatedServerFactory,
+    authenticatedStatelessServerFactory: AuthenticatedStatelessServerFactory? = nil
+  ) {
+    self.boundPort = boundPort
+    self.limits = limits
+    self.serverFactory = authenticatedServerFactory
+    self.statelessServerFactory = authenticatedStatelessServerFactory
   }
 
   public func handle(_ request: HTTPRequest) async -> HTTPResponse {
+    await handle(AuthenticatedMCPRequest(request: request, clientID: .chatGPT))
+  }
+
+  public func handle(_ authenticatedRequest: AuthenticatedMCPRequest) async -> HTTPResponse {
     guard !isStopped else {
       return .error(statusCode: 503, .internalError("MCP service unavailable"))
     }
     await expireSessions()
+    let request = authenticatedRequest.request
+    let clientID = authenticatedRequest.clientID
+    if let rejection = validateAuthorityAndOrigin(request, clientID: clientID) {
+      return rejection
+    }
 
     if let sessionID = extractSessionID(from: request) {
-      return await handleExisting(request, sessionID: sessionID)
+      return await handleExisting(request, clientID: clientID, sessionID: sessionID)
     }
     if isDiscover(request) {
+      if let rejection = validateModernRequest(request, clientID: clientID) { return rejection }
       return await handleDiscover(for: request)
     }
     if isModernRequest(request) {
-      return await handleModernRequest(request)
+      return await handleModernRequest(request, clientID: clientID)
     }
     if isInitialize(request) {
-      return await createSession(for: request)
+      return await createSession(for: request, clientID: clientID)
     }
     if request.body == nil || request.body?.isEmpty == true {
       return .data(Data("{}".utf8), headers: [HTTPHeaderName.contentType: "application/json"])
@@ -133,33 +168,23 @@ public actor MCPSessionRegistry {
       || request.header("Mcp-Method") != nil
   }
 
-  private func handleModernRequest(_ request: HTTPRequest) async -> HTTPResponse {
+  private func handleModernRequest(
+    _ request: HTTPRequest,
+    clientID: MCPClientID
+  ) async -> HTTPResponse {
+    if let rejection = validateModernRoutingHeaders(request) { return rejection }
     guard let statelessServerFactory else {
       return .error(statusCode: 400, .invalidRequest("Modern MCP requests are unavailable"))
     }
     let transport = StatelessHTTPServerTransport(
       validationPipeline: StandardValidationPipeline(validators: [
-        OriginValidator(
-          allowedHosts: [
-            "127.0.0.1:*",
-            "localhost:*",
-            "[::1]:*",
-          ],
-          allowedOrigins: [
-            "http://127.0.0.1:*",
-            "http://localhost:*",
-            "http://[::1]:*",
-            "https://chatgpt.com",
-            "https://chat.openai.com",
-            "https://platform.openai.com",
-          ]
-        ),
+        originValidator(for: clientID),
         AcceptHeaderValidator(mode: .jsonOnly),
         ContentTypeValidator(),
       ])
     )
     do {
-      let server = try await statelessServerFactory()
+      let server = try await statelessServerFactory(clientID)
       try await server.start(transport: transport)
       let response = await transport.handleRequest(request)
       await server.stop()
@@ -167,6 +192,47 @@ public actor MCPSessionRegistry {
     } catch {
       return .error(statusCode: 500, .internalError("Modern MCP request failed"))
     }
+  }
+
+  private func validateModernRequest(
+    _ request: HTTPRequest,
+    clientID: MCPClientID
+  ) -> HTTPResponse? {
+    let pipeline = StandardValidationPipeline(validators: [
+      originValidator(for: clientID),
+      AcceptHeaderValidator(mode: .jsonOnly),
+      ContentTypeValidator(),
+    ])
+    if let rejection = pipeline.validate(
+      request,
+      context: HTTPValidationContext(
+        httpMethod: request.method.uppercased(),
+        isInitializationRequest: false
+      )
+    ) {
+      return rejection
+    }
+    return validateModernRoutingHeaders(request)
+  }
+
+  private func validateModernRoutingHeaders(_ request: HTTPRequest) -> HTTPResponse? {
+    guard let body = request.body,
+      let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+      let method = object["method"] as? String
+    else {
+      return .error(statusCode: 400, .invalidRequest("Bad Request: Invalid modern MCP request"))
+    }
+    if let routedMethod = request.header("Mcp-Method"), routedMethod != method {
+      return .error(statusCode: 400, .invalidRequest("Bad Request: MCP method header mismatch"))
+    }
+    guard method == "tools/call", let routedName = request.header("Mcp-Name") else {
+      return nil
+    }
+    let parameters = object["params"] as? [String: Any]
+    guard routedName == parameters?["name"] as? String else {
+      return .error(statusCode: 400, .invalidRequest("Bad Request: MCP name header mismatch"))
+    }
+    return nil
   }
 
   private func handleDiscover(for request: HTTPRequest) async -> HTTPResponse {
@@ -239,12 +305,30 @@ public actor MCPSessionRegistry {
     sessions.count
   }
 
+  public func activeSessionCount(for clientID: MCPClientID) -> Int {
+    sessions.values.lazy.filter { $0.clientID == clientID }.count
+  }
+
+  public func terminateSessions(for clientID: MCPClientID) async {
+    let matching = sessions.compactMap { sessionID, context in
+      context.clientID == clientID ? sessionID : nil
+    }
+    for sessionID in matching {
+      await closeSession(sessionID)
+    }
+  }
+
   private func handleExisting(
     _ request: HTTPRequest,
+    clientID: MCPClientID,
     sessionID: String
   ) async -> HTTPResponse {
     guard var context = sessions[sessionID] else {
       return .error(statusCode: 404, .invalidRequest("Not Found: Session unavailable"))
+    }
+    guard context.clientID == clientID else {
+      await closeSession(sessionID)
+      return .error(statusCode: 403, .invalidRequest("Forbidden: Session client mismatch"))
     }
     if context.retirementRequired || context.completedToolCalls >= limits.maximumToolCalls {
       await closeSession(sessionID)
@@ -268,31 +352,30 @@ public actor MCPSessionRegistry {
     return response
   }
 
-  private func createSession(for request: HTTPRequest) async -> HTTPResponse {
-    guard !isStopped, sessions.count + pendingSessionCreations < limits.maximumSessions else {
+  private func createSession(
+    for request: HTTPRequest,
+    clientID: MCPClientID
+  ) async -> HTTPResponse {
+    let clientSessionCount = sessions.values.lazy.filter { $0.clientID == clientID }.count
+    let pendingForClient = pendingSessionCreationsByClient[clientID, default: 0]
+    guard !isStopped,
+      sessions.count + pendingSessionCreations < limits.maximumSessions,
+      clientSessionCount + pendingForClient < limits.maximumSessionsPerClient
+    else {
       return .error(statusCode: 503, .internalError("Session capacity reached"))
     }
     pendingSessionCreations += 1
-    defer { pendingSessionCreations -= 1 }
+    pendingSessionCreationsByClient[clientID, default: 0] += 1
+    defer {
+      pendingSessionCreations -= 1
+      let remaining = pendingSessionCreationsByClient[clientID, default: 1] - 1
+      pendingSessionCreationsByClient[clientID] = remaining == 0 ? nil : remaining
+    }
 
     let sessionID = makeUniqueSessionID()
     let validation = StandardValidationPipeline(validators: [
-      OriginValidator(
-        allowedHosts: [
-          "127.0.0.1:\(boundPort)",
-          "localhost:\(boundPort)",
-          "[::1]:\(boundPort)",
-        ],
-        allowedOrigins: [
-          "http://127.0.0.1:\(boundPort)",
-          "http://localhost:\(boundPort)",
-          "http://[::1]:\(boundPort)",
-          "https://chatgpt.com",
-          "https://chat.openai.com",
-          "https://platform.openai.com",
-        ]
-      ),
-      AcceptHeaderValidator(mode: .jsonOnly),
+      originValidator(for: clientID),
+      AcceptHeaderValidator(mode: .sseRequired),
       ContentTypeValidator(),
       ProtocolVersionValidator(),
       SessionValidator(),
@@ -309,7 +392,7 @@ public actor MCPSessionRegistry {
 
     var server: Server?
     do {
-      let createdServer = try await serverFactory(transport)
+      let createdServer = try await serverFactory(clientID, transport)
       server = createdServer
       try await createdServer.start(transport: transport)
       guard !isStopped else {
@@ -318,6 +401,7 @@ public actor MCPSessionRegistry {
       }
       let now = clock.now
       sessions[sessionID] = SessionContext(
+        clientID: clientID,
         server: createdServer,
         transport: transport,
         createdAt: now,
@@ -336,6 +420,42 @@ public actor MCPSessionRegistry {
       }
       return .error(statusCode: 500, .internalError("Session unavailable"))
     }
+  }
+
+  private func validateAuthorityAndOrigin(
+    _ request: HTTPRequest,
+    clientID: MCPClientID
+  ) -> HTTPResponse? {
+    originValidator(for: clientID).validate(
+      request,
+      context: HTTPValidationContext(
+        httpMethod: request.method.uppercased(),
+        isInitializationRequest: isInitialize(request)
+      )
+    )
+  }
+
+  private func originValidator(for clientID: MCPClientID) -> OriginValidator {
+    var origins = [
+      "http://127.0.0.1:\(boundPort)",
+      "http://localhost:\(boundPort)",
+      "http://[::1]:\(boundPort)",
+    ]
+    if clientID == .chatGPT {
+      origins += [
+        "https://chatgpt.com",
+        "https://chat.openai.com",
+        "https://platform.openai.com",
+      ]
+    }
+    return OriginValidator(
+      allowedHosts: [
+        "127.0.0.1:\(boundPort)",
+        "localhost:\(boundPort)",
+        "[::1]:\(boundPort)",
+      ],
+      allowedOrigins: origins
+    )
   }
 
   private func closeSession(_ sessionID: String) async {

@@ -165,6 +165,7 @@ struct BridgeServiceOverviewView: View {
         ForEach(Array(model.tasks.prefix(3)), id: \.taskID) { task in
           HStack(alignment: .center, spacing: 12) {
             TaskStatusLabel(status: task.status)
+            StatusBadge(task.sourceDisplayName, tone: .neutral)
 
             VStack(alignment: .leading, spacing: 2) {
               Text(task.currentStep ?? task.resultSummary ?? task.taskID)

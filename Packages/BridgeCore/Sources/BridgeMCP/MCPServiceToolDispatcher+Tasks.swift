@@ -6,7 +6,8 @@ import MCP
 extension MCPServiceToolDispatcher {
   func callTask(
     _ name: MCPServiceToolName,
-    arguments: [String: Value]?
+    arguments: [String: Value]?,
+    sessionID: String
   ) async throws -> CallTool.Result {
     switch name {
     case .runSkillAction:
@@ -14,7 +15,7 @@ extension MCPServiceToolDispatcher {
     case .getTask:
       return try await callGetTask(arguments)
     case .submitTask:
-      return try await callSubmitTask(arguments)
+      return try await callSubmitTask(arguments, sessionID: sessionID)
     case .steerTask:
       return try await callSteerTask(arguments)
     case .interruptTask:
@@ -59,11 +60,18 @@ extension MCPServiceToolDispatcher {
 
   }
 
-  private func callSubmitTask(_ arguments: [String: Value]?) async throws -> CallTool.Result {
+  private func callSubmitTask(
+    _ arguments: [String: Value]?,
+    sessionID: String
+  ) async throws -> CallTool.Result {
     let submission = try parseSubmission(arguments)
     let deadline = clock.now.advanced(by: deadlines.submit)
     let receipt = try await withToolDeadline(until: deadline) {
-      try await service.serviceSubmitTask(submission, deadline: deadline)
+      try await service.serviceSubmitTask(
+        submission,
+        invocationContext: MCPInvocationContext(clientID: clientID, sessionID: sessionID),
+        deadline: deadline
+      )
     }
     return try resultEncoder.encode(ServiceSubmitTaskOutput(receipt: receipt))
 

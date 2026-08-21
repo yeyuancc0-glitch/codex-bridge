@@ -111,7 +111,7 @@ struct BridgeServiceLogsView: View {
         searchText.isEmpty ? "暂无日志事件" : "无匹配日志",
         systemImage: "doc.text.magnifyingglass",
         description: Text(
-          searchText.isEmpty ? "当 ChatGPT 或 Codex 执行任务时，事件流会实时记录在此。" : "尝试更换搜索关键字或项目筛选。")
+          searchText.isEmpty ? "当 MCP 客户端或 Codex 执行任务时，事件流会实时记录在此。" : "尝试更换搜索关键字或项目筛选。")
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {

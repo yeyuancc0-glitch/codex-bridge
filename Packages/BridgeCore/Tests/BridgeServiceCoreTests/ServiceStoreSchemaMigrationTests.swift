@@ -1,4 +1,5 @@
 import BridgeDomain
+import Darwin
 import GRDB
 import XCTest
 
@@ -469,5 +470,140 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
         "BridgeServiceCore.v1", "BridgeServiceCore.v2", "BridgeServiceCore.v3",
         "BridgeServiceCore.v4", "BridgeServiceCore.v5", "BridgeServiceCore.v6",
       ])
+  }
+
+  func testVersionSevenMigratesTasksEventsMessagesAndCreatesPrivateBackup() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-schema-migration-v8-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "service.sqlite").path
+    let legacy = try DatabaseQueue(path: path)
+    try await legacy.writeWithoutTransaction { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+          INSERT INTO grdb_migrations (identifier)
+          VALUES ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+                 ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4'),
+                 ('BridgeServiceCore.v5'), ('BridgeServiceCore.v6'),
+                 ('BridgeServiceCore.v7');
+          """)
+      try ServiceStoreSchema.createVersionOne(in: db)
+      try ServiceStoreSchema.createVersionTwo(in: db)
+      try ServiceStoreSchema.createVersionThree(in: db)
+      try ServiceStoreSchema.createVersionFour(in: db)
+      try ServiceStoreSchema.createVersionFive(in: db)
+      try ServiceStoreSchema.createVersionSix(in: db)
+      try ServiceStoreSchema.createVersionSeven(in: db)
+      try db.execute(sql: "PRAGMA foreign_keys = OFF")
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json, direct_blacklist_json,
+            created_at, updated_at
+          ) VALUES ('prj-v7', 'V7', '/tmp/v7', '1', '2',
+            'allowed', 'allowed', 'denied', 'safe', CAST('[]' AS BLOB),
+            CAST('[]' AS BLOB), 1, 2);
+
+          INSERT INTO bridge_service_tasks (
+            task_id, project_id, source, client_request_id, prompt, requested_thread_id,
+            codex_thread_id, codex_turn_id, status, supervisor_status, execution_model,
+            execution_effort, supervisor_model, supervisor_effort, permission_mode,
+            network_allowed, access_mode, fast_mode, current_step, changed_files_json,
+            result_summary, supervisor_summary, failure_code, created_at, updated_at
+          ) VALUES ('tsk-v7', 'prj-v7', 'chatgpt.mcp', 'legacy-request', 'Legacy', NULL,
+            'thread-v7', 'turn-v7', 'completed', 'disabled', 'legacy-model', 'medium',
+            NULL, NULL, 'read-only', 0, 'request-approval', 0, NULL,
+            CAST('[]' AS BLOB), 'Done', NULL, NULL, 3, 4);
+
+          INSERT INTO bridge_service_task_events (task_id, kind, summary, created_at)
+          VALUES ('tsk-v7', 'task.created', 'Created', 3);
+          INSERT INTO bridge_service_task_messages (
+            task_id, message_key, role, content, created_at, kind
+          ) VALUES ('tsk-v7', 'agent:1', 'agent', 'Completed', 4, 'agent');
+          """)
+      try db.execute(sql: "PRAGMA foreign_keys = ON")
+    }
+
+    let store = try SimpleServiceStore(path: path)
+    let task = try await store.task(id: TaskID(rawValue: "tsk-v7"))
+    XCTAssertEqual(task?.source, .chatGPT)
+    XCTAssertEqual(task?.sourceClientID, "")
+    let events = try await store.events(taskID: TaskID(rawValue: "tsk-v7"))
+    let messages = try await store.taskMessages(taskID: TaskID(rawValue: "tsk-v7"))
+    XCTAssertEqual(events.map(\.summary), ["Created"])
+    XCTAssertEqual(messages.map(\.content), ["Completed"])
+
+    let backupPath = path + ".pre-v8"
+    var metadata = stat()
+    XCTAssertEqual(lstat(backupPath, &metadata), 0)
+    XCTAssertEqual(metadata.st_mode & 0o777, 0o600)
+    let backup = try DatabaseQueue(path: backupPath)
+    let backupVersion = try await backup.read { db in
+      try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+    }
+    XCTAssertEqual(backupVersion, 7)
+  }
+
+  func testVersionEightIdempotencyIsScopedByMCPClient() async throws {
+    let store = try SimpleServiceStore.inMemory()
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-v8-idempotency-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let project = try makeServiceProject(
+      id: "prj-client-idempotency",
+      rootURL: root
+    )
+    try await store.insertProject(project)
+    let foreignKeyTargets = try await store.database.read { db in
+      let taskTargets = try String.fetchAll(
+        db,
+        sql: "SELECT \"table\" FROM pragma_foreign_key_list('bridge_service_tasks')"
+      )
+      let eventTargets = try String.fetchAll(
+        db,
+        sql: "SELECT \"table\" FROM pragma_foreign_key_list('bridge_service_task_events')"
+      )
+      let messageTargets = try String.fetchAll(
+        db,
+        sql: "SELECT \"table\" FROM pragma_foreign_key_list('bridge_service_task_messages')"
+      )
+      return taskTargets + eventTargets + messageTargets
+    }
+    XCTAssertEqual(
+      foreignKeyTargets,
+      ["bridge_service_projects", "bridge_service_tasks", "bridge_service_tasks"]
+    )
+    let manager = ServiceTaskManager(store: store)
+    let base: (String) -> ServiceTaskRequest = { clientID in
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .mcpClient,
+        sourceClientID: clientID,
+        clientRequestID: "same-request",
+        prompt: "Run the same request ID from a distinct client.",
+        executionModel: "fixture",
+        executionEffort: "medium",
+        permissionMode: .readOnly
+      )
+    }
+
+    let chat = try await manager.submit(base("openai.chatgpt"))
+    let qwen = try await manager.submit(base("qwen.studio"))
+    let qwenReplay = try await manager.submit(base("qwen.studio"))
+    XCTAssertNotEqual(chat.task.id, qwen.task.id)
+    XCTAssertEqual(qwenReplay.task.id, qwen.task.id)
+    XCTAssertTrue(qwenReplay.reusedExistingTask)
   }
 }

@@ -10,6 +10,7 @@ public struct MCPServiceServerFactory: Sendable {
     appVersion: String,
     service: any BridgeMCPServiceAPI,
     exposureMode: MCPServiceExposureMode,
+    clientID: MCPClientID = .chatGPT,
     logger: Logger = Logger(label: "CodexBridge.BridgeMCP.LightweightServer")
   ) {
     precondition(!appVersion.isEmpty)
@@ -18,6 +19,7 @@ public struct MCPServiceServerFactory: Sendable {
     dispatcher = MCPServiceToolDispatcher(
       service: service,
       exposureMode: exposureMode,
+      clientID: clientID,
       logger: logger
     )
   }

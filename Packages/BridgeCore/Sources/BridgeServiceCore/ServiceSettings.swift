@@ -12,6 +12,9 @@ public enum ServiceDirectApprovalMode: String, Codable, CaseIterable, Sendable {
 
 public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case mcpExposureMode = "mcp.exposure_mode"
+  case mcpLocalPort = "mcp.local_port"
+  case qwenStudioEnabled = "mcp.client.qwen-studio.enabled"
+  case qwenStudioExposureMode = "mcp.client.qwen-studio.exposure_mode"
   case directApprovalMode = "direct.approval_mode"
   case defaultExecutionModel = "models.execution.default"
   case defaultExecutionEffort = "models.execution.effort"
@@ -74,6 +77,47 @@ public actor ServiceSettings {
 
   public func setExposureMode(_ mode: ServiceMCPExposureMode) async throws {
     try await set(mode.rawValue, for: .mcpExposureMode)
+  }
+
+  public func localMCPPort() async throws -> Int? {
+    guard let value = try await string(for: .mcpLocalPort) else { return nil }
+    guard let port = Int(value), (1...65_535).contains(port) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return port
+  }
+
+  public func setLocalMCPPort(_ port: Int?) async throws {
+    guard let port else {
+      try await set(nil, for: .mcpLocalPort)
+      return
+    }
+    guard (1...65_535).contains(port) else {
+      throw ServiceStoreError.invalidArgument("mcp.localPort")
+    }
+    try await set(String(port), for: .mcpLocalPort)
+  }
+
+  public func qwenStudioEnabled() async throws -> Bool {
+    guard let value = try await string(for: .qwenStudioEnabled) else { return false }
+    guard let enabled = Bool(value) else { throw ServiceStoreError.corruptRecord }
+    return enabled
+  }
+
+  public func setQwenStudioEnabled(_ enabled: Bool) async throws {
+    try await set(String(enabled), for: .qwenStudioEnabled)
+  }
+
+  public func qwenStudioExposureMode() async throws -> ServiceMCPExposureMode {
+    guard let value = try await string(for: .qwenStudioExposureMode) else { return .readOnly }
+    guard let mode = ServiceMCPExposureMode(rawValue: value) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return mode
+  }
+
+  public func setQwenStudioExposureMode(_ mode: ServiceMCPExposureMode) async throws {
+    try await set(mode.rawValue, for: .qwenStudioExposureMode)
   }
 
   public func directApprovalMode() async throws -> ServiceDirectApprovalMode {

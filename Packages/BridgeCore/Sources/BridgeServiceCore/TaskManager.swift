@@ -28,6 +28,7 @@ public actor ServiceTaskManager {
       id: requestedTaskID ?? makeTaskID(),
       projectID: request.projectID,
       source: request.source,
+      sourceClientID: request.sourceClientID,
       clientRequestID: request.clientRequestID,
       prompt: request.prompt,
       requestedThreadID: request.requestedThreadID,

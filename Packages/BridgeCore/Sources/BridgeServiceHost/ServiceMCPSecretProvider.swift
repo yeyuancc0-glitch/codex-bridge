@@ -1,3 +1,4 @@
+import BridgeMCP
 import BridgeSecurity
 import Foundation
 import Security
@@ -5,10 +6,14 @@ import Security
 public enum ServiceMCPSecretError: Error, Equatable, Sendable {
   case randomGenerationFailed
   case invalidStoredSecret
+  case unsupportedClient
 }
 
 public actor ServiceMCPSecretProvider {
   public static let reference = SecretReference(rawValue: "service-mcp-path-secret")
+  public static let qwenStudioReference = SecretReference(
+    rawValue: "service.mcp.client.qwen-studio"
+  )
 
   private let store: any SecretStore
   private let randomBytes: @Sendable (Int) throws -> Data
@@ -27,23 +32,41 @@ public actor ServiceMCPSecretProvider {
   }
 
   public func secret() throws -> String {
+    try secret(for: .chatGPT)
+  }
+
+  public func secret(for clientID: MCPClientID) throws -> String {
+    let reference = try Self.reference(for: clientID)
     do {
-      let data = try store.load(Self.reference)
+      let data = try store.load(reference)
       guard let value = String(data: data, encoding: .utf8), Self.isValid(value) else {
         throw ServiceMCPSecretError.invalidStoredSecret
       }
       return value
     } catch SecretStoreError.notFound {
       let value = try Self.encode(randomBytes(32))
-      try store.store(Data(value.utf8), for: Self.reference)
+      try store.store(Data(value.utf8), for: reference)
       return value
     }
   }
 
   public func rotate() throws -> String {
+    try rotate(clientID: .chatGPT)
+  }
+
+  public func rotate(clientID: MCPClientID) throws -> String {
+    let reference = try Self.reference(for: clientID)
     let value = try Self.encode(randomBytes(32))
-    try store.store(Data(value.utf8), for: Self.reference)
+    try store.store(Data(value.utf8), for: reference)
     return value
+  }
+
+  private static func reference(for clientID: MCPClientID) throws -> SecretReference {
+    switch clientID {
+    case .chatGPT: reference
+    case .qwenStudio: qwenStudioReference
+    default: throw ServiceMCPSecretError.unsupportedClient
+    }
   }
 
   private static func secureRandomBytes(count: Int) throws -> Data {

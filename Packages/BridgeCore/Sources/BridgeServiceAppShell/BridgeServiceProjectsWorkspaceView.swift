@@ -27,7 +27,7 @@ struct ProjectWorkspaceEditor: View {
     NativeCard {
       VStack(alignment: .leading, spacing: 14) {
         HStack {
-          Label("ChatGPT Direct 命令", systemImage: "terminal")
+          Label("MCP Direct 命令", systemImage: "terminal")
             .font(.subheadline.weight(.semibold))
           Spacer()
           if showSavedFeedback {
@@ -43,7 +43,7 @@ struct ProjectWorkspaceEditor: View {
         }
 
         Text(
-          "默认仍由 Codex 执行项目任务。这里配置的是用户在 ChatGPT 对话中明确要求\u{201C}直接执行\u{201D}时，网页 GPT 可以使用的本地命令。"
+          "默认仍由 Codex 执行项目任务。这里配置的是用户在 MCP 客户端中明确要求\u{201C}直接执行\u{201D}时，客户端可以使用的本地命令。"
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -144,7 +144,7 @@ struct ProjectWorkspaceEditor: View {
   private var modeDescription: String {
     switch draftMode {
     case "denied":
-      return "禁止 ChatGPT 直接执行任何命令。"
+      return "禁止 MCP 客户端直接执行任何命令。"
     case "full":
       return "完全模式放行所有命令，不再检查白名单。"
     default:

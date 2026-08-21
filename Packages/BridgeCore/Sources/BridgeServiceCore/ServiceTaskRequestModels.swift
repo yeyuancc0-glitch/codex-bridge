@@ -14,6 +14,7 @@ public struct ServiceTaskCreationResult: Equatable, Sendable {
 public struct ServiceTaskRequest: Equatable, Sendable {
   public let projectID: ProjectID
   public let source: ServiceTaskSource
+  public let sourceClientID: String
   public let clientRequestID: String?
   public let prompt: String
   public let requestedThreadID: String?
@@ -29,6 +30,7 @@ public struct ServiceTaskRequest: Equatable, Sendable {
   public init(
     projectID: ProjectID,
     source: ServiceTaskSource,
+    sourceClientID: String = "",
     clientRequestID: String? = nil,
     prompt: String,
     requestedThreadID: String? = nil,
@@ -43,6 +45,7 @@ public struct ServiceTaskRequest: Equatable, Sendable {
   ) {
     self.projectID = projectID
     self.source = source
+    self.sourceClientID = sourceClientID
     self.clientRequestID = clientRequestID
     self.prompt = prompt
     self.requestedThreadID = requestedThreadID

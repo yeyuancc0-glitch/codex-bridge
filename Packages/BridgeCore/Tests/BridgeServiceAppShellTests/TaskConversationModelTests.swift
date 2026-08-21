@@ -7,6 +7,24 @@ import XCTest
 
 @MainActor
 final class TaskConversationModelTests: XCTestCase {
+  func testTaskSourceDisplayNameKeepsLegacyChatGPTAndLabelsQwen() {
+    let legacy = taskSnapshot(status: "completed", source: "chatgpt.mcp")
+    let chatGPT = taskSnapshot(
+      status: "completed",
+      source: "mcp.client",
+      sourceClientID: MCPClientID.chatGPT.rawValue
+    )
+    let qwen = taskSnapshot(
+      status: "completed",
+      source: "mcp.client",
+      sourceClientID: MCPClientID.qwenStudio.rawValue
+    )
+
+    XCTAssertEqual(legacy.sourceDisplayName, "ChatGPT")
+    XCTAssertEqual(chatGPT.sourceDisplayName, "ChatGPT")
+    XCTAssertEqual(qwen.sourceDisplayName, "Qwen Studio")
+  }
+
   func testStartAppliesSubscriptionPageThenAppliesStreamingPushes() async throws {
     let client = TestBridgeServiceClient()
     let model = TaskConversationModel(taskID: "task-1", client: client)
@@ -351,10 +369,16 @@ final class TaskConversationModelTests: XCTestCase {
     XCTFail("Condition did not become true before the deadline.")
   }
 
-  private func taskSnapshot(status: String) -> MCPServiceTaskSnapshot {
+  private func taskSnapshot(
+    status: String,
+    source: String? = nil,
+    sourceClientID: String? = nil
+  ) -> MCPServiceTaskSnapshot {
     MCPServiceTaskSnapshot(
       taskID: "task-1",
       projectID: "project-1",
+      source: source,
+      sourceClientID: sourceClientID,
       status: status,
       supervisorStatus: "disabled",
       localApprovalRequired: false,

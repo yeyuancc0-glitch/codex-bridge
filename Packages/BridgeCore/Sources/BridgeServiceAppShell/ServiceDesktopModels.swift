@@ -11,6 +11,19 @@ extension MCPServiceTaskSnapshot {
   var isRunning: Bool {
     ["starting", "running", "waiting_for_codex_approval"].contains(status)
   }
+
+  var sourceDisplayName: String {
+    if source == "chatgpt.mcp" || sourceClientID == MCPClientID.chatGPT.rawValue {
+      return "ChatGPT"
+    }
+    if sourceClientID == MCPClientID.qwenStudio.rawValue {
+      return "Qwen Studio"
+    }
+    if let sourceClientID, !sourceClientID.isEmpty {
+      return sourceClientID
+    }
+    return source == "macos.app" ? "本机 App" : "本机任务"
+  }
 }
 
 struct CodexActivityPresentation: Equatable {

@@ -148,16 +148,18 @@ func serviceThreadListScript(root: String) -> String {
 
 func serviceMixedThreadListScript(root: String) -> String {
   let bridge = serviceThreadJSON(id: "thread-bridge", root: root, name: "Bridge")
+  let qwen = serviceThreadJSON(id: "thread-qwen", root: root, name: "Qwen")
   let manual = serviceThreadJSON(id: "thread-manual", root: root, name: "Manual")
   return serviceCatalogHandshake
     + "\n"
       + #"""
       IFS= read -r request
       case "$request" in *'"method":"thread/list"'*) ;; *) exit 23 ;; esac
-      printf '%s\n' '{"id":2,"result":{"data":[__MANUAL__,__BRIDGE__],"nextCursor":null}}'
+      printf '%s\n' '{"id":2,"result":{"data":[__MANUAL__,__QWEN__,__BRIDGE__],"nextCursor":null}}'
       sleep 1
       """#
     .replacingOccurrences(of: "__MANUAL__", with: manual)
+    .replacingOccurrences(of: "__QWEN__", with: qwen)
     .replacingOccurrences(of: "__BRIDGE__", with: bridge)
 }
 

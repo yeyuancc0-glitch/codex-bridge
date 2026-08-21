@@ -7,7 +7,7 @@ struct BridgeServiceSettingsView: View {
     Form {
       modelDefaultsSection(
         title: "执行任务默认偏好",
-        description: "ChatGPT 提交新任务时，若未显式指定模型，将默认使用该配置。"
+        description: "MCP 客户端提交新任务时，若未显式指定模型，将默认使用该配置。"
       )
 
       modelDefaultsSection(

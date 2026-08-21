@@ -3,8 +3,13 @@ import Foundation
 
 public enum ServiceTaskSource: String, Codable, CaseIterable, Sendable {
   case chatGPT = "chatgpt.mcp"
+  case mcpClient = "mcp.client"
   case macOSApp = "macos.app"
   case legacyImport = "legacy.import"
+
+  public var isRemoteMCPOrigin: Bool {
+    self == .chatGPT || self == .mcpClient
+  }
 }
 
 public enum ServicePermissionMode: String, Codable, CaseIterable, Sendable {
@@ -142,6 +147,7 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
   public let id: TaskID
   public let projectID: ProjectID
   public let source: ServiceTaskSource
+  public let sourceClientID: String
   public let clientRequestID: String?
   public let prompt: String
   public let requestedThreadID: String?
@@ -161,6 +167,7 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     id: TaskID,
     projectID: ProjectID,
     source: ServiceTaskSource,
+    sourceClientID: String = "",
     clientRequestID: String? = nil,
     prompt: String,
     requestedThreadID: String? = nil,
@@ -178,6 +185,15 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
   ) throws {
     try ServiceValidation.identifier(id.rawValue, field: "task.id", maximumBytes: 128)
     try ServiceValidation.identifier(projectID.rawValue, field: "task.projectID", maximumBytes: 128)
+    if source == .mcpClient {
+      try ServiceValidation.identifier(
+        sourceClientID,
+        field: "task.sourceClientID",
+        maximumBytes: 128
+      )
+    } else if !sourceClientID.isEmpty {
+      throw ServiceStoreError.invalidArgument("task.sourceClientID")
+    }
     if let clientRequestID {
       try ServiceValidation.identifier(
         clientRequestID,
@@ -229,6 +245,7 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     self.id = id
     self.projectID = projectID
     self.source = source
+    self.sourceClientID = sourceClientID
     self.clientRequestID = clientRequestID
     self.prompt = prompt
     self.requestedThreadID = requestedThreadID
@@ -253,6 +270,7 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
       id: id,
       projectID: projectID,
       source: source,
+      sourceClientID: sourceClientID,
       clientRequestID: clientRequestID,
       prompt: prompt,
       requestedThreadID: requestedThreadID,
@@ -273,6 +291,7 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
   func hasSameSubmission(as other: ServiceTaskRecord) -> Bool {
     projectID == other.projectID
       && source == other.source
+      && sourceClientID == other.sourceClientID
       && clientRequestID == other.clientRequestID
       && prompt == other.prompt
       && requestedThreadID == other.requestedThreadID

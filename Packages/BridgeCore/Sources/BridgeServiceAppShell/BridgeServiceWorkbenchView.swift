@@ -187,6 +187,7 @@ struct BridgeServiceWorkbenchView: View {
         Spacer()
 
         if let task = currentTask {
+          StatusBadge(task.sourceDisplayName, tone: .neutral)
           TaskStatusLabel(status: task.status)
         } else if model.runningTaskCount > 0 {
           StatusBadge("运行中", tone: .running)

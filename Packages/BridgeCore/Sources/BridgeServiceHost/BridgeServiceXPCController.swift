@@ -161,6 +161,18 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleSetDirectApprovalMode(request)
     case .setExposureMode:
       return try await handleSetExposureMode(request)
+    case .listMCPClients:
+      return try await handleListMCPClients(request)
+    case .setMCPClientEnabled:
+      return try await handleSetMCPClientEnabled(request)
+    case .setMCPClientExposureMode:
+      return try await handleSetMCPClientExposureMode(request)
+    case .exportMCPClientConfiguration:
+      return try await handleExportMCPClientConfiguration(request)
+    case .rotateMCPClientCredential:
+      return try await handleRotateMCPClientCredential(request)
+    case .rotateLocalMCPEndpoint:
+      return try await handleRotateLocalMCPEndpoint(request)
     case .configureTunnel:
       return try await handleConfigureTunnel(request)
     case .connectTunnel:

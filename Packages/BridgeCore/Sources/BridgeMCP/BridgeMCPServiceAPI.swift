@@ -85,6 +85,7 @@ public protocol BridgeMCPServiceAPI: Sendable {
 
   func serviceSubmitTask(
     _ submission: MCPServiceTaskSubmission,
+    invocationContext: MCPInvocationContext,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPServiceTaskSubmissionReceipt
 

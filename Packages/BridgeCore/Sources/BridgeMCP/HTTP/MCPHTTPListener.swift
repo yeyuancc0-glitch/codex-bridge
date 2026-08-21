@@ -5,7 +5,7 @@ import Foundation
 
 public actor MCPHTTPListener {
   private let configuration: MCPHTTPConfiguration
-  private let handler: MCPHTTPRequestHandler
+  private let handler: MCPAuthenticatedHTTPRequestHandler
   private let emissionObserver: MCPHTTPEmissionObserver?
   private let admission: MCPHTTPAdmission
   private var serverChannel: (any Channel)?
@@ -20,7 +20,21 @@ public actor MCPHTTPListener {
     emissionObserver: MCPHTTPEmissionObserver? = nil
   ) {
     self.configuration = configuration
-    self.handler = handler
+    self.handler = { request in await handler(request.request) }
+    self.emissionObserver = emissionObserver
+    admission = MCPHTTPAdmission(
+      maximumConnections: configuration.maximumConnections,
+      maximumActiveRequests: configuration.maximumActiveRequests
+    )
+  }
+
+  public init(
+    configuration: MCPHTTPConfiguration,
+    authenticatedHandler: @escaping MCPAuthenticatedHTTPRequestHandler,
+    emissionObserver: MCPHTTPEmissionObserver? = nil
+  ) {
+    self.configuration = configuration
+    self.handler = authenticatedHandler
     self.emissionObserver = emissionObserver
     admission = MCPHTTPAdmission(
       maximumConnections: configuration.maximumConnections,
@@ -67,7 +81,7 @@ public actor MCPHTTPListener {
           channel.pipeline.addHandler(
             MCPHTTPHandler(
               configuration: configuration,
-              handler: handler,
+              authenticatedHandler: handler,
               emissionObserver: emissionObserver,
               admission: admission
             )

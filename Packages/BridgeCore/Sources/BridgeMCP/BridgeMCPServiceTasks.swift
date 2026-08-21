@@ -23,6 +23,8 @@ public struct MCPServiceTaskEvent: Codable, Equatable, Sendable {
 public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let taskID: String
   public let projectID: String
+  public let source: String?
+  public let sourceClientID: String?
   public let status: String
   public let threadID: String?
   public let turnID: String?
@@ -39,6 +41,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public init(
     taskID: String,
     projectID: String,
+    source: String? = nil,
+    sourceClientID: String? = nil,
     status: String,
     threadID: String? = nil,
     turnID: String? = nil,
@@ -54,6 +58,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   ) {
     self.taskID = taskID
     self.projectID = projectID
+    self.source = source
+    self.sourceClientID = sourceClientID
     self.status = status
     self.threadID = threadID
     self.turnID = turnID
@@ -71,6 +77,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case taskID = "task_id"
     case projectID = "project_id"
+    case source
+    case sourceClientID = "source_client_id"
     case status
     case threadID = "thread_id"
     case turnID = "turn_id"

@@ -5,6 +5,17 @@ import BridgeServiceCore
 import Foundation
 
 extension BridgeServiceApplication {
+  public func serviceSubmitTask(
+    _ submission: MCPServiceTaskSubmission,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceTaskSubmissionReceipt {
+    try await serviceSubmitTask(
+      submission,
+      invocationContext: MCPInvocationContext(clientID: .chatGPT),
+      deadline: deadline
+    )
+  }
+
   public func serviceTask(
     taskID: String,
     recentEventLimit: Int,
@@ -19,6 +30,8 @@ extension BridgeServiceApplication {
     return MCPServiceTaskSnapshot(
       taskID: task.id.rawValue,
       projectID: task.projectID.rawValue,
+      source: task.source.rawValue,
+      sourceClientID: task.sourceClientID.isEmpty ? nil : task.sourceClientID,
       status: task.state.status.rawValue,
       threadID: task.state.codexThreadID,
       turnID: task.state.codexTurnID,
@@ -44,10 +57,15 @@ extension BridgeServiceApplication {
 
   public func serviceSubmitTask(
     _ submission: MCPServiceTaskSubmission,
+    invocationContext: MCPInvocationContext,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPServiceTaskSubmissionReceipt {
     try Self.checkDeadline(deadline)
-    let prepared = try await prepareTaskSubmission(submission, deadline: deadline)
+    let prepared = try await prepareTaskSubmission(
+      submission,
+      sourceClientID: invocationContext.clientID.rawValue,
+      deadline: deadline
+    )
     let result = try await submitTaskWithAdmission(
       prepared.request,
       projectID: prepared.projectID
@@ -72,6 +90,7 @@ extension BridgeServiceApplication {
 
   private func prepareTaskSubmission(
     _ submission: MCPServiceTaskSubmission,
+    sourceClientID: String,
     deadline: ContinuousClock.Instant
   ) async throws -> PreparedTaskSubmission {
     let project = try await readableProject(submission.projectID)
@@ -91,7 +110,8 @@ extension BridgeServiceApplication {
       projectID: project.id,
       request: ServiceTaskRequest(
         projectID: project.id,
-        source: .chatGPT,
+        source: .mcpClient,
+        sourceClientID: sourceClientID,
         clientRequestID: submission.clientRequestID,
         prompt: taskPrompt,
         requestedThreadID: submission.threadID,

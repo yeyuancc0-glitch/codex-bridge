@@ -34,7 +34,7 @@ extension MCPServiceToolCatalog {
   static let listProjects = Tool(
     name: MCPServiceToolName.listProjects.rawValue,
     title: "List projects",
-    description: "List user-approved projects visible to ChatGPT.",
+    description: "List user-approved projects visible to the authenticated MCP client.",
     inputSchema: objectSchema(
       properties: [
         "cursor": nullableStringSchema(maximum: 2_048),
@@ -250,7 +250,7 @@ extension MCPServiceToolCatalog {
     title: "List project commands",
     description:
       "Read the built-in safe rules, registered Direct commands, and command mode for an approved project. "
-      + "These commands only run when the user explicitly asks ChatGPT to execute them locally.",
+      + "These commands only run when the user explicitly asks the MCP client to execute them locally.",
     inputSchema: projectIDInput,
     annotations: readAnnotations,
     outputSchema: outputSchema(

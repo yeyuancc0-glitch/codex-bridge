@@ -48,6 +48,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
     let task = try XCTUnwrap(storedTask)
     XCTAssertEqual(task.executionModel, "execution-model")
+    XCTAssertEqual(task.source, .mcpClient)
+    XCTAssertEqual(task.sourceClientID, MCPClientID.chatGPT.rawValue)
     XCTAssertEqual(task.executionEffort, "high")
     XCTAssertEqual(task.supervisorModel, "gpt-5.6-luna")
     XCTAssertEqual(task.supervisorEffort, "medium")
@@ -63,6 +65,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
       deadline: deadline
     )
     XCTAssertEqual(snapshot.status, ServiceTaskStatus.running.rawValue)
+    XCTAssertEqual(snapshot.source, ServiceTaskSource.mcpClient.rawValue)
+    XCTAssertEqual(snapshot.sourceClientID, MCPClientID.chatGPT.rawValue)
     XCTAssertEqual(
       snapshot.recentEvents.map(\.kind),
       [
@@ -76,6 +80,32 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let status = try await application.serviceStatus(deadline: deadline)
     XCTAssertEqual(status.executionState, "active")
     XCTAssertEqual(status.pendingApprovalCount, 0)
+  }
+
+  func testQwenInvocationPersistsGenericMCPSourceAndStableClientIdentity() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Read the project through Qwen Studio."
+      ),
+      invocationContext: MCPInvocationContext(
+        clientID: .qwenStudio,
+        sessionID: "qwen-session"
+      ),
+      deadline: deadline
+    )
+
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.source, .mcpClient)
+    XCTAssertEqual(task.sourceClientID, MCPClientID.qwenStudio.rawValue)
   }
 
   func testModelPreferencesArePersistedAndUsedForNewTasks() async throws {
@@ -405,7 +435,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     }
   }
 
-  func testAppThreadCatalogOnlyReturnsChatGPTMCPTaskThreads() async throws {
+  func testAppThreadCatalogReturnsLegacyChatGPTAndGenericMCPClientThreads() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     _ = try await fixture.tasks.submit(
       ServiceTaskRequest(
@@ -423,6 +453,24 @@ final class BridgeServiceApplicationTests: XCTestCase {
       threadID: "thread-bridge",
       turnID: "turn-bridge"
     )
+    _ = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: MCPClientID.qwenStudio.rawValue,
+        prompt: "Qwen task",
+        executionModel: "execution-model",
+        executionEffort: "high",
+        permissionMode: .readOnly
+      ),
+      taskID: TaskID(rawValue: "tsk-service-app-qwen")
+    )
+    _ = try await fixture.tasks.begin(taskID: TaskID(rawValue: "tsk-service-app-qwen"))
+    _ = try await fixture.tasks.markExecutionStarted(
+      taskID: TaskID(rawValue: "tsk-service-app-qwen"),
+      threadID: "thread-qwen",
+      turnID: "turn-qwen"
+    )
     let application = makeServiceApplication(
       fixture: fixture,
       catalogScript: serviceMixedThreadListScript(root: fixture.root.path)
@@ -436,7 +484,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
       deadline: ContinuousClock.now.advanced(by: .seconds(3))
     )
 
-    XCTAssertEqual(page.threads.map(\.threadID), ["thread-bridge"])
+    XCTAssertEqual(Set(page.threads.map(\.threadID)), ["thread-bridge", "thread-qwen"])
   }
 
   func testAppThreadReadRejectsThreadWithoutChatGPTMCPTask() async throws {

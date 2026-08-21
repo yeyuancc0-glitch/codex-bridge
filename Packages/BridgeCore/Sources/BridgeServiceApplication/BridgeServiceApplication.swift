@@ -311,7 +311,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     let records = try await tasks.tasks(projectID: projectID, limit: 500)
     return Set(
       records.lazy
-        .filter { $0.source == .chatGPT }
+        .filter { $0.source.isRemoteMCPOrigin }
         .compactMap { $0.state.codexThreadID }
     )
   }

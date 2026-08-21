@@ -170,6 +170,29 @@ extension BridgeServiceXPCController {
     if error is BridgeServiceIPCCodecError {
       return .init(code: "invalid_request", message: "The XPC request is invalid.")
     }
+    if let error = error as? ServiceLocalMCPError {
+      switch error {
+      case .localPortUnavailable:
+        return .init(
+          code: "local_port_unavailable",
+          message: "The configured local MCP port is unavailable.",
+          retryable: true
+        )
+      case .endpointManagedByConfiguration:
+        return .init(
+          code: "endpoint_managed_by_configuration",
+          message: "The local MCP endpoint is managed by the service configuration."
+        )
+      }
+    }
+    if let error = error as? ServiceMCPClientRegistryError {
+      switch error {
+      case .unsupportedClient:
+        return .init(code: "invalid_client", message: "The MCP client is unsupported.")
+      case .clientDisabled:
+        return .init(code: "client_disabled", message: "The MCP client is disabled.")
+      }
+    }
     if let error = error as? ServiceStoreError {
       switch error {
       case .unknownProject:
