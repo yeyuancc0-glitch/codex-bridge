@@ -28,6 +28,7 @@ enum DirectSearchArgumentValidator {
     "--encoding", "--hidden", "--no-ignore", "--no-ignore-vcs", "--files",
     "--glob-case-insensitive", "--stats", "--json", "--heading", "--no-heading",
     "--trim", "--crlf", "--null", "--null-data", "--passthru", "--binary-files",
+    "--line-buffered",
   ])
   private static let deniedSearchOptionPrefixes = ["--pre", "--hostname-bin"]
 

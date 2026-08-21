@@ -117,7 +117,16 @@ extension MCPServiceToolCatalog {
     description:
       "Explicit Direct Workspace action. Use only when the user explicitly asks the MCP client "
       + "to edit the local project without delegating the work to Codex. Applies a multi-file "
-      + "patch (*** Begin Patch / *** Add File / *** Update File) with per-file revision checks.",
+      + "exact-line patch. Accepts the Bridge format below or a standard unified diff with "
+      + "`--- a/path`, `+++ b/path`, and `@@` hunks. Deletion and rename diffs are rejected. "
+      + "Bridge syntax: the `*** Begin Patch` and `*** End Patch` outer lines may both be omitted; "
+      + "when used they must appear as a pair. "
+      + "each file starts with `*** Update File: relative/path` or `*** Add File: relative/path`. "
+      + "For updates, use `@@` (or `@@ -old +new @@`) followed by unchanged lines prefixed with "
+      + "one space, removed lines prefixed with `-`, and added lines prefixed with `+`. An update "
+      + "must include at least one exact removed or context line. Example: "
+      + "`*** Begin Patch\n*** Update File: notes.txt\n@@\n-old\n+new\n*** End Patch`. "
+      + "Read the current file first; a non-unique or stale exact context returns invalid_patch.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -186,14 +195,14 @@ extension MCPServiceToolCatalog {
       "Explicit Direct Workspace action that runs a user-registered project command (or a "
       + "built-in safe command) on the local machine. Use only when the user explicitly asks "
       + "the MCP client to run a command inside the project. The session streams bounded "
-      + "output and can be read with direct_read_command.",
+      + "output and can be read with direct_read_command. tty must be false in this version.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
         "command_id": nullableStringSchema(maximum: 256),
         "argv": arraySchema(boundedStringSchema(maximum: 4_096)),
         "working_directory": nullableStringSchema(maximum: 1_024),
-        "tty": boolSchema,
+        "tty": ["type": "boolean", "const": false],
         "yield_time_ms": integerSchema(minimum: 0, maximum: 60_000),
         "timeout_ms": integerSchema(minimum: 1, maximum: 3_600_000),
         "client_request_id": nullableStringSchema(maximum: 512),
@@ -230,13 +239,15 @@ extension MCPServiceToolCatalog {
     description:
       "Write a bounded chunk of input to the stdin of a running interactive direct command "
       + "session. Use only when the user explicitly asked the MCP client to drive an interactive "
-      + "command directly.",
+      + "command directly. Set close_stdin=true after the final chunk to deliver EOF; this lets "
+      + "buffered programs such as grep flush output and exit before direct_read_command is polled.",
     inputSchema: objectSchema(
       properties: [
         "session_id": boundedStringSchema(maximum: 128),
         "data": boundedStringSchema(maximum: 64 * 1_024),
+        "close_stdin": boolSchema,
       ],
-      required: ["session_id", "data"]
+      required: ["session_id"]
     ),
     annotations: Tool.Annotations(
       readOnlyHint: false,
@@ -244,7 +255,13 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: outputSchema(properties: [:], required: [])
+    outputSchema: outputSchema(
+      properties: [
+        "bytes_written": integerSchema(minimum: 0, maximum: 64 * 1_024),
+        "stdin_closed": boolSchema,
+      ],
+      required: ["bytes_written", "stdin_closed"]
+    )
   )
 
   static let directInterruptCommand = Tool(

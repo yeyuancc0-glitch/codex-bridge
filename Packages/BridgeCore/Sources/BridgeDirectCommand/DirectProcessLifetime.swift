@@ -32,8 +32,10 @@ public final class DirectProcessLifetime: @unchecked Sendable {
   private let outputHandle: FileHandle
   private let inputHandle: FileHandle
   private let lock = NSLock()
+  private let inputLock = NSLock()
   private var _termination: DirectProcessTermination?
   private var _identity: DirectProcessIdentity?
+  private var inputClosed = false
 
   public var identity: DirectProcessIdentity? {
     lock.lock()
@@ -100,11 +102,22 @@ public final class DirectProcessLifetime: @unchecked Sendable {
   }
 
   public func writeStdin(_ data: Data) throws {
+    inputLock.lock()
+    defer { inputLock.unlock() }
+    guard !inputClosed else { throw DirectProcessError.stdinUnavailable }
     do {
       try inputHandle.write(contentsOf: data)
     } catch {
       throw DirectProcessError.stdinUnavailable
     }
+  }
+
+  public func closeStdin() {
+    inputLock.lock()
+    defer { inputLock.unlock() }
+    guard !inputClosed else { return }
+    inputClosed = true
+    inputHandle.closeFile()
   }
 
   public func terminateGroup() {
@@ -191,7 +204,7 @@ public final class DirectProcessLifetime: @unchecked Sendable {
   public func close() {
     outputHandle.readabilityHandler = nil
     outputHandle.closeFile()
-    inputHandle.closeFile()
+    closeStdin()
   }
 
   private func reapIfExitedLocked() -> DirectProcessTermination? {

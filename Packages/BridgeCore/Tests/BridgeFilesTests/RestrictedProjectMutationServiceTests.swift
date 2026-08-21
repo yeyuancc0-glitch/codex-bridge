@@ -387,6 +387,99 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
     }
   }
 
+  func testPatchParserAcceptsOptionalOuterMarkersAndCRLF() throws {
+    let patch = "*** Update File: file.txt\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+    let operations = try ProjectPatchParser.parse(patch)
+
+    XCTAssertEqual(operations.count, 1)
+    XCTAssertEqual(operations[0].action, "update")
+    XCTAssertEqual(operations[0].relativePath, "file.txt")
+    XCTAssertEqual(operations[0].hunks.first?.context, "-1 +1 @@")
+    XCTAssertEqual(operations[0].hunks.first?.removals, ["old"])
+    XCTAssertEqual(operations[0].hunks.first?.additions, ["new"])
+  }
+
+  func testPatchParserAcceptsIndentedControlLines() throws {
+    let patch = """
+        *** Begin Patch
+        *** Add File: nested/file.txt
+      +content
+        *** End Patch
+      """
+    let operations = try ProjectPatchParser.parse(patch)
+
+    XCTAssertEqual(operations.count, 1)
+    XCTAssertEqual(operations[0].action, "add")
+    XCTAssertEqual(operations[0].relativePath, "nested/file.txt")
+    XCTAssertEqual(operations[0].hunks.first?.additions, ["content"])
+  }
+
+  func testPatchParserRejectsOnlyOneOuterMarker() {
+    XCTAssertThrowsError(
+      try ProjectPatchParser.parse(
+        "*** Begin Patch\n*** Add File: file.txt\n+content\n"
+      )
+    ) { error in
+      XCTAssertEqual(error as? ProjectPatchParserError, .missingEndMarker)
+    }
+  }
+
+  func testPatchParserAcceptsStandardUnifiedUpdateAndAdd() throws {
+    let patch = """
+      diff --git a/file.txt b/file.txt
+      --- a/file.txt
+      +++ b/file.txt
+      @@ -1,3 +1,3 @@
+       alpha
+      -old
+      +new
+       omega
+      diff --git a/nested/new.txt b/nested/new.txt
+      --- /dev/null
+      +++ b/nested/new.txt
+      @@ -0,0 +1,2 @@
+      +one
+      +two
+      """
+
+    let operations = try ProjectPatchParser.parse(patch)
+
+    XCTAssertEqual(operations.map(\.action), ["update", "add"])
+    XCTAssertEqual(operations.map(\.relativePath), ["file.txt", "nested/new.txt"])
+    XCTAssertEqual(operations[0].hunks[0].removals, ["alpha", "old", "omega"])
+    XCTAssertEqual(operations[0].hunks[0].additions, ["alpha", "new", "omega"])
+    XCTAssertEqual(operations[1].hunks[0].additions, ["one", "two"])
+  }
+
+  func testPatchParserAcceptsUnifiedDiffInsideOuterMarkers() throws {
+    let patch = """
+      *** Begin Patch
+      --- a/file.txt
+      +++ b/file.txt
+      @@ -1 +1 @@
+      -old
+      +new
+      *** End Patch
+      """
+
+    let operations = try ProjectPatchParser.parse(patch)
+
+    XCTAssertEqual(operations.count, 1)
+    XCTAssertEqual(operations[0].relativePath, "file.txt")
+  }
+
+  func testPatchParserRejectsUnifiedDeleteAndRename() {
+    let deletePatch = "--- a/file.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n"
+    XCTAssertThrowsError(try ProjectPatchParser.parse(deletePatch)) { error in
+      XCTAssertEqual(error as? ProjectPatchParserError, .malformedFileHeader)
+    }
+
+    let renamePatch = "--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-old\n+new\n"
+    XCTAssertThrowsError(try ProjectPatchParser.parse(renamePatch)) { error in
+      XCTAssertEqual(error as? ProjectPatchParserError, .malformedFileHeader)
+    }
+  }
+
   func testRevisionReadsRegularFileWithoutDirectoryFlag() async throws {
     let fixture = try await writeFixture(self)
     let data = Data("revision content\n".utf8)

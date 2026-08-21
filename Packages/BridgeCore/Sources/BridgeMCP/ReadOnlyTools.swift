@@ -334,6 +334,11 @@ struct StrictToolArguments {
     return value
   }
 
+  func optionalText(_ key: String, maximumUTF8Bytes: Int) throws -> String? {
+    guard let rawValue = values[key], rawValue != .null else { return nil }
+    return try text(key, maximumUTF8Bytes: maximumUTF8Bytes)
+  }
+
   func optionalIdentifier(_ key: String, maximumUTF8Bytes: Int) throws -> String? {
     guard let value = try optionalString(key, maximumUTF8Bytes: maximumUTF8Bytes) else {
       return nil

@@ -189,6 +189,18 @@ func serviceThreadReadScript(root: String, returnedRoot: String? = nil) -> Strin
     .replacingOccurrences(of: "__THREAD__", with: thread)
 }
 
+func serviceThreadReadFailureScript(message: String) -> String {
+  serviceCatalogHandshake
+    + "\n"
+      + #"""
+      IFS= read -r request
+      case "$request" in *'"method":"thread/read"'*) ;; *) exit 32 ;; esac
+      printf '%s\n' '{"id":2,"error":{"code":-32600,"message":"__MESSAGE__"}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__MESSAGE__", with: message)
+}
+
 func serviceExecutionStartScript(root: String) -> String {
   let thread = serviceThreadJSON(id: "thread-execution", root: root, name: "Execution")
   let turn = serviceExecutionTurnJSON(id: "turn-execution")

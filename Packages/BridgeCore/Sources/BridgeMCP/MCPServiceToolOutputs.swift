@@ -350,9 +350,13 @@ struct ServiceDirectCommandOutput: Codable, Sendable {
 
 struct ServiceDirectWriteStdinOutput: Codable, Sendable {
   let schemaVersion = 1
+  let bytesWritten: Int
+  let stdinClosed: Bool
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case bytesWritten = "bytes_written"
+    case stdinClosed = "stdin_closed"
   }
 }
 

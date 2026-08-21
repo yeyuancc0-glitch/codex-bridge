@@ -143,6 +143,13 @@ public protocol BridgeMCPServiceAPI: Sendable {
     deadline: ContinuousClock.Instant
   ) async throws
 
+  func serviceDirectWriteStdin(
+    sessionID: String,
+    data: String,
+    closeStdin: Bool,
+    deadline: ContinuousClock.Instant
+  ) async throws
+
   func serviceDirectInterruptCommand(
     sessionID: String,
     deadline: ContinuousClock.Instant
@@ -152,4 +159,20 @@ public protocol BridgeMCPServiceAPI: Sendable {
     _ request: MCPDirectGitCommitRequest,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPDirectGitCommitReceipt
+}
+
+extension BridgeMCPServiceAPI {
+  public func serviceDirectWriteStdin(
+    sessionID: String,
+    data: String,
+    closeStdin: Bool,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    guard !closeStdin else { throw BridgeMCPQueryError.contractRejected }
+    try await serviceDirectWriteStdin(
+      sessionID: sessionID,
+      data: data,
+      deadline: deadline
+    )
+  }
 }

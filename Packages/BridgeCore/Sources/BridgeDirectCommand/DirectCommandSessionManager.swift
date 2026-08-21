@@ -219,17 +219,26 @@ public actor DirectCommandSessionManager {
     }
   }
 
-  public func writeStdin(sessionID: String, data: Data) async throws {
+  public func writeStdin(
+    sessionID: String,
+    data: Data,
+    closeStdin: Bool = false
+  ) async throws {
     guard let session = sessions[sessionID], session.status == "running" else {
       throw DirectCommandSessionError.notRunning
     }
-    guard !data.isEmpty, data.count <= 64 * 1_024 else {
+    guard !data.isEmpty || closeStdin, data.count <= 64 * 1_024 else {
       throw DirectCommandSessionError.invalidStdin
     }
     guard let process = processes[sessionID] else {
       throw DirectCommandSessionError.notRunning
     }
-    try process.writeStdin(data)
+    if !data.isEmpty {
+      try process.writeStdin(data)
+    }
+    if closeStdin {
+      process.closeStdin()
+    }
   }
 
   public func interrupt(sessionID: String) async throws {

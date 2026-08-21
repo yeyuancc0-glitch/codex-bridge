@@ -514,6 +514,7 @@ final class DirectCommandPolicyTests: XCTestCase {
       ["rg", "--files", "."],
       ["grep", "-in", "needle", "."],
       ["grep", "-e", "needle", "--", "."],
+      ["grep", "--line-buffered", "needle", "."],
     ]
     for argv in requests {
       let result = policy.resolve(
@@ -811,6 +812,31 @@ final class DirectCommandOutputCollectorTests: XCTestCase {
 }
 
 final class DirectCommandSessionManagerTests: XCTestCase {
+  func testCloseStdinDeliversEOFAndFlushesGrepOutput() async throws {
+    let manager = DirectCommandSessionManager(
+      runner: DirectCommandRunner(defaultTimeout: .seconds(5))
+    )
+    defer { Task { await manager.cancelAll() } }
+    _ = try await manager.launch(
+      sessionID: "dcmd-stdin-eof",
+      projectID: ProjectID(rawValue: "prj-stdin-eof"),
+      argv: ["/usr/bin/grep", "needle"],
+      workingDirectory: nil,
+      requiresNetwork: false,
+      usePTY: false
+    )
+
+    try await manager.writeStdin(
+      sessionID: "dcmd-stdin-eof",
+      data: Data("ignored\nneedle value\n".utf8),
+      closeStdin: true
+    )
+
+    let result = try await waitForFinishedSession(manager, sessionID: "dcmd-stdin-eof")
+    XCTAssertEqual(result.exitCode, 0)
+    XCTAssertTrue(result.output.tail.contains("needle value"))
+  }
+
   func testNetworkSandboxBlocksUndeclaredLoopbackConnection() async throws {
     let listener = Darwin.socket(AF_INET, SOCK_STREAM, 0)
     XCTAssertGreaterThanOrEqual(listener, 0)

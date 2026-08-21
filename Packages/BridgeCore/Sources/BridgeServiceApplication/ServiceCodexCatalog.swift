@@ -112,9 +112,14 @@ public actor ServiceCodexCatalog {
       throw BridgeMCPQueryError.contractRejected
     }
     return try await withClient(deadline: deadline) { client in
-      let response = try await client.readThread(
-        ThreadReadParams(threadId: threadID, includeTurns: detail == .full)
-      )
+      let response: ThreadReadResponse
+      do {
+        response = try await client.readThread(
+          ThreadReadParams(threadId: threadID, includeTurns: detail == .full)
+        )
+      } catch let error as CodexRPCError {
+        throw Self.publicThreadReadError(error)
+      }
       guard response.thread.id == threadID, response.thread.cwd == root else {
         throw BridgeMCPQueryError.threadNotFound
       }
@@ -134,6 +139,18 @@ public actor ServiceCodexCatalog {
         entries: page,
         nextCursor: next
       )
+    }
+  }
+
+  private static func publicThreadReadError(_ error: CodexRPCError) -> Error {
+    switch error {
+    case .remote(_, let message, _)
+    where message == "thread not loaded" || message.hasPrefix("invalid thread id"):
+      return BridgeMCPQueryError.threadNotFound
+    case .timeout:
+      return BridgeMCPQueryError.timeout
+    default:
+      return error
     }
   }
 

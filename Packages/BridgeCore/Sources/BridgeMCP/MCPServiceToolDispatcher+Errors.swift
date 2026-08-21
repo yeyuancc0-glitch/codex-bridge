@@ -114,7 +114,10 @@ extension MCPServiceToolDispatcher {
     case .invalidPatch:
       dto = .init(
         code: "invalid_patch",
-        message: "The patch could not be parsed or applied.",
+        message:
+          "Patch syntax or exact context did not match. Use paired optional Begin/End markers with "
+          + "*** Update File and space/-/+ lines, *** Add File and + lines, or a standard ---/+++ "
+          + "unified diff. Read the current file before retrying.",
         retryable: false
       )
     case .notGitRepository:

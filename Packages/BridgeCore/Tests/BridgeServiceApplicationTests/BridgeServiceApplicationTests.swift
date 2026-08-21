@@ -435,6 +435,50 @@ final class BridgeServiceApplicationTests: XCTestCase {
     }
   }
 
+  func testThreadReadMapsMissingRemoteThreadToNotFound() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceThreadReadFailureScript(message: "thread not loaded")
+    )
+
+    do {
+      _ = try await application.serviceReadThread(
+        projectID: fixture.project.id.rawValue,
+        threadID: "00000000-0000-0000-0000-000000000000",
+        detail: .summary,
+        cursor: nil,
+        limit: 25,
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected a missing Thread")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .threadNotFound)
+    }
+  }
+
+  func testThreadReadMapsInvalidRemoteThreadIDToNotFound() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceThreadReadFailureScript(message: "invalid thread id: arbitrary")
+    )
+
+    do {
+      _ = try await application.serviceReadThread(
+        projectID: fixture.project.id.rawValue,
+        threadID: "arbitrary",
+        detail: .summary,
+        cursor: nil,
+        limit: 25,
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected an invalid Thread ID to be unavailable")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .threadNotFound)
+    }
+  }
+
   func testAppThreadCatalogReturnsLegacyChatGPTAndGenericMCPClientThreads() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     _ = try await fixture.tasks.submit(
@@ -630,6 +674,105 @@ final class BridgeServiceApplicationTests: XCTestCase {
       denied.structuredContent?.objectValue?["error"]?.objectValue?["code"],
       .string("unsafe_content_detected")
     )
+  }
+
+  func testDirectPatchAcceptsUnifiedDiffAndReturnsActionableInvalidPatchError() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
+    let target = fixture.root.appendingPathComponent("patch-target.txt")
+    try Data("alpha\nold\nomega\n".utf8).write(to: target)
+
+    let success = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "patch": .string(
+            "--- a/patch-target.txt\n+++ b/patch-target.txt\n"
+              + "@@ -1,3 +1,3 @@\n alpha\n-old\n+new\n omega\n"
+          ),
+        ]
+      ))
+
+    XCTAssertEqual(success.isError, false)
+    XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "alpha\nnew\nomega\n")
+
+    let invalid = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "patch": .string("not a patch"),
+        ]
+      ))
+    XCTAssertEqual(invalid.isError, true)
+    let error = invalid.structuredContent?.objectValue?["error"]?.objectValue
+    XCTAssertEqual(error?["code"], .string("invalid_patch"))
+    XCTAssertTrue(error?["message"]?.stringValue?.contains("standard ---/+++") == true)
+  }
+
+  func testDirectWriteStdinClosesEOFAndFlushesGrepThroughMCPDispatcher() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
+
+    do {
+      _ = try await dispatcher.call(
+        .init(
+          name: MCPServiceToolName.directExecCommand.rawValue,
+          arguments: [
+            "project_id": .string(fixture.project.id.rawValue),
+            "argv": .array([.string("/usr/bin/grep"), .string("needle")]),
+            "tty": .bool(true),
+          ]
+        ))
+      XCTFail("Expected tty=true to be rejected")
+    } catch let error as MCPError {
+      guard case .invalidParams = error else {
+        return XCTFail("Unexpected MCP error: \(error)")
+      }
+    }
+
+    let launched = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directExecCommand.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "argv": .array([.string("/usr/bin/grep"), .string("needle")]),
+          "yield_time_ms": .int(0),
+          "timeout_ms": .int(5_000),
+        ]
+      ))
+    let sessionID = try XCTUnwrap(
+      launched.structuredContent?.objectValue?["session_id"]?.stringValue)
+
+    let written = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directWriteStdin.rawValue,
+        arguments: [
+          "session_id": .string(sessionID),
+          "data": .string("ignored\nneedle value\n"),
+          "close_stdin": .bool(true),
+        ]
+      ))
+    XCTAssertEqual(written.structuredContent?.objectValue?["bytes_written"], .int(21))
+    XCTAssertEqual(written.structuredContent?.objectValue?["stdin_closed"], .bool(true))
+
+    let output = try await waitForCommand(
+      application,
+      sessionID: sessionID,
+      deadline: ContinuousClock.now.advanced(by: .seconds(5))
+    )
+    XCTAssertEqual(output.exitCode, 0)
+    XCTAssertTrue(output.tail.contains("needle value"))
+    await application.directCommands.cancelAll()
   }
 
   func testReadOnlyDispatcherRejectsEveryFullOnlyToolEvenWhenCalledByName() async throws {

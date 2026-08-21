@@ -198,12 +198,16 @@ extension MCPServiceToolDispatcher {
     let yieldTimeMS = try values.optionalNonnegativeInteger("yield_time_ms").map(Int.init)
     let timeoutMS = try values.optionalPositiveInteger(
       "timeout_ms", maximum: 3_600_000)
+    let tty = try values.optionalBoolean("tty") ?? false
+    guard !tty else {
+      throw MCPError.invalidParams("Argument 'tty' must be false in this version.")
+    }
     return MCPDirectExecRequest(
       projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
       commandID: commandID,
       argv: argv,
       workingDirectory: workingDirectory,
-      tty: try values.optionalBoolean("tty") ?? false,
+      tty: tty,
       yieldTimeMS: yieldTimeMS ?? 1_000,
       timeoutMS: timeoutMS ?? 300_000,
       clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)

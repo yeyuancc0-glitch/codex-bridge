@@ -128,7 +128,9 @@ extension MCPServiceToolCatalog {
   static let listThreads = Tool(
     name: MCPServiceToolName.listThreads.rawValue,
     title: "List Codex threads",
-    description: "List Codex Threads whose cwd exactly matches an approved project.",
+    description:
+      "List Codex Threads whose cwd exactly matches an approved project. An empty threads array "
+      + "is a valid result and means no matching Thread is currently available.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -151,7 +153,10 @@ extension MCPServiceToolCatalog {
   static let readThread = Tool(
     name: MCPServiceToolName.readThread.rawValue,
     title: "Read Codex thread",
-    description: "Read a bounded page from a project-bound Codex Thread.",
+    description:
+      "Read a bounded page from a project-bound Codex Thread. Use only a thread_id returned by "
+      + "list_threads for the same project_id. Known missing or invalid IDs return thread_not_found; "
+      + "a Codex component or process failure remains unavailable.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),

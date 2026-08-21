@@ -108,7 +108,10 @@ final class MCPServiceExposureTests: XCTestCase {
     XCTAssertEqual(read["exit_code"]?.objectValue?["type"], "integer")
 
     let stdin = try outputProperties("direct_write_stdin", in: definitions)
-    XCTAssertEqual(stdin.keys.sorted(), ["error", "schema_version"])
+    XCTAssertEqual(
+      stdin.keys.sorted(),
+      ["bytes_written", "error", "schema_version", "stdin_closed"]
+    )
 
     let git = try XCTUnwrap(definitions["direct_git_commit"]?.outputSchema?.objectValue)
     let success = try XCTUnwrap(git["oneOf"]?.arrayValue?.first?.objectValue)
@@ -135,6 +138,28 @@ final class MCPServiceExposureTests: XCTestCase {
     XCTAssertTrue(skillAction?.description?.localizedCaseInsensitiveContains("explicit") == true)
   }
 
+  func testDirectPatchDescriptionPublishesExecutableGrammar() throws {
+    let catalog = MCPServiceToolCatalog(exposureMode: .full)
+    let patch = try XCTUnwrap(
+      catalog.definitions.first { $0.name == "direct_apply_project_patch" }
+    )
+    let description = try XCTUnwrap(patch.description)
+
+    XCTAssertTrue(description.contains("*** Update File: relative/path"))
+    XCTAssertTrue(description.contains("-old\n+new"))
+    XCTAssertTrue(description.contains("exact context"))
+  }
+
+  func testDirectCommandInputSchemaPublishesStdinEOFAndNoPTY() throws {
+    let catalog = MCPServiceToolCatalog(exposureMode: .full)
+    let definitions = Dictionary(uniqueKeysWithValues: catalog.definitions.map { ($0.name, $0) })
+    let stdin = try inputProperties("direct_write_stdin", in: definitions)
+    let exec = try inputProperties("direct_exec_project_command", in: definitions)
+
+    XCTAssertEqual(stdin["close_stdin"]?.objectValue?["type"], "boolean")
+    XCTAssertEqual(exec["tty"]?.objectValue?["const"], false)
+  }
+
   func testSubmitTaskDescriptionNamesCodexAsDefault() {
     let catalog = MCPServiceToolCatalog(exposureMode: .full)
     guard let submit = catalog.definitions.first(where: { $0.name == "submit_task" }) else {
@@ -151,6 +176,15 @@ final class MCPServiceExposureTests: XCTestCase {
   ) throws -> [String: Value] {
     try XCTUnwrap(
       definitions[name]?.outputSchema?.objectValue?["properties"]?.objectValue
+    )
+  }
+
+  private func inputProperties(
+    _ name: String,
+    in definitions: [String: Tool]
+  ) throws -> [String: Value] {
+    try XCTUnwrap(
+      definitions[name]?.inputSchema.objectValue?["properties"]?.objectValue
     )
   }
 }

@@ -257,7 +257,7 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
     case .contentTooLarge:
       "The content exceeds the allowed size."
     case .invalidPatch:
-      "The patch could not be parsed or applied."
+      "The patch syntax or exact context did not match."
     case .partialCommit:
       "Some files changed before a write failed; the service attempted a rollback."
     case .durabilityUncertain:

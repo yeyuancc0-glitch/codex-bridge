@@ -108,15 +108,33 @@ extension BridgeServiceApplication {
     data: String,
     deadline: ContinuousClock.Instant
   ) async throws {
+    try await serviceDirectWriteStdin(
+      sessionID: sessionID,
+      data: data,
+      closeStdin: false,
+      deadline: deadline
+    )
+  }
+
+  public func serviceDirectWriteStdin(
+    sessionID: String,
+    data: String,
+    closeStdin: Bool,
+    deadline: ContinuousClock.Instant
+  ) async throws {
     try Self.checkDeadline(deadline)
     guard !sessionID.isEmpty, sessionID.utf8.count <= 128 else {
       throw BridgeMCPQueryError.commandSessionNotFound
     }
-    guard data.utf8.count <= 64 * 1_024 else {
+    guard !data.isEmpty || closeStdin, data.utf8.count <= 64 * 1_024 else {
       throw BridgeMCPQueryError.contractRejected
     }
     do {
-      try await directCommands.writeStdin(sessionID: sessionID, data: Data(data.utf8))
+      try await directCommands.writeStdin(
+        sessionID: sessionID,
+        data: Data(data.utf8),
+        closeStdin: closeStdin
+      )
     } catch {
       throw Self.publicCommandError(error)
     }

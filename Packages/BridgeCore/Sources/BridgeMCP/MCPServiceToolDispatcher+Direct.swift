@@ -120,20 +120,30 @@ extension MCPServiceToolDispatcher {
   private func callDirectWriteStdin(_ arguments: [String: Value]?) async throws -> CallTool.Result {
     let values = try StrictToolArguments(
       arguments,
-      allowed: ["session_id", "data"],
-      required: ["session_id", "data"]
+      allowed: ["session_id", "data", "close_stdin"],
+      required: ["session_id"]
     )
     let sessionID = try values.requiredIdentifier("session_id", maximumUTF8Bytes: 128)
-    let data = try values.requiredText("data", maximumUTF8Bytes: 64 * 1_024)
+    let data = try values.optionalText("data", maximumUTF8Bytes: 64 * 1_024) ?? ""
+    let closeStdin = try values.optionalBoolean("close_stdin") ?? false
+    guard !data.isEmpty || closeStdin else {
+      throw MCPError.invalidParams("Provide non-empty data or set close_stdin=true.")
+    }
     let deadline = clock.now.advanced(by: deadlines.mutation)
     try await withToolDeadline(until: deadline) {
       try await service.serviceDirectWriteStdin(
         sessionID: sessionID,
         data: data,
+        closeStdin: closeStdin,
         deadline: deadline
       )
     }
-    return try resultEncoder.encode(ServiceDirectWriteStdinOutput())
+    return try resultEncoder.encode(
+      ServiceDirectWriteStdinOutput(
+        bytesWritten: data.utf8.count,
+        stdinClosed: closeStdin
+      )
+    )
 
   }
 

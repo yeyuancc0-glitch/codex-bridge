@@ -320,7 +320,13 @@ extension BridgeServiceXPCController {
           retryable: true
         )
       case .invalidPatch:
-        return .init(code: "invalid_patch", message: "The patch could not be parsed or applied.")
+        return .init(
+          code: "invalid_patch",
+          message:
+            "The patch syntax was invalid or its exact context did not match. Read the file, then "
+            + "use *** Update File with space/-/+ lines, *** Add File with + lines, or a standard "
+            + "---/+++ unified diff."
+        )
       case .notGitRepository:
         return .init(code: "not_git_repository", message: "The project is not a Git repository.")
       case .commandSessionNotFound:
