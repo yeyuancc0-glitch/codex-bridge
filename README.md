@@ -1,27 +1,27 @@
 # Codex Bridge
 
 <p align="center">
-  <b>English</b> | <a href="./README_zh.md">简体中文</a>
+  <b>简体中文</b> | <a href="./README_en.md">English</a>
 </p>
 
-Codex Bridge is a zero-cloud, personal self-hosted native bridge connecting **ChatGPT Web**, **Qwen Studio**, and other MCP clients directly to your local **Codex** installation on macOS. 
+Codex Bridge 是一个**零开发者云端服务器、个人自托管**的 macOS 本机桥接工具，将 **ChatGPT 网页版**、**通义千问桌面版 (Qwen Studio)** 以及各类 MCP 客户端直接连接到你本地的 **Codex** 执行环境。
 
-MCP clients inspect user-registered local projects, bind to Codex threads, submit tasks, and interact with your local development environment. A native macOS SwiftUI/AppKit application provides project management, configuration, real-time streaming conversations, and local approval controls; the long-running backend runs as a standalone user background Service (`CodexBridgeService`).
+MCP 客户端通过协议安全读取用户显式注册的本地项目、绑定 Codex 会话 Thread、提交任务并与本地环境交互。原生 macOS SwiftUI/AppKit 应用程序提供项目管理、配置、打字机式流式实时对话展示以及本机审批控制；长期运行的后端则作为独立的用户后台服务 (`CodexBridgeService`) 稳定运行。
 
-> **Development Status**: The V1 background Service architecture is fully implemented and verified. `CodexBridgeService` runs as a bundled LaunchAgent owning the MCP gateway, Secure Tunnel, loopback Streamable HTTP `/mcp` endpoint, Codex execution, independent Supervisor, and single SQLite store. The native macOS App is a pure Service client over versioned XPC; quitting or closing the App does not terminate the background Service or in-flight tasks.
+> **当前开发状态**：V1 后台 Service 架构已完整实现并经过全面验证。`CodexBridgeService` 作为随 App 打包的 LaunchAgent 后台进程运行，持有 MCP 网关、Secure Tunnel、回环 Streamable HTTP `/mcp` 端点、Codex 执行、独立 Supervisor 监督以及单 SQLite 存储。原生 macOS App 是通过版本化 XPC 连接的轻量客户端；关闭或退出 App 窗口不会终止后台 Service 或中断正在执行的本地任务。
 
 ---
 
-## Architecture Topology
+## 架构拓扑
 
 ```text
-ChatGPT Web ───► Secure MCP Tunnel ┐
-                                   ├─► CodexBridgeService ──► Local Codex Execution (app-server)
-Qwen Studio ───► Local HTTP `/mcp` ┘   (MCP Gateway)       └─► Independent Supervisor
-CodexBridge.app ──► Mach XPC ──────┘
+ChatGPT 网页版 ───► Secure MCP Tunnel ┐
+                                      ├─► CodexBridgeService ──► 本机 Codex 执行 (app-server)
+Qwen Studio ────► 本机 HTTP `/mcp` ───┘   (MCP Gateway 网关)   └─► 独立 Supervisor 监督
+CodexBridge.app ─► Mach XPC ──────────┘
 ```
 
-### Module Dependency Flow
+### 模块单向依赖流
 
 ```text
 CodexBridge.app → BridgeServiceAppShell → BridgeIPC → CodexBridgeService
@@ -31,62 +31,62 @@ BridgeServiceHost → BridgeServiceCore / BridgeServiceApplication / BridgeMCP
 BridgeCodexService → BridgeCodexRPC
 BridgeDirectCommand → BridgeServiceCore / BridgeProjects / BridgeSecurity
 BridgeMCP → Service API
-BridgeLegacyImport → BridgeServiceCore + legacy project model read boundary
+BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 ```
 
 ---
 
-## Key Capabilities
+## 核心特性
 
-### 1. Unified Multi-Client MCP Gateway
-- **ChatGPT Web**: Connects securely via the official OpenAI Secure MCP Tunnel.
-- **Qwen Studio & Local Clients**: Connects directly via a stable loopback Streamable HTTP endpoint (`/mcp`) with per-client credentials in Keychain and independent session lifecycle management.
-- **Exposure Modes**: Flexible per-client Read-Only and Full-Action tool exposure modes.
+### 1. 统一的多客户端 MCP 网关 (MCP Gateway)
+- **ChatGPT 网页版**：通过 OpenAI 官方 Secure MCP Tunnel 安全接入。
+- **Qwen Studio (通义千问桌面版) 及本地客户端**：通过稳定的本机回环 Streamable HTTP 端点 (`/mcp`) 直接接入，各客户端拥有独立 Keychain 凭证、独立的 Profile 与会话生命周期回收机制。
+- **灵活暴露模式**：每个 MCP 客户端均支持独立的只读 (Read-Only) 或完整操作 (Full-Action) 暴露模式。
 
-### 2. Native Codex Execution & Supervision
-- Direct communication with the local Codex instance via the official `codex app-server` stdio protocol.
-- Independent **Supervisor** session for transparent observation, critique, and progress monitoring without hijacking execution.
-- Real-time streaming conversation sync (`item/agentMessage/delta`, `item/reasoning/textDelta`, tool call progression) into the native desktop app.
+### 2. 本机 Codex 执行与透明监督
+- 通过官方 `codex app-server` stdio 协议与本机 Codex 实例通信。
+- 独立的 **Supervisor** 监督会话，提供透明的观察、评审和进度跟踪，且 Supervisor 异常绝不中断 Codex 主执行流程。
+- 实时对话流式同步（`item/agentMessage/delta`、`item/reasoning/textDelta`、工具调用状态流）至原生桌面客户端。
 
-### 3. Direct Workspace Actions & Controlled Git Commit
-- **Direct Process Sessions**: Managed process lifecycle per project, structured argv matching, `posix_spawn` process group isolation, and orphan process cleanup.
-- **Security Command Modes**: Configurable `denied`, `safe` (capability-validated built-in commands like `ls/find/grep/rg` with path containment), and `full` modes with custom whitelist/blacklist.
-- **File & Patch Operations**: Granular project file read/write, optimistic concurrency conflict detection (`revision_conflict`), unified diff / patch application, and sensitive credential detection.
-- **Controlled Git Commits**: `direct_git_commit` stages changes using isolated temporary index boundaries, prevents destructive actions (`amend`/`push`/history rewriting), and validates sensitive paths before commit.
+### 3. Direct 本地命令与受控 Git 提交
+- **Direct 进程会话**：每个项目管理独立活跃进程组，结构化 argv 精确/前缀匹配，`posix_spawn` 原子创建，支持孤儿进程自动清理与 LRU/TTL 淘汰。
+- **命令安全策略**：支持 `denied`（禁用）、`safe`（安全内置命令如 `ls/find/grep/rg` 且参数级路径受限）与 `full`（完整模式），配合用户白名单与黑名单。
+- **文件与 Patch 操作**：精确的项目文件读写、乐观锁版本冲突检测 (`revision_conflict`)、受限 unified diff / patch 语法应用与敏感密钥泄露拦截。
+- **受控 Git 提交**：`direct_git_commit` 使用隔离的临时 index 暂存变更，拒绝破坏性操作（`amend`/`push`/历史改写），并在暂存前严格检测敏感文件与密钥。
 
-### 4. Skill Action Contracts & Network Sandbox
-- Full YAML Frontmatter parsing (`SKILL.md`) exposing explicit action contracts.
-- Granular network declaration (`denied` runs under `sandbox-exec` network isolation; `unspecified` conservatively triggers local policy/approval).
-- Built-in adapters for skills like `agent-reach` for safe, read-only external lookups.
+### 4. Skill Action 契约与网络沙盒隔离
+- 完整 YAML Frontmatter 解析（`SKILL.md`），基于显式 Action 契约暴露能力。
+- 细粒度网络声明：声明 `denied` 的脚本自动在 `sandbox-exec` 禁网沙盒中运行；`unspecified` 按保守策略走项目权限与本机审批。
+- 内置 `agent-reach` 等只读 Skill 适配器，支持安全查询与外部检索。
 
-### 5. Native macOS Desktop Experience (SwiftUI + AppKit)
-- **Real-Time Streaming Conversation**: Typewriter-style live streaming, collapsible reasoning blocks, and structured tool-call cards.
-- **Local Approval Center**: Dangerous mutations and direct actions trigger desktop approvals with single-use payload digests, expiration, and cooldown protections.
-- **Embedded Workbench Browser**: Persistent `WKWebView` with login session reuse, native file download handling, and external URL scheme containment.
-
----
-
-## Security Boundaries & Product Principles
-
-- **Zero Cloud Footprint**: No developer-operated cloud servers, databases, account systems, or telemetry.
-- **No Secret Scraping**: Bridge never reads, logs, or exports Codex `auth.json`, tokens, session cookies, or Keychain secrets.
-- **Local-Only Approvals**: Neither ChatGPT, Qwen, nor the Supervisor can approve sensitive operations—authorization stays exclusively with the local Mac user.
-- **Workspace Containment**: MCP tools operate strictly on explicit relative paths within user-registered project roots (canonical path, device, and inode validated).
-- **Concurrency Safety**: At most one active workspace-write task per project at any time. Read-only tasks run concurrently.
+### 5. 原生 macOS 桌面体验 (SwiftUI + AppKit)
+- **实时流式对话**：打字机式实时渲染，支持可折叠思考链区块与结构化工具调用卡片。
+- **本机审批中心**：危险的文件修改与 Direct 操作触发桌面本机审批，支持一次性 payload digest 校验、过期时间与冷却防刷机制。
+- **工作台内嵌浏览器**：持久化 `WKWebView`，离开工作台支持会话保留复用，支持原生文件下载面板拦截与外部 URL 防跳出。
 
 ---
 
-## Getting Started
+## 安全边界与产品原则
 
-### Prerequisites
-- macOS 14.0 or later
-- Swift 6 / Xcode 16+ toolchain
-- Local [Codex CLI](https://github.com/openai/codex) with `app-server` support
-- Node.js (for MCP Inspector acceptance test gate)
+- **零云端存储**：无开发者运营的云端服务器、数据库、计费系统或远程源码同步。
+- **凭据绝不上报**：Bridge 绝不读取、记录、导出 Codex 的 `auth.json`、Token、登录 Cookie 或 Keychain 私钥。
+- **本机唯一授权**：ChatGPT、Qwen Studio 与 Supervisor 均无权批准危险操作——审批权限完全归属于本地 Mac 用户。
+- **工作区边界封闭**：MCP 工具严格限制在用户显式注册的项目目录内（经由规范绝对路径、设备 device 与 inode 严格校验），拒绝符号链接逃逸与越权访问。
+- **写并发互斥**：同一项目同一时间至多允许一个活跃的工作区写任务；只读任务支持完全并发。
 
-### Build and Run
+---
 
-1. **Development Build**:
+## 快速上手
+
+### 环境要求
+- macOS 14.0 或更高版本
+- Swift 6 / Xcode 16+ 编译工具链
+- 本地已安装支持 `app-server` 的 [Codex CLI](https://github.com/openai/codex)
+- Node.js（用于运行 MCP Inspector 验收门禁）
+
+### 构建与运行
+
+1. **本地开发构建**：
    ```bash
    Scripts/with-xcode.sh xcodebuild \
      -project CodexBridge.xcodeproj \
@@ -96,79 +96,79 @@ BridgeLegacyImport → BridgeServiceCore + legacy project model read boundary
      -derivedDataPath .build/Xcode \
      build CODE_SIGNING_ALLOWED=NO
    ```
-2. **First Launch**:
-   - Launch `CodexBridge.app`. It automatically registers and connects to the bundled `CodexBridgeService` LaunchAgent.
-   - Authorize background items in **macOS System Settings → General → Login Items & Extensions** if prompted.
-3. **Register Projects**:
-   - Add local project directories through the app. Project roots are captured with canonical path, device ID, and inode.
-4. **Connect MCP Clients**:
-   - **ChatGPT Web**: Configure Secure MCP Tunnel in the Connections tab, enter the Tunnel ID and Runtime Key (stored securely in Keychain), and connect via ChatGPT Developer Mode.
-   - **Qwen Studio**: Enable Qwen Studio in Connections, copy the local JSON configuration into Qwen Studio MCP settings, and start chatting.
+2. **首次启动**：
+   - 打开 `CodexBridge.app`，应用会自动注册并连接内置的 `CodexBridgeService` 后台 LaunchAgent。
+   - 若系统弹出提示，请在 **macOS 系统设置 → 通用 → 登录项与扩展** 中允许后台运行。
+3. **注册项目**：
+   - 在应用内点击添加本地项目目录。项目根目录将被记录并持续校验其设备号与 inode 标识。
+4. **接入 MCP 客户端**：
+   - **ChatGPT 网页版**：在“连接”页面配置 Secure MCP Tunnel，输入 Tunnel ID 与 Runtime Key（仅存入系统 Keychain），并在 ChatGPT 开发者模式中添加该 MCP 服务。
+   - **Qwen Studio**：在“连接”页面开启 Qwen Studio，复制本地配置 JSON 并填入 Qwen Studio MCP 设置中即可开始对话。
 
 ---
 
-## Repository Map
+## 代码仓库结构
 
 ```text
-App/                              Native macOS client entry point
-CodexBridge.xcodeproj/            Xcode project containing App and Service targets
+App/                              macOS 原生客户端入口
+CodexBridge.xcodeproj/            包含 App 与后台 Service Target 的 Xcode 工程
 Packages/BridgeCore/
-  Sources/BridgeServiceCore/      Single SQLite store: projects, tasks, settings, events
-  Sources/BridgeCodexRPC/         Verified Codex app-server protocol adapter
-  Sources/BridgeCodexService/     ExecutionManager, SupervisorManager, local approval, coordinator
-  Sources/BridgeServiceApplication/ Lightweight application service shared by MCP & XPC
-  Sources/BridgeMCP/              Bounded MCP server (ChatGPT & Qwen Studio profiles)
-  Sources/BridgeIPC/              Versioned, bounded XPC DTOs and client hub
-  Sources/BridgeServiceHost/      Background Service composition root, XPC/MCP/Tunnel lifecycle
-  Sources/BridgeServiceAppShell/  Pure UI client: projects, threads, status, approvals, workbench
-  Sources/BridgeDirectCommand/    Direct command execution, process sessions & controlled git
-  Sources/BridgeSkills/           Skill discovery, YAML frontmatter & action sandboxing
-  Sources/BridgeTunnel/           Secure MCP Tunnel lifecycle & health checks
-  Sources/BridgeLegacyImport/     One-time read-only legacy configuration migration
-  Sources/BridgeSecurity/         Path canonicalization, device/inode validation & secret filters
-  Sources/BridgeFiles/            Restricted project search and bounded reads
-  Sources/BridgeProjects/         Project registration models
-Scripts/                          Build, lint, test, tunnel verification & release scripts
-docs/                             Architecture specs, compatibility matrices, guides
+  Sources/BridgeServiceCore/      单 SQLite 数据存储：项目、任务、设置、事件
+  Sources/BridgeCodexRPC/         Codex app-server 协议适配与进程通信
+  Sources/BridgeCodexService/     ExecutionManager、SupervisorManager、本机审批与协调器
+  Sources/BridgeServiceApplication/ MCP 与 XPC 共用的轻量应用服务层
+  Sources/BridgeMCP/              受限 MCP 网关服务端（ChatGPT 与 Qwen Studio Profile）
+  Sources/BridgeIPC/              版本化、有界的 XPC 通信 DTO 与客户端 Hub
+  Sources/BridgeServiceHost/      后台 Service 组合根、XPC/MCP/Tunnel 生命周期管理
+  Sources/BridgeServiceAppShell/  纯 UI 客户端：项目管理、会话列表、状态展示、审批与工作台
+  Sources/BridgeDirectCommand/    Direct 命令执行会话、进程隔离与受控 Git 提交
+  Sources/BridgeSkills/           Skill 发现、YAML Frontmatter 解析与 Action 沙盒
+  Sources/BridgeTunnel/           Secure MCP Tunnel 进程生命周期与健康检查
+  Sources/BridgeLegacyImport/     一次性只读旧版本配置迁移
+  Sources/BridgeSecurity/         路径规范化、设备/Inode 校验与敏感密钥过滤
+  Sources/BridgeFiles/            受限项目文件检索与分页读取
+  Sources/BridgeProjects/         项目注册数据模型
+Scripts/                          构建、代码检查、测试、Tunnel 校验与发布脚本
+docs/                             架构规范、兼容性矩阵、开发者指南与交接文档
 ```
 
 ---
 
-## Development & Verification
+## 开发与测试验证
 
-All changes must pass the full test suite and strict linting:
+所有提交均需通过完整的测试套件与严格的代码格式检查：
 
 ```bash
-# Run package unit and integration tests
+# 运行 Swift Package 单元测试与集成测试
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 
-# Strict swift-format check
+# 严格 swift-format 代码风格检查
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive \
   Packages/BridgeCore/Sources Packages/BridgeCore/Tests App
 
-# Verified MCP Inspector gate
+# 官方 MCP Inspector 验收门禁
 Scripts/verify-mcp-inspector.sh
 
-# Tunnel helper compatibility check
+# Tunnel helper 兼容性与配置检查
 Scripts/test-tunnel-helper-config.sh
 ```
 
-**Verified Baseline**: 730+ tests across 28 test bundles with 0 failures under Swift 6 strict concurrency, plus clean MCP Inspector 2.1.0 and tunnel-client validation gates.
+**当前验证基线**：Swift 6 严格并发检查下，28 个测试包共 730+ 项测试全部通过 (0 失败)，并通过 MCP Inspector 2.1.0 与官方 tunnel-client 兼容门禁。
 
 ---
 
-## Documentation
+## 相关文档
 
-- [`docs/CHATGPT_DEVELOPER_MODE.md`](./docs/CHATGPT_DEVELOPER_MODE.md) — ChatGPT Developer Mode & Tunnel setup.
-- [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md) — Compatibility matrix for Codex, MCP, and macOS.
-- [`docs/DEPENDENCIES.md`](./docs/DEPENDENCIES.md) — Pinned dependency versions and license evidence.
-- [`docs/TUNNEL_CLIENT_INTEGRATION.md`](./docs/TUNNEL_CLIENT_INTEGRATION.md) — Tunnel helper integration contract.
-- [`docs/RELEASE.md`](./docs/RELEASE.md) — Packaging, signing, notarization, and distribution guide.
+- [`docs/CHATGPT_DEVELOPER_MODE.md`](./docs/CHATGPT_DEVELOPER_MODE.md) — ChatGPT 开发者模式与 Tunnel 配置指南。
+- [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md) — Codex、MCP 与 macOS 兼容性矩阵。
+- [`docs/DEPENDENCIES.md`](./docs/DEPENDENCIES.md) — 第三方依赖版本与开源协议清单。
+- [`docs/TUNNEL_CLIENT_INTEGRATION.md`](./docs/TUNNEL_CLIENT_INTEGRATION.md) — Tunnel helper 集成与密钥传递契约。
+- [`docs/RELEASE.md`](./docs/RELEASE.md) — 打包、签名、公证与发布流程。
 
 ---
 
-## License & Security
+## 开源协议与安全声明
 
-- **License**: Licensed under the [Apache License 2.0](./LICENSE). See [NOTICE](./NOTICE) for third-party acknowledgments.
-- **Privacy & Security**: See [PRIVACY.md](./PRIVACY.md) and [SECURITY.md](./SECURITY.md). Never export tokens, keys, cookies, or sensitive project source in issues or reports.
+- **开源协议**：本项目基于 [Apache License 2.0](./LICENSE) 开源。第三方组件声明参见 [NOTICE](./NOTICE)。
+- **隐私与安全**：详情参见 [PRIVACY.md](./PRIVACY.md) 与 [SECURITY.md](./SECURITY.md)。请勿在 Issue 或报告中附带任何 Token、密钥、Cookie 或敏感源码。
 
