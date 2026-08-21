@@ -48,6 +48,30 @@ final class ChatGPTWebViewDelegateTests: XCTestCase {
   }
 
   @MainActor
+  func testDownloadDestinationDoesNotDeleteAnExistingTarget() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("bridge-webview-download-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let target = root.appendingPathComponent("report.pdf")
+    try Data("old".utf8).write(to: target)
+
+    let temporary = try XCTUnwrap(ChatGPTWebView.Coordinator.temporaryDestination(for: target))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+    XCTAssertEqual(try Data(contentsOf: target), Data("old".utf8))
+
+    try Data("new".utf8).write(to: temporary)
+    try ChatGPTWebView.Coordinator.replaceDownloadedFile(
+      temporary: temporary,
+      target: target
+    )
+
+    XCTAssertEqual(try Data(contentsOf: target), Data("new".utf8))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
+  }
+
+  @MainActor
   func testDownloadResponsePolicyRecognizesAttachmentsAndUnsupportedContent() throws {
     let url = try XCTUnwrap(URL(string: "https://chatgpt.com/files/report.pdf"))
     let attachment = try XCTUnwrap(

@@ -28,6 +28,7 @@ public enum ServiceMCPClientRegistryError: Error, Equatable, Sendable {
 
 public actor ServiceMCPClientRegistry {
   public let authenticator: MCPClientCredentialAuthenticator
+  public let admission: MCPClientAdmissionGate
 
   private let settings: ServiceSettings
   private let secrets: ServiceMCPSecretProvider
@@ -43,7 +44,8 @@ public actor ServiceMCPClientRegistry {
     let registry = try ServiceMCPClientRegistry(
       settings: settings,
       secrets: secrets,
-      authenticator: MCPClientCredentialAuthenticator(credentials: credentials)
+      authenticator: MCPClientCredentialAuthenticator(credentials: credentials),
+      admission: MCPClientAdmissionGate()
     )
     try await registry.refreshCredentials()
     return registry
@@ -52,11 +54,13 @@ public actor ServiceMCPClientRegistry {
   private init(
     settings: ServiceSettings,
     secrets: ServiceMCPSecretProvider,
-    authenticator: MCPClientCredentialAuthenticator
+    authenticator: MCPClientCredentialAuthenticator,
+    admission: MCPClientAdmissionGate
   ) throws {
     self.settings = settings
     self.secrets = secrets
     self.authenticator = authenticator
+    self.admission = admission
   }
 
   public func profiles() async throws -> [ServiceMCPClientProfile] {
@@ -70,7 +74,8 @@ public actor ServiceMCPClientRegistry {
       ServiceMCPClientProfile(
         clientID: .qwenStudio,
         displayName: "Qwen Studio",
-        enabled: try await settings.qwenStudioEnabled(),
+        enabled: try await settings.qwenStudioEnabled()
+          && admission.isEnabled(.qwenStudio),
         exposureMode: Self.mcpMode(try await settings.qwenStudioExposureMode())
       ),
     ]
@@ -92,8 +97,34 @@ public actor ServiceMCPClientRegistry {
   }
 
   public func setQwenStudioEnabled(_ enabled: Bool) async throws {
-    try await settings.setQwenStudioEnabled(enabled)
-    try await refreshCredentials()
+    admission.revoke(.qwenStudio)
+    if enabled {
+      do {
+        try await installCredentials(qwenEnabled: false)
+        let credentials = try await credentials(qwenEnabled: true)
+        try await settings.setQwenStudioEnabled(true)
+        try authenticator.replaceCredentials(credentials)
+        admission.allow(.qwenStudio)
+      } catch {
+        try? await settings.setQwenStudioEnabled(false)
+        try? await installCredentials(qwenEnabled: false)
+        throw error
+      }
+      return
+    }
+
+    var firstError: (any Error)?
+    do {
+      try await settings.setQwenStudioEnabled(false)
+    } catch {
+      firstError = error
+    }
+    do {
+      try await installCredentials(qwenEnabled: false)
+    } catch {
+      if firstError == nil { firstError = error }
+    }
+    if let firstError { throw firstError }
   }
 
   public func setQwenStudioExposureMode(_ mode: MCPServiceExposureMode) async throws {
@@ -101,12 +132,26 @@ public actor ServiceMCPClientRegistry {
   }
 
   public func rotateQwenStudioCredential() async throws {
-    _ = try await secrets.rotate(clientID: .qwenStudio)
-    try await refreshCredentials()
+    admission.revoke(.qwenStudio)
+    let wasEnabled = try await settings.qwenStudioEnabled()
+    do {
+      try await installCredentials(qwenEnabled: false)
+      _ = try await secrets.rotate(clientID: .qwenStudio)
+      if wasEnabled {
+        try await installCredentials(qwenEnabled: true)
+        admission.allow(.qwenStudio)
+      }
+    } catch {
+      if wasEnabled {
+        try? await settings.setQwenStudioEnabled(false)
+      }
+      try? await installCredentials(qwenEnabled: false)
+      throw error
+    }
   }
 
   public func qwenStudioCredential() async throws -> String {
-    guard try await settings.qwenStudioEnabled() else {
+    guard try await settings.qwenStudioEnabled(), admission.isEnabled(.qwenStudio) else {
       throw ServiceMCPClientRegistryError.clientDisabled
     }
     return try await secrets.secret(for: .qwenStudio)
@@ -117,13 +162,27 @@ public actor ServiceMCPClientRegistry {
   }
 
   private func refreshCredentials() async throws {
+    let qwenEnabled = try await settings.qwenStudioEnabled()
+    try await installCredentials(qwenEnabled: qwenEnabled)
+    if qwenEnabled {
+      admission.allow(.qwenStudio)
+    } else {
+      admission.revoke(.qwenStudio)
+    }
+  }
+
+  private func installCredentials(qwenEnabled: Bool) async throws {
+    try authenticator.replaceCredentials(try await credentials(qwenEnabled: qwenEnabled))
+  }
+
+  private func credentials(qwenEnabled: Bool) async throws -> [MCPClientCredential] {
     var credentials = [
       try MCPClientCredential(
         clientID: .chatGPT,
         value: try await secrets.secret(for: .chatGPT)
       )
     ]
-    if try await settings.qwenStudioEnabled() {
+    if qwenEnabled {
       credentials.append(
         try MCPClientCredential(
           clientID: .qwenStudio,
@@ -131,7 +190,7 @@ public actor ServiceMCPClientRegistry {
         )
       )
     }
-    try authenticator.replaceCredentials(credentials)
+    return credentials
   }
 
   private static func mcpMode(_ mode: ServiceMCPExposureMode) -> MCPServiceExposureMode {

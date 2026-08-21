@@ -35,6 +35,7 @@ public actor MCPBridgeServer {
   private let makeServer: @Sendable (MCPClientID) async -> Server
   private let httpConfiguration: MCPHTTPConfiguration
   private let sessionLimits: MCPSessionRegistry.Limits
+  private let clientAdmission: MCPClientAdmissionGate?
   private var lifecycle = Lifecycle.stopped
   private var currentStopID: UUID?
   private var stopWaiters: [CheckedContinuation<Void, Never>] = []
@@ -45,7 +46,8 @@ public actor MCPBridgeServer {
     taskOperations: (any BridgeMCPTaskOperations)? = nil,
     projectOperations: (any BridgeMCPProjectOperations)? = nil,
     httpConfiguration: MCPHTTPConfiguration,
-    sessionLimits: MCPSessionRegistry.Limits = .init()
+    sessionLimits: MCPSessionRegistry.Limits = .init(),
+    clientAdmission: MCPClientAdmissionGate? = nil
   ) {
     precondition(!appVersion.isEmpty)
     let factory = MCPServerFactory(
@@ -57,6 +59,7 @@ public actor MCPBridgeServer {
     makeServer = { _ in await factory.makeServer() }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
+    self.clientAdmission = clientAdmission
   }
 
   public init(
@@ -64,7 +67,8 @@ public actor MCPBridgeServer {
     service: any BridgeMCPServiceAPI,
     exposureMode: MCPServiceExposureMode,
     httpConfiguration: MCPHTTPConfiguration,
-    sessionLimits: MCPSessionRegistry.Limits = .init()
+    sessionLimits: MCPSessionRegistry.Limits = .init(),
+    clientAdmission: MCPClientAdmissionGate? = nil
   ) {
     precondition(!appVersion.isEmpty)
     let factory = MCPServiceServerFactory(
@@ -75,6 +79,7 @@ public actor MCPBridgeServer {
     makeServer = { _ in await factory.makeServer() }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
+    self.clientAdmission = clientAdmission
   }
 
   public init(
@@ -82,7 +87,8 @@ public actor MCPBridgeServer {
     service: any BridgeMCPServiceAPI,
     exposureMode: @escaping @Sendable (MCPClientID) async -> MCPServiceExposureMode,
     httpConfiguration: MCPHTTPConfiguration,
-    sessionLimits: MCPSessionRegistry.Limits = .init()
+    sessionLimits: MCPSessionRegistry.Limits = .init(),
+    clientAdmission: MCPClientAdmissionGate? = nil
   ) {
     precondition(!appVersion.isEmpty)
     makeServer = { clientID in
@@ -96,6 +102,7 @@ public actor MCPBridgeServer {
     }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
+    self.clientAdmission = clientAdmission
   }
 
   public func start() async throws -> MCPBridgeEndpoint {
@@ -136,7 +143,8 @@ public actor MCPBridgeServer {
         },
         authenticatedStatelessServerFactory: { clientID in
           await makeServer(clientID)
-        }
+        },
+        clientAdmission: clientAdmission
       )
       await router.install(registry)
 

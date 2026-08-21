@@ -4,6 +4,26 @@ import BridgeSecurity
 import BridgeServiceCore
 import Foundation
 
+private struct DirectCommandApprovalPayload: Encodable {
+  let request: MCPDirectExecRequest
+  let resolvedArgv: [String]
+  let executableIdentity: DirectExecutableIdentity?
+}
+
+private struct DirectExecutableIdentity: Codable, Equatable, Sendable {
+  let device: UInt64
+  let inode: UInt64
+
+  static func read(atPath path: String) -> DirectExecutableIdentity? {
+    guard
+      let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+      let device = (attributes[.systemNumber] as? NSNumber)?.uint64Value,
+      let inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+    else { return nil }
+    return DirectExecutableIdentity(device: device, inode: inode)
+  }
+}
+
 extension BridgeServiceApplication {
   package func shutdownDirectOperations() async {
     await directCommands.cancelAll()
@@ -34,12 +54,17 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.contractRejected
     }
     let project = try await writableProject(request.projectID)
+    let resolvedExecutable = Self.resolvedExecutableForPolicy(
+      request: request,
+      project: project
+    )
     let resolution = commandPolicy.resolve(
       project: project,
       request: DirectCommandRequest(
         projectID: project.id,
         commandID: request.commandID,
         argv: request.argv,
+        resolvedExecutable: resolvedExecutable,
         workingDirectory: request.workingDirectory,
         requiresNetwork: requiresNetwork,
         isValidatedSkillScript: isValidatedSkillScript
@@ -48,23 +73,36 @@ extension BridgeServiceApplication {
     guard resolution.allowed else {
       throw BridgeMCPQueryError.commandDenied(Self.denialMessage(resolution.reason))
     }
-    try await requireDirectApproval(
-      project: project,
-      kind: resolution.requiresNetwork ? .network : .command,
-      summary: "Run \(request.commandID ?? resolution.argv.joined(separator: " "))",
-      payload: request,
-      clientRequestID: request.clientRequestID
-    )
     let workingDirectory = try Self.resolvedWorkingDirectory(
       project: project,
       relative: resolution.workingDirectory
     )
     let launchArgv = try Self.resolvedLaunchArgv(resolution.argv, project: project)
+    let approvalPayload = DirectCommandApprovalPayload(
+      request: request,
+      resolvedArgv: launchArgv,
+      executableIdentity: launchArgv.first.flatMap(DirectExecutableIdentity.read(atPath:))
+    )
+    try await requireDirectApproval(
+      project: project,
+      kind: resolution.requiresNetwork ? .network : .command,
+      summary: "Run \(launchArgv.joined(separator: " "))",
+      payload: approvalPayload,
+      clientRequestID: request.clientRequestID
+    )
+    guard
+      approvalPayload.resolvedArgv == launchArgv,
+      approvalPayload.executableIdentity
+        == launchArgv.first.flatMap(DirectExecutableIdentity.read(atPath:))
+    else {
+      throw BridgeMCPQueryError.pathChanged
+    }
     let sessionID = "dcmd-\(UUID().uuidString)"
     let lease = try await acquireDirectLease(
       project: project,
       owner: .directCommand(sessionID: sessionID)
     )
+    var launched = false
     do {
       _ = try await directCommands.launch(
         sessionID: sessionID,
@@ -78,15 +116,50 @@ extension BridgeServiceApplication {
           || project.accessPolicy.network == .denied,
         onExit: { await lease.release() }
       )
-      let yieldDeadline = ContinuousClock.now.advanced(by: .milliseconds(request.yieldTimeMS))
+      launched = true
+      let requestedYieldDeadline = ContinuousClock.now.advanced(
+        by: .milliseconds(request.yieldTimeMS)
+      )
+      let yieldDeadline = requestedYieldDeadline < deadline ? requestedYieldDeadline : deadline
       while ContinuousClock.now < yieldDeadline {
-        try? await Task.sleep(for: .milliseconds(20))
+        try Task.checkCancellation()
+        try await Task.sleep(for: .milliseconds(20))
       }
+      try Self.checkDeadline(deadline)
       return try await receipt(for: sessionID)
+    } catch is CancellationError {
+      if launched { await stopDirectSession(sessionID) }
+      await lease.release()
+      throw CancellationError()
+    } catch let error as BridgeMCPQueryError {
+      if launched { await stopDirectSession(sessionID) }
+      await lease.release()
+      throw error
     } catch {
+      if launched { await stopDirectSession(sessionID) }
       await lease.release()
       throw Self.publicCommandError(error)
     }
+  }
+
+  private func stopDirectSession(_ sessionID: String) async {
+    try? await directCommands.interrupt(sessionID: sessionID)
+  }
+
+  private static func resolvedExecutableForPolicy(
+    request: MCPDirectExecRequest,
+    project: ServiceProjectRecord
+  ) -> String? {
+    let requestedExecutable =
+      request.argv.first
+      ?? request.commandID.flatMap { commandID in
+        project.workspaceCommands.first(where: { $0.id == commandID })?.executable
+      }
+    guard let requestedExecutable, !requestedExecutable.isEmpty else { return nil }
+    guard let resolved = try? resolvedLaunchArgv([requestedExecutable], project: project).first,
+      resolved.hasPrefix("/")
+    else { return nil }
+    return resolved
   }
 
   public func serviceDirectReadCommand(

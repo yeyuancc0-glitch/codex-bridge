@@ -272,12 +272,136 @@ final class DirectApprovalFlowTests: XCTestCase {
       guard case .approvalRequired(let approvalID) = error else {
         return XCTFail("Expected approvalRequired, got \(error)")
       }
+      let pending = await application.approvals.pendingApprovals()
+      XCTAssertTrue(
+        pending.first(where: { $0.approvalID == approvalID })?.summary
+          .contains("/bin/echo deploying") == true
+      )
       let approved = await application.approvals.approve(approvalID: approvalID)
       XCTAssertTrue(approved)
     }
     let receipt = try await application.serviceDirectExecCommand(request, deadline: deadline)
     XCTAssertEqual(receipt.status, "ended")
     XCTAssertEqual(receipt.exitCode, 0)
+    await application.directCommands.cancelAll()
+  }
+
+  func testDirectExecDeadlineCancelsLaunchedProcessAndReleasesWorkspaceLease() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let script = fixture.root.appending(path: "Scripts/long-running.sh")
+    try FileManager.default.createDirectory(
+      at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nsleep 30\n".utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+
+    let task = Task {
+      try await application.serviceDirectExecCommand(
+        MCPDirectExecRequest(
+          projectID: fixture.project.id.rawValue,
+          argv: ["Scripts/long-running.sh"],
+          yieldTimeMS: 60_000,
+          timeoutMS: 60_000,
+          clientRequestID: "req-deadline-cleanup"
+        ),
+        deadline: ContinuousClock.now.advanced(by: .seconds(1))
+      )
+    }
+    let launchDeadline = Date().addingTimeInterval(5)
+    var sessionID: String?
+    while Date() < launchDeadline {
+      if let session = await application.directCommands.activeSession(projectID: fixture.project.id)
+      {
+        sessionID = session.sessionID
+        break
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertNotNil(sessionID)
+
+    do {
+      _ = try await task.value
+      XCTFail("Expected the service deadline to cancel the direct command")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .timeout)
+    }
+
+    let cleanupDeadline = Date().addingTimeInterval(5)
+    while Date() < cleanupDeadline {
+      guard await application.directCommands.isBusy(projectID: fixture.project.id) else { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let isBusy = await application.directCommands.isBusy(projectID: fixture.project.id)
+    XCTAssertFalse(isBusy)
+    if let sessionID {
+      let session = await application.directCommands.snapshot(sessionID: sessionID)
+      XCTAssertNotEqual(session?.status, "running")
+    }
+    await application.directCommands.cancelAll()
+  }
+
+  func testDirectExecCancellationDoesNotLeaveHiddenSessionOrLease() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let script = fixture.root.appending(path: "Scripts/long-running.sh")
+    try FileManager.default.createDirectory(
+      at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nsleep 30\n".utf8).write(to: script)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+
+    let task = Task {
+      try await application.serviceDirectExecCommand(
+        MCPDirectExecRequest(
+          projectID: fixture.project.id.rawValue,
+          argv: ["Scripts/long-running.sh"],
+          yieldTimeMS: 60_000,
+          timeoutMS: 60_000,
+          clientRequestID: "req-cancellation-cleanup"
+        ),
+        deadline: ContinuousClock.now.advanced(by: .seconds(30))
+      )
+    }
+    let launchDeadline = Date().addingTimeInterval(5)
+    var sessionID: String?
+    while Date() < launchDeadline {
+      if let session = await application.directCommands.activeSession(projectID: fixture.project.id)
+      {
+        sessionID = session.sessionID
+        break
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertNotNil(sessionID)
+    task.cancel()
+
+    do {
+      _ = try await task.value
+      XCTFail("Expected task cancellation")
+    } catch is CancellationError {
+      // The service must terminate the launched process before propagating cancellation.
+    }
+
+    let cleanupDeadline = Date().addingTimeInterval(5)
+    while Date() < cleanupDeadline {
+      guard await application.directCommands.isBusy(projectID: fixture.project.id) else { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let isBusy = await application.directCommands.isBusy(projectID: fixture.project.id)
+    XCTAssertFalse(isBusy)
+    if let sessionID {
+      let session = await application.directCommands.snapshot(sessionID: sessionID)
+      XCTAssertNotEqual(session?.status, "running")
+    }
     await application.directCommands.cancelAll()
   }
 

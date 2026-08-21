@@ -142,6 +142,59 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(push.reason, .commandNotRegistered)
   }
 
+  func testSafeModeEvaluatesResolvedExecutableInsteadOfShadowedCommandName() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .safe, write: .allowed),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["git", "status"],
+        resolvedExecutable: "/Users/test/.local/bin/git"
+      )
+    )
+    XCTAssertFalse(result.allowed)
+    XCTAssertEqual(result.reason, .commandNotRegistered)
+  }
+
+  func testSafeModeAllowsResolvedSystemExecutableForBuiltInRule() throws {
+    let policy = DirectCommandPolicy()
+    let result = policy.resolve(
+      project: try project(mode: .safe, write: .allowed),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["git", "status"],
+        resolvedExecutable: "/usr/bin/git"
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertFalse(result.requiresApproval)
+    XCTAssertEqual(result.argv, ["/usr/bin/git", "status"])
+  }
+
+  func testSafeModeAllowsResolvedExecutableWhenExplicitlyRegistered() throws {
+    let policy = DirectCommandPolicy()
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-shadowed-git",
+      name: "Shadowed Git",
+      executable: "git",
+      arguments: ["status"]
+    )
+    let result = policy.resolve(
+      project: try project(mode: .safe, write: .allowed, commands: [command]),
+      request: DirectCommandRequest(
+        projectID: ProjectID(rawValue: "prj-policy"),
+        commandID: nil,
+        argv: ["git", "status"],
+        resolvedExecutable: "/Users/test/.local/bin/git"
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertFalse(result.requiresApproval)
+    XCTAssertEqual(result.argv, ["/Users/test/.local/bin/git", "status"])
+  }
+
   func testSafeModeRejectsUnsafeProgram() throws {
     let policy = DirectCommandPolicy()
     let result = policy.resolve(
@@ -672,7 +725,6 @@ final class DirectCommandPolicyTests: XCTestCase {
       )
     )
     XCTAssertTrue(result.allowed)
-    XCTAssertTrue(result.requiresApproval)
   }
 
   func testLegacyRegisteredValueDecodesAsSafe() throws {

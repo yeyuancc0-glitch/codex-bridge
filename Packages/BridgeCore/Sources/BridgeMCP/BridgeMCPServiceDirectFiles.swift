@@ -141,6 +141,24 @@ public struct MCPDirectWriteReceipt: Codable, Equatable, Sendable {
   }
 }
 
+extension MCPDirectWriteReceipt {
+  func compactedForTransport() -> Self {
+    Self(
+      relativePath: relativePath,
+      operation: operation,
+      oldSHA256: oldSHA256,
+      newSHA256: newSHA256,
+      byteCount: byteCount,
+      boundedDiff: MCPBoundedDiff(
+        removedLines: [],
+        addedLines: [],
+        truncated: true,
+        byteCount: 0
+      )
+    )
+  }
+}
+
 public struct MCPDirectEditRequest: Codable, Equatable, Sendable {
   public let projectID: String
   public let relativePath: String
@@ -274,6 +292,15 @@ public struct MCPDirectPatchReceipt: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case operations
     case partialCommit = "partial_commit"
+  }
+}
+
+extension MCPDirectPatchReceipt {
+  func compactedForTransport() -> Self {
+    Self(
+      operations: operations.map { $0.compactedForTransport() },
+      partialCommit: partialCommit
+    )
   }
 }
 

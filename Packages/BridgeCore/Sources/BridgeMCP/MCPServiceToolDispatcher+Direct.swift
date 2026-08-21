@@ -40,7 +40,7 @@ extension MCPServiceToolDispatcher {
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceDirectWriteFile(request, deadline: deadline)
     }
-    return try resultEncoder.encode(ServiceDirectMutationOutput(receipt: receipt))
+    return try encodeMutationReceipt(receipt)
 
   }
 
@@ -52,7 +52,7 @@ extension MCPServiceToolDispatcher {
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceDirectEditFile(request, deadline: deadline)
     }
-    return try resultEncoder.encode(ServiceDirectMutationOutput(receipt: receipt))
+    return try encodeMutationReceipt(receipt)
 
   }
 
@@ -64,7 +64,7 @@ extension MCPServiceToolDispatcher {
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceDirectApplyPatch(request, deadline: deadline)
     }
-    return try resultEncoder.encode(ServiceDirectPatchOutput(receipt: receipt))
+    return try encodePatchReceipt(receipt)
 
   }
 
@@ -161,6 +161,28 @@ extension MCPServiceToolDispatcher {
       try await service.serviceDirectInterruptCommand(sessionID: sessionID, deadline: deadline)
     }
     return try resultEncoder.encode(ServiceDirectCommandOutput(output: output))
+  }
+
+  private func encodeMutationReceipt(_ receipt: MCPDirectWriteReceipt) throws
+    -> CallTool.Result
+  {
+    do {
+      return try resultEncoder.encode(ServiceDirectMutationOutput(receipt: receipt))
+    } catch is MCPToolResultEncodingError {
+      return try resultEncoder.encode(
+        ServiceDirectMutationOutput(receipt: receipt.compactedForTransport())
+      )
+    }
+  }
+
+  private func encodePatchReceipt(_ receipt: MCPDirectPatchReceipt) throws -> CallTool.Result {
+    do {
+      return try resultEncoder.encode(ServiceDirectPatchOutput(receipt: receipt))
+    } catch is MCPToolResultEncodingError {
+      return try resultEncoder.encode(
+        ServiceDirectPatchOutput(receipt: receipt.compactedForTransport())
+      )
+    }
   }
 
 }

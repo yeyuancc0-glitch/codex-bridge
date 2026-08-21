@@ -147,6 +147,53 @@ final class SimpleServiceStoreTests: XCTestCase {
     }
   }
 
+  func testClientRequestIdempotencyRejectsChangedExecutionPosture() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let project = try makeServiceProject(
+      id: "prj-idempotent-posture",
+      rootURL: fixture.firstProjectURL
+    )
+    try await store.insertProject(project)
+    let first = try makeServiceTask(
+      id: "tsk-idempotent-posture",
+      projectID: project.id,
+      clientRequestID: "request-posture",
+      permissionMode: .readOnly
+    )
+    _ = try await store.createTask(first, event: creationEvent(at: first.createdAt))
+
+    let changedPostures = [
+      try makeServiceTask(
+        id: "tsk-idempotent-access-mode",
+        projectID: project.id,
+        clientRequestID: "request-posture",
+        permissionMode: .readOnly,
+        accessMode: .fullAccess
+      ),
+      try makeServiceTask(
+        id: "tsk-idempotent-fast-mode",
+        projectID: project.id,
+        clientRequestID: "request-posture",
+        permissionMode: .readOnly,
+        fastMode: true
+      ),
+    ]
+
+    for changed in changedPostures {
+      do {
+        _ = try await store.createTask(changed, event: creationEvent(at: changed.createdAt))
+        XCTFail("Expected an idempotency conflict for \(changed.id.rawValue)")
+      } catch {
+        XCTAssertEqual(
+          error as? ServiceStoreError,
+          .idempotencyConflict(source: .chatGPT, clientRequestID: "request-posture")
+        )
+      }
+    }
+  }
+
   func testInvalidTaskTransitionRollsBackStateAndEvent() async throws {
     let fixture = try ServiceCoreFixture()
     defer { fixture.remove() }

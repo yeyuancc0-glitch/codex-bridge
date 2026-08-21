@@ -56,6 +56,12 @@ public struct ChatGPTWebView: NSViewRepresentable {
 
   public final class Coordinator: NSObject, WKDownloadDelegate, WKNavigationDelegate, WKUIDelegate {
     let parent: ChatGPTWebView
+    private var downloadDestinations: [ObjectIdentifier: DownloadDestination] = [:]
+
+    private struct DownloadDestination {
+      let target: URL
+      let temporary: URL
+    }
 
     init(_ parent: ChatGPTWebView) {
       self.parent = parent
@@ -138,7 +144,43 @@ public struct ChatGPTWebView: NSViewRepresentable {
       panel.nameFieldStringValue = Self.safeFilename(suggestedFilename)
       panel.canCreateDirectories = true
       guard await panel.begin() == .OK else { return nil }
-      return Self.prepareDestination(panel.url)
+      guard let target = panel.url,
+        let temporary = Self.temporaryDestination(for: target)
+      else {
+        return nil
+      }
+      downloadDestinations[ObjectIdentifier(download)] = DownloadDestination(
+        target: target,
+        temporary: temporary
+      )
+      return temporary
+    }
+
+    public func downloadDidFinish(_ download: WKDownload) {
+      guard let destination = downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
+      else {
+        return
+      }
+      do {
+        try Self.replaceDownloadedFile(
+          temporary: destination.temporary,
+          target: destination.target
+        )
+      } catch {
+        try? FileManager.default.removeItem(at: destination.temporary)
+      }
+    }
+
+    public func download(
+      _ download: WKDownload,
+      didFailWithError error: Error,
+      resumeData: Data?
+    ) {
+      guard let destination = downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
+      else {
+        return
+      }
+      try? FileManager.default.removeItem(at: destination.temporary)
     }
 
     public func webView(
@@ -176,14 +218,27 @@ public struct ChatGPTWebView: NSViewRepresentable {
       return navigationAction.shouldPerformDownload && (scheme == "blob" || scheme == "data")
     }
 
-    private static func prepareDestination(_ url: URL?) -> URL? {
-      guard let url else { return nil }
-      guard FileManager.default.fileExists(atPath: url.path) else { return url }
-      do {
-        try FileManager.default.removeItem(at: url)
-        return url
-      } catch {
-        return nil
+    static func temporaryDestination(for target: URL) -> URL? {
+      let directory = target.deletingLastPathComponent()
+      guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
+      let temporary = directory.appendingPathComponent(
+        ".codexbridge-download-\(UUID().uuidString.lowercased())",
+        isDirectory: false
+      )
+      return FileManager.default.fileExists(atPath: temporary.path) ? nil : temporary
+    }
+
+    static func replaceDownloadedFile(temporary: URL, target: URL) throws {
+      guard FileManager.default.fileExists(atPath: temporary.path) else { return }
+      if FileManager.default.fileExists(atPath: target.path) {
+        _ = try FileManager.default.replaceItemAt(
+          target,
+          withItemAt: temporary,
+          backupItemName: nil,
+          options: []
+        )
+      } else {
+        try FileManager.default.moveItem(at: temporary, to: target)
       }
     }
   }

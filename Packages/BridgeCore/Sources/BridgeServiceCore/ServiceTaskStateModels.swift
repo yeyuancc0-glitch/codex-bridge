@@ -301,6 +301,8 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
       && supervisorEffort == other.supervisorEffort
       && permissionMode == other.permissionMode
       && networkAllowed == other.networkAllowed
+      && accessMode == other.accessMode
+      && fastMode == other.fastMode
   }
 
   func hasSameImmutableFields(as other: ServiceTaskRecord) -> Bool {

@@ -243,6 +243,38 @@ final class MCPToolContractTests: XCTestCase {
     )
   }
 
+  func testLargeMutationReceiptCanFallBackToCompactTransportForm() throws {
+    let oversizedLine = String(repeating: "x", count: 150_000)
+    let receipt = MCPDirectWriteReceipt(
+      relativePath: "large.txt",
+      operation: "replace",
+      oldSHA256: String(repeating: "a", count: 64),
+      newSHA256: String(repeating: "b", count: 64),
+      byteCount: oversizedLine.utf8.count,
+      boundedDiff: MCPBoundedDiff(
+        removedLines: [],
+        addedLines: [oversizedLine],
+        truncated: false,
+        byteCount: oversizedLine.utf8.count
+      )
+    )
+    let encoder = MCPToolResultEncoder()
+
+    XCTAssertThrowsError(
+      try encoder.encode(ServiceDirectMutationOutput(receipt: receipt))
+    )
+
+    let compact = receipt.compactedForTransport()
+    let result = try encoder.encode(ServiceDirectMutationOutput(receipt: compact))
+
+    XCTAssertTrue(compact.boundedDiff.truncated)
+    XCTAssertTrue(compact.boundedDiff.addedLines.isEmpty)
+    XCTAssertLessThanOrEqual(
+      try JSONEncoder().encode(result).count,
+      MCPToolResultEncoder.productionMaximumBytes
+    )
+  }
+
   func testAdmissionEnforcesGlobalAndPerSessionLimits() async {
     let perSession = MCPToolAdmission()
     let firstSessionPermit = await perSession.acquire(sessionID: "session-a")

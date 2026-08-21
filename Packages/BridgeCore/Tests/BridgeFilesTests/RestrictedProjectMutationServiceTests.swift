@@ -143,6 +143,19 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
     XCTAssertEqual(result.boundedDiff.addedLines, ["func value() { return 2 }"])
   }
 
+  func testBoundedDiffCapsAStartedSingleLineAndMarksItTruncated() {
+    let old = "small"
+    let new = String(repeating: "x", count: BoundedDiffMaker.maximumBytes * 3)
+
+    let diff = BoundedDiffMaker.make(old: old, new: new)
+
+    XCTAssertTrue(diff.truncated)
+    XCTAssertLessThanOrEqual(diff.byteCount, BoundedDiffMaker.maximumBytes)
+    XCTAssertEqual(diff.addedLines.count, 1)
+    XCTAssertTrue(diff.addedLines[0].hasSuffix("…"))
+    XCTAssertLessThan(diff.addedLines[0].utf8.count, new.utf8.count)
+  }
+
   func testEditRejectsStaleSHAAndWrongReplacementCount() async throws {
     let fixture = try await writeFixture(self)
     let path = fixture.root.appending(path: "app.swift")

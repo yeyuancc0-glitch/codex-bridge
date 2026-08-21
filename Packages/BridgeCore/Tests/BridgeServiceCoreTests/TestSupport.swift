@@ -75,7 +75,9 @@ func makeServiceTask(
   supervisorStatus: ServiceSupervisorStatus = .disabled,
   permissionMode: ServicePermissionMode = .workspaceWrite,
   supervisorModel: String? = nil,
-  supervisorEffort: String? = nil
+  supervisorEffort: String? = nil,
+  accessMode: ServiceAccessMode = .requestApproval,
+  fastMode: Bool = false
 ) throws -> ServiceTaskRecord {
   try ServiceTaskRecord(
     id: TaskID(rawValue: id),
@@ -89,6 +91,8 @@ func makeServiceTask(
     supervisorEffort: supervisorEffort,
     permissionMode: permissionMode,
     networkAllowed: false,
+    accessMode: accessMode,
+    fastMode: fastMode,
     state: ServiceTaskState(
       status: status,
       supervisorStatus: supervisorStatus

@@ -188,7 +188,7 @@ final class MCPSessionLifecycleTests: XCTestCase {
     XCTAssertNotNil(initialized.headers[HTTPHeaderName.sessionID])
   }
 
-  func testSessionIsBoundToAuthenticatedClientAndMismatchClosesIt() async throws {
+  func testSessionIsBoundToAuthenticatedClientAndMismatchDoesNotCloseIt() async throws {
     let registry = authenticatedRegistry(port: 19_328)
     addTeardownBlock { await registry.stop() }
     let initialized = await registry.handle(
@@ -214,7 +214,39 @@ final class MCPSessionLifecycleTests: XCTestCase {
     )
     XCTAssertEqual(mismatch.statusCode, 403)
     let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
-    XCTAssertEqual(qwenCount, 0)
+    XCTAssertEqual(qwenCount, 1)
+  }
+
+  func testRevokedClientCannotRegisterPendingSession() async {
+    let gate = ServerFactoryGate()
+    let admission = MCPClientAdmissionGate(initiallyEnabled: [.qwenStudio])
+    let registry = MCPSessionRegistry(
+      boundPort: 19_335,
+      authenticatedServerFactory: { _, _ in
+        await gate.suspendFactory()
+        return Self.makeServer()
+      },
+      clientAdmission: admission
+    )
+    addTeardownBlock { await registry.stop() }
+
+    let request = initializeRequest(port: 19_335)
+    let initialization = Task {
+      await registry.handle(
+        AuthenticatedMCPRequest(
+          request: request,
+          clientID: .qwenStudio
+        )
+      )
+    }
+    await gate.waitUntilFactorySuspended()
+    admission.revoke(.qwenStudio)
+    await gate.resumeFactory()
+
+    let response = await initialization.value
+    XCTAssertEqual(response.statusCode, 503)
+    let activeQwenSessions = await registry.activeSessionCount(for: .qwenStudio)
+    XCTAssertEqual(activeQwenSessions, 0)
   }
 
   func testQwenReclaimsOldestSessionWithoutAffectingChatGPT() async throws {
@@ -318,7 +350,7 @@ final class MCPSessionLifecycleTests: XCTestCase {
     addTeardownBlock { await registry.stop() }
     let body = Data(
       """
-      {"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}
+      {"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
       """.utf8
     )
     let response = await registry.handle(
@@ -375,6 +407,267 @@ final class MCPSessionLifecycleTests: XCTestCase {
     )
 
     XCTAssertEqual(response.statusCode, 400)
+  }
+
+  func testModernRequestsRequireCompleteRoutingEnvelope() async throws {
+    let registry = authenticatedRegistry(port: 19_335)
+    addTeardownBlock { await registry.stop() }
+    let completeBody = Data(
+      """
+      {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bridge_status","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+      """.utf8
+    )
+    let headers = [
+      HTTPHeaderName.host: "127.0.0.1:19335",
+      HTTPHeaderName.accept: "application/json",
+      HTTPHeaderName.contentType: "application/json",
+      "Mcp-Protocol-Version": "2026-07-28",
+    ]
+
+    let missingMethod = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(method: "POST", headers: headers, body: completeBody, path: "/mcp"),
+        clientID: .qwenStudio
+      )
+    )
+    XCTAssertEqual(missingMethod.statusCode, 400)
+    XCTAssertEqual(try modernErrorCode(missingMethod), -32_020)
+
+    let missingName = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "POST",
+          headers: headers.merging(["Mcp-Method": "tools/call"]) { _, value in value },
+          body: completeBody,
+          path: "/mcp"
+        ),
+        clientID: .qwenStudio
+      )
+    )
+    XCTAssertEqual(missingName.statusCode, 400)
+    XCTAssertEqual(try modernErrorCode(missingName), -32_020)
+
+    let missingMetadata = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "POST",
+          headers: headers.merging([
+            "Mcp-Method": "tools/list"
+          ]) { _, value in value },
+          body: Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.utf8),
+          path: "/mcp"
+        ),
+        clientID: .qwenStudio
+      )
+    )
+    XCTAssertEqual(missingMetadata.statusCode, 400)
+    XCTAssertEqual(try modernErrorCode(missingMetadata), -32_600)
+  }
+
+  func testModernProtocolVersionMustMatchRequestMetadata() async throws {
+    let registry = authenticatedRegistry(port: 19_336)
+    addTeardownBlock { await registry.stop() }
+    let body = Data(
+      """
+      {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18","io.modelcontextprotocol/clientCapabilities":{}}}}
+      """.utf8
+    )
+    let response = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "POST",
+          headers: [
+            HTTPHeaderName.host: "127.0.0.1:19336",
+            HTTPHeaderName.accept: "application/json",
+            HTTPHeaderName.contentType: "application/json",
+            "Mcp-Protocol-Version": "2026-07-28",
+            "Mcp-Method": "tools/list",
+          ],
+          body: body,
+          path: "/mcp"
+        ),
+        clientID: .qwenStudio
+      )
+    )
+
+    XCTAssertEqual(response.statusCode, 400)
+    XCTAssertEqual(try modernErrorCode(response), -32_020)
+  }
+
+  func testModernToolsListReturnsRequestScopedServerMetadata() async throws {
+    let registry = MCPSessionRegistry(
+      boundPort: 19_337,
+      authenticatedServerFactory: { _, _ in Self.makeServer() },
+      authenticatedStatelessServerFactory: { _ in
+        let server = Server(
+          name: "codex-bridge-modern-test",
+          version: "0.1.0",
+          capabilities: .init(tools: .init()),
+          configuration: .default
+        )
+        await server.withMethodHandler(ListTools.self) { _ in
+          ListTools.Result(tools: [])
+        }
+        return server
+      }
+    )
+    addTeardownBlock { await registry.stop() }
+    let body = Data(
+      """
+      {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+      """.utf8
+    )
+    let request = HTTPRequest(
+      method: "POST",
+      headers: [
+        HTTPHeaderName.host: "127.0.0.1:19337",
+        HTTPHeaderName.accept: "application/json, text/event-stream",
+        HTTPHeaderName.contentType: "application/json",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+      ],
+      body: body,
+      path: "/mcp"
+    )
+    let response = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: request,
+        clientID: .qwenStudio
+      )
+    )
+
+    XCTAssertEqual(response.statusCode, 200)
+    let data = try XCTUnwrap(response.bodyData)
+    let object = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    let result = try XCTUnwrap(object["result"] as? [String: Any])
+    let metadata = try XCTUnwrap(result["_meta"] as? [String: Any])
+    XCTAssertNotNil(metadata["io.modelcontextprotocol/serverInfo"])
+
+    let jsonOnly = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: request.method,
+          headers: request.headers.merging([
+            HTTPHeaderName.accept: "application/json"
+          ]) { _, replacement in replacement },
+          body: request.body,
+          path: request.path
+        ),
+        clientID: .qwenStudio
+      )
+    )
+    XCTAssertEqual(jsonOnly.statusCode, 406)
+  }
+
+  func testTerminatingClientStopsActiveModernServer() async throws {
+    let handlerStarted = expectation(description: "modern tool handler started")
+    let admission = MCPClientAdmissionGate(initiallyEnabled: [.qwenStudio])
+    let registry = MCPSessionRegistry(
+      boundPort: 19_339,
+      authenticatedServerFactory: { _, _ in Self.makeServer() },
+      authenticatedStatelessServerFactory: { _ in
+        let server = Server(
+          name: "codex-bridge-modern-termination-test",
+          version: "0.1.0",
+          capabilities: .init(tools: .init()),
+          configuration: .default
+        )
+        await server.withMethodHandler(CallTool.self) { _ in
+          handlerStarted.fulfill()
+          try? await Task.sleep(for: .seconds(2))
+          return CallTool.Result(content: [.text(text: "late", annotations: nil, _meta: nil)])
+        }
+        return server
+      },
+      clientAdmission: admission
+    )
+    addTeardownBlock { await registry.stop() }
+    let request = HTTPRequest(
+      method: "POST",
+      headers: [
+        HTTPHeaderName.host: "127.0.0.1:19339",
+        HTTPHeaderName.accept: "application/json, text/event-stream",
+        HTTPHeaderName.contentType: "application/json",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "slow_tool",
+      ],
+      body: Data(
+        """
+        {"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"slow_tool","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+        """.utf8
+      ),
+      path: "/mcp"
+    )
+    let call = Task {
+      await registry.handle(
+        AuthenticatedMCPRequest(request: request, clientID: .qwenStudio)
+      )
+    }
+
+    await fulfillment(of: [handlerStarted], timeout: 1)
+    admission.revoke(.qwenStudio)
+    await registry.terminateSessions(for: .qwenStudio)
+    let response = await call.value
+    XCTAssertEqual(response.statusCode, 500)
+    let activeModernRequests = await registry.activeStatelessServerCount
+    XCTAssertEqual(activeModernRequests, 0)
+    let activeQwenSessions = await registry.activeSessionCount(for: .qwenStudio)
+    XCTAssertEqual(activeQwenSessions, 0)
+  }
+
+  func testCancellingModernRequestDisconnectsItsTransport() async throws {
+    let handlerStarted = expectation(description: "modern tool handler started")
+    let registry = MCPSessionRegistry(
+      boundPort: 19_338,
+      authenticatedServerFactory: { _, _ in Self.makeServer() },
+      authenticatedStatelessServerFactory: { _ in
+        let server = Server(
+          name: "codex-bridge-modern-cancellation-test",
+          version: "0.1.0",
+          capabilities: .init(tools: .init()),
+          configuration: .default
+        )
+        await server.withMethodHandler(CallTool.self) { _ in
+          handlerStarted.fulfill()
+          try? await Task.sleep(for: .seconds(2))
+          return CallTool.Result(content: [.text(text: "late", annotations: nil, _meta: nil)])
+        }
+        return server
+      }
+    )
+    addTeardownBlock { await registry.stop() }
+    let request = HTTPRequest(
+      method: "POST",
+      headers: [
+        HTTPHeaderName.host: "127.0.0.1:19338",
+        HTTPHeaderName.accept: "application/json, text/event-stream",
+        HTTPHeaderName.contentType: "application/json",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "slow_tool",
+      ],
+      body: Data(
+        """
+        {"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"slow_tool","arguments":{},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}
+        """.utf8
+      ),
+      path: "/mcp"
+    )
+    let call = Task {
+      await registry.handle(
+        AuthenticatedMCPRequest(request: request, clientID: .qwenStudio)
+      )
+    }
+
+    await fulfillment(of: [handlerStarted], timeout: 1)
+    call.cancel()
+    let response = await call.value
+    XCTAssertEqual(response.statusCode, 500)
+    let activeModernRequests = await registry.activeStatelessServerCount
+    XCTAssertEqual(activeModernRequests, 0)
   }
 
   func testRemoteOpenAIOriginIsAllowedOnlyForChatGPTCredential() async {
@@ -446,6 +739,15 @@ final class MCPSessionLifecycleTests: XCTestCase {
       body: body,
       path: "/mcp/test"
     )
+  }
+
+  private func modernErrorCode(_ response: HTTPResponse) throws -> Int {
+    let data = try XCTUnwrap(response.bodyData)
+    let object = try XCTUnwrap(
+      try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    let error = try XCTUnwrap(object["error"] as? [String: Any])
+    return try XCTUnwrap(error["code"] as? Int)
   }
 }
 

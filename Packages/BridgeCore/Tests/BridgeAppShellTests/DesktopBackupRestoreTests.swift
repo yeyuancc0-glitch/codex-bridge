@@ -313,6 +313,23 @@ final class DesktopBackupRestoreTests: XCTestCase {
     )
   }
 
+  func testRollbackSwapReportsDescriptorFailures() {
+    let report = DesktopRestoreCoordinator.rollbackSwap(
+      dataRoot: -1,
+      retained: -1,
+      staged: -1,
+      movedToLive: [],
+      movedToRetained: []
+    )
+
+    XCTAssertFalse(report.succeeded)
+    XCTAssertTrue(
+      report.failures.contains {
+        $0.operation == "fsync" && $0.errno == EBADF
+      }
+    )
+  }
+
   // MARK: - Sensitive content and permissions
 
   func testSnapshotAndPackageExcludeSensitiveFiles() throws {

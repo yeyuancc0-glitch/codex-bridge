@@ -18,6 +18,12 @@ public struct DirectCommandRequest: Equatable, Sendable {
   public let projectID: ProjectID
   public let commandID: String?
   public let argv: [String]
+  /// The executable resolved by the service before policy evaluation.
+  ///
+  /// `argv` remains the caller's representation so registered-command matching
+  /// stays source-compatible, while the policy evaluates the executable that
+  /// will actually be launched.
+  public let resolvedExecutable: String?
   public let workingDirectory: String?
   public let requiresNetwork: Bool
   public let isValidatedSkillScript: Bool
@@ -26,6 +32,7 @@ public struct DirectCommandRequest: Equatable, Sendable {
     projectID: ProjectID,
     commandID: String?,
     argv: [String],
+    resolvedExecutable: String? = nil,
     workingDirectory: String? = nil,
     requiresNetwork: Bool = false,
     isValidatedSkillScript: Bool = false
@@ -33,6 +40,7 @@ public struct DirectCommandRequest: Equatable, Sendable {
     self.projectID = projectID
     self.commandID = commandID
     self.argv = argv
+    self.resolvedExecutable = resolvedExecutable
     self.workingDirectory = workingDirectory
     self.requiresNetwork = requiresNetwork
     self.isValidatedSkillScript = isValidatedSkillScript
@@ -476,11 +484,25 @@ public struct DirectCommandPolicy: Sendable {
   }
 
   private func matchesSafeRule(_ rule: SafeRule, argv: [String]) -> Bool {
-    guard let executable = argv.first, executable == rule.executable else { return false }
+    guard let executable = argv.first,
+      safeRuleExecutableMatches(rule.executable, resolvedExecutable: executable)
+    else { return false }
     guard !rule.argumentsPrefix.isEmpty else { return true }
     let arguments = Array(argv.dropFirst())
     guard arguments.count >= rule.argumentsPrefix.count else { return false }
     return Array(arguments.prefix(rule.argumentsPrefix.count)) == rule.argumentsPrefix
+  }
+
+  private func safeRuleExecutableMatches(
+    _ ruleExecutable: String,
+    resolvedExecutable: String
+  ) -> Bool {
+    if resolvedExecutable == ruleExecutable { return true }
+    guard resolvedExecutable.hasPrefix("/") else { return false }
+    let url = URL(fileURLWithPath: resolvedExecutable).standardizedFileURL
+    let trustedSystemDirectories: Set<String> = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    return url.lastPathComponent == ruleExecutable
+      && trustedSystemDirectories.contains(url.deletingLastPathComponent().path)
   }
 
   private func matchesRegistered(
@@ -525,7 +547,8 @@ public struct DirectCommandPolicy: Sendable {
     guard project.directCommandMode != .denied else {
       return .denied(.commandModeDenied)
     }
-    let executable = request.argv.first ?? ""
+    let requestedExecutable = request.argv.first ?? ""
+    let executable = request.resolvedExecutable ?? requestedExecutable
     if request.commandID == nil {
       guard !executable.isEmpty else { return .denied(.invalidArguments) }
     }
@@ -561,11 +584,18 @@ public struct DirectCommandPolicy: Sendable {
       effectiveArgv = request.argv
     }
 
-    if isBlacklisted(rules: project.commandBlacklist, argv: effectiveArgv) {
+    let policyArgv: [String]
+    if let resolvedExecutable = request.resolvedExecutable, !effectiveArgv.isEmpty {
+      policyArgv = [resolvedExecutable] + effectiveArgv.dropFirst()
+    } else {
+      policyArgv = effectiveArgv
+    }
+
+    if isBlacklisted(rules: project.commandBlacklist, argv: policyArgv) {
       return .denied(.blacklisted)
     }
 
-    let matchedBuiltInRule = builtInSafeRules.first { matchesSafeRule($0, argv: effectiveArgv) }
+    let matchedBuiltInRule = builtInSafeRules.first { matchesSafeRule($0, argv: policyArgv) }
     switch project.directCommandMode {
     case .denied:
       return .denied(.commandModeDenied)
@@ -579,7 +609,7 @@ public struct DirectCommandPolicy: Sendable {
       guard allowed else { return .denied(.commandNotRegistered) }
       if matchedBuiltInRule != nil,
         !safeBuiltInInvocation(
-          effectiveArgv,
+          policyArgv,
           projectRoot: project.root.canonicalPath,
           workingDirectory: matched?.workingDirectory ?? request.workingDirectory
         )
@@ -606,7 +636,7 @@ public struct DirectCommandPolicy: Sendable {
     return DirectCommandResolution(
       allowed: true,
       requiresApproval: requiresApproval,
-      argv: effectiveArgv,
+      argv: policyArgv,
       workingDirectory: matched?.workingDirectory ?? request.workingDirectory,
       requiresNetwork: needsNetwork,
       reason: nil

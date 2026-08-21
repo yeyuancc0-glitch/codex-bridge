@@ -226,6 +226,18 @@ enum DesktopRestoreOutcome: Equatable, Sendable {
   case failed(DesktopRestoreResult)
 }
 
+struct DesktopRestoreRollbackFailure: Equatable, Sendable {
+  let operation: String
+  let path: String
+  let errno: Int32?
+}
+
+struct DesktopRestoreRollbackReport: Equatable, Sendable {
+  let failures: [DesktopRestoreRollbackFailure]
+
+  var succeeded: Bool { failures.isEmpty }
+}
+
 /// Restore coordinator. The live databases are never touched until the next
 /// launch, when `performPendingRestoreIfNeeded` runs before any store opens.
 enum DesktopRestoreCoordinator {
@@ -378,12 +390,9 @@ enum DesktopRestoreCoordinator {
     let retainedDirectoryURL = retainedRoot(dataDirectoryURL: dataDirectoryURL)
       .appendingPathComponent(marker.retainedDirectoryName, isDirectory: true)
 
-    let stagedIntact: Bool
-    if (try? openDirectory(stagedDirectoryURL, requirePrivate: true)) != nil {
-      stagedIntact = (try? packageDigest(of: stagedDirectoryURL)) == marker.packageDigest
-    } else {
-      stagedIntact = false
-    }
+    let stagedIntact =
+      directoryExists(stagedDirectoryURL)
+      && (try? packageDigest(of: stagedDirectoryURL)) == marker.packageDigest
 
     guard stagedIntact else {
       return try recoverInterruptedRestore(
@@ -403,37 +412,47 @@ enum DesktopRestoreCoordinator {
     let staged = try openDirectory(stagedDirectoryURL, requirePrivate: true)
     defer { Darwin.close(staged) }
 
+    let originalPackageDigest = try livePackageDigest(from: dataRoot)
     var movedToRetained: [String] = []
     var movedToLive: [String] = []
     do {
       for name in DesktopBackupSnapshotProvider.allowedNames {
-        try moveWithCompanions(name: name, from: dataRoot, to: retained)
         movedToRetained.append(name)
+        try moveWithCompanions(name: name, from: dataRoot, to: retained)
       }
       for name in DesktopBackupSnapshotProvider.allowedNames {
+        movedToLive.append(name)
         guard renameat(staged, name, dataRoot, name) == 0 else {
           throw DesktopBackupRestoreError.stagingUnavailable
         }
-        movedToLive.append(name)
       }
       guard fsync(dataRoot) == 0, fsync(staged) == 0, fsync(retained) == 0 else {
         throw DesktopBackupRestoreError.backupUnavailable
       }
     } catch {
-      rollbackSwap(
+      let rollback = rollbackSwap(
         dataRoot: dataRoot,
         retained: retained,
         staged: staged,
         movedToLive: movedToLive,
         movedToRetained: movedToRetained
       )
-      _ = try? writeResult(
+      let verificationFailures = verifyOriginalLiveState(
+        dataRoot: dataRoot,
+        dataDirectoryURL: dataDirectoryURL,
+        expectedPackageDigest: originalPackageDigest
+      )
+      let rollbackFailures = rollback.failures + verificationFailures
+      try? writeResult(
         DesktopRestoreResult(
           schemaVersion: DesktopRestoreResult.schemaVersion,
           operationID: marker.operationID,
           createdAt: now,
           status: .failed,
-          message: "数据库交换未完成，已保留原有数据。",
+          message: rollbackMessage(
+            prefix: "数据库交换未完成，已尝试保留原有数据。",
+            failures: rollbackFailures
+          ),
           databaseSchemaVersions: [:]
         ),
         to: dataRoot
@@ -444,20 +463,29 @@ enum DesktopRestoreCoordinator {
     do {
       try validateLiveStores(dataDirectoryURL: dataDirectoryURL)
     } catch {
-      rollbackSwap(
+      let rollback = rollbackSwap(
         dataRoot: dataRoot,
         retained: retained,
         staged: staged,
         movedToLive: movedToLive,
         movedToRetained: movedToRetained
       )
-      _ = try? writeResult(
+      let verificationFailures = verifyOriginalLiveState(
+        dataRoot: dataRoot,
+        dataDirectoryURL: dataDirectoryURL,
+        expectedPackageDigest: originalPackageDigest
+      )
+      let rollbackFailures = rollback.failures + verificationFailures
+      try? writeResult(
         DesktopRestoreResult(
           schemaVersion: DesktopRestoreResult.schemaVersion,
           operationID: marker.operationID,
           createdAt: now,
           status: .failed,
-          message: "恢复后的数据库未通过完整性校验，已回滚并使用原有数据。",
+          message: rollbackMessage(
+            prefix: "恢复后的数据库未通过完整性校验，已尝试回滚。",
+            failures: rollbackFailures
+          ),
           databaseSchemaVersions: [:]
         ),
         to: dataRoot
@@ -499,19 +527,42 @@ enum DesktopRestoreCoordinator {
     retainedDirectoryURL: URL,
     now: Date
   ) throws -> DesktopRestoreOutcome {
-    let retainedExists = (try? openDirectory(retainedDirectoryURL, requirePrivate: true)) != nil
+    let retainedExists = directoryExists(retainedDirectoryURL)
     if retainedExists {
       let retained = try openDirectory(retainedDirectoryURL, requirePrivate: true)
       defer { Darwin.close(retained) }
+      var failures: [DesktopRestoreRollbackFailure] = []
       for name in DesktopBackupSnapshotProvider.allowedNames {
         for candidate in [name, name + "-wal", name + "-shm"] {
           var metadata = stat()
           if fstatat(retained, candidate, &metadata, 0) == 0 {
-            _ = renameat(retained, candidate, dataRoot, candidate)
+            guard renameat(retained, candidate, dataRoot, candidate) == 0 else {
+              failures.append(
+                DesktopRestoreRollbackFailure(
+                  operation: "rename",
+                  path: candidate,
+                  errno: errno
+                )
+              )
+              continue
+            }
+          } else if errno != ENOENT {
+            failures.append(
+              DesktopRestoreRollbackFailure(
+                operation: "stat",
+                path: candidate,
+                errno: errno
+              )
+            )
           }
         }
       }
-      guard fsync(dataRoot) == 0 else {
+      if fsync(dataRoot) != 0 {
+        failures.append(
+          DesktopRestoreRollbackFailure(operation: "fsync", path: "data-root", errno: errno)
+        )
+      }
+      guard failures.isEmpty else {
         throw DesktopBackupRestoreError.restoreIncomplete
       }
     }
@@ -651,6 +702,29 @@ enum DesktopRestoreCoordinator {
     return digest(Data(lines.joined(separator: "\n").utf8))
   }
 
+  private static func livePackageDigest(from directory: Int32) throws -> String {
+    var lines: [String] = []
+    for name in DesktopBackupSnapshotProvider.allowedNames {
+      let descriptor = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+      guard descriptor >= 0 else { throw DesktopBackupRestoreError.invalidSnapshot }
+      defer { Darwin.close(descriptor) }
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0,
+        (metadata.st_mode & S_IFMT) == S_IFREG,
+        metadata.st_uid == geteuid(),
+        metadata.st_nlink == 1
+      else {
+        throw DesktopBackupRestoreError.invalidSnapshot
+      }
+      let bytes = try readAll(
+        descriptor,
+        maximumBytes: DesktopBackupPackage.maximumEntryBytes
+      )
+      lines.append("\(name):\(bytes.count):\(digest(bytes))")
+    }
+    return digest(Data(lines.joined(separator: "\n").utf8))
+  }
+
   // MARK: - Marker and result persistence
 
   private static func writeMarker(_ marker: DesktopRestoreMarker, to dataRoot: Int32) throws {
@@ -708,28 +782,117 @@ enum DesktopRestoreCoordinator {
     }
   }
 
-  private static func rollbackSwap(
+  static func rollbackSwap(
     dataRoot: Int32,
     retained: Int32,
     staged: Int32,
     movedToLive: [String],
     movedToRetained: [String]
-  ) {
+  ) -> DesktopRestoreRollbackReport {
+    var failures: [DesktopRestoreRollbackFailure] = []
     for name in movedToLive.reversed() {
-      _ = renameat(dataRoot, name, staged, name)
+      recordRename(
+        from: dataRoot,
+        name: name,
+        to: staged,
+        failures: &failures
+      )
       for suffix in ["-wal", "-shm"] {
-        _ = renameat(dataRoot, name + suffix, staged, name + suffix)
+        recordRename(
+          from: dataRoot,
+          name: name + suffix,
+          to: staged,
+          failures: &failures
+        )
       }
     }
     for name in movedToRetained.reversed() {
-      _ = renameat(retained, name, dataRoot, name)
+      recordRename(
+        from: retained,
+        name: name,
+        to: dataRoot,
+        failures: &failures
+      )
       for suffix in ["-wal", "-shm"] {
-        _ = renameat(retained, name + suffix, dataRoot, name + suffix)
+        recordRename(
+          from: retained,
+          name: name + suffix,
+          to: dataRoot,
+          failures: &failures
+        )
       }
     }
-    _ = fsync(dataRoot)
-    _ = fsync(staged)
-    _ = fsync(retained)
+    recordFsync(dataRoot, path: "data-root", failures: &failures)
+    recordFsync(staged, path: "staging", failures: &failures)
+    recordFsync(retained, path: "retained", failures: &failures)
+    return DesktopRestoreRollbackReport(failures: failures)
+  }
+
+  private static func recordRename(
+    from source: Int32,
+    name: String,
+    to destination: Int32,
+    failures: inout [DesktopRestoreRollbackFailure]
+  ) {
+    if renameat(source, name, destination, name) != 0 {
+      let code = errno
+      if code != ENOENT {
+        failures.append(
+          DesktopRestoreRollbackFailure(operation: "rename", path: name, errno: code)
+        )
+      }
+    }
+  }
+
+  private static func recordFsync(
+    _ descriptor: Int32,
+    path: String,
+    failures: inout [DesktopRestoreRollbackFailure]
+  ) {
+    if fsync(descriptor) != 0 {
+      failures.append(
+        DesktopRestoreRollbackFailure(operation: "fsync", path: path, errno: errno)
+      )
+    }
+  }
+
+  private static func verifyOriginalLiveState(
+    dataRoot: Int32,
+    dataDirectoryURL: URL,
+    expectedPackageDigest: String
+  ) -> [DesktopRestoreRollbackFailure] {
+    var failures: [DesktopRestoreRollbackFailure] = []
+    do {
+      if try livePackageDigest(from: dataRoot) != expectedPackageDigest {
+        failures.append(
+          DesktopRestoreRollbackFailure(operation: "verify", path: "file-digest", errno: nil)
+        )
+      }
+    } catch {
+      failures.append(
+        DesktopRestoreRollbackFailure(operation: "verify", path: "file-set", errno: nil)
+      )
+    }
+    do {
+      try validateLiveStores(dataDirectoryURL: dataDirectoryURL)
+    } catch {
+      failures.append(
+        DesktopRestoreRollbackFailure(operation: "verify", path: "sqlite", errno: nil)
+      )
+    }
+    return failures
+  }
+
+  private static func rollbackMessage(
+    prefix: String,
+    failures: [DesktopRestoreRollbackFailure]
+  ) -> String {
+    guard !failures.isEmpty else { return prefix }
+    let details = failures.map { failure in
+      let code = failure.errno.map(String.init) ?? "n/a"
+      return "\(failure.operation):\(failure.path) errno=\(code)"
+    }.joined(separator: ",")
+    return "\(prefix) 回滚验证失败：\(details)"
   }
 
   private static func removeRetainedDirectory(_ name: String, parent: Int32) {
@@ -759,9 +922,30 @@ enum DesktopRestoreCoordinator {
     } catch {
       throw DesktopBackupRestoreError.stagingUnavailable
     }
-    guard (try? openDirectory(url, requirePrivate: true)) != nil else {
+    do {
+      try withOpenedDirectory(url, requirePrivate: true) { _ in }
+    } catch {
       throw DesktopBackupRestoreError.stagingUnavailable
     }
+  }
+
+  private static func directoryExists(_ url: URL) -> Bool {
+    do {
+      try withOpenedDirectory(url, requirePrivate: true) { _ in }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private static func withOpenedDirectory<Result>(
+    _ url: URL,
+    requirePrivate: Bool,
+    body: (Int32) throws -> Result
+  ) throws -> Result {
+    let descriptor = try openDirectory(url, requirePrivate: requirePrivate)
+    defer { Darwin.close(descriptor) }
+    return try body(descriptor)
   }
 
   static func openDirectory(_ url: URL, requirePrivate: Bool) throws -> Int32 {

@@ -2,7 +2,78 @@ import Foundation
 import Logging
 import MCP
 
+/// Coordinates client enablement changes with session admission.
+///
+/// Authentication can finish before an HTTP request reaches the session
+/// registry. A generation token lets the registry reject that request after a
+/// credential rotation or disablement, including while a server is starting.
+public final class MCPClientAdmissionGate: @unchecked Sendable {
+  public struct Token: Equatable, Sendable {
+    fileprivate let generation: UInt64
+  }
+
+  private struct State {
+    var enabled: Bool
+    var generation: UInt64
+  }
+
+  private let lock = NSLock()
+  private var states: [MCPClientID: State]
+
+  public init(initiallyEnabled: Set<MCPClientID> = [.chatGPT]) {
+    states = Dictionary(
+      uniqueKeysWithValues: initiallyEnabled.map {
+        ($0, State(enabled: true, generation: 1))
+      }
+    )
+  }
+
+  @discardableResult
+  public func revoke(_ clientID: MCPClientID) -> Token {
+    lock.lock()
+    defer { lock.unlock() }
+    let nextGeneration =
+      states[clientID, default: State(enabled: false, generation: 0)]
+      .generation &+ 1
+    states[clientID] = State(enabled: false, generation: nextGeneration)
+    return Token(generation: nextGeneration)
+  }
+
+  @discardableResult
+  public func allow(_ clientID: MCPClientID) -> Token {
+    lock.lock()
+    defer { lock.unlock() }
+    let nextGeneration =
+      states[clientID, default: State(enabled: false, generation: 0)]
+      .generation &+ 1
+    states[clientID] = State(enabled: true, generation: nextGeneration)
+    return Token(generation: nextGeneration)
+  }
+
+  public func token(for clientID: MCPClientID) -> Token? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let state = states[clientID], state.enabled else { return nil }
+    return Token(generation: state.generation)
+  }
+
+  public func isCurrent(_ token: Token, for clientID: MCPClientID) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let state = states[clientID] else { return false }
+    return state.enabled && state.generation == token.generation
+  }
+
+  public func isEnabled(_ clientID: MCPClientID) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return states[clientID]?.enabled == true
+  }
+}
+
 public actor MCPSessionRegistry {
+  private static let modernProtocolVersion = "2026-07-28"
+
   public typealias ServerFactory = @Sendable (StatefulHTTPServerTransport) async throws -> Server
   public typealias AuthenticatedServerFactory =
     @Sendable (MCPClientID, StatefulHTTPServerTransport) async throws -> Server
@@ -37,6 +108,7 @@ public actor MCPSessionRegistry {
 
   private struct SessionContext {
     let clientID: MCPClientID
+    let admissionToken: MCPClientAdmissionGate.Token?
     let server: Server
     let transport: StatefulHTTPServerTransport
     let createdAt: ContinuousClock.Instant
@@ -44,6 +116,12 @@ public actor MCPSessionRegistry {
     var emittedBytes = 0
     var completedToolCalls = 0
     var retirementRequired = false
+  }
+
+  private struct ActiveStatelessServer {
+    let clientID: MCPClientID
+    let server: Server
+    let requestTask: Task<HTTPResponse, Never>
   }
 
   private struct FixedSessionIDGenerator: SessionIDGenerator {
@@ -58,8 +136,10 @@ public actor MCPSessionRegistry {
   private let limits: Limits
   private let serverFactory: AuthenticatedServerFactory
   private let statelessServerFactory: AuthenticatedStatelessServerFactory?
+  private let clientAdmission: MCPClientAdmissionGate?
   private let clock = ContinuousClock()
   private var sessions: [String: SessionContext] = [:]
+  private var activeStatelessServers: [UUID: ActiveStatelessServer] = [:]
   private var pendingSessionCreations = 0
   private var pendingSessionCreationsByClient: [MCPClientID: Int] = [:]
   private var isStopped = false
@@ -68,7 +148,8 @@ public actor MCPSessionRegistry {
     boundPort: Int,
     limits: Limits = .init(),
     serverFactory: @escaping ServerFactory,
-    statelessServerFactory: StatelessServerFactory? = nil
+    statelessServerFactory: StatelessServerFactory? = nil,
+    clientAdmission: MCPClientAdmissionGate? = nil
   ) {
     self.boundPort = boundPort
     self.limits = limits
@@ -78,18 +159,21 @@ public actor MCPSessionRegistry {
     } else {
       self.statelessServerFactory = nil
     }
+    self.clientAdmission = clientAdmission
   }
 
   public init(
     boundPort: Int,
     limits: Limits = .init(),
     authenticatedServerFactory: @escaping AuthenticatedServerFactory,
-    authenticatedStatelessServerFactory: AuthenticatedStatelessServerFactory? = nil
+    authenticatedStatelessServerFactory: AuthenticatedStatelessServerFactory? = nil,
+    clientAdmission: MCPClientAdmissionGate? = nil
   ) {
     self.boundPort = boundPort
     self.limits = limits
     self.serverFactory = authenticatedServerFactory
     self.statelessServerFactory = authenticatedStatelessServerFactory
+    self.clientAdmission = clientAdmission
   }
 
   public func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -106,6 +190,9 @@ public actor MCPSessionRegistry {
     if let rejection = validateAuthorityAndOrigin(request, clientID: clientID) {
       return rejection
     }
+    guard isClientAdmitted(clientID) else {
+      return .error(statusCode: 503, .internalError("MCP client unavailable"))
+    }
 
     if let sessionID = extractSessionID(from: request) {
       return await handleExisting(request, clientID: clientID, sessionID: sessionID)
@@ -114,11 +201,11 @@ public actor MCPSessionRegistry {
       if let rejection = validateModernRequest(request, clientID: clientID) { return rejection }
       return await handleDiscover(for: request)
     }
-    if isModernRequest(request) {
-      return await handleModernRequest(request, clientID: clientID)
-    }
     if isInitialize(request) {
       return await createSession(for: request, clientID: clientID)
+    }
+    if isModernRequest(request) {
+      return await handleModernRequest(request, clientID: clientID)
     }
     if request.body == nil || request.body?.isEmpty == true {
       return .data(Data("{}".utf8), headers: [HTTPHeaderName.contentType: "application/json"])
@@ -164,8 +251,17 @@ public actor MCPSessionRegistry {
 
   private func isModernRequest(_ request: HTTPRequest) -> Bool {
     guard request.method.uppercased() == "POST" else { return false }
-    return request.header("Mcp-Protocol-Version") == "2026-07-28"
-      || request.header("Mcp-Method") != nil
+    if request.header("Mcp-Protocol-Version") != nil || request.header("Mcp-Method") != nil {
+      return true
+    }
+    guard let body = request.body,
+      let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+      let parameters = object["params"] as? [String: Any],
+      let metadata = parameters["_meta"] as? [String: Any]
+    else {
+      return false
+    }
+    return metadata["io.modelcontextprotocol/protocolVersion"] != nil
   }
 
   private func handleModernRequest(
@@ -179,17 +275,43 @@ public actor MCPSessionRegistry {
     let transport = StatelessHTTPServerTransport(
       validationPipeline: StandardValidationPipeline(validators: [
         originValidator(for: clientID),
-        AcceptHeaderValidator(mode: .jsonOnly),
+        AcceptHeaderValidator(mode: .sseRequired),
         ContentTypeValidator(),
       ])
     )
+    let admissionToken = clientAdmission?.token(for: clientID)
+    var server: Server?
     do {
-      let server = try await statelessServerFactory(clientID)
-      try await server.start(transport: transport)
-      let response = await transport.handleRequest(request)
-      await server.stop()
+      let createdServer = try await statelessServerFactory(clientID)
+      server = createdServer
+      try await createdServer.start(transport: transport)
+      guard isAdmissionCurrent(admissionToken, for: clientID) else {
+        await createdServer.stop()
+        return .error(statusCode: 503, .internalError("MCP client unavailable"))
+      }
+      let serverID = UUID()
+      let requestTask = Task { await transport.handleRequest(request) }
+      activeStatelessServers[serverID] = ActiveStatelessServer(
+        clientID: clientID,
+        server: createdServer,
+        requestTask: requestTask
+      )
+      let response = await withTaskCancellationHandler {
+        addingModernServerInfo(to: await requestTask.value)
+      } onCancel: {
+        requestTask.cancel()
+        Task { await createdServer.stop() }
+      }
+      if removeStatelessServer(serverID) != nil {
+        await createdServer.stop()
+      }
       return response
     } catch {
+      if let server {
+        await server.stop()
+      } else {
+        await transport.disconnect()
+      }
       return .error(statusCode: 500, .internalError("Modern MCP request failed"))
     }
   }
@@ -200,7 +322,7 @@ public actor MCPSessionRegistry {
   ) -> HTTPResponse? {
     let pipeline = StandardValidationPipeline(validators: [
       originValidator(for: clientID),
-      AcceptHeaderValidator(mode: .jsonOnly),
+      AcceptHeaderValidator(mode: .sseRequired),
       ContentTypeValidator(),
     ])
     if let rejection = pipeline.validate(
@@ -222,17 +344,88 @@ public actor MCPSessionRegistry {
     else {
       return .error(statusCode: 400, .invalidRequest("Bad Request: Invalid modern MCP request"))
     }
-    if let routedMethod = request.header("Mcp-Method"), routedMethod != method {
-      return .error(statusCode: 400, .invalidRequest("Bad Request: MCP method header mismatch"))
+    guard let protocolVersion = request.header("Mcp-Protocol-Version") else {
+      return modernHeaderMismatch("Missing MCP protocol version header")
     }
-    guard method == "tools/call", let routedName = request.header("Mcp-Name") else {
+    guard protocolVersion == Self.modernProtocolVersion else {
+      return .error(
+        statusCode: 400,
+        .serverError(
+          code: -32_022,
+          message: "Unsupported MCP protocol version: \(protocolVersion)"
+        )
+      )
+    }
+    guard let routedMethod = request.header("Mcp-Method"), routedMethod == method else {
+      return modernHeaderMismatch("MCP method header is missing or does not match the body")
+    }
+    guard let parameters = object["params"] as? [String: Any],
+      let metadata = parameters["_meta"] as? [String: Any],
+      let bodyVersion = metadata["io.modelcontextprotocol/protocolVersion"] as? String,
+      metadata["io.modelcontextprotocol/clientCapabilities"] is [String: Any]
+    else {
+      return .error(
+        statusCode: 400,
+        .invalidRequest("Bad Request: Missing modern MCP request metadata")
+      )
+    }
+    guard bodyVersion == protocolVersion else {
+      return modernHeaderMismatch("MCP protocol version header does not match the body")
+    }
+
+    guard let routedNameField = modernRoutedNameField(for: method) else {
       return nil
     }
-    let parameters = object["params"] as? [String: Any]
-    guard routedName == parameters?["name"] as? String else {
-      return .error(statusCode: 400, .invalidRequest("Bad Request: MCP name header mismatch"))
+    guard let expectedName = parameters[routedNameField] as? String,
+      !expectedName.isEmpty,
+      let routedName = request.header("Mcp-Name"),
+      decodeModernHeaderValue(routedName) == expectedName
+    else {
+      return modernHeaderMismatch("MCP name header is missing or does not match the body")
     }
     return nil
+  }
+
+  private func modernRoutedNameField(for method: String) -> String? {
+    switch method {
+    case "tools/call", "prompts/get":
+      return "name"
+    case "resources/read":
+      return "uri"
+    default:
+      return nil
+    }
+  }
+
+  private func decodeModernHeaderValue(_ value: String) -> String? {
+    let prefix = "=?base64?"
+    let suffix = "?="
+    guard value.hasPrefix(prefix), value.hasSuffix(suffix) else { return value }
+    let encoded = String(value.dropFirst(prefix.count).dropLast(suffix.count))
+    guard let data = Data(base64Encoded: encoded) else { return nil }
+    return String(data: data, encoding: .utf8)
+  }
+
+  private func modernHeaderMismatch(_ message: String) -> HTTPResponse {
+    .error(statusCode: 400, .serverError(code: -32_020, message: message))
+  }
+
+  private func addingModernServerInfo(to response: HTTPResponse) -> HTTPResponse {
+    guard case .data(let data, let headers) = response,
+      var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      var result = object["result"] as? [String: Any]
+    else {
+      return response
+    }
+    var metadata = result["_meta"] as? [String: Any] ?? [:]
+    metadata["io.modelcontextprotocol/serverInfo"] = [
+      "name": "Codex Bridge",
+      "version": "1.0.0",
+    ]
+    result["_meta"] = metadata
+    object["result"] = result
+    guard let encoded = try? JSONSerialization.data(withJSONObject: object) else { return response }
+    return .data(encoded, headers: headers)
   }
 
   private func handleDiscover(for request: HTTPRequest) async -> HTTPResponse {
@@ -244,7 +437,7 @@ public actor MCPSessionRegistry {
     let id = object["id"] ?? NSNull()
     let result: [String: Any] = [
       "resultType": "complete",
-      "supportedVersions": ["2026-07-28", Version.latest],
+      "supportedVersions": [Self.modernProtocolVersion, Version.latest],
       "capabilities": ["tools": [:]],
       "_meta": [
         "io.modelcontextprotocol/serverInfo": [
@@ -278,9 +471,15 @@ public actor MCPSessionRegistry {
   public func stop() async {
     isStopped = true
     let active = sessions.values.map(\.server)
+    let activeStateless = Array(activeStatelessServers.values)
     sessions.removeAll(keepingCapacity: false)
+    activeStatelessServers.removeAll(keepingCapacity: false)
     for server in active {
       await server.stop()
+    }
+    for active in activeStateless {
+      active.requestTask.cancel()
+      await active.server.stop()
     }
   }
 
@@ -305,6 +504,10 @@ public actor MCPSessionRegistry {
     sessions.count
   }
 
+  package var activeStatelessServerCount: Int {
+    activeStatelessServers.count
+  }
+
   public func activeSessionCount(for clientID: MCPClientID) -> Int {
     sessions.values.lazy.filter { $0.clientID == clientID }.count
   }
@@ -313,8 +516,16 @@ public actor MCPSessionRegistry {
     let matching = sessions.compactMap { sessionID, context in
       context.clientID == clientID ? sessionID : nil
     }
+    let matchingStateless = activeStatelessServers.compactMap { serverID, context in
+      context.clientID == clientID ? serverID : nil
+    }
     for sessionID in matching {
       await closeSession(sessionID)
+    }
+    for serverID in matchingStateless {
+      guard let active = removeStatelessServer(serverID) else { continue }
+      active.requestTask.cancel()
+      await active.server.stop()
     }
   }
 
@@ -327,8 +538,11 @@ public actor MCPSessionRegistry {
       return .error(statusCode: 404, .invalidRequest("Not Found: Session unavailable"))
     }
     guard context.clientID == clientID else {
-      await closeSession(sessionID)
       return .error(statusCode: 403, .invalidRequest("Forbidden: Session client mismatch"))
+    }
+    guard isAdmissionCurrent(context.admissionToken, for: clientID) else {
+      await closeSession(sessionID)
+      return .error(statusCode: 404, .invalidRequest("Not Found: Session retired"))
     }
     if context.retirementRequired || context.completedToolCalls >= limits.maximumToolCalls {
       await closeSession(sessionID)
@@ -356,6 +570,10 @@ public actor MCPSessionRegistry {
     for request: HTTPRequest,
     clientID: MCPClientID
   ) async -> HTTPResponse {
+    let admissionToken = clientAdmission?.token(for: clientID)
+    guard clientAdmission == nil || admissionToken != nil else {
+      return .error(statusCode: 503, .internalError("MCP client unavailable"))
+    }
     let retiredServers = retireQwenSessionsForAdmission(clientID: clientID)
     let clientSessionCount = sessions.values.lazy.filter { $0.clientID == clientID }.count
     let pendingForClient = pendingSessionCreationsByClient[clientID, default: 0]
@@ -402,13 +620,15 @@ public actor MCPSessionRegistry {
       let createdServer = try await serverFactory(clientID, transport)
       server = createdServer
       try await createdServer.start(transport: transport)
-      guard !isStopped else {
+      guard !isStopped, isAdmissionCurrent(admissionToken, for: clientID)
+      else {
         await createdServer.stop()
         return .error(statusCode: 503, .internalError("MCP service unavailable"))
       }
       let now = clock.now
       sessions[sessionID] = SessionContext(
         clientID: clientID,
+        admissionToken: admissionToken,
         server: createdServer,
         transport: transport,
         createdAt: now,
@@ -492,6 +712,24 @@ public actor MCPSessionRegistry {
   private func closeSession(_ sessionID: String) async {
     guard let context = sessions.removeValue(forKey: sessionID) else { return }
     await context.server.stop()
+  }
+
+  private func removeStatelessServer(_ serverID: UUID) -> ActiveStatelessServer? {
+    activeStatelessServers.removeValue(forKey: serverID)
+  }
+
+  private func isAdmissionCurrent(
+    _ token: MCPClientAdmissionGate.Token?,
+    for clientID: MCPClientID
+  ) -> Bool {
+    guard let clientAdmission else { return true }
+    guard let token else { return false }
+    return clientAdmission.isCurrent(token, for: clientID)
+  }
+
+  private func isClientAdmitted(_ clientID: MCPClientID) -> Bool {
+    guard let clientAdmission else { return true }
+    return clientAdmission.isEnabled(clientID)
   }
 
   private func makeUniqueSessionID() -> String {

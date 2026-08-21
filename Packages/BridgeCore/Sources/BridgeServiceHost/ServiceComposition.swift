@@ -247,7 +247,8 @@ public actor ServiceComposition {
       httpConfiguration: try MCPHTTPConfiguration(
         clientAuthenticator: mcpClients.authenticator,
         port: requestedPort
-      )
+      ),
+      clientAdmission: mcpClients.admission
     )
     do {
       let endpoint = try await server.start()
@@ -320,7 +321,12 @@ public actor ServiceComposition {
   }
 
   public func setQwenStudioEnabled(_ enabled: Bool) async throws {
-    try await mcpClients.setQwenStudioEnabled(enabled)
+    do {
+      try await mcpClients.setQwenStudioEnabled(enabled)
+    } catch {
+      await mcpServer?.terminateSessions(for: .qwenStudio)
+      throw error
+    }
     await mcpServer?.terminateSessions(for: .qwenStudio)
   }
 
@@ -330,7 +336,12 @@ public actor ServiceComposition {
   }
 
   public func rotateQwenStudioCredential() async throws {
-    try await mcpClients.rotateQwenStudioCredential()
+    do {
+      try await mcpClients.rotateQwenStudioCredential()
+    } catch {
+      await mcpServer?.terminateSessions(for: .qwenStudio)
+      throw error
+    }
     await mcpServer?.terminateSessions(for: .qwenStudio)
   }
 
