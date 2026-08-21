@@ -9,3 +9,15 @@ SupportBundles/
 Secrets/
 *.runtime-key
 
+# AI Agent Memory
+AGENTS.md
+**/AGENTS.md
+
+# Internal Planning, Review & Handoff docs
+docs/*PLAN*
+docs/*REVIEW*
+docs/*plan*
+docs/*review*
+docs/HANDOFF_*
+docs/Codex-Bridge-Code-Review*
+docs/QWEN_STUDIO_MCP_ADAPTATION_PLAN*
