@@ -265,7 +265,11 @@ public struct ExecutionAgentMessageDelta: Codable, Equatable, Sendable {
       maximumBytes: 1_024
     )
     try ExecutionValidation.identifier(itemID, field: "agentMessageDelta.itemID", maximumBytes: 256)
-    try ExecutionValidation.text(delta, field: "agentMessageDelta.delta", maximumBytes: 64 * 1_024)
+    try ExecutionValidation.streamDelta(
+      delta,
+      field: "agentMessageDelta.delta",
+      maximumBytes: 64 * 1_024
+    )
     self.threadID = threadID
     self.turnID = turnID
     self.itemID = itemID
@@ -291,7 +295,11 @@ public struct ExecutionReasoningDelta: Codable, Equatable, Sendable {
       maximumBytes: 1_024
     )
     try ExecutionValidation.identifier(itemID, field: "reasoningDelta.itemID", maximumBytes: 256)
-    try ExecutionValidation.text(delta, field: "reasoningDelta.delta", maximumBytes: 64 * 1_024)
+    try ExecutionValidation.streamDelta(
+      delta,
+      field: "reasoningDelta.delta",
+      maximumBytes: 64 * 1_024
+    )
     self.threadID = threadID
     self.turnID = turnID
     self.itemID = itemID

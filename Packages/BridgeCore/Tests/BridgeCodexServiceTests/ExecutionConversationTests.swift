@@ -29,7 +29,7 @@ final class ExecutionConversationTests: XCTestCase {
       $0.state.status == .completed
     }
     XCTAssertEqual(completed.state.resultSummary, "Final authoritative agent text.")
-    try await waitUntil { await collector.count(key: "agent:item-message") == 4 }
+    try await waitUntil { await collector.count(key: "agent:item-message") == 5 }
 
     let changes = await collector.all()
     let userSeeds = changes.filter { $0.role == .user }
@@ -39,15 +39,17 @@ final class ExecutionConversationTests: XCTestCase {
       userSeeds[0].fullContent, "Implement the requested change and report the result.")
 
     let agentChanges = changes.filter { $0.key == "agent:item-message" }
-    XCTAssertEqual(agentChanges.count, 4)
+    XCTAssertEqual(agentChanges.count, 5)
     XCTAssertEqual(agentChanges[0].fullContent, "I will fix")
     XCTAssertEqual(agentChanges[0].baseContentLength, 0)
-    XCTAssertEqual(agentChanges[1].delta, " the parser")
+    XCTAssertEqual(agentChanges[1].delta, "\n")
     XCTAssertEqual(agentChanges[1].baseContentLength, 10)
-    XCTAssertEqual(agentChanges[2].delta, " now.")
-    XCTAssertEqual(agentChanges[2].baseContentLength, 21)
-    XCTAssertEqual(agentChanges[3].fullContent, "Final authoritative agent text.")
-    XCTAssertEqual(agentChanges[3].final, true)
+    XCTAssertEqual(agentChanges[2].delta, " the parser")
+    XCTAssertEqual(agentChanges[2].baseContentLength, 11)
+    XCTAssertEqual(agentChanges[3].delta, " now.")
+    XCTAssertEqual(agentChanges[3].baseContentLength, 22)
+    XCTAssertEqual(agentChanges[4].fullContent, "Final authoritative agent text.")
+    XCTAssertEqual(agentChanges[4].final, true)
 
     let page = try await coordinator.conversationPage(taskID: task.id)
     XCTAssertEqual(page.count, 2)
@@ -228,7 +230,9 @@ func agentDeltaScript(root: String) -> String {
       case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 22 ;; esac
       printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-conversation","turn":__TURN__}}'
       printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-conversation","turnId":"turn-conversation","itemId":"item-message","delta":""}}'
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-conversation","turnId":"turn-conversation","itemId":"item-message","delta":"I will fix"}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-conversation","turnId":"turn-conversation","itemId":"item-message","delta":"\n"}}'
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-conversation","turnId":"turn-conversation","itemId":"item-message","delta":" the parser"}}'
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-conversation","turnId":"turn-conversation","itemId":"item-message","delta":" now."}}'
       printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-conversation","turn":__COMPLETED__}}'

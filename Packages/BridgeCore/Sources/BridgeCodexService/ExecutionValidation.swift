@@ -18,19 +18,14 @@ package enum ExecutionValidation {
   static func text(_ value: String, field: String, maximumBytes: Int) throws {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalized.isEmpty,
-      normalized.utf8.count <= maximumBytes,
-      !normalized.contains("\0"),
-      normalized.unicodeScalars.allSatisfy({ scalar in
-        switch scalar.value {
-        case 0x09, 0x0A, 0x0D:
-          true
-        case 0..<0x20, 0x7F:
-          false
-        default:
-          true
-        }
-      })
+      isSafeText(normalized, maximumBytes: maximumBytes)
     else {
+      throw ExecutionServiceError.invalidRequest(field)
+    }
+  }
+
+  static func streamDelta(_ value: String, field: String, maximumBytes: Int) throws {
+    guard isSafeText(value, maximumBytes: maximumBytes) else {
       throw ExecutionServiceError.invalidRequest(field)
     }
   }
@@ -79,5 +74,19 @@ package enum ExecutionValidation {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalized.isEmpty else { return nil }
     return OutboundContentSecurity.redacted(normalized, maximumUTF8Bytes: maximumBytes)
+  }
+
+  private static func isSafeText(_ value: String, maximumBytes: Int) -> Bool {
+    maximumBytes > 0 && value.utf8.count <= maximumBytes && !value.contains("\0")
+      && value.unicodeScalars.allSatisfy { scalar in
+        switch scalar.value {
+        case 0x09, 0x0A, 0x0D:
+          true
+        case 0..<0x20, 0x7F:
+          false
+        default:
+          true
+        }
+      }
   }
 }
