@@ -1,109 +1,166 @@
-# ChatGPT Developer Mode 接入与验收
+# ChatGPT Developer Mode 接入与全流程验收指南
 
-本文是 Codex Bridge 的用户侧接入手册。它描述真实接入所需的人工步骤和可观察结果，不把本地 fake fixture 或无凭证测试当作 ChatGPT 端验收。ChatGPT、OpenAI Tunnel 和 Codex 登录的界面会变化，界面名称不一致时以当前产品中的同义入口为准。
+本指南为 **Codex Bridge** 的用户侧完整接入手册，详细指导如何将 **ChatGPT 网页版**（通过 OpenAI 官方 Secure MCP Tunnel）安全连接到本地运行的 Codex Bridge，并在本地环境中完成真实端到端任务执行与验收。
 
-## 1. 前置条件
+---
 
-开始前确认：
+## 目录
+- [一、 前置准备与环境要求](#一-前置准备与环境要求)
+- [二、 获取 OpenAI Secure Tunnel 凭据](#二-获取-openai-secure-tunnel-凭据)
+- [三、 在 Codex Bridge App 中配置连接](#三-在-codex-bridge-app-中配置连接)
+- [四、 在 ChatGPT 网页端配置 MCP 应用](#四-在-chatgpt-网页端配置-mcp-应用)
+- [五、 端到端连通性测试与使用示范](#五-端到端连通性测试与使用示范)
+- [六、 真实闭环验收核对表 (Checklist)](#六-真实闭环验收核对表-checklist)
+- [七、 常见问题与故障排查 (FAQ)](#七-常见问题与故障排查-faq)
 
-- macOS 14 或更高版本，Codex CLI 已安装并能启动 `codex app-server`；
-- Codex Bridge 已完成首次启动，项目已通过应用内目录选择器注册；
-- Codex 登录由应用内向导完成。不要把 `auth.json`、Cookie 或任何 Token 复制到聊天、日志或仓库；
-- Supervisor 的每个隔离 HOME 也只能由该 HOME 内的 Codex app-server 通过官方 ChatGPT 登录接口完成配置。Bridge 不复制或读取主 HOME、其他任务 HOME 或 `auth.json`；因此首次启用新的隔离会话可能需要用户再次在系统浏览器完成登录。
-- ChatGPT 账号具备 Developer Mode / 自定义 MCP 应用权限；
-- 若使用 Secure MCP Tunnel，已经在 OpenAI 平台创建仅用于 Tunnel 的 Restricted Runtime Key，并知道 Tunnel ID。
+---
 
-## 2. 在 Bridge 中配置连接
+## 一、 前置准备与环境要求
 
-### Secure MCP Tunnel（推荐）
+在开始接入前，请确保满足以下条件：
 
-1. 在 Bridge 的 Connections 或首次运行向导中选择 **Secure MCP Tunnel**。
-2. 输入 Tunnel ID 和 Restricted Runtime Key。Runtime Key 只写入 macOS Keychain，Bridge 不会在日志、支持包或 Codex/Luna 请求中回显它。
-3. 等待界面同时显示本地 MCP 就绪、helper 就绪、健康检查通过和远程提交可用。只有 `/readyz`、匹配的 helper peer PID 和新鲜 control-plane poll 全部通过，才算远程 admission 开放。
-4. 若健康检查失败，先在 Bridge 中处理明确的认证或配置错误。认证失败不会自动重试；普通 helper 意外退出最多按 `1s/2s/4s` 退避重建三次。
+1. **Mac 运行环境**：
+   - 搭载 macOS 14.0 (Sonoma) 或更高版本的 Mac（推荐 Apple Silicon 芯片）。
+   - 本地已安装并登录 **Codex 桌面端**（或系统终端 PATH 中具备可执行的 `codex` 命令且 `codex app-server` 能正常启动）。
+2. **ChatGPT 账号权限**：
+   - 拥有支持 **Developer Mode（开发者模式）/ 自定义 MCP Connectors** 的 ChatGPT Plus / Team / Enterprise 账号。
+3. **注册本地项目**：
+   - 打开 `CodexBridge.app`，在“项目”页面中点击添加你要操作的本地项目根目录（例如 `~/Projects/my-app`）。
+   - 项目路径、设备 ID 与 Inode 会被 Bridge 安全捕获并严格校验。
 
-Bridge 的 Tunnel 模式对 ChatGPT 使用固定的 `/mcp` 路径和非秘密静态请求头。不要把本地 path secret、Runtime Key 或 helper 管理 socket 地址填入 ChatGPT。
+---
 
-### Manual HTTPS（替代）
+## 二、 获取 OpenAI Secure Tunnel 凭据
 
-只有在你已经有强认证、无重定向的公网 HTTPS MCP 地址时才使用此模式。地址必须是 HTTPS 的 `/mcp`，不得包含用户信息、query 或 fragment；Authorization 值由应用保存并用于连接测试。公网端点、证书、访问日志和防刷边界由你自行负责。
+Codex Bridge 通过 OpenAI 官方开源的 `tunnel-client` 建立安全的双向端到端隧道，无需公网 IP 或配置内网穿透端口。
 
-### Local（仅开发）
+1. 登录 [OpenAI 开发者平台](https://platform.openai.com/) 或对应的 OpenAI MCP Tunnel 管理后台。
+2. 创建或查看你的 **Secure MCP Tunnel**：
+   - **Tunnel ID**：类似 `tun_xxxxxxxxxxxx` 的字符串。
+   - **Restricted Runtime Key**：为该 Tunnel 分配的专属受限运行密钥（通常形如 `sec_xxxx` 或 `rtk_xxxx`）。
+3. *安全提示*：请妥善保存该 Key，**绝不要**将其提交到 Git、写入公共聊天框或截图中。
 
-Local 模式只监听 `127.0.0.1`，适合 MCP Inspector 和本机回归，不能让 ChatGPT 网页访问。Local 显示为已就绪时不代表远程提交可用。
+---
 
-### 手动暂停接收
+## 三、 在 Codex Bridge App 中配置连接
 
-菜单栏和 Connections 页面中的 **暂停接收新任务** 只关闭新的远程提交，不会停止本地 MCP 或中断正在运行的任务。该选择写入本机数据库，连接替换、睡眠恢复和应用重启后仍保持；恢复操作也必须等待当前 transport 重新通过健康检查。
+1. 打开 **CodexBridge.app**，进入 **连接 (Connections)** 面板（或在初次启动向导中）：
+   - 在连接模式中选择 **Secure MCP Tunnel**。
+2. **填入凭据**：
+   - **Tunnel ID**：输入你的 Tunnel ID。
+   - **Runtime Key**：粘贴你的受限运行密钥。
+   - *安全说明*：该 Key 将直接存入 macOS 系统级 **Keychain（钥匙串）**，Bridge 不会将其记录在 SQLite 数据库、日志或明文文件中。
+3. **启动并检查就绪状态**：
+   - 点击 **启动 / 连接**。
+   - 观察连接状态指示轨，确认以下指标全部亮起绿色：
+     - `Local MCP`：本地 HTTP/Streamable Gateway 监听正常
+     - `Tunnel Helper`：后台 `tunnel-client` 守护进程已成功拉起
+     - `Health / Ready`：回环健康检查通过，远程准入 (Admission) 已开放
+4. **选择工具暴露模式**（按需）：
+   - **只读模式 (Read-Only)**：暴露 11 个只读工具（查看项目、读取文件、列出模型与线程等，适合检索与审查）。
+   - **完整模式 (Full-Action)**：暴露 22 个工具（包含任务提交、Direct 文件改写、受控 Git 提交与安全命令执行）。
 
-## 3. 在 ChatGPT 网页添加开发者应用
+---
 
-1. 打开 ChatGPT 网页的 **Settings**，进入 **Apps / Connectors**（不同版本可能显示为 Developer Mode 或自定义 MCP 应用）。
-2. 打开 Developer Mode，选择创建自定义应用或 MCP Server。
-3. 使用官方 Secure MCP Tunnel 选项时，选择与 Bridge 中完全相同的 Tunnel ID。若界面要求 MCP 地址，使用官方流程显示的 Tunnel `/mcp` 地址；不要填 `localhost`，也不要填 Bridge 的 path secret。
-4. 使用 Manual HTTPS 时，填入完整 HTTPS `/mcp` 地址和对应强认证信息。仅在你确认该端点为自己的服务时保存。
-5. 保存后只授予这个应用所需的工具访问权限。Bridge 不向 ChatGPT 暴露 Codex 审批工具；高风险审批仍只能在 Mac 本地完成。
-6. 在应用的连接测试或工具列表中确认能看到工具目录。工具数量应为：只读模式 11 个；完整模式 22 个。完整模式的 Direct 文件编辑与受控命令工具（`direct_write_project_file`、`direct_edit_project_file`、`direct_apply_project_patch`、`direct_manage_project_path`、`direct_exec_project_command`、`direct_read_command`、`direct_write_stdin`、`direct_interrupt_command`）只应在你明确要求 ChatGPT 直接修改文件或运行命令时调用，默认工作仍走 `submit_task` 交给本机 Codex。
+## 四、 在 ChatGPT 网页端配置 MCP 应用
 
-不要在 ChatGPT 的 Server Instructions、对话或截图中粘贴 Runtime Key、Authorization 值、项目绝对路径或 Codex 登录信息。
-
-## 4. 推荐 Server Instructions
-
-将以下短指令放入开发者应用的 Server Instructions。它约束调用顺序，但不会绕过 Bridge 的本地策略或审批：
+1. **打开开发者设置**：
+   - 在浏览器中打开 [chatgpt.com](https://chatgpt.com)。
+   - 点击左下角头像 → **Settings（设置）** → **Connected apps / Developer Mode / MCP**。
+2. **添加新的 MCP 连接**：
+   - 点击 **Add New MCP Server / Create App**。
+   - **Name（名称）**：填入 `Codex Bridge`（或自定义名称）。
+   - **Transport Type（传输类型）**：选择 **OpenAI Secure Tunnel**。
+   - **Tunnel ID**：填入与 Bridge App 中完全相同的 Tunnel ID。
+   - **Endpoint Path**：填入 `/mcp`。
+3. **填写 Server Instructions（推荐提示词）**：
+   - 在应用设置的 **Server Instructions**（或 Custom Instructions）中粘贴以下最佳实践提示词，以规范 ChatGPT 的工具调用流程：
 
 ```text
-Before starting any task, call list_projects, list_threads when continuing work, and list_models. Never invent identifiers. For write tasks, submit a structured task contract with goal, requirements, non-goals, constraints, and acceptance criteria. After submission, tell the user whether local approval is pending. Use get_task rather than repeatedly submitting the same work. Do not claim completion until get_final_report returns a terminal result.
+Before starting any coding task, call list_projects to discover registered workspaces, list_threads to check ongoing discussions, and list_models to inspect available Codex models. Never invent or guess identifiers.
+For long-running tasks, submit a structured task contract using submit_task (with explicit goal, requirements, and constraints) to delegate work to local Codex. 
+If direct edits or commands are explicitly requested by the user, use direct_write_project_file, direct_apply_project_patch, or direct_exec_project_command and inform the user that local desktop approval may be required.
+Periodically check progress with get_task, and do not claim completion until get_final_report returns a terminal result.
 ```
 
-## 5. 验收顺序
+4. **保存并测试扫描工具**：
+   - 保存配置，点击 **Test Connection / Scan Tools**。
+   - 验证工具列表已正确加载（只读模式显示 11 个，完整模式显示 22 个）。
 
-### 当前无凭证、本地可验收的部分
+---
 
-在 Bridge 中使用 Local 模式或测试专用 Tunnel fixture，可以验证：
+## 五、 端到端连通性测试与使用示范
 
-1. `list_projects` 只返回已注册项目的脱敏元数据；
-2. `list_threads`、`list_models` 返回真实边界内的有界结果，标识符不会由 ChatGPT 猜测；
-3. 相对路径文件读取拒绝绝对路径、符号链接逃逸和默认敏感路径；
-4. 连接替换失败会关闭远程 admission，重新配置成功后才恢复；
-5. `get_task` 在 Supervisor 不可用时明确返回 `supervisorState = unavailable`；Supervisor 默认推荐 Luna，但允许使用当前目录中的其他用户选择模型。
+在 ChatGPT 开启新的对话，并确保顶部已启用 `Codex Bridge` MCP 连接。
 
-新 Service 路径的 `submit_task` 不受旧版 `productionReviewAvailable` 常量门控。它只要求：项目已注册、Codex 模型目录可达、网络权限允许、workspace gate 可准入。任务提交后保持 pending，直到你在 Mac 本机允许。Supervisor 未完成隔离登录只会让 `get_task` 返回 `supervisorState = unavailable`，不会阻止执行（fail-open）。
+### 场景 1：基础连通性与项目发现（只读测试）
 
-### 真实凭证化验收（需要用户在本机授权）
+在对话中输入：
+> *“请列出当前 Codex Bridge 注册的本地项目和可用的 Codex 模型。”*
 
-完成 Codex 登录、隔离 HOME 配置和 Restricted Runtime Key 后，按以下顺序逐项记录结果：
+**预期结果**：
+1. ChatGPT 调用 `list_projects` 工具，返回你在 Bridge App 中添加的项目列表（含项目名称、相对目录、只读/写权限状态）。
+2. ChatGPT 调用 `list_models` 工具，返回本机 Codex 支持的模型列表（如 `gpt-5-codex`、`o3-mini` 等）及其 reasoning effort 档位。
 
-1. ChatGPT Developer Mode 的连接测试成功，Bridge 记录到匹配 Tunnel ID；
-2. `list_projects`、`list_threads`、`list_models` 成功；
-3. 用已注册项目、真实模型 ID 和 `list_models` 给出的 effort 提交最小只读任务；
-4. Bridge 本地确认出现后再允许执行；
-5. 通过 `get_task` 观察计划、事件序号、Supervisor 状态和终态；
-6. 只有 `get_final_report` 返回绑定同一 task/project/thread/turn/generation 的终态报告，才在 ChatGPT 中宣称完成；
-7. 断开 Tunnel 后确认本地任务不被停止、新的远程提交被拒绝；恢复 Tunnel 后确认重新通过严格健康检查；
-8. 用恶意 fixture 验证 Supervisor 不能读取项目根、用户目录或联网，也不能批准审批请求。
-9. 验证双执行模式：请 ChatGPT 直接改写一个项目文件（`direct_write_project_file`）时，Bridge 本地出现“仅本次允许/拒绝”审批，批准后文件原子写入；拒绝后文件不被修改。再请 ChatGPT 直接运行一个已登记命令（`direct_exec_project_command`），确认命令在独立进程组内有界运行、输出可读、可中断，且 Codex 写任务与 Direct 命令在同一项目互斥。
+---
 
-Supervisor 认证的顺序必须是：创建任务隔离 HOME，启动仅允许出站网络的认证 app-server，用户在系统浏览器完成官方登录，收到匹配的 `account/login/completed` 成功通知并由 `account/read` 核验，然后停止认证进程，再用同一 HOME 启动完全禁网的只读 Supervisor 进程。
+### 场景 2：通过本地 Codex 执行任务（推荐核心路径）
 
-任何一步失败都保留明确的 unavailable/failed 事实，不用自然语言或旧 generation 证据替代成功结果。
+在对话中输入：
+> *“在项目 `<你的项目名>` 中，帮我检查一下 `README.md` 的格式，并在末尾添加一段使用说明。”*
 
-## 6. 常见问题
+**预期结果**：
+1. ChatGPT 自动组装任务契约并调用 `submit_task`。
+2. **CodexBridgeService** 接收到任务，并在后台启动独立的 Codex 执行会话。
+3. **桌面端反馈**：
+   - 打开 `CodexBridge.app`，在工作台中可以看到该任务正处于实时运行状态。
+   - 会话流以打字机式实时呈现 Codex 的推理思考过程（可折叠）与工具执行进度。
+4. ChatGPT 端通过 `get_task` 轮询进度，任务完成后调用 `get_final_report` 汇总执行结论。
 
-| 现象 | 处理 |
-| --- | --- |
-| ChatGPT 看不到工具 | 先确认 Bridge 的 MCP listener 和 Tunnel `/readyz`，再重新运行应用连接测试；不要反复更换 Tunnel ID。 |
-| 连接成功但 `submit_task` 被拒绝 | 检查项目是否已注册、模型目录是否可达、网络权限是否允许，以及是否已有同项目写任务占用 workspace gate；Supervisor 未登录不会导致拒绝，只会显示 `unavailable`。 |
-| Tunnel 认证失败 | 在 Bridge 中重新输入受限 Runtime Key；不要读取或复制 Keychain 内容，也不要把 Key 放进命令行。 |
-| 工具返回旧任务状态 | 使用 `get_task` 的游标重新读取；任务事实来自 EventStore，不以 ChatGPT 对话缓存为准。 |
-| Tunnel 断线后本地任务停止 | 这是不符合设计的结果，应记录任务 ID、event sequence 和连接状态后报告；断线只应关闭新的远程 admission。 |
+---
 
-## 7. 发布前证据清单
+### 场景 3：直接文件修改与本地桌面审批（Direct 工具路径）
 
-- 真实 Codex ChatGPT 登录完成，且没有导出凭证；
-- 隔离 HOME 下的默认 Luna 或用户选择 Supervisor 模型 initialize、model/list、thread/start、turn/start 和恶意读写/联网回归通过；
-- Restricted Runtime Key、Tunnel ID、helper doctor、ready、metrics 和断线重连证据已记录；
-- ChatGPT Developer Mode 完成 16 工具目录和最小任务闭环；
-- 连续 checkpoint、existing Thread recovery、finalization recovery 通过；
-- Developer ID 签名、公证、staple 和干净 Mac Gatekeeper 验收通过。
+在对话中明确要求 ChatGPT 直接修改文件：
+> *“请直接使用 direct_write_project_file 工具，为当前项目新建一个 `test_demo.txt` 文件，内容为 `Hello Codex Bridge`。”*
 
-在以上证据齐全前，README 和应用界面必须继续显示 pre-release / unavailable，不能把本地测试结果描述为生产可用。
+**预期结果**：
+1. ChatGPT 调用 `direct_write_project_file`。
+2. **Mac 桌面审批弹出**：
+   - `CodexBridge.app` 立即弹出桌面审批面板，展示待写入的绝对路径、变更文件内容摘要与安全签名校验（Payload Digest）。
+   - 用户可点击 **允许 (Allow)** 或 **拒绝 (Deny)**。
+3. **执行结果**：
+   - 若点击允许：文件安全写入磁盘，ChatGPT 收到成功写入的 receipt（含当前文件的 SHA256）。
+   - 若点击拒绝：文件保持不变，ChatGPT 收到 `approval_denied` 结构化拒绝提示。
+
+---
+
+## 六、 真实闭环验收核对表 (Checklist)
+
+完成全部配置后，可通过下表逐项核验系统的健壮性：
+
+- [ ] **项目隔离验证**：尝试让 ChatGPT 读取项目目录之外的绝对路径（如 `/etc/passwd` 或 `~/.ssh/id_rsa`），确认被 Bridge 严格拒绝并返回 `path_denied`。
+- [ ] **断线安全验证**：在任务执行过程中，关闭网络或断开 Tunnel 连接，确认本地后台 Service 中的 Codex 任务**继续正常执行**，未被中断。
+- [ ] **UI 解耦验证**：在任务执行过程中彻底退出 `CodexBridge.app` 桌面窗口，确认后台任务不中断；重新打开 App 后能无缝重新拉取到任务最新进度。
+- [ ] **写冲突互斥验证**：同一项目中有一个正在执行的写任务时，尝试提交第二个写任务，确认 Bridge 自动排队或拒绝并提示 `project_busy`，确保工作区不发生并发写冲突。
+- [ ] **安全提交验证**：使用 `direct_git_commit` 进行受控 Git 提交，确认敏感文件（如 `.env*`、私钥）不会被误提交，且拒绝破坏性的 `push` 或 `amend` 操作。
+
+---
+
+## 七、 常见问题与故障排查 (FAQ)
+
+### Q1: ChatGPT 提示 "Could not connect to MCP server" 或无法扫描到工具？
+- **排查步骤**：
+  1. 检查 `CodexBridge.app` 的“连接”页面，确认 `Local MCP` 与 `Tunnel Helper` 是否均为绿色已连接状态。
+  2. 确认 ChatGPT 填写的 **Tunnel ID** 与 Bridge App 中的完全一致（无前后空格）。
+  3. 确认 ChatGPT 填写的路径是 `/mcp`，且不要在 URL 中填写 `localhost` 或包含本地 secret。
+
+### Q2: 任务提交后，ChatGPT 提示 `project_busy`？
+- **原因**：当前项目已有一个活动的写入任务或正在运行的 Direct 命令会话。
+- **解决**：等待前一个任务执行完毕，或在 App 中手动终止前一个任务。
+
+### Q3: 为什么 ChatGPT 无法直接批准 Codex 的危险操作？
+- **设计原则**：Bridge 坚持**本地唯一授权（Local-Only Approval）**原则。无论是 ChatGPT、外部客户端还是内置的 Supervisor，均无权代替 Mac 本地用户做安全决定。所有危险文件修改或高危命令必须在 Mac 桌面弹窗中由用户人工点击批准。
+
+### Q4: 重启电脑后，Bridge 会自动恢复吗？
+- **机制说明**：`CodexBridgeService` 作为 macOS 标准 LaunchAgent 运行，如果开启了“开机自启”，系统重启登录后服务会自动启动并准备就绪。
