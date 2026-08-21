@@ -7,10 +7,10 @@ struct BridgeMCPInspectorFixture {
   static func main() async throws {
     let arguments = try parseArguments()
     let secret = try makePathSecret()
-    let httpConfiguration =
-      arguments.usesTunnelHeader
-      ? try MCPHTTPConfiguration(headerSecret: secret)
-      : try MCPHTTPConfiguration(pathSecret: secret)
+    let httpConfiguration = try makeHTTPConfiguration(
+      authentication: arguments.authentication,
+      secret: secret
+    )
     let server = MCPBridgeServer(
       appVersion: "inspector-fixture",
       queries: InspectorQueries(),
@@ -20,7 +20,7 @@ struct BridgeMCPInspectorFixture {
     let endpoint = try await server.start()
     try writeReadyEndpoint(
       endpoint.localURL,
-      tunnelHeaderSecret: arguments.usesTunnelHeader ? secret : nil
+      tunnelHeaderSecret: arguments.authentication.usesHeader ? secret : nil
     )
 
     while !FileManager.default.fileExists(atPath: arguments.stopFile.path) {
@@ -41,14 +41,36 @@ struct BridgeMCPInspectorFixture {
     guard url.path.hasPrefix("/"), !FileManager.default.fileExists(atPath: url.path) else {
       throw FixtureError.invalidStopFile
     }
-    let usesTunnelHeader = arguments.count == 5
-    guard
-      !usesTunnelHeader
-        || (arguments[3] == "--authentication" && arguments[4] == "tunnel-header")
-    else {
-      throw FixtureError.invalidArguments
+    let authentication = try parseAuthentication(arguments)
+    return FixtureArguments(stopFile: url, authentication: authentication)
+  }
+
+  private static func parseAuthentication(_ arguments: [String]) throws
+    -> FixtureAuthentication
+  {
+    guard arguments.count == 5 else { return .path }
+    guard arguments[3] == "--authentication" else { throw FixtureError.invalidArguments }
+    switch arguments[4] {
+    case "tunnel-header": return .chatGPTHeader
+    case "qwen-header": return .qwenHeader
+    default: throw FixtureError.invalidArguments
     }
-    return FixtureArguments(stopFile: url, usesTunnelHeader: usesTunnelHeader)
+  }
+
+  private static func makeHTTPConfiguration(
+    authentication: FixtureAuthentication,
+    secret: String
+  ) throws -> MCPHTTPConfiguration {
+    switch authentication {
+    case .path:
+      return try MCPHTTPConfiguration(pathSecret: secret)
+    case .chatGPTHeader:
+      return try MCPHTTPConfiguration(headerSecret: secret)
+    case .qwenHeader:
+      let credential = try MCPClientCredential(clientID: .qwenStudio, value: secret)
+      let authenticator = try MCPClientCredentialAuthenticator(credentials: [credential])
+      return try MCPHTTPConfiguration(clientAuthenticator: authenticator)
+    }
   }
 
   private static func makePathSecret() throws -> String {
@@ -76,7 +98,17 @@ struct BridgeMCPInspectorFixture {
 
 private struct FixtureArguments {
   let stopFile: URL
-  let usesTunnelHeader: Bool
+  let authentication: FixtureAuthentication
+}
+
+private enum FixtureAuthentication {
+  case path
+  case chatGPTHeader
+  case qwenHeader
+
+  var usesHeader: Bool {
+    self != .path
+  }
 }
 
 private enum FixtureError: Error {

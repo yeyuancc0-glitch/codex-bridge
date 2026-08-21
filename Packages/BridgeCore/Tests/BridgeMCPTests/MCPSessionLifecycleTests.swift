@@ -217,7 +217,7 @@ final class MCPSessionLifecycleTests: XCTestCase {
     XCTAssertEqual(qwenCount, 0)
   }
 
-  func testSessionLimitsAreEnforcedPerClientAndGlobally() async {
+  func testQwenReclaimsOldestSessionWithoutAffectingChatGPT() async throws {
     let registry = authenticatedRegistry(
       port: 19_329,
       limits: .init(maximumSessions: 2, maximumSessionsPerClient: 1)
@@ -230,6 +230,7 @@ final class MCPSessionLifecycleTests: XCTestCase {
         clientID: .qwenStudio
       )
     )
+    let firstQwenSessionID = try XCTUnwrap(firstQwen.headers[HTTPHeaderName.sessionID])
     let secondQwen = await registry.handle(
       AuthenticatedMCPRequest(
         request: initializeRequest(port: 19_329),
@@ -243,12 +244,73 @@ final class MCPSessionLifecycleTests: XCTestCase {
       )
     )
     XCTAssertEqual(firstQwen.statusCode, 200)
-    XCTAssertEqual(secondQwen.statusCode, 503)
+    XCTAssertEqual(secondQwen.statusCode, 200)
     XCTAssertEqual(chatGPT.statusCode, 200)
+    let retired = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: HTTPRequest(
+          method: "GET",
+          headers: [
+            HTTPHeaderName.host: "127.0.0.1:19329",
+            HTTPHeaderName.accept: "text/event-stream",
+            HTTPHeaderName.sessionID: firstQwenSessionID,
+          ]
+        ),
+        clientID: .qwenStudio
+      )
+    )
+    XCTAssertEqual(retired.statusCode, 404)
     let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
     let chatGPTCount = await registry.activeSessionCount(for: .chatGPT)
     XCTAssertEqual(qwenCount, 1)
     XCTAssertEqual(chatGPTCount, 1)
+  }
+
+  func testChatGPTSessionLimitStillFailsClosed() async {
+    let registry = authenticatedRegistry(
+      port: 19_333,
+      limits: .init(maximumSessions: 2, maximumSessionsPerClient: 1)
+    )
+    addTeardownBlock { await registry.stop() }
+
+    let first = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: initializeRequest(port: 19_333),
+        clientID: .chatGPT
+      )
+    )
+    let second = await registry.handle(
+      AuthenticatedMCPRequest(
+        request: initializeRequest(port: 19_333),
+        clientID: .chatGPT
+      )
+    )
+
+    XCTAssertEqual(first.statusCode, 200)
+    XCTAssertEqual(second.statusCode, 503)
+    let chatGPTCount = await registry.activeSessionCount(for: .chatGPT)
+    XCTAssertEqual(chatGPTCount, 1)
+  }
+
+  func testQwenSessionLeakCannotExhaustItsClientCapacity() async {
+    let registry = authenticatedRegistry(
+      port: 19_334,
+      limits: .init(maximumSessions: 3, maximumSessionsPerClient: 2)
+    )
+    addTeardownBlock { await registry.stop() }
+
+    for _ in 0..<20 {
+      let response = await registry.handle(
+        AuthenticatedMCPRequest(
+          request: initializeRequest(port: 19_334),
+          clientID: .qwenStudio
+        )
+      )
+      XCTAssertEqual(response.statusCode, 200)
+    }
+
+    let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
+    XCTAssertEqual(qwenCount, 2)
   }
 
   func testModernDiscoveryIsAvailableToQwenWithItsOwnAuthenticatedContext() async throws {

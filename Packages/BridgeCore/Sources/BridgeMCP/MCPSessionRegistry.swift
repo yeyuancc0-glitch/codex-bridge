@@ -356,12 +356,16 @@ public actor MCPSessionRegistry {
     for request: HTTPRequest,
     clientID: MCPClientID
   ) async -> HTTPResponse {
+    let retiredServers = retireQwenSessionsForAdmission(clientID: clientID)
     let clientSessionCount = sessions.values.lazy.filter { $0.clientID == clientID }.count
     let pendingForClient = pendingSessionCreationsByClient[clientID, default: 0]
     guard !isStopped,
       sessions.count + pendingSessionCreations < limits.maximumSessions,
       clientSessionCount + pendingForClient < limits.maximumSessionsPerClient
     else {
+      for server in retiredServers {
+        await server.stop()
+      }
       return .error(statusCode: 503, .internalError("Session capacity reached"))
     }
     pendingSessionCreations += 1
@@ -370,6 +374,9 @@ public actor MCPSessionRegistry {
       pendingSessionCreations -= 1
       let remaining = pendingSessionCreationsByClient[clientID, default: 1] - 1
       pendingSessionCreationsByClient[clientID] = remaining == 0 ? nil : remaining
+    }
+    for server in retiredServers {
+      await server.stop()
     }
 
     let sessionID = makeUniqueSessionID()
@@ -420,6 +427,30 @@ public actor MCPSessionRegistry {
       }
       return .error(statusCode: 500, .internalError("Session unavailable"))
     }
+  }
+
+  private func retireQwenSessionsForAdmission(clientID: MCPClientID) -> [Server] {
+    guard clientID == .qwenStudio else { return [] }
+    var retiredServers: [Server] = []
+    while sessionCapacityReached(for: clientID) {
+      guard
+        let oldest = sessions.lazy.filter({ $0.value.clientID == .qwenStudio }).min(by: {
+          $0.value.lastAccessedAt < $1.value.lastAccessedAt
+        }),
+        let retired = sessions.removeValue(forKey: oldest.key)
+      else {
+        break
+      }
+      retiredServers.append(retired.server)
+    }
+    return retiredServers
+  }
+
+  private func sessionCapacityReached(for clientID: MCPClientID) -> Bool {
+    let clientSessionCount = sessions.values.lazy.filter { $0.clientID == clientID }.count
+    let pendingForClient = pendingSessionCreationsByClient[clientID, default: 0]
+    return sessions.count + pendingSessionCreations >= limits.maximumSessions
+      || clientSessionCount + pendingForClient >= limits.maximumSessionsPerClient
   }
 
   private func validateAuthorityAndOrigin(
