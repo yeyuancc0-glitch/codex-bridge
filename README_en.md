@@ -81,7 +81,7 @@ BridgeLegacyImport → BridgeServiceCore + legacy project model read boundary
 ### Prerequisites
 - macOS 14.0 or later
 - Swift 6 / Xcode 16+ toolchain
-- Local [Codex CLI](https://github.com/openai/codex) with `app-server` support
+- Local **Codex Desktop** (or Codex environment with `app-server` support)
 - Node.js (for MCP Inspector acceptance test gate)
 
 ### Build and Run

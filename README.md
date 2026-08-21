@@ -81,7 +81,7 @@ BridgeLegacyImport → BridgeServiceCore + 旧项目模型读取边界
 ### 环境要求
 - macOS 14.0 或更高版本
 - Swift 6 / Xcode 16+ 编译工具链
-- 本地已安装支持 `app-server` 的 [Codex CLI](https://github.com/openai/codex)
+- 本地已安装 **Codex 桌面端**（或具备 `app-server` 支持的 Codex 环境）
 - Node.js（用于运行 MCP Inspector 验收门禁）
 
 ### 构建与运行
