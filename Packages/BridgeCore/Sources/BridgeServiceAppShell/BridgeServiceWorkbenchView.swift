@@ -208,22 +208,39 @@ struct BridgeServiceWorkbenchView: View {
         } else {
           Menu {
             ForEach(model.threads, id: \.threadID) { thread in
+              let title = thread.title ?? thread.preview ?? thread.threadID
+              let compactTitle = WorkbenchThreadTitlePresentation.compact(
+                title,
+                maximumCharacters: 48
+              )
               Button {
                 model.openThread(thread.threadID)
               } label: {
                 if thread.threadID == model.selectedThreadID {
-                  Label(thread.title ?? thread.preview ?? thread.threadID, systemImage: "checkmark")
+                  Label(compactTitle, systemImage: "checkmark")
+                    .accessibilityLabel(title)
                 } else {
-                  Text(thread.title ?? thread.preview ?? thread.threadID)
+                  Text(compactTitle)
+                    .accessibilityLabel(title)
                 }
               }
             }
           } label: {
-            Text(currentSelectedThreadTitle)
-              .font(.caption.weight(.medium))
-              .lineLimit(1)
+            Text(
+              WorkbenchThreadTitlePresentation.compact(
+                currentSelectedThreadTitle,
+                maximumCharacters: 28
+              )
+            )
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 220, alignment: .leading)
           }
           .menuStyle(.borderlessButton)
+          .frame(maxWidth: 220, alignment: .leading)
+          .help(currentSelectedThreadTitle)
+          .accessibilityLabel("当前会话：\(currentSelectedThreadTitle)")
         }
 
         Spacer()
@@ -428,6 +445,16 @@ struct BridgeServiceWorkbenchView: View {
     return model.threads.first(where: { $0.threadID == threadID })?.title
       ?? model.threads.first(where: { $0.threadID == threadID })?.preview
       ?? threadID.prefix(8) + "…"
+  }
+}
+
+package enum WorkbenchThreadTitlePresentation {
+  package static func compact(_ value: String, maximumCharacters: Int) -> String {
+    precondition(maximumCharacters >= 2)
+    let normalized = value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    guard !normalized.isEmpty else { return "未命名会话" }
+    guard normalized.count > maximumCharacters else { return normalized }
+    return String(normalized.prefix(maximumCharacters - 1)) + "…"
   }
 }
 
