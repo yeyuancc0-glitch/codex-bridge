@@ -4,170 +4,198 @@
   <a href="./README.md">简体中文</a> | <b>English</b>
 </p>
 
-Codex Bridge is a zero-cloud, personal self-hosted native bridge connecting **ChatGPT Web**, **Qwen Studio**, and other MCP clients directly to your local **Codex** installation on macOS. 
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-macOS%2014.0%2B-blue?style=flat-square&logo=apple" alt="Platform">
+  <img src="https://img.shields.io/badge/Swift-6.0%20Strict-orange?style=flat-square&logo=swift" alt="Swift 6">
+  <img src="https://img.shields.io/badge/Protocol-MCP%20Gateway-green?style=flat-square" alt="MCP">
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License">
+</p>
 
-MCP clients inspect user-registered local projects, bind to Codex threads, submit tasks, and interact with your local development environment. A native macOS SwiftUI/AppKit application provides project management, configuration, real-time streaming conversations, and local approval controls; the long-running backend runs as a standalone user background Service (`CodexBridgeService`).
-
-> **Development Status**: The V1 background Service architecture is fully implemented and verified. `CodexBridgeService` runs as a bundled LaunchAgent owning the MCP gateway, Secure Tunnel, loopback Streamable HTTP `/mcp` endpoint, Codex execution, independent Supervisor, and single SQLite store. The native macOS App is a pure Service client over versioned XPC; quitting or closing the App does not terminate the background Service or in-flight tasks.
+**Codex Bridge** is a **zero-cloud, personal self-hosted, local-first** macOS bridge. Through the standard Model Context Protocol (MCP), it connects **ChatGPT Web**, **Qwen Studio**, and other MCP clients directly to your local **Codex** execution engine—enabling world-class cloud AI models to safely power local development and environment automation.
 
 ---
 
-## Architecture Topology
+## 🌟 Key Highlights & Core Values
+
+- 🔒 **Zero Cloud Footprint**: No third-party relay servers, no developer databases, and no account tracking. All code and credentials remain entirely on your local Mac.
+- ⚡ **Native Multi-Client MCP Gateway**:
+  - **ChatGPT Web**: Connects end-to-end via OpenAI's official Secure MCP Tunnel.
+  - **Qwen Studio & Local Clients**: Connects lightning-fast via a stable loopback Streamable HTTP `/mcp` endpoint with one-click JSON configuration.
+- 🤖 **Dual Execution Pathways**:
+  - **Codex Deep Mode (Recommended)**: Delegates tasks to the local Codex engine (supporting multi-turn discussions, tool execution, independent Supervisor critique, and typewriter live streaming).
+  - **Direct Mutation Mode**: Direct file edits, patch applications, controlled Git commits, and sandboxed command execution (protected by desktop prompt approvals).
+- 🛡️ **Local-Only Approvals**: No matter how intelligent the AI is, any dangerous file write, command execution, or Git commit **must be explicitly approved by the local Mac user via a native desktop dialog**.
+- 🖥️ **Native macOS Experience (SwiftUI + AppKit)**: Standalone LaunchAgent daemon continues running when the UI is closed; the built-in workbench features real-time streaming, collapsible reasoning blocks, and structured tool-call cards.
+
+---
+
+## 🏗️ Architecture Topology
 
 ```text
-ChatGPT Web ───► Secure MCP Tunnel ┐
-                                   ├─► CodexBridgeService ──► Local Codex Execution (app-server)
-Qwen Studio ───► Local HTTP `/mcp` ┘   (MCP Gateway)       └─► Independent Supervisor
-CodexBridge.app ──► Mach XPC ──────┘
+┌────────────────────────┐      ┌────────────────────────┐
+│      ChatGPT Web       │      │   Qwen Studio Client   │
+│ (OpenAI Secure Tunnel) │      │ (Local HTTP /mcp Port) │
+└───────────┬────────────┘      └───────────┬────────────┘
+            │                               │
+            └───────────────┬───────────────┘
+                            ▼
+            ┌──────────────────────────────────────────────┐
+            │        CodexBridgeService (LaunchAgent)      │
+            │  ├─ Unified MCP Gateway (Read-Only/Full)     │
+            │  ├─ Direct Process & Session Management      │
+            │  ├─ Single SQLite Store (Tasks, Projects)    │
+            │  └─ Local Action Approval Center             │
+            └──────┬────────────────────────┬──────────────┘
+                   │ Mach XPC IPC           │ stdio JSON-RPC
+                   ▼                        ▼
+      ┌────────────────────────┐  ┌────────────────────────┐
+      │    CodexBridge.app     │  │   Local Codex Engine   │
+      │  (Native macOS Shell)  │  │(app-server + Supervisor│
+      └────────────────────────┘  └────────────────────────┘
 ```
 
-### Module Dependency Flow
+---
 
+## 🚀 Two Core Workflows
+
+### 1. Codex Deep Execution Workflow (Primary Path)
 ```text
-CodexBridge.app → BridgeServiceAppShell → BridgeIPC → CodexBridgeService
-CodexBridgeService → BridgeServiceHost
-BridgeServiceHost → BridgeServiceCore / BridgeServiceApplication / BridgeMCP
-                  → BridgeCodexService / BridgeTunnel / BridgeSecurity / BridgeDirectCommand
-BridgeCodexService → BridgeCodexRPC
-BridgeDirectCommand → BridgeServiceCore / BridgeProjects / BridgeSecurity
-BridgeMCP → Service API
-BridgeLegacyImport → BridgeServiceCore + legacy project model read boundary
+ChatGPT / Qwen  ──[submit_task]──►  CodexBridgeService  ──►  Local Codex Engine
+      ▲                                                          │
+      │                                                          ▼
+  [get_task] Poll progress & final report   ◄────  Typewriter streaming / Supervisor critique
+```
+- **Best for**: Feature implementations, large refactors, multi-step debugging, and automated testing.
+- **Features**: Automatic Codex thread binding, live reasoning chain display, tool progress visualization, and uninterrupted background execution upon app exit.
+
+### 2. Direct Agile Mutation Workflow (Instant Edits)
+```text
+ChatGPT / Qwen  ──[direct_write_file]──►  Desktop Approval Sheet (Payload Digest validation)
+                                                    │
+                                           [User clicks Allow / Deny]
+                                                    │
+                                                    ▼
+                                          Atomic write to workspace file
+```
+- **Best for**: Fast configuration tweaks, small patch applications, repository inspection, and safe read-only commands.
+- **Features**: Single-use signed approval grants, cooldown flood protection, and controlled `direct_git_commit` (isolated temporary index, sensitive credential protection).
+
+---
+
+## 🛠️ Quick Start
+
+### 1. Prerequisites
+- **Operating System**: macOS 14.0 (Sonoma) or later (Apple Silicon & Intel supported).
+- **Codex Environment**: Installed and logged-in **Codex Desktop** (or executable `codex` command in system PATH).
+- **Toolchain**: Xcode 16+ / Swift 6.0 toolchain.
+
+### 2. Build & Launch
+```bash
+# Clone the repository
+git clone https://github.com/yeyuancc0-glitch/codex-bridge.git
+cd codex-bridge
+
+# Build and run locally
+Scripts/with-xcode.sh xcodebuild \
+  -project CodexBridge.xcodeproj \
+  -scheme CodexBridge \
+  -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath .build/Xcode \
+  build CODE_SIGNING_ALLOWED=NO
 ```
 
----
+Launching `CodexBridge.app` will automatically register and start the bundled `CodexBridgeService` LaunchAgent.
 
-## Key Capabilities
+### 3. Register Local Projects
+Open the app and click **Add Project** to register your authorized workspace directories. Bridge binds the canonical path, device ID, and inode to eliminate symlink escapes.
 
-### 1. Unified Multi-Client MCP Gateway
-- **ChatGPT Web**: Connects securely via the official OpenAI Secure MCP Tunnel.
-- **Qwen Studio & Local Clients**: Connects directly via a stable loopback Streamable HTTP endpoint (`/mcp`) with per-client credentials in Keychain and independent session lifecycle management.
-- **Exposure Modes**: Flexible per-client Read-Only and Full-Action tool exposure modes.
+### 4. Connect Your MCP Clients
 
-### 2. Native Codex Execution & Supervision
-- Direct communication with the local Codex instance via the official `codex app-server` stdio protocol.
-- Independent **Supervisor** session for transparent observation, critique, and progress monitoring without hijacking execution.
-- Real-time streaming conversation sync (`item/agentMessage/delta`, `item/reasoning/textDelta`, tool call progression) into the native desktop app.
+#### Option A: Connect ChatGPT Web
+1. In Bridge App's **Connections** tab, select **Secure MCP Tunnel**, and enter your OpenAI `Tunnel ID` and `Runtime Key` (securely stored in Keychain).
+2. On ChatGPT Web → **Settings** → **Connected apps / Developer Mode** → **Add New Server**.
+3. Choose **OpenAI Secure Tunnel**, enter the matching `Tunnel ID`, and set path to `/mcp`.
+4. For step-by-step setup and prompt examples, see: [👉 ChatGPT Developer Mode Setup Guide](./docs/CHATGPT_DEVELOPER_MODE.md).
 
-### 3. Direct Workspace Actions & Controlled Git Commit
-- **Direct Process Sessions**: Managed process lifecycle per project, structured argv matching, `posix_spawn` process group isolation, and orphan process cleanup.
-- **Security Command Modes**: Configurable `denied`, `safe` (capability-validated built-in commands like `ls/find/grep/rg` with path containment), and `full` modes with custom whitelist/blacklist.
-- **File & Patch Operations**: Granular project file read/write, optimistic concurrency conflict detection (`revision_conflict`), unified diff / patch application, and sensitive credential detection.
-- **Controlled Git Commits**: `direct_git_commit` stages changes using isolated temporary index boundaries, prevents destructive actions (`amend`/`push`/history rewriting), and validates sensitive paths before commit.
-
-### 4. Skill Action Contracts & Network Sandbox
-- Full YAML Frontmatter parsing (`SKILL.md`) exposing explicit action contracts.
-- Granular network declaration (`denied` runs under `sandbox-exec` network isolation; `unspecified` conservatively triggers local policy/approval).
-- Built-in adapters for skills like `agent-reach` for safe, read-only external lookups.
-
-### 5. Native macOS Desktop Experience (SwiftUI + AppKit)
-- **Real-Time Streaming Conversation**: Typewriter-style live streaming, collapsible reasoning blocks, and structured tool-call cards.
-- **Local Approval Center**: Dangerous mutations and direct actions trigger desktop approvals with single-use payload digests, expiration, and cooldown protections.
-- **Embedded Workbench Browser**: Persistent `WKWebView` with login session reuse, native file download handling, and external URL scheme containment.
+#### Option B: Connect Qwen Studio (Desktop)
+1. In Bridge App's **Connections** tab, enable **Qwen Studio Support**.
+2. Click **Copy MCP Config JSON**.
+3. Paste the configuration into Qwen Studio's MCP settings to start chatting immediately!
 
 ---
 
-## Security Boundaries & Product Principles
+## 🛡️ Security & Privacy Boundaries
 
-- **Zero Cloud Footprint**: No developer-operated cloud servers, databases, account systems, or telemetry.
-- **No Secret Scraping**: Bridge never reads, logs, or exports Codex `auth.json`, tokens, session cookies, or Keychain secrets.
-- **Local-Only Approvals**: Neither ChatGPT, Qwen, nor the Supervisor can approve sensitive operations—authorization stays exclusively with the local Mac user.
-- **Workspace Containment**: MCP tools operate strictly on explicit relative paths within user-registered project roots (canonical path, device, and inode validated).
-- **Concurrency Safety**: At most one active workspace-write task per project at any time. Read-only tasks run concurrently.
-
----
-
-## Getting Started
-
-### Prerequisites
-- macOS 14.0 or later
-- Swift 6 / Xcode 16+ toolchain
-- Local **Codex Desktop** (or Codex environment with `app-server` support)
-- Node.js (for MCP Inspector acceptance test gate)
-
-### Build and Run
-
-1. **Development Build**:
-   ```bash
-   Scripts/with-xcode.sh xcodebuild \
-     -project CodexBridge.xcodeproj \
-     -scheme CodexBridge \
-     -configuration Debug \
-     -destination 'platform=macOS,arch=arm64' \
-     -derivedDataPath .build/Xcode \
-     build CODE_SIGNING_ALLOWED=NO
-   ```
-2. **First Launch**:
-   - Launch `CodexBridge.app`. It automatically registers and connects to the bundled `CodexBridgeService` LaunchAgent.
-   - Authorize background items in **macOS System Settings → General → Login Items & Extensions** if prompted.
-3. **Register Projects**:
-   - Add local project directories through the app. Project roots are captured with canonical path, device ID, and inode.
-4. **Connect MCP Clients**:
-   - **ChatGPT Web**: Configure Secure MCP Tunnel in the Connections tab, enter the Tunnel ID and Runtime Key (stored securely in Keychain), and connect via ChatGPT Developer Mode.
-   - **Qwen Studio**: Enable Qwen Studio in Connections, copy the local JSON configuration into Qwen Studio MCP settings, and start chatting.
+| Security Pillar | Implementation Mechanism |
+| :--- | :--- |
+| **Local-Only Approval** | AI models and Supervisors cannot approve sensitive actions; approvals stay strictly with the Mac user via desktop sheets. |
+| **Workspace Containment** | Operations are strictly constrained within registered project roots; access to sensitive locations (`~/.ssh`, `.env*`, `/etc`) is denied. |
+| **Mutex Write Lock** | Exactly one active workspace-write task per project at a time (`project_busy` protection), preventing write conflicts. |
+| **Controlled Git Commits** | `direct_git_commit` uses an isolated temporary index, validates against secret leakage, and forbids destructive `push` / `amend`. |
+| **Skill Sandboxing** | Explicit Action contracts run under `sandbox-exec` network isolation when marked `denied`. |
+| **Zero Credential Scraping** | Never reads, logs, or exports Codex `auth.json`, session tokens, or browser cookies. |
 
 ---
 
-## Repository Map
+## 📂 Repository Map
 
 ```text
-App/                              Native macOS client entry point
-CodexBridge.xcodeproj/            Xcode project containing App and Service targets
+App/                              Native macOS client entry point (SwiftUI + AppKit)
+CodexBridge.xcodeproj/            Xcode project containing App & Service LaunchAgent targets
 Packages/BridgeCore/
-  Sources/BridgeServiceCore/      Single SQLite store: projects, tasks, settings, events
-  Sources/BridgeCodexRPC/         Verified Codex app-server protocol adapter
-  Sources/BridgeCodexService/     ExecutionManager, SupervisorManager, local approval, coordinator
+  Sources/BridgeServiceCore/      Single SQLite store (Projects, tasks, settings, events)
+  Sources/BridgeCodexRPC/         Codex app-server protocol adapter & stdio process broker
+  Sources/BridgeCodexService/     ExecutionManager, Supervisor, coordinator & live streams
   Sources/BridgeServiceApplication/ Lightweight application service shared by MCP & XPC
-  Sources/BridgeMCP/              Bounded MCP server (ChatGPT & Qwen Studio profiles)
-  Sources/BridgeIPC/              Versioned, bounded XPC DTOs and client hub
-  Sources/BridgeServiceHost/      Background Service composition root, XPC/MCP/Tunnel lifecycle
-  Sources/BridgeServiceAppShell/  Pure UI client: projects, threads, status, approvals, workbench
+  Sources/BridgeMCP/              Bounded MCP gateway (ChatGPT & Qwen Studio profiles)
+  Sources/BridgeIPC/              Versioned, bounded XPC IPC hub
+  Sources/BridgeServiceHost/      Background Service composition root & lifecycle manager
+  Sources/BridgeServiceAppShell/  Pure UI shell: workbench, project manager, approval sheets
   Sources/BridgeDirectCommand/    Direct command execution, process sessions & controlled git
   Sources/BridgeSkills/           Skill discovery, YAML frontmatter & action sandboxing
-  Sources/BridgeTunnel/           Secure MCP Tunnel lifecycle & health checks
-  Sources/BridgeLegacyImport/     One-time read-only legacy configuration migration
+  Sources/BridgeTunnel/           Secure MCP Tunnel process lifecycle & health checks
   Sources/BridgeSecurity/         Path canonicalization, device/inode validation & secret filters
-  Sources/BridgeFiles/            Restricted project search and bounded reads
-  Sources/BridgeProjects/         Project registration models
 Scripts/                          Build, lint, test, tunnel verification & release scripts
-docs/                             Architecture specs, compatibility matrices, guides
+docs/                             Detailed technical specifications & developer guides
 ```
 
 ---
 
-## Development & Verification
+## 🧪 Development & Verification Baseline
 
-All changes must pass the full test suite and strict linting:
+This project adheres to rigorous engineering standards:
 
 ```bash
 # Run package unit and integration tests
 Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 
-# Strict swift-format check
+# Strict swift-format code style check
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive \
   Packages/BridgeCore/Sources Packages/BridgeCore/Tests App
 
-# Verified MCP Inspector gate
+# Official MCP Inspector acceptance gate
 Scripts/verify-mcp-inspector.sh
 
 # Tunnel helper compatibility check
 Scripts/test-tunnel-helper-config.sh
 ```
 
-**Verified Baseline**: 730+ tests across 28 test bundles with 0 failures under Swift 6 strict concurrency, plus clean MCP Inspector 2.1.0 and tunnel-client validation gates.
+- **Verified Baseline**: Under Swift 6 strict concurrency, **730+ tests across 28 test bundles pass with 0 failures (100% pass rate)**, along with clean MCP Inspector 2.1.0 and tunnel-client validation gates.
 
 ---
 
-## Documentation
+## 📚 Documentation
 
-- [`docs/CHATGPT_DEVELOPER_MODE.md`](./docs/CHATGPT_DEVELOPER_MODE.md) — ChatGPT Developer Mode & Tunnel setup.
-- [`docs/COMPATIBILITY.md`](./docs/COMPATIBILITY.md) — Compatibility matrix for Codex, MCP, and macOS.
-- [`docs/DEPENDENCIES.md`](./docs/DEPENDENCIES.md) — Pinned dependency versions and license evidence.
-- [`docs/TUNNEL_CLIENT_INTEGRATION.md`](./docs/TUNNEL_CLIENT_INTEGRATION.md) — Tunnel helper integration contract.
-- [`docs/RELEASE.md`](./docs/RELEASE.md) — Packaging, signing, notarization, and distribution guide.
+- [ChatGPT Developer Mode Setup Guide](./docs/CHATGPT_DEVELOPER_MODE.md)
+- [System & Environment Compatibility Matrix](./docs/COMPATIBILITY.md)
+- [Pinned Dependencies & Licensing Evidence](./docs/DEPENDENCIES.md)
+- [Secure Tunnel Helper Integration Contract](./docs/TUNNEL_CLIENT_INTEGRATION.md)
+- [Packaging, Signing & Release Guide](./docs/RELEASE.md)
 
 ---
 
-## License & Security
+## 📄 License & Privacy
 
 - **License**: Licensed under the [Apache License 2.0](./LICENSE). See [NOTICE](./NOTICE) for third-party acknowledgments.
 - **Privacy & Security**: See [PRIVACY.md](./PRIVACY.md) and [SECURITY.md](./SECURITY.md). Never export tokens, keys, cookies, or sensitive project source in issues or reports.
