@@ -10,6 +10,7 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case getProjectCommands = "get_project_commands"
   case updateProjectCommands = "update_project_commands"
   case setProjectCommandMode = "set_project_command_mode"
+  case setWorkbenchProject = "set_workbench_project"
   case listModels = "list_models"
   case getModelCatalog = "get_model_catalog"
   case getModelPreferences = "get_model_preferences"

@@ -2,49 +2,77 @@ import SwiftUI
 
 struct BridgeServiceSettingsView: View {
   @ObservedObject var model: BridgeServiceAppModel
+  @State private var showDisableConfirmation = false
 
   var body: some View {
     Form {
+      Section {
+        HStack(spacing: 8) {
+          Image(systemName: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+          Text("偏好设置修改后会自动同步至后台 Service，无需手动点击保存。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+      }
+
       modelDefaultsSection(
         title: "执行任务默认偏好",
+        icon: "cpu",
         description: "MCP 客户端提交新任务时，若未显式指定模型，将默认使用该配置。"
       )
 
       modelDefaultsSection(
         title: "Supervisor 只读监督",
+        icon: "eye.fill",
         description: "启用后，新任务会启动独立的只读 Supervisor 进行合规与执行监督；Supervisor 无权替本机用户批准操作。",
         supervisor: true
       )
 
       modelCatalogSection
 
-      Section("后台常驻服务") {
-        LabeledContent("当前状态", value: registrationLabel)
+      Section {
+        LabeledContent("当前守护状态", value: registrationLabel)
         Button("打开 macOS 登录项设置") {
           model.openSystemSettings()
         }
         Button("停用后台 Service", role: .destructive) {
-          Task { await model.disableBackgroundService() }
+          showDisableConfirmation = true
         }
         .disabled(model.registrationStatus == .notRegistered)
+      } header: {
+        Label("后台常驻服务", systemImage: "server.rack")
       }
 
-      Section("生命周期说明") {
+      Section {
         Text("关闭或退出当前可视化 App 只会断开本机 XPC 客户端，不会主动停止后台 Service、Codex 或 Supervisor。")
           .font(.caption)
         Text("只有在此处点击“停用后台 Service”才会注销系统 LaunchAgent 守护。")
           .font(.caption)
           .foregroundStyle(.secondary)
+      } header: {
+        Label("生命周期说明", systemImage: "info.circle")
       }
     }
     .formStyle(.grouped)
-    .padding(20)
+    .padding(24)
+    .frame(maxWidth: 960, alignment: .leading)
     .navigationTitle("设置")
+    .alert("停用后台 Service？", isPresented: $showDisableConfirmation) {
+      Button("停用后台服务", role: .destructive) {
+        Task { await model.disableBackgroundService() }
+      }
+      Button("取消", role: .cancel) {}
+    } message: {
+      Text("停用后，Codex Bridge 的后台 LaunchAgent 守护将被注销，退出 App 将无法继续响应 MCP 远程请求。")
+    }
   }
 
   @ViewBuilder
   private func modelDefaultsSection(
     title: String,
+    icon: String? = nil,
     description: String,
     supervisor: Bool = false
   ) -> some View {
@@ -108,7 +136,11 @@ struct BridgeServiceSettingsView: View {
         .disabled(supervisor && !(model.modelPreferences?.supervisorEnabled ?? true))
       }
     } header: {
-      Text(title)
+      if let icon {
+        Label(title, systemImage: icon)
+      } else {
+        Text(title)
+      }
     }
     .disabled(model.models.isEmpty || model.modelPreferences == nil)
   }
@@ -133,7 +165,7 @@ struct BridgeServiceSettingsView: View {
   }
 
   private var modelCatalogSection: some View {
-    Section("Codex 本机模型目录") {
+    Section {
       if model.models.isEmpty {
         modelCatalogStatus
       } else {
@@ -149,6 +181,8 @@ struct BridgeServiceSettingsView: View {
           }
         }
       }
+    } header: {
+      Label("Codex 本机模型目录", systemImage: "square.stack.3d.up.fill")
     }
   }
 

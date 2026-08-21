@@ -6,6 +6,36 @@ import BridgeServiceCore
 import Foundation
 
 extension BridgeServiceApplication {
+  public func serviceWorkbenchProjectID(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String? {
+    try Self.checkDeadline(deadline)
+    guard let projectID = try await settings.string(for: .workbenchProjectID) else {
+      return nil
+    }
+    guard !projectID.isEmpty, projectID.utf8.count <= 128, !projectID.contains("\0"),
+      try await projects.project(id: ProjectID(rawValue: projectID)) != nil
+    else {
+      return nil
+    }
+    return projectID
+  }
+
+  public func serviceSetWorkbenchProjectID(
+    _ projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    if let projectID {
+      guard !projectID.isEmpty, projectID.utf8.count <= 128, !projectID.contains("\0"),
+        try await projects.project(id: ProjectID(rawValue: projectID)) != nil
+      else {
+        throw BridgeMCPQueryError.projectNotFound
+      }
+    }
+    try await settings.set(projectID, for: .workbenchProjectID)
+  }
+
   public func serviceRegisterManagedProject(
     name: String,
     rootURL: URL,

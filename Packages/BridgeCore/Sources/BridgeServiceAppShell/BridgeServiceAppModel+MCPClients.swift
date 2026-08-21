@@ -11,6 +11,7 @@ extension BridgeServiceAppModel {
         enabled: enabled
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast(enabled ? "已启用 Qwen Studio 客户端" : "已停用 Qwen Studio 客户端")
     }
   }
 
@@ -22,17 +23,19 @@ extension BridgeServiceAppModel {
         mode: mode
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("Qwen 工具权限已设置为：\(mode.localizedTitle)")
     }
   }
 
   public func copyQwenStudioConfiguration() {
-    runMutation { client in
+    runMutation { [weak self] client in
       let configuration = try await client.exportMCPClientConfiguration(
         clientID: MCPClientID.qwenStudio.rawValue
       )
       let pasteboard = NSPasteboard.general
       pasteboard.clearContents()
       pasteboard.setString(configuration, forType: .string)
+      self?.postToast("已复制 Qwen Studio JSON 配置")
     }
   }
 
@@ -43,6 +46,7 @@ extension BridgeServiceAppModel {
         clientID: MCPClientID.qwenStudio.rawValue
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("已重新生成 Qwen 凭证")
     }
   }
 
@@ -51,6 +55,7 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       _ = try await client.rotateLocalMCPEndpoint()
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("已重新生成本地 MCP Endpoint")
     }
   }
 }

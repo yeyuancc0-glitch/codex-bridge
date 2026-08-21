@@ -212,6 +212,27 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
   }
 
+  func testSelectingWorkbenchProjectPersistsTheGPTDefault() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.selectProject("project-1")
+
+    try await waitUntil {
+      await client.workbenchProjectSelectionsValue() == ["project-1"]
+    }
+    XCTAssertEqual(model.selectedProjectID, "project-1")
+    XCTAssertEqual(model.serviceStatus?.workbenchProjectID, "project-1")
+  }
+
   func testTunnelActionsRouteWithoutRetainingRuntimeKeyInViewState() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -346,9 +367,53 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertNil(model.chatWebView)
   }
 
+  func testToastPostingAndManualClear() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil
+    )
+
+    XCTAssertNil(model.toast)
+    model.postToast("测试提示", symbol: "info.circle", tone: .info)
+    XCTAssertNotNil(model.toast)
+    XCTAssertEqual(model.toast?.message, "测试提示")
+    XCTAssertEqual(model.toast?.symbol, "info.circle")
+    XCTAssertEqual(model.toast?.tone, .info)
+
+    model.clearToast()
+    XCTAssertNil(model.toast)
+  }
+
+  func testPolicyUpdatePostsFeedbackToast() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil
+    )
+    await model.startAsync()
+
+    let draft = BridgeProjectPolicyDraft(
+      readPermission: "allowed",
+      writePermission: "allowed",
+      networkPermission: "allowed"
+    )
+    model.updateProjectPolicy(projectID: "project-1", draft: draft)
+
+    try await waitUntil {
+      model.toast?.message == "项目权限配置已保存生效"
+    }
+    XCTAssertEqual(model.toast?.symbol, "checkmark.circle.fill")
+    XCTAssertEqual(model.toast?.tone, .success)
+  }
+
   private func waitUntil(
     timeout: Duration = .seconds(2),
-    condition: @escaping @Sendable () async -> Bool
+    condition: @escaping @MainActor () async -> Bool
   ) async throws {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)

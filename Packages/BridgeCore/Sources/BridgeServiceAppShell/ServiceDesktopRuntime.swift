@@ -208,8 +208,10 @@ extension BridgeServiceAppModel {
     if let value = await projectResult {
       projects = value
       reconcileProjectSelection()
-      if selectedProjectID == nil, let first = value.first {
-        selectedProjectID = first.projectID
+      if selectedProjectID == nil {
+        selectedProjectID =
+          value.first(where: { $0.projectID == serviceStatus?.workbenchProjectID })?.projectID
+          ?? value.first?.projectID
       }
     }
 
@@ -222,6 +224,7 @@ extension BridgeServiceAppModel {
         selectedThreadID != threadID || conversation?.taskID != activeTask.taskID
       {
         selectedProjectID = activeTask.projectID
+        persistWorkbenchProjectSelection(activeTask.projectID)
         selectedThreadID = threadID
         selectedThread = nil
         openConversation(taskID: activeTask.taskID)
@@ -344,7 +347,19 @@ extension BridgeServiceAppModel {
       status: serviceStatus.status,
       localMCPURL: serviceStatus.localMCPURL,
       exposureMode: mode,
-      tunnel: serviceStatus.tunnel
+      tunnel: serviceStatus.tunnel,
+      workbenchProjectID: serviceStatus.workbenchProjectID
+    )
+  }
+
+  func updateWorkbenchProjectState(_ projectID: String?) {
+    guard let serviceStatus else { return }
+    self.serviceStatus = IPCServiceStatusResponse(
+      status: serviceStatus.status,
+      localMCPURL: serviceStatus.localMCPURL,
+      exposureMode: serviceStatus.exposureMode,
+      tunnel: serviceStatus.tunnel,
+      workbenchProjectID: projectID
     )
   }
 

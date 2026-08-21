@@ -95,7 +95,7 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
 }
 
 public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
-  public let projectID: String
+  public let projectID: String?
   public let prompt: String
   public let skillName: String?
   public let threadID: String?
@@ -109,7 +109,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   public let clientRequestID: String?
 
   public init(
-    projectID: String,
+    projectID: String? = nil,
     prompt: String,
     skillName: String? = nil,
     threadID: String? = nil,

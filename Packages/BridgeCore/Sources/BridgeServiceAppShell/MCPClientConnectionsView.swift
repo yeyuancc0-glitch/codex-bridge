@@ -12,6 +12,7 @@ struct MCPClientConnectionsView: View {
 
   @ObservedObject var model: BridgeServiceAppModel
   @State private var confirmation: Confirmation?
+  @State private var isCopyingQwen = false
 
   var body: some View {
     NativeCard {
@@ -66,7 +67,9 @@ struct MCPClientConnectionsView: View {
   @ViewBuilder
   private var endpoint: some View {
     if let localMCPURL = model.safeLocalMCPDescription {
-      CodeSnippetBlock(text: localMCPURL, label: "稳定本机 Endpoint (需认证 Header)")
+      CodeSnippetBlock(text: localMCPURL, label: "稳定本机 Endpoint (需认证 Header)") {
+        model.postToast("已复制本地 MCP Endpoint")
+      }
       HStack {
         Text("仅监听 127.0.0.1；凭证不会进入普通状态、日志或 SQLite。")
           .font(.caption2)
@@ -142,9 +145,26 @@ struct MCPClientConnectionsView: View {
 
       if isQwen {
         HStack(spacing: 10) {
-          Button("复制 Qwen JSON 配置") { model.copyQwenStudioConfiguration() }
-            .buttonStyle(.borderedProminent)
-            .disabled(!profile.enabled)
+          Button {
+            model.copyQwenStudioConfiguration()
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+              isCopyingQwen = true
+            }
+            Task {
+              try? await Task.sleep(for: .seconds(2))
+              withAnimation(.easeInOut(duration: 0.2)) {
+                isCopyingQwen = false
+              }
+            }
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: isCopyingQwen ? "checkmark" : "doc.on.doc")
+              Text(isCopyingQwen ? "已复制 JSON 配置" : "复制 Qwen JSON 配置")
+            }
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!profile.enabled)
+
           Button("重新生成凭证", role: .destructive) {
             confirmation = .rotateCredential
           }

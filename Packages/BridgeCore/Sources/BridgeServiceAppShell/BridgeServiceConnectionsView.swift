@@ -6,6 +6,8 @@ struct BridgeServiceConnectionsView: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var tunnelID = ""
   @State private var runtimeKey = ""
+  @State private var showClearConfirmation = false
+  @State private var showSaveSuccess = false
 
   var body: some View {
     ScrollView {
@@ -18,7 +20,7 @@ struct BridgeServiceConnectionsView: View {
 
         VStack(alignment: .leading, spacing: 12) {
           Text("后台守护服务 (Service)")
-            .font(.headline)
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
           serviceSection
@@ -26,7 +28,7 @@ struct BridgeServiceConnectionsView: View {
 
         VStack(alignment: .leading, spacing: 12) {
           Text("本地 MCP 通道")
-            .font(.headline)
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
           mcpSection
@@ -34,16 +36,26 @@ struct BridgeServiceConnectionsView: View {
 
         VStack(alignment: .leading, spacing: 12) {
           Text("OpenAI Secure MCP Tunnel")
-            .font(.headline)
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
           tunnelSection
         }
       }
-      .padding(24)
+      .padding(28)
       .frame(maxWidth: 960, alignment: .leading)
     }
     .navigationTitle("连接")
+    .alert("清除 Secure Tunnel 配置？", isPresented: $showClearConfirmation) {
+      Button("清除配置", role: .destructive) {
+        model.clearTunnel()
+        tunnelID = ""
+        runtimeKey = ""
+      }
+      Button("取消", role: .cancel) {}
+    } message: {
+      Text("这将从 Keychain 中移除已保存的 Runtime Key 并重置 Tunnel 绑定。")
+    }
   }
 
   private var serviceSection: some View {
@@ -147,7 +159,9 @@ struct BridgeServiceConnectionsView: View {
         }
 
         if let configuredID = tunnelStatus.tunnelID, !configuredID.isEmpty {
-          CodeSnippetBlock(text: configuredID, label: "已绑定的 Tunnel ID")
+          CodeSnippetBlock(text: configuredID, label: "已绑定的 Tunnel ID") {
+            model.postToast("已复制 Tunnel ID")
+          }
         }
 
         if !tunnelStatus.helperAvailable {
@@ -182,10 +196,26 @@ struct BridgeServiceConnectionsView: View {
         }
 
         HStack(spacing: 12) {
-          Button("保存并启动连接") {
+          Button {
             let key = runtimeKey
             runtimeKey = ""
             model.configureTunnel(tunnelID: tunnelID, runtimeKey: key)
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+              showSaveSuccess = true
+            }
+            Task {
+              try? await Task.sleep(for: .seconds(2.5))
+              withAnimation(.easeInOut(duration: 0.3)) {
+                showSaveSuccess = false
+              }
+            }
+          } label: {
+            HStack(spacing: 6) {
+              if showSaveSuccess {
+                Image(systemName: "checkmark")
+              }
+              Text("保存并启动连接")
+            }
           }
           .buttonStyle(.borderedProminent)
           .disabled(tunnelID.isEmpty || runtimeKey.isEmpty || !tunnelStatus.helperAvailable)
@@ -201,11 +231,20 @@ struct BridgeServiceConnectionsView: View {
             .buttonStyle(.bordered)
 
             Button("清除配置", role: .destructive) {
-              model.clearTunnel()
-              tunnelID = ""
-              runtimeKey = ""
+              showClearConfirmation = true
             }
             .buttonStyle(.bordered)
+          }
+
+          if showSaveSuccess {
+            HStack(spacing: 4) {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+              Text("凭据已提交")
+                .font(.caption)
+                .foregroundStyle(.green)
+            }
+            .transition(.opacity)
           }
         }
 

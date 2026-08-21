@@ -13,6 +13,7 @@ extension BridgeServiceAppModel {
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("已成功注册项目：\(url.lastPathComponent)")
     }
   }
 
@@ -31,6 +32,7 @@ extension BridgeServiceAppModel {
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("项目权限配置已保存生效")
     }
   }
 
@@ -74,6 +76,7 @@ extension BridgeServiceAppModel {
       )
       self.projectDetails[projectID] = detail
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("Direct 命令配置已保存生效")
     }
   }
 
@@ -86,6 +89,7 @@ extension BridgeServiceAppModel {
       )
       self.projectDetails[projectID] = detail
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("Direct 命令模式已保存")
     }
   }
 
@@ -94,17 +98,19 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       try await client.removeProject(projectID: projectID)
       if self.selectedProjectID == projectID {
-        self.selectedProjectID = nil
+        self.selectProject(nil)
         self.threads = []
         self.skills = []
         self.selectedThread = nil
       }
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("已移除项目")
     }
   }
 
   public func selectProject(_ projectID: String?) {
     selectedProjectID = projectID
+    persistWorkbenchProjectSelection(projectID)
     selectedThread = nil
     selectedThreadID = nil
     threads = []
@@ -113,6 +119,23 @@ extension BridgeServiceAppModel {
     loadSkills(projectID: projectID)
     Task { [weak self] in
       await self?.loadThreads(projectID: projectID)
+    }
+  }
+
+  func persistWorkbenchProjectSelection(_ projectID: String?) {
+    let precedingTask = workbenchProjectSyncTask
+    workbenchProjectSyncTask = Task { [weak self] in
+      await precedingTask?.value
+      guard let self, self.selectedProjectID == projectID else { return }
+      do {
+        let client = try self.currentClient()
+        try await client.setWorkbenchProject(projectID: projectID)
+        guard self.selectedProjectID == projectID else { return }
+        self.updateWorkbenchProjectState(projectID)
+      } catch {
+        guard self.selectedProjectID == projectID else { return }
+        self.errorMessage = Self.message(error)
+      }
     }
   }
 
@@ -125,6 +148,7 @@ extension BridgeServiceAppModel {
 
     if selectedProjectID != targetProjectID {
       selectedProjectID = targetProjectID
+      persistWorkbenchProjectSelection(targetProjectID)
     }
     selectedThreadID = threadID
 
@@ -192,6 +216,7 @@ extension BridgeServiceAppModel {
         self.closeConversation()
       }
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("已删除任务记录")
     }
   }
 
@@ -206,6 +231,11 @@ extension BridgeServiceAppModel {
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast(
+        allow ? "已批准 Codex 操作" : "已拒绝 Codex 操作",
+        symbol: allow ? "checkmark.shield.fill" : "xmark.shield.fill",
+        tone: allow ? .success : .warning
+      )
     }
   }
 
@@ -221,6 +251,11 @@ extension BridgeServiceAppModel {
         _ = try await client.denyDirectApproval(approvalID: approval.approvalID)
       }
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast(
+        allow ? "已批准 Direct 操作" : "已拒绝 Direct 操作",
+        symbol: allow ? "checkmark.shield.fill" : "xmark.shield.fill",
+        tone: allow ? .success : .warning
+      )
     }
   }
 
@@ -229,6 +264,7 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       try await client.setDirectApprovalMode(mode)
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast(mode == "auto" ? "已开启 Direct 操作自动批准" : "已设置为每次 Direct 操作均需批准")
     }
   }
 
@@ -238,6 +274,7 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       try await client.setExposureMode(mode)
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("MCP 工具权限已更新为：\(mode.localizedTitle)")
     }
   }
 
@@ -249,6 +286,7 @@ extension BridgeServiceAppModel {
       do {
         try await client.setModelPreferences(preferences)
         await self.refresh(silent: true, includeCatalog: true)
+        self.postToast("模型偏好设置已更新")
       } catch {
         modelPreferences = previous
         throw error
@@ -402,6 +440,7 @@ extension BridgeServiceAppModel {
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("Secure Tunnel 配置已提交，正在启动连接…")
     }
   }
 
@@ -410,6 +449,7 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       _ = try await client.connectTunnel()
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("正在连接 Secure Tunnel…")
     }
   }
 
@@ -418,6 +458,7 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       try await client.disconnectTunnel()
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("Secure Tunnel 已断开连接", symbol: "link.badge.plus", tone: .neutral)
     }
   }
 
@@ -426,6 +467,7 @@ extension BridgeServiceAppModel {
       guard let self else { return }
       try await client.clearTunnel()
       await self.refresh(silent: true, includeCatalog: false)
+      self.postToast("已清除 Secure Tunnel 配置", symbol: "trash", tone: .neutral)
     }
   }
 

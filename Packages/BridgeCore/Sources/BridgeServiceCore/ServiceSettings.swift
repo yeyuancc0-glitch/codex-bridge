@@ -23,6 +23,7 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case supervisorEnabled = "supervisor.enabled"
   case executionAccessMode = "execution.access_mode"
   case executionFastMode = "execution.fast_mode"
+  case workbenchProjectID = "workbench.project_id"
   case tunnelID = "tunnel.id"
   case tunnelEnabled = "tunnel.enabled"
 }

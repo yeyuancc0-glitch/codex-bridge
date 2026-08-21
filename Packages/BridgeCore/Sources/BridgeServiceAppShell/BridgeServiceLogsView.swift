@@ -7,6 +7,7 @@ struct BridgeServiceLogsView: View {
   @State private var filterProjectID: String? = nil
   @State private var searchText = ""
   @State private var selectedKind: String = "all"
+  @State private var isLogsCopied = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -26,10 +27,14 @@ struct BridgeServiceLogsView: View {
           icon: "list.dash.header.rectangle"
         )
         Spacer()
+
         Button {
           copyAllLogs()
         } label: {
-          Label("复制日志", systemImage: "doc.on.doc")
+          HStack(spacing: 4) {
+            Image(systemName: isLogsCopied ? "checkmark" : "doc.on.doc")
+            Text(isLogsCopied ? "已复制" : "复制日志")
+          }
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -37,8 +42,19 @@ struct BridgeServiceLogsView: View {
 
         Button {
           model.refresh()
+          model.postToast("已刷新最新日志记录")
         } label: {
-          Label("刷新", systemImage: "arrow.clockwise")
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.clockwise")
+              .rotationEffect(model.isRefreshing ? .degrees(360) : .degrees(0))
+              .animation(
+                model.isRefreshing
+                  ? .linear(duration: 1).repeatForever(autoreverses: false)
+                  : .default,
+                value: model.isRefreshing
+              )
+            Text("刷新")
+          }
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
@@ -48,28 +64,31 @@ struct BridgeServiceLogsView: View {
       HStack(spacing: 12) {
         HStack(spacing: 6) {
           Image(systemName: "magnifyingglass")
+            .font(.caption)
             .foregroundStyle(.secondary)
           TextField("搜索日志摘要、命令或文件…", text: $searchText)
+            .font(.system(size: 12))
             .textFieldStyle(.plain)
           if !searchText.isEmpty {
             Button {
               searchText = ""
             } label: {
               Image(systemName: "xmark.circle.fill")
+                .font(.caption2)
                 .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
           }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
-          RoundedRectangle(cornerRadius: 6)
-            .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.8)
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
         )
-        .frame(maxWidth: 320)
+        .frame(maxWidth: 280)
 
         if model.projects.count > 1 {
           Picker("项目", selection: $filterProjectID) {
@@ -80,27 +99,32 @@ struct BridgeServiceLogsView: View {
           }
           .pickerStyle(.menu)
           .controlSize(.small)
-          .frame(maxWidth: 180)
+          .frame(maxWidth: 160)
         }
 
         Picker("类型", selection: $selectedKind) {
-          Text("全部类型").tag("all")
-          Text("命令执行").tag("command")
-          Text("文件修改").tag("file")
-          Text("其他事件").tag("other")
+          Text("全部").tag("all")
+          Text("命令").tag("command")
+          Text("文件").tag("file")
+          Text("其他").tag("other")
         }
         .pickerStyle(.segmented)
         .controlSize(.small)
-        .frame(maxWidth: 240)
+        .frame(maxWidth: 220)
 
         Spacer()
 
         Text("共 \(filteredEvents.count) 条记录")
-          .font(.caption)
+          .font(.caption2.monospacedDigit())
           .foregroundStyle(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 3)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(Capsule())
       }
     }
-    .padding(16)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 16)
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
@@ -121,32 +145,35 @@ struct BridgeServiceLogsView: View {
             logRow(log)
           }
         }
-        .padding(16)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
       }
     }
   }
 
   private func logRow(_ log: LogItem) -> some View {
-    HStack(alignment: .top, spacing: 10) {
+    HStack(alignment: .center, spacing: 10) {
       Text("#\(log.sequence)")
-        .font(.system(size: 11, weight: .bold, design: .monospaced))
+        .font(.system(size: 11, weight: .semibold, design: .monospaced))
         .foregroundStyle(.secondary)
-        .frame(width: 38, alignment: .leading)
+        .frame(width: 42, alignment: .trailing)
 
       HStack(spacing: 4) {
         Image(systemName: "folder")
           .font(.caption2)
         Text(log.projectName)
           .font(.system(size: 11, weight: .medium))
+          .lineLimit(1)
       }
       .foregroundStyle(.blue)
-      .frame(width: 120, alignment: .leading)
-      .lineLimit(1)
+      .frame(width: 110, alignment: .leading)
 
       StatusBadge(log.kindBadge.0, symbol: log.kindBadge.1, tone: log.kindBadge.2)
+        .frame(width: 64, alignment: .leading)
 
       Text(log.summary)
         .font(.system(size: 12, design: .monospaced))
+        .lineLimit(1)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -155,6 +182,7 @@ struct BridgeServiceLogsView: View {
       Text(log.timestamp)
         .font(.system(size: 10, design: .monospaced))
         .foregroundStyle(.secondary)
+        .frame(width: 80, alignment: .trailing)
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 7)
@@ -162,7 +190,7 @@ struct BridgeServiceLogsView: View {
     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.2), lineWidth: 0.8)
+        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 0.8)
     )
   }
 
@@ -231,9 +259,20 @@ struct BridgeServiceLogsView: View {
   }
 
   private func copyAllLogs() {
+    let count = filteredEvents.count
     let text = filteredEvents.map { "#\($0.sequence) [\($0.projectName)] \($0.summary)" }.joined(
       separator: "\n")
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+      isLogsCopied = true
+    }
+    model.postToast("已复制 \(count) 条日志记录", symbol: "doc.on.doc")
+    Task {
+      try? await Task.sleep(for: .seconds(2))
+      withAnimation(.easeInOut(duration: 0.2)) {
+        isLogsCopied = false
+      }
+    }
   }
 }

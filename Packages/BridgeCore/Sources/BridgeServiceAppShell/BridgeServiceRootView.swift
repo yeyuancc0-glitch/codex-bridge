@@ -17,23 +17,46 @@ public struct BridgeServiceRootView: View {
       }
       .navigationTitle("Codex Bridge")
       .listStyle(.sidebar)
-      .frame(minWidth: 200)
+      .frame(minWidth: 220)
       .safeAreaInset(edge: .bottom) {
         connectionFooter
       }
     } detail: {
-      detail
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .toolbar {
-          ToolbarItem {
-            Button {
-              model.refresh()
-            } label: {
-              Label("刷新状态", systemImage: "arrow.clockwise")
-            }
-            .disabled(model.isRefreshing)
+      ZStack(alignment: .bottomTrailing) {
+        detail
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        if let toast = model.toast {
+          ToastHUDView(toast: toast) {
+            model.clearToast()
           }
+          .padding(.trailing, 24)
+          .padding(.bottom, 20)
+          .zIndex(100)
         }
+      }
+      .toolbar {
+        ToolbarItem(placement: .automatic) {
+          Button {
+            model.refresh()
+            model.postToast("正在刷新状态…", symbol: "arrow.clockwise", tone: .neutral)
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: "arrow.clockwise")
+                .rotationEffect(model.isRefreshing ? .degrees(360) : .degrees(0))
+                .animation(
+                  model.isRefreshing
+                    ? .linear(duration: 1).repeatForever(autoreverses: false)
+                    : .default,
+                  value: model.isRefreshing
+                )
+              Text("刷新状态")
+            }
+          }
+          .disabled(model.isRefreshing)
+          .help("刷新后台 Service、项目、Skills 及连接状态")
+        }
+      }
     }
     .task {
       model.start()
@@ -57,8 +80,9 @@ public struct BridgeServiceRootView: View {
 
   @ViewBuilder
   private func sidebarRow(for item: BridgeServiceNavigation) -> some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 10) {
       Label(item.title, systemImage: item.symbol)
+        .font(.system(size: 13, weight: .medium))
 
       Spacer(minLength: 4)
 
@@ -86,12 +110,16 @@ public struct BridgeServiceRootView: View {
           Text("\(model.projects.count)")
             .font(.caption2.monospacedDigit())
             .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Color.secondary.opacity(0.12))
+            .clipShape(Capsule())
         }
       default:
         EmptyView()
       }
     }
-    .padding(.vertical, 2)
+    .padding(.vertical, 3)
   }
 
   @ViewBuilder
@@ -114,12 +142,17 @@ public struct BridgeServiceRootView: View {
 
   private var connectionFooter: some View {
     HStack(spacing: 8) {
-      Circle()
-        .fill(footerStatusColor)
-        .frame(width: 8, height: 8)
+      ZStack {
+        Circle()
+          .fill(footerStatusColor.opacity(0.25))
+          .frame(width: 14, height: 14)
+        Circle()
+          .fill(footerStatusColor)
+          .frame(width: 8, height: 8)
+      }
 
       Text(model.connectionState.label)
-        .font(.caption)
+        .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.primary)
 
       Spacer(minLength: 0)
@@ -135,7 +168,7 @@ public struct BridgeServiceRootView: View {
     .overlay(
       Rectangle()
         .frame(height: 0.5)
-        .foregroundStyle(Color(nsColor: .separatorColor).opacity(0.4)),
+        .foregroundStyle(Color(nsColor: .separatorColor).opacity(0.35)),
       alignment: .top
     )
   }

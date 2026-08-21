@@ -16,26 +16,36 @@ struct ProjectPermissionEditor: View {
   var body: some View {
     NativeCard {
       VStack(alignment: .leading, spacing: 14) {
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
           permissionPickerRow(
             "读取权限",
+            description: readPermissionDescription,
             symbol: "doc.text.magnifyingglass",
             selection: $draft.readPermission,
             supportsLocalApproval: false
           )
           Divider()
           permissionPickerRow(
-            "写入权限", symbol: "pencil.and.outline", selection: $draft.writePermission)
+            "写入权限",
+            description: writePermissionDescription,
+            symbol: "pencil.and.outline",
+            selection: $draft.writePermission
+          )
           Divider()
-          permissionPickerRow("网络权限", symbol: "network", selection: $draft.networkPermission)
+          permissionPickerRow(
+            "网络权限",
+            description: networkPermissionDescription,
+            symbol: "network",
+            selection: $draft.networkPermission
+          )
         }
 
         Divider()
 
-        HStack(spacing: 12) {
-          Button("保存权限配置") {
+        HStack(spacing: 14) {
+          Button {
             model.updateProjectPolicy(projectID: project.projectID, draft: draft)
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
               showSavedFeedback = true
             }
             Task {
@@ -44,28 +54,23 @@ struct ProjectPermissionEditor: View {
                 showSavedFeedback = false
               }
             }
+          } label: {
+            HStack(spacing: 6) {
+              if showSavedFeedback {
+                Image(systemName: "checkmark")
+              }
+              Text("保存权限配置")
+            }
           }
           .buttonStyle(.borderedProminent)
           .disabled(!hasChanges)
 
-          if showSavedFeedback {
-            HStack(spacing: 4) {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-              Text("权限已保存生效")
-                .font(.caption)
-                .foregroundStyle(.green)
-            }
-            .transition(.opacity)
-          } else if !hasChanges {
-            HStack(spacing: 4) {
-              Image(systemName: "checkmark")
-                .foregroundStyle(.secondary)
-              Text("已是最新生效状态")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-          }
+          SaveFeedbackBadge(
+            showSaved: showSavedFeedback,
+            isModified: hasChanges,
+            savedText: "权限已保存生效",
+            unmodifiedText: "已是最新生效状态"
+          )
         }
 
         Text("安全原则：MCP 客户端和 Supervisor 永远不能代替本机用户批准 Codex 操作。")
@@ -84,32 +89,60 @@ struct ProjectPermissionEditor: View {
     draft != BridgeProjectPolicyDraft(project: project)
   }
 
+  private var readPermissionDescription: String {
+    draft.readPermission == "allowed" ? "允许读取项目内的非敏感代码和文件。" : "禁止读取任何文件。"
+  }
+
+  private var writePermissionDescription: String {
+    switch draft.writePermission {
+    case "allowed": "允许直接创建或修改文件。"
+    case "requiresLocalApproval": "每次写操作均需本机用户在 App 中显式确认。"
+    default: "禁止创建或修改项目内任何文件。"
+    }
+  }
+
+  private var networkPermissionDescription: String {
+    switch draft.networkPermission {
+    case "allowed": "允许执行联网命令或外部请求。"
+    case "requiresLocalApproval": "每次尝试联网操作均需本机用户批准。"
+    default: "严格禁止网络连接（sandbox 拦截）。"
+    }
+  }
+
   private func permissionPickerRow(
     _ title: String,
+    description: String,
     symbol: String,
     selection: Binding<String>,
     supportsLocalApproval: Bool = true
   ) -> some View {
-    HStack(alignment: .center) {
-      Label(title, systemImage: symbol)
-        .font(.subheadline.weight(.medium))
-        .frame(width: 120, alignment: .leading)
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .center) {
+        Label(title, systemImage: symbol)
+          .font(.system(size: 13, weight: .semibold))
+          .frame(width: 130, alignment: .leading)
 
-      Spacer()
+        Spacer()
 
-      Picker(title, selection: selection) {
-        Text("拒绝").tag("denied")
-        if supportsLocalApproval {
-          Text("需要本机批准").tag("requiresLocalApproval")
-        } else if selection.wrappedValue == "requiresLocalApproval" {
-          Text("需批准（不支持）").tag("requiresLocalApproval")
-            .disabled(true)
+        Picker(title, selection: selection) {
+          Text("拒绝").tag("denied")
+          if supportsLocalApproval {
+            Text("需要本机批准").tag("requiresLocalApproval")
+          } else if selection.wrappedValue == "requiresLocalApproval" {
+            Text("需批准（不支持）").tag("requiresLocalApproval")
+              .disabled(true)
+          }
+          Text("允许").tag("allowed")
         }
-        Text("允许").tag("allowed")
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: 320)
       }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .frame(maxWidth: 320)
+
+      Text(description)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.leading, 26)
     }
   }
 }

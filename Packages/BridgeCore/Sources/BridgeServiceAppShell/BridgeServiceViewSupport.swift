@@ -2,7 +2,7 @@ import AppKit
 import BridgeMCP
 import SwiftUI
 
-enum StatusTone {
+public enum StatusTone: Sendable {
   case neutral
   case success
   case warning
@@ -10,7 +10,7 @@ enum StatusTone {
   case info
   case running
 
-  var foregroundColor: Color {
+  public var foregroundColor: Color {
     switch self {
     case .neutral: .secondary
     case .success: .green
@@ -21,7 +21,7 @@ enum StatusTone {
     }
   }
 
-  var backgroundColor: Color {
+  public var backgroundColor: Color {
     switch self {
     case .neutral: Color(nsColor: .quaternaryLabelColor).opacity(0.15)
     case .success: Color.green.opacity(0.12)
@@ -32,7 +32,7 @@ enum StatusTone {
     }
   }
 
-  var borderColor: Color {
+  public var borderColor: Color {
     switch self {
     case .neutral: Color(nsColor: .separatorColor).opacity(0.3)
     case .success: Color.green.opacity(0.25)
@@ -44,18 +44,67 @@ enum StatusTone {
   }
 }
 
-struct StatusBadge: View {
-  let title: String
-  let symbol: String?
-  let tone: StatusTone
+public struct ToastHUDView: View {
+  let toast: ToastNotice
+  var onDismiss: (() -> Void)? = nil
 
-  init(_ title: String, symbol: String? = nil, tone: StatusTone = .neutral) {
+  public init(toast: ToastNotice, onDismiss: (() -> Void)? = nil) {
+    self.toast = toast
+    self.onDismiss = onDismiss
+  }
+
+  public var body: some View {
+    HStack(spacing: 10) {
+      Image(systemName: toast.symbol)
+        .font(.system(size: 14, weight: .bold))
+        .foregroundStyle(toast.tone.foregroundColor)
+
+      Text(toast.message)
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.primary)
+
+      if let onDismiss {
+        Button {
+          onDismiss()
+        } label: {
+          Image(systemName: "xmark")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .padding(.leading, 4)
+      }
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 10)
+    .background(.regularMaterial)
+    .clipShape(Capsule())
+    .overlay(
+      Capsule()
+        .strokeBorder(toast.tone.borderColor, lineWidth: 1)
+    )
+    .shadow(color: Color.black.opacity(0.18), radius: 10, x: 0, y: 4)
+    .transition(
+      .asymmetric(
+        insertion: .move(edge: .bottom).combined(with: .opacity).combined(
+          with: .scale(scale: 0.95)),
+        removal: .opacity.combined(with: .scale(scale: 0.9))
+      ))
+  }
+}
+
+public struct StatusBadge: View {
+  public let title: String
+  public let symbol: String?
+  public let tone: StatusTone
+
+  public init(_ title: String, symbol: String? = nil, tone: StatusTone = .neutral) {
     self.title = title
     self.symbol = symbol
     self.tone = tone
   }
 
-  var body: some View {
+  public var body: some View {
     HStack(spacing: 4) {
       if let symbol {
         Image(systemName: symbol)
@@ -76,68 +125,93 @@ struct StatusBadge: View {
   }
 }
 
-struct ServiceStatusLabel: View {
-  let title: String
-  let value: String
-  let symbol: String
-  var tone: StatusTone = .neutral
+public struct ServiceStatusLabel: View {
+  public let title: String
+  public let value: String
+  public let symbol: String
+  public var tone: StatusTone = .neutral
 
-  var body: some View {
-    HStack(spacing: 10) {
-      Image(systemName: symbol)
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(tone.foregroundColor)
-        .frame(width: 20, alignment: .center)
-        .accessibilityHidden(true)
+  public init(title: String, value: String, symbol: String, tone: StatusTone = .neutral) {
+    self.title = title
+    self.value = value
+    self.symbol = symbol
+    self.tone = tone
+  }
+
+  public var body: some View {
+    HStack(spacing: 12) {
+      ZStack {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+          .fill(tone.backgroundColor)
+          .frame(width: 26, height: 26)
+        Image(systemName: symbol)
+          .font(.system(size: 13, weight: .semibold))
+          .foregroundStyle(tone.foregroundColor)
+      }
+      .accessibilityHidden(true)
 
       Text(title)
-        .font(.body)
+        .font(.body.weight(.medium))
+        .foregroundStyle(.primary)
 
       Spacer(minLength: 16)
 
       StatusBadge(value, tone: tone)
     }
-    .padding(.vertical, 3)
+    .padding(.vertical, 2)
   }
 }
 
-struct SectionHeader: View {
-  let title: String
-  let subtitle: String?
-  let icon: String?
+public struct SectionHeader: View {
+  public let title: String
+  public let subtitle: String?
+  public let icon: String?
 
-  init(_ title: String, subtitle: String? = nil, icon: String? = nil) {
+  public init(_ title: String, subtitle: String? = nil, icon: String? = nil) {
     self.title = title
     self.subtitle = subtitle
     self.icon = icon
   }
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 8) {
-        if let icon {
+  public var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      if let icon {
+        ZStack {
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color.accentColor.opacity(0.12))
+            .frame(width: 34, height: 34)
           Image(systemName: icon)
-            .font(.title3.weight(.medium))
-            .foregroundStyle(.tint)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(Color.accentColor)
         }
-        Text(title)
-          .font(.title2.weight(.bold))
       }
-      if let subtitle {
-        Text(subtitle)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text(title)
+          .font(.system(size: 20, weight: .bold))
+          .foregroundStyle(.primary)
+
+        if let subtitle {
+          Text(subtitle)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+        }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
-struct TaskStatusLabel: View {
-  let status: String
+public struct TaskStatusLabel: View {
+  public let status: String
 
-  var body: some View {
+  public init(status: String) {
+    self.status = status
+  }
+
+  public var body: some View {
     StatusBadge(label, symbol: symbol, tone: tone)
       .help(status)
   }
@@ -179,50 +253,83 @@ struct TaskStatusLabel: View {
   }
 }
 
-struct NativeCard<Content: View>: View {
-  let content: Content
+public struct NativeCard<Content: View>: View {
+  public let content: Content
 
-  init(@ViewBuilder content: () -> Content) {
+  public init(@ViewBuilder content: () -> Content) {
     self.content = content()
   }
 
-  var body: some View {
+  public var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       content
     }
     .padding(16)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color(nsColor: .controlBackgroundColor))
-    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.8)
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
     )
   }
 }
 
-struct MetricCard: View {
-  let title: String
-  let value: String
-  let symbol: String
-  var subtitle: String? = nil
-  var tint: Color = .blue
+public struct MetricCard: View {
+  public let title: String
+  public let value: String
+  public let symbol: String
+  public var subtitle: String? = nil
+  public var tint: Color = .blue
+  public var action: (() -> Void)? = nil
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+  @State private var isHovered = false
+
+  public init(
+    title: String,
+    value: String,
+    symbol: String,
+    subtitle: String? = nil,
+    tint: Color = .blue,
+    action: (() -> Void)? = nil
+  ) {
+    self.title = title
+    self.value = value
+    self.symbol = symbol
+    self.subtitle = subtitle
+    self.tint = tint
+    self.action = action
+  }
+
+  public var body: some View {
+    let cardContent = VStack(alignment: .leading, spacing: 10) {
       HStack {
         Text(title)
           .font(.subheadline.weight(.medium))
           .foregroundStyle(.secondary)
         Spacer()
-        Image(systemName: symbol)
-          .font(.system(size: 14, weight: .semibold))
-          .foregroundStyle(tint)
+        ZStack {
+          RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(tint.opacity(0.12))
+            .frame(width: 28, height: 28)
+          Image(systemName: symbol)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(tint)
+        }
       }
 
-      Text(value)
-        .font(.system(size: 24, weight: .bold, design: .rounded))
-        .foregroundStyle(.primary)
+      HStack(alignment: .lastTextBaseline, spacing: 6) {
+        Text(value)
+          .font(.system(size: 26, weight: .bold, design: .rounded))
+          .foregroundStyle(.primary)
+
+        if action != nil {
+          Spacer()
+          Image(systemName: "chevron.right")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(isHovered ? tint : Color.secondary.opacity(0.4))
+        }
+      }
 
       if let subtitle {
         Text(subtitle)
@@ -231,26 +338,65 @@ struct MetricCard: View {
           .lineLimit(1)
       }
     }
-    .padding(14)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color(nsColor: .controlBackgroundColor))
-    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.8)
+    .padding(16)
+    .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+    .background(
+      isHovered && action != nil
+        ? Color(nsColor: .controlBackgroundColor).opacity(0.9)
+        : Color(nsColor: .controlBackgroundColor)
     )
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .strokeBorder(
+          isHovered && action != nil
+            ? tint.opacity(0.45)
+            : Color(nsColor: .separatorColor).opacity(0.35),
+          lineWidth: isHovered && action != nil ? 1.2 : 0.8
+        )
+    )
+
+    if let action {
+      Button(action: action) {
+        cardContent
+      }
+      .buttonStyle(.plain)
+      .onHover { hovering in
+        withAnimation(.easeInOut(duration: 0.15)) {
+          isHovered = hovering
+        }
+      }
+    } else {
+      cardContent
+    }
   }
 }
 
-struct CalloutBanner: View {
-  let title: String
-  let message: String
-  let symbol: String
-  let tone: StatusTone
-  var actionTitle: String? = nil
-  var action: (() -> Void)? = nil
+public struct CalloutBanner: View {
+  public let title: String
+  public let message: String
+  public let symbol: String
+  public let tone: StatusTone
+  public var actionTitle: String? = nil
+  public var action: (() -> Void)? = nil
 
-  var body: some View {
+  public init(
+    title: String,
+    message: String,
+    symbol: String,
+    tone: StatusTone,
+    actionTitle: String? = nil,
+    action: (() -> Void)? = nil
+  ) {
+    self.title = title
+    self.message = message
+    self.symbol = symbol
+    self.tone = tone
+    self.actionTitle = actionTitle
+    self.action = action
+  }
+
+  public var body: some View {
     HStack(alignment: .top, spacing: 12) {
       Image(systemName: symbol)
         .font(.system(size: 16, weight: .semibold))
@@ -290,11 +436,20 @@ struct CalloutBanner: View {
   }
 }
 
-struct CodeSnippetBlock: View {
-  let text: String
-  var label: String? = nil
+public struct CodeSnippetBlock: View {
+  public let text: String
+  public var label: String? = nil
+  public var onCopy: (() -> Void)? = nil
 
-  var body: some View {
+  @State private var isCopied = false
+
+  public init(text: String, label: String? = nil, onCopy: (() -> Void)? = nil) {
+    self.text = text
+    self.label = label
+    self.onCopy = onCopy
+  }
+
+  public var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       if let label {
         HStack {
@@ -303,11 +458,15 @@ struct CodeSnippetBlock: View {
             .foregroundStyle(.secondary)
           Spacer()
           Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            copyText()
           } label: {
-            Label("复制", systemImage: "doc.on.doc")
-              .font(.caption2)
+            HStack(spacing: 4) {
+              Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.caption2)
+              Text(isCopied ? "已复制" : "复制")
+                .font(.caption2.weight(isCopied ? .semibold : .regular))
+            }
+            .foregroundStyle(isCopied ? Color.green : Color.accentColor)
           }
           .buttonStyle(.borderless)
         }
@@ -325,14 +484,81 @@ struct CodeSnippetBlock: View {
       .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
       .overlay(
         RoundedRectangle(cornerRadius: 6, style: .continuous)
-          .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
+          .strokeBorder(
+            isCopied ? Color.green.opacity(0.4) : Color(nsColor: .separatorColor).opacity(0.35),
+            lineWidth: 0.8
+          )
       )
+    }
+  }
+
+  private func copyText() {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+      isCopied = true
+    }
+    onCopy?()
+    Task {
+      try? await Task.sleep(for: .seconds(2))
+      withAnimation(.easeInOut(duration: 0.2)) {
+        isCopied = false
+      }
+    }
+  }
+}
+
+public struct SaveFeedbackBadge: View {
+  public let showSaved: Bool
+  public let isModified: Bool
+  public var savedText: String = "已保存生效"
+  public var unmodifiedText: String = "已是最新生效状态"
+
+  public init(
+    showSaved: Bool,
+    isModified: Bool,
+    savedText: String = "已保存生效",
+    unmodifiedText: String = "已是最新生效状态"
+  ) {
+    self.showSaved = showSaved
+    self.isModified = isModified
+    self.savedText = savedText
+    self.unmodifiedText = unmodifiedText
+  }
+
+  public var body: some View {
+    if showSaved {
+      HStack(spacing: 4) {
+        Image(systemName: "checkmark.circle.fill")
+          .foregroundStyle(.green)
+        Text(savedText)
+          .font(.caption.weight(.medium))
+          .foregroundStyle(.green)
+      }
+      .transition(.opacity.combined(with: .scale(scale: 0.95)))
+    } else if !isModified {
+      HStack(spacing: 4) {
+        Image(systemName: "checkmark")
+          .foregroundStyle(.secondary)
+        Text(unmodifiedText)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    } else {
+      HStack(spacing: 4) {
+        Circle()
+          .fill(Color.orange)
+          .frame(width: 6, height: 6)
+        Text("有未保存的改动")
+          .font(.caption)
+          .foregroundStyle(.orange)
+      }
     }
   }
 }
 
 extension MCPServiceExposureMode {
-  var localizedTitle: String {
+  public var localizedTitle: String {
     switch self {
     case .readOnly: "只读模式"
     case .full: "完整操作"

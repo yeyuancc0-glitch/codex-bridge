@@ -52,7 +52,9 @@ extension MCPServiceToolCatalog {
     description:
       "Create and start a Codex task. Risky Codex operations still require local approval. "
       + "Codex is the default execution path. Prefer this tool unless the user explicitly asked "
-      + "the MCP client to modify files or run commands directly.",
+      + "the MCP client to modify files or run commands directly. Omit project_id to use the "
+      + "project currently selected in the Codex Bridge workbench; an explicit project_id overrides "
+      + "that default.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -75,7 +77,7 @@ extension MCPServiceToolCatalog {
         ],
         "client_request_id": nullableStringSchema(maximum: 512),
       ],
-      required: ["project_id", "prompt"]
+      required: ["prompt"]
     ),
     annotations: Tool.Annotations(
       readOnlyHint: false,

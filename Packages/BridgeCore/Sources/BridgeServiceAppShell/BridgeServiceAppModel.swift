@@ -109,6 +109,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var lastRefreshAt: Date?
   @Published public internal(set) var conversation: TaskConversationModel?
   @Published public var errorMessage: String?
+  @Published public internal(set) var toast: ToastNotice?
   @Published public var isChatBrowserEnabled: Bool {
     didSet {
       UserDefaults.standard.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
@@ -131,6 +132,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   var client: (any BridgeServiceClientProtocol)?
   var pollingTask: Task<Void, Never>?
   var chatWebViewSleepTask: Task<Void, Never>?
+  var toastDismissTask: Task<Void, Never>?
+  var workbenchProjectSyncTask: Task<Void, Never>?
   var chatBrowserResumeURL = URL(string: "https://chatgpt.com")!
   var lastThreadCatalogRefreshAt: Date?
   var started = false
@@ -169,6 +172,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   deinit {
     pollingTask?.cancel()
     chatWebViewSleepTask?.cancel()
+    toastDismissTask?.cancel()
+    workbenchProjectSyncTask?.cancel()
   }
 
   public func projectName(for projectID: String) -> String {
@@ -229,5 +234,49 @@ public final class BridgeServiceAppModel: ObservableObject {
     Task { [weak self] in
       await self?.refresh(silent: false, includeCatalog: true)
     }
+  }
+
+  public func postToast(
+    _ message: String,
+    symbol: String = "checkmark.circle.fill",
+    tone: StatusTone = .success
+  ) {
+    toastDismissTask?.cancel()
+    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+      toast = ToastNotice(message: message, symbol: symbol, tone: tone)
+    }
+    toastDismissTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(2.5))
+      guard !Task.isCancelled else { return }
+      withAnimation(.easeInOut(duration: 0.25)) {
+        self?.toast = nil
+      }
+    }
+  }
+
+  public func clearToast() {
+    toastDismissTask?.cancel()
+    withAnimation(.easeInOut(duration: 0.2)) {
+      toast = nil
+    }
+  }
+}
+
+public struct ToastNotice: Identifiable, Equatable, Sendable {
+  public let id: UUID
+  public let message: String
+  public let symbol: String
+  public let tone: StatusTone
+
+  public init(
+    id: UUID = UUID(),
+    message: String,
+    symbol: String = "checkmark.circle.fill",
+    tone: StatusTone = .success
+  ) {
+    self.id = id
+    self.message = message
+    self.symbol = symbol
+    self.tone = tone
   }
 }

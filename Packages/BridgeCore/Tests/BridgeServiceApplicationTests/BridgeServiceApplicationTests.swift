@@ -82,6 +82,68 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(status.pendingApprovalCount, 0)
   }
 
+  func testSubmissionWithoutProjectUsesWorkbenchSelection() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    try await application.serviceSetWorkbenchProjectID(
+      fixture.project.id.rawValue,
+      deadline: deadline
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        prompt: "Use the workbench project by default.",
+        clientRequestID: "workbench-default-request"
+      ),
+      deadline: deadline
+    )
+
+    let stored = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let selectedProjectID = try await application.serviceWorkbenchProjectID(deadline: deadline)
+    XCTAssertEqual(stored?.projectID, fixture.project.id)
+    XCTAssertEqual(selectedProjectID, fixture.project.id.rawValue)
+  }
+
+  func testExplicitSubmissionProjectOverridesWorkbenchSelection() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let secondRoot = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-service-application-second-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: false)
+    addTeardownBlock { try? FileManager.default.removeItem(at: secondRoot) }
+    let secondProject = try await fixture.projects.register(
+      name: "Second Project",
+      rootURL: secondRoot,
+      id: ProjectID(rawValue: "prj-service-second")
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    try await application.serviceSetWorkbenchProjectID(
+      secondProject.id.rawValue,
+      deadline: deadline
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Honor the explicit project.",
+        clientRequestID: "explicit-project-request"
+      ),
+      deadline: deadline
+    )
+
+    let stored = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(stored?.projectID, fixture.project.id)
+  }
+
   func testQwenInvocationPersistsGenericMCPSourceAndStableClientIdentity() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(
@@ -916,7 +978,6 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let context: RequestContext<CallTool.Result> = try await client.callTool(
       name: MCPServiceToolName.submitTask.rawValue,
       arguments: [
-        "project_id": .string(fixture.project.id.rawValue),
         "prompt": .string("Implement the minimal requested change."),
         "client_request_id": .string("loopback-request"),
       ]

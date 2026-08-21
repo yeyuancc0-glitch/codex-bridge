@@ -157,17 +157,20 @@ public struct IPCServiceStatusResponse: Codable, Equatable, Sendable {
   public let localMCPURL: String?
   public let exposureMode: MCPServiceExposureMode
   public let tunnel: IPCTunnelStatus
+  public let workbenchProjectID: String?
 
   public init(
     status: BridgeStatusSnapshot,
     localMCPURL: String?,
     exposureMode: MCPServiceExposureMode,
-    tunnel: IPCTunnelStatus = .unconfigured
+    tunnel: IPCTunnelStatus = .unconfigured,
+    workbenchProjectID: String? = nil
   ) {
     self.status = status
     self.localMCPURL = localMCPURL
     self.exposureMode = exposureMode
     self.tunnel = tunnel
+    self.workbenchProjectID = workbenchProjectID
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -175,6 +178,7 @@ public struct IPCServiceStatusResponse: Codable, Equatable, Sendable {
     case localMCPURL = "local_mcp_url"
     case exposureMode = "exposure_mode"
     case tunnel
+    case workbenchProjectID = "workbench_project_id"
   }
 }
 

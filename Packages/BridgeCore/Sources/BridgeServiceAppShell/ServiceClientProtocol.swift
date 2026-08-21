@@ -25,6 +25,7 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   ) async throws -> MCPProjectDetail
   func setProjectCommandMode(projectID: String, commandMode: String) async throws
     -> MCPProjectDetail
+  func setWorkbenchProject(projectID: String?) async throws
   func removeProject(projectID: String) async throws
   func models() async throws -> MCPModelList
   func modelCatalog() async throws -> IPCModelCatalogResponse

@@ -192,6 +192,18 @@ public struct IPCProjectIDRequest: Codable, Equatable, Sendable {
   }
 }
 
+public struct IPCWorkbenchProjectRequest: Codable, Equatable, Sendable {
+  public let projectID: String?
+
+  public init(projectID: String?) {
+    self.projectID = projectID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+  }
+}
+
 public struct IPCProjectListResponse: Codable, Equatable, Sendable {
   public let projects: [MCPProjectSummary]
 

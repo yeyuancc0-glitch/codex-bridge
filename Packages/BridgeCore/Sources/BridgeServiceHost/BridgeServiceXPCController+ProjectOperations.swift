@@ -108,6 +108,18 @@ extension BridgeServiceXPCController {
     )
   }
 
+  func handleSetWorkbenchProject(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(
+      IPCWorkbenchProjectRequest.self,
+      from: request
+    )
+    try await composition.application.serviceSetWorkbenchProjectID(
+      payload.projectID,
+      deadline: Self.deadline()
+    )
+    return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+  }
+
   func handleRemoveProject(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(
       IPCProjectIDRequest.self,

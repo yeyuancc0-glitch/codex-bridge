@@ -5,11 +5,12 @@ import SwiftUI
 struct BridgeServiceProjectsView: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var taskPendingDeletion: MCPServiceTaskSnapshot?
+  @State private var projectPendingRemoval: MCPProjectSummary?
 
   var body: some View {
     HStack(spacing: 0) {
       projectList
-        .frame(width: 280)
+        .frame(width: 290)
         .frame(maxHeight: .infinity)
       projectDetail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -40,6 +41,26 @@ struct BridgeServiceProjectsView: View {
     } message: { _ in
       Text("该操作会删除此会话在 Codex Bridge 中保存的任务、事件和对话记录，无法撤销。")
     }
+    .alert(
+      "移除项目？",
+      isPresented: Binding(
+        get: { projectPendingRemoval != nil },
+        set: { visible in
+          if !visible { projectPendingRemoval = nil }
+        }
+      ),
+      presenting: projectPendingRemoval
+    ) { project in
+      Button("移除", role: .destructive) {
+        projectPendingRemoval = nil
+        model.removeProject(project.projectID)
+      }
+      Button("取消", role: .cancel) {
+        projectPendingRemoval = nil
+      }
+    } message: { project in
+      Text("确定要从 Codex Bridge 中移除项目“\(project.name)”吗？本地磁盘上的实际项目文件不会受到任何影响。")
+    }
   }
 
   private var projectList: some View {
@@ -47,7 +68,7 @@ struct BridgeServiceProjectsView: View {
       HStack {
         VStack(alignment: .leading, spacing: 2) {
           Text("已注册项目")
-            .font(.headline)
+            .font(.system(size: 14, weight: .bold))
           Text("共 \(model.projects.count) 个目录")
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -61,7 +82,8 @@ struct BridgeServiceProjectsView: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
       }
-      .padding(14)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 14)
 
       Divider()
 
@@ -74,20 +96,27 @@ struct BridgeServiceProjectsView: View {
         .frame(maxHeight: .infinity)
       } else {
         ScrollView {
-          LazyVStack(spacing: 8) {
+          LazyVStack(spacing: 6) {
             ForEach(model.projects, id: \.projectID) { project in
               let isSelected = model.selectedProjectID == project.projectID
               Button {
                 model.selectProject(project.projectID)
               } label: {
-                HStack(spacing: 12) {
-                  Image(systemName: isSelected ? "folder.fill" : "folder")
-                    .font(.system(size: 18))
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                HStack(spacing: 10) {
+                  ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                      .fill(
+                        isSelected ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08)
+                      )
+                      .frame(width: 34, height: 34)
+                    Image(systemName: isSelected ? "folder.fill" : "folder")
+                      .font(.system(size: 15))
+                      .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                  }
 
-                  VStack(alignment: .leading, spacing: 3) {
+                  VStack(alignment: .leading, spacing: 2) {
                     Text(project.name)
-                      .font(.body.weight(isSelected ? .semibold : .medium))
+                      .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
                       .foregroundStyle(.primary)
                       .lineLimit(1)
 
@@ -105,10 +134,11 @@ struct BridgeServiceProjectsView: View {
                       .foregroundStyle(Color.accentColor)
                   }
                 }
-                .padding(12)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
                 .background(
                   isSelected
-                    ? Color.accentColor.opacity(0.12)
+                    ? Color.accentColor.opacity(0.1)
                     : Color(nsColor: .controlBackgroundColor)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -116,8 +146,8 @@ struct BridgeServiceProjectsView: View {
                   RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(
                       isSelected
-                        ? Color.accentColor.opacity(0.35)
-                        : Color(nsColor: .separatorColor).opacity(0.3),
+                        ? Color.accentColor.opacity(0.4)
+                        : Color(nsColor: .separatorColor).opacity(0.25),
                       lineWidth: isSelected ? 1.2 : 0.8
                     )
                 )
@@ -125,7 +155,7 @@ struct BridgeServiceProjectsView: View {
               .buttonStyle(.plain)
             }
           }
-          .padding(12)
+          .padding(10)
         }
       }
     }
@@ -142,7 +172,7 @@ struct BridgeServiceProjectsView: View {
   private var projectDetail: some View {
     if let project = selectedProject {
       ScrollView {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
           HStack(alignment: .top) {
             SectionHeader(
               project.name,
@@ -150,8 +180,9 @@ struct BridgeServiceProjectsView: View {
               icon: "folder"
             )
             Spacer()
+
             Button("移除项目", role: .destructive) {
-              model.removeProject(project.projectID)
+              projectPendingRemoval = project
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -159,7 +190,7 @@ struct BridgeServiceProjectsView: View {
 
           VStack(alignment: .leading, spacing: 12) {
             Text("访问与执行权限")
-              .font(.headline)
+              .font(.system(size: 13, weight: .semibold))
               .foregroundStyle(.secondary)
 
             ProjectPermissionEditor(model: model, project: project)
@@ -175,7 +206,7 @@ struct BridgeServiceProjectsView: View {
           VStack(alignment: .leading, spacing: 12) {
             HStack {
               Text("Codex Threads")
-                .font(.headline)
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
               Spacer()
               if let projectID = model.selectedProjectID {
@@ -192,7 +223,7 @@ struct BridgeServiceProjectsView: View {
             threadsSection
           }
         }
-        .padding(24)
+        .padding(28)
         .frame(maxWidth: 960, alignment: .leading)
       }
     } else {

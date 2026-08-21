@@ -168,6 +168,10 @@ final class MCPServiceExposureTests: XCTestCase {
     let description = submit.description ?? ""
     XCTAssertTrue(description.localizedCaseInsensitiveContains("default execution path"))
     XCTAssertTrue(description.localizedCaseInsensitiveContains("codex"))
+    XCTAssertTrue(description.localizedCaseInsensitiveContains("workbench"))
+    let required = submit.inputSchema.objectValue?["required"]?.arrayValue ?? []
+    XCTAssertTrue(required.contains(.string("prompt")))
+    XCTAssertFalse(required.contains(.string("project_id")))
   }
 
   private func outputProperties(

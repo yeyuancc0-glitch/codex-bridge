@@ -366,6 +366,14 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(initial.directWorkspace?.commandMode, "safe")
     XCTAssertTrue(initial.directWorkspace?.commands.isEmpty ?? false)
 
+    try await client.setWorkbenchProject(projectID: registered.projectID)
+    let status = try await client.status()
+    let storedWorkbenchProject = try await fixture.composition.settings.string(
+      for: .workbenchProjectID
+    )
+    XCTAssertEqual(status.workbenchProjectID, registered.projectID)
+    XCTAssertEqual(storedWorkbenchProject, registered.projectID)
+
     let updated = try await client.updateProjectCommands(
       projectID: registered.projectID,
       commands: [

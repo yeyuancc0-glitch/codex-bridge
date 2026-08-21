@@ -116,6 +116,13 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func setWorkbenchProject(projectID: String?) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setWorkbenchProject,
+      payload: IPCWorkbenchProjectRequest(projectID: projectID)
+    )
+  }
+
   public func models() async throws -> MCPModelList {
     try await call(operation: .listModels, payload: Optional<IPCMutationResponse>.none)
   }

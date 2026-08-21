@@ -27,19 +27,15 @@ struct ProjectWorkspaceEditor: View {
     NativeCard {
       VStack(alignment: .leading, spacing: 14) {
         HStack {
-          Label("MCP Direct 命令", systemImage: "terminal")
+          Label("MCP Direct 命令与安全模式", systemImage: "terminal")
             .font(.subheadline.weight(.semibold))
           Spacer()
-          if showSavedFeedback {
-            HStack(spacing: 4) {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-              Text("已保存生效")
-                .font(.caption)
-                .foregroundStyle(.green)
-            }
-            .transition(.opacity)
-          }
+          SaveFeedbackBadge(
+            showSaved: showSavedFeedback,
+            isModified: hasCommandChanges || modeChanged,
+            savedText: "命令配置已保存生效",
+            unmodifiedText: "已是最新生效状态"
+          )
         }
 
         Text(
@@ -51,19 +47,26 @@ struct ProjectWorkspaceEditor: View {
 
         Divider()
 
-        Picker("Direct 命令模式", selection: $draftMode) {
-          Text("禁止").tag("denied")
-          Text("安全模式").tag("safe")
-          Text("完全模式").tag("full")
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(maxWidth: 420)
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Direct 命令执行策略")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
 
-        Text(modeDescription)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+          Picker("Direct 命令模式", selection: $draftMode) {
+            Text("禁止直接执行").tag("denied")
+            Text("安全模式 (推荐)").tag("safe")
+            Text("完全模式 (无白名单限制)").tag("full")
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .frame(maxWidth: 480)
+
+          Text(modeDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 2)
+        }
 
         Divider()
 
@@ -84,38 +87,23 @@ struct ProjectWorkspaceEditor: View {
 
         Divider()
 
-        HStack {
-          Button("+ 添加命令") {
-            drafts.append(BridgeWorkspaceCommandDraft())
+        HStack(spacing: 12) {
+          Button {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+              drafts.append(BridgeWorkspaceCommandDraft())
+            }
+          } label: {
+            Label("添加允许命令", systemImage: "plus")
           }
           .buttonStyle(.bordered)
 
           Spacer()
 
-          Button("保存命令配置") {
-            model.saveProjectCommands(
-              projectID: project.projectID,
-              drafts: drafts,
-              commandBlacklist: blacklistDrafts.map { $0.toIPCRule() }
-            )
-            withAnimation(.easeInOut(duration: 0.2)) {
-              showSavedFeedback = true
-            }
-            Task {
-              try? await Task.sleep(for: .seconds(2.5))
-              withAnimation(.easeInOut(duration: 0.3)) {
-                showSavedFeedback = false
-              }
-            }
-          }
-          .buttonStyle(.borderedProminent)
-          .disabled(!hasCommandChanges)
-
           if modeChanged {
             Button("保存命令模式") {
               model.setProjectCommandMode(projectID: project.projectID, mode: draftMode)
               modeChanged = false
-              withAnimation(.easeInOut(duration: 0.2)) {
+              withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                 showSavedFeedback = true
               }
               Task {
@@ -127,6 +115,36 @@ struct ProjectWorkspaceEditor: View {
             }
             .buttonStyle(.borderedProminent)
           }
+
+          Button {
+            if modeChanged {
+              model.setProjectCommandMode(projectID: project.projectID, mode: draftMode)
+              modeChanged = false
+            }
+            model.saveProjectCommands(
+              projectID: project.projectID,
+              drafts: drafts,
+              commandBlacklist: blacklistDrafts.map { $0.toIPCRule() }
+            )
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+              showSavedFeedback = true
+            }
+            Task {
+              try? await Task.sleep(for: .seconds(2.5))
+              withAnimation(.easeInOut(duration: 0.3)) {
+                showSavedFeedback = false
+              }
+            }
+          } label: {
+            HStack(spacing: 6) {
+              if showSavedFeedback {
+                Image(systemName: "checkmark")
+              }
+              Text("保存命令配置")
+            }
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!hasCommandChanges && !modeChanged)
         }
       }
       .onAppear {

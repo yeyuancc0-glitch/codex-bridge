@@ -93,7 +93,8 @@ extension BridgeServiceApplication {
     sourceClientID: String,
     deadline: ContinuousClock.Instant
   ) async throws -> PreparedTaskSubmission {
-    let project = try await readableProject(submission.projectID)
+    let projectID = try await submissionProjectID(explicit: submission.projectID)
+    let project = try await readableProject(projectID)
     let models = try await catalog.listModels(deadline: deadline).models
     let selections = try await modelSelections(submission: submission, models: models)
     let permission = try Self.permissionMode(submission.permissionMode, project: project)
@@ -125,6 +126,20 @@ extension BridgeServiceApplication {
         fastMode: fastMode
       )
     )
+  }
+
+  private func submissionProjectID(explicit: String?) async throws -> String {
+    if let explicit { return explicit }
+    if let selected = try await settings.string(for: .workbenchProjectID), !selected.isEmpty,
+      selected.utf8.count <= 128, !selected.contains("\0"),
+      try await projects.project(id: ProjectID(rawValue: selected)) != nil
+    {
+      return selected
+    }
+    guard let fallback = Self.sortedProjects(try await projects.projects()).first else {
+      throw BridgeMCPQueryError.projectNotFound
+    }
+    return fallback.id.rawValue
   }
 
   private func taskPrompt(

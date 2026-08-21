@@ -5,19 +5,32 @@ struct BlacklistRow: View {
   let onRemove: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        TextField("可执行文件（可选）", text: $draft.executable)
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Image(systemName: "shield.slash")
+          .font(.caption)
+          .foregroundStyle(.red)
+
+        TextField("可执行文件名 (例如: rm, dropdb)", text: $draft.executable)
+          .font(.system(.body, design: .monospaced))
           .textFieldStyle(.roundedBorder)
-        TextField("参数子串（可选）", text: $draft.pattern)
+
+        TextField("禁用参数正则/前缀 (例如: -rf, --force)", text: $draft.pattern)
+          .font(.system(.body, design: .monospaced))
           .textFieldStyle(.roundedBorder)
-        Spacer()
+
+        Spacer(minLength: 4)
+
         Button(role: .destructive) {
-          onRemove()
+          withAnimation(.easeInOut(duration: 0.2)) {
+            onRemove()
+          }
         } label: {
           Image(systemName: "trash")
+            .font(.caption)
         }
         .buttonStyle(.borderless)
+        .help("删除此黑名单规则")
       }
     }
     .padding(10)
@@ -25,7 +38,7 @@ struct BlacklistRow: View {
     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .strokeBorder(Color.red.opacity(0.35), lineWidth: 0.8)
+        .strokeBorder(Color.red.opacity(0.3), lineWidth: 0.8)
     )
   }
 }
@@ -35,54 +48,82 @@ struct ProjectCommandRow: View {
   let onRemove: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 10) {
       HStack {
-        TextField("命令名称", text: $draft.name)
-          .textFieldStyle(.roundedBorder)
-        Spacer()
+        HStack(spacing: 6) {
+          Image(systemName: "terminal")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          TextField("命令标识 (例如: build, test-unit)", text: $draft.name)
+            .font(.body.weight(.medium))
+            .textFieldStyle(.roundedBorder)
+        }
+
+        Spacer(minLength: 8)
+
         Button(role: .destructive) {
-          onRemove()
+          withAnimation(.easeInOut(duration: 0.2)) {
+            onRemove()
+          }
         } label: {
           Image(systemName: "trash")
+            .font(.caption)
         }
         .buttonStyle(.borderless)
+        .help("删除此允许命令")
       }
 
-      HStack(spacing: 8) {
-        TextField("可执行文件 / 脚本路径", text: $draft.executable)
+      VStack(alignment: .leading, spacing: 3) {
+        Text("可执行文件路径或项目内脚本：")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+        TextField("例如: /usr/bin/git, Scripts/build.sh", text: $draft.executable)
+          .font(.system(.body, design: .monospaced))
           .textFieldStyle(.roundedBorder)
       }
 
-      HStack(spacing: 8) {
-        TextField("参数前缀（每行一个，可选）", text: $draft.arguments, axis: .vertical)
-          .textFieldStyle(.roundedBorder)
-          .lineLimit(2...4)
+      HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 3) {
+          Text("参数前缀白名单（每行一个）：")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+          TextField("例如: status\ncommit", text: $draft.arguments, axis: .vertical)
+            .font(.system(.body, design: .monospaced))
+            .textFieldStyle(.roundedBorder)
+            .lineLimit(2...4)
+        }
 
-        TextField("工作目录（相对项目根，可选）", text: $draft.workingDirectory)
-          .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 3) {
+          Text("工作目录（相对项目根）：")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+          TextField("留空表示项目根目录", text: $draft.workingDirectory)
+            .font(.system(.body, design: .monospaced))
+            .textFieldStyle(.roundedBorder)
+        }
       }
 
-      HStack(spacing: 12) {
-        Toggle("需要网络", isOn: $draft.requiresNetwork)
+      HStack(spacing: 16) {
+        Toggle("需要网络连接", isOn: $draft.requiresNetwork)
           .toggleStyle(.switch)
           .controlSize(.small)
 
-        Picker("风险", selection: $draft.risk) {
-          Text("普通").tag("normal")
-          Text("高风险（每次需批准）").tag("elevated")
+        Picker("安全风险级别", selection: $draft.risk) {
+          Text("普通命令").tag("normal")
+          Text("高风险（每次均需本机审批）").tag("elevated")
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(maxWidth: 260)
+        .frame(maxWidth: 280)
 
         Spacer()
       }
     }
-    .padding(10)
+    .padding(14)
     .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     .overlay(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
         .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
     )
   }

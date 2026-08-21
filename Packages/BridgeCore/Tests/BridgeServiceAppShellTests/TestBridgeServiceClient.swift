@@ -48,6 +48,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     ]
   )
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
+  private var workbenchProjectSelections: [String?] = []
 
   struct TaskConversationQuery: Hashable {
     let taskID: String
@@ -223,6 +224,14 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
         commands: []
       )
     )
+  }
+
+  func setWorkbenchProject(projectID: String?) async throws {
+    workbenchProjectSelections.append(projectID)
+  }
+
+  func workbenchProjectSelectionsValue() -> [String?] {
+    workbenchProjectSelections
   }
 
   func models() async throws -> MCPModelList {

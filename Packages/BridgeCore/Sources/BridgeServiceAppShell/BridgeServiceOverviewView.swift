@@ -17,7 +17,7 @@ struct BridgeServiceOverviewView: View {
 
         VStack(alignment: .leading, spacing: 12) {
           Text("关键指标")
-            .font(.headline)
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
           metricsGrid
@@ -25,7 +25,7 @@ struct BridgeServiceOverviewView: View {
 
         VStack(alignment: .leading, spacing: 12) {
           Text("连接与服务状态")
-            .font(.headline)
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
           statusCard
@@ -35,20 +35,21 @@ struct BridgeServiceOverviewView: View {
           VStack(alignment: .leading, spacing: 12) {
             HStack {
               Text("最近任务")
-                .font(.headline)
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
               Spacer()
-              Button("进入工作台") {
+              Button("进入工作台 →") {
                 model.selection = .workbench
               }
               .buttonStyle(.link)
+              .font(.caption.weight(.medium))
             }
 
             recentTasksCard
           }
         }
       }
-      .padding(24)
+      .padding(28)
       .frame(maxWidth: 960, alignment: .leading)
     }
     .navigationTitle("概览")
@@ -82,29 +83,39 @@ struct BridgeServiceOverviewView: View {
   }
 
   private var metricsGrid: some View {
-    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 240), spacing: 14)], spacing: 14)
+    {
       MetricCard(
         title: "注册项目",
         value: "\(model.projects.count)",
         symbol: "folder.fill",
-        subtitle: "已授权本地目录",
-        tint: .blue
+        subtitle: "点击管理本地目录",
+        tint: .blue,
+        action: {
+          model.selection = .projects
+        }
       )
 
       MetricCard(
         title: "运行中任务",
         value: "\(model.runningTaskCount)",
         symbol: "bolt.fill",
-        subtitle: model.runningTaskCount > 0 ? "正在本机执行" : "当前空闲",
-        tint: model.runningTaskCount > 0 ? .green : .secondary
+        subtitle: model.runningTaskCount > 0 ? "点击进入工作台查看" : "当前空闲",
+        tint: model.runningTaskCount > 0 ? .green : .secondary,
+        action: {
+          model.selection = .workbench
+        }
       )
 
       MetricCard(
         title: "待审批项",
         value: "\(model.approvals.count)",
         symbol: "shield.lefthalf.filled",
-        subtitle: model.approvals.isEmpty ? "无阻断事项" : "等待本机决定",
-        tint: model.approvals.isEmpty ? .secondary : .orange
+        subtitle: model.approvals.isEmpty ? "无阻断事项" : "点击立即处理审批",
+        tint: model.approvals.isEmpty ? .secondary : .orange,
+        action: {
+          model.selection = .workbench
+        }
       )
 
       MetricCard(
@@ -112,14 +123,17 @@ struct BridgeServiceOverviewView: View {
         value: "\(model.tasks.count)",
         symbol: "list.bullet.rectangle",
         subtitle: lastRefreshSubtitle,
-        tint: .purple
+        tint: .purple,
+        action: {
+          model.selection = .logs
+        }
       )
     }
   }
 
   private var statusCard: some View {
     NativeCard {
-      VStack(spacing: 12) {
+      VStack(spacing: 10) {
         ServiceStatusLabel(
           title: "后台 Service",
           value: model.connectionState.label,
@@ -155,41 +169,79 @@ struct BridgeServiceOverviewView: View {
           symbol: model.exposureMode == .full ? "wrench.and.screwdriver.fill" : "eye.fill",
           tone: model.exposureMode == .full ? .info : .neutral
         )
+
+        Divider()
+
+        HStack {
+          Button("管理连接与凭据 →") {
+            model.selection = .connections
+          }
+          .buttonStyle(.link)
+          .font(.caption.weight(.medium))
+
+          Spacer()
+
+          Button("配置模型与监督偏好 →") {
+            model.selection = .settings
+          }
+          .buttonStyle(.link)
+          .font(.caption.weight(.medium))
+        }
+        .padding(.top, 4)
       }
     }
   }
 
   private var recentTasksCard: some View {
     NativeCard {
-      VStack(alignment: .leading, spacing: 10) {
-        ForEach(Array(model.tasks.prefix(3)), id: \.taskID) { task in
-          HStack(alignment: .center, spacing: 12) {
-            TaskStatusLabel(status: task.status)
-            StatusBadge(task.sourceDisplayName, tone: .neutral)
-
-            VStack(alignment: .leading, spacing: 2) {
-              Text(task.currentStep ?? task.resultSummary ?? task.taskID)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(1)
-
-              HStack(spacing: 4) {
-                Image(systemName: "folder")
-                  .font(.caption2)
-                Text(model.projectName(for: task.projectID))
-                  .font(.caption)
-              }
-              .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 4) {
+        ForEach(Array(model.tasks.prefix(4)), id: \.taskID) { task in
+          Button {
+            if let threadID = task.threadID {
+              model.openThread(threadID, inProject: task.projectID)
             }
+            model.selection = .workbench
+          } label: {
+            HStack(alignment: .center, spacing: 12) {
+              TaskStatusLabel(status: task.status)
+                .frame(width: 98, alignment: .leading)
 
-            Spacer()
+              StatusBadge(task.sourceDisplayName, tone: .neutral)
+                .frame(width: 80, alignment: .leading)
 
-            Text(task.updatedAt)
-              .font(.caption2.monospacedDigit())
-              .foregroundStyle(.secondary)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(task.currentStep ?? task.resultSummary ?? task.taskID)
+                  .font(.system(size: 13, weight: .medium))
+                  .lineLimit(1)
+                  .foregroundStyle(.primary)
+
+                HStack(spacing: 4) {
+                  Image(systemName: "folder")
+                    .font(.caption2)
+                  Text(model.projectName(for: task.projectID))
+                    .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+              }
+
+              Spacer()
+
+              Text(task.updatedAt)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 80, alignment: .trailing)
+
+              Image(systemName: "chevron.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
           }
-          .padding(.vertical, 4)
+          .buttonStyle(.plain)
 
-          if task.taskID != model.tasks.prefix(3).last?.taskID {
+          if task.taskID != model.tasks.prefix(4).last?.taskID {
             Divider()
           }
         }

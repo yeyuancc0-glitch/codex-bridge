@@ -18,7 +18,10 @@ extension BridgeServiceXPCController {
         status: status,
         localMCPURL: endpoint,
         exposureMode: Self.mcpExposureMode(exposureMode),
-        tunnel: Self.tunnelStatus(tunnel)
+        tunnel: Self.tunnelStatus(tunnel),
+        workbenchProjectID: try await composition.application.serviceWorkbenchProjectID(
+          deadline: Self.deadline()
+        )
       )
     )
   }

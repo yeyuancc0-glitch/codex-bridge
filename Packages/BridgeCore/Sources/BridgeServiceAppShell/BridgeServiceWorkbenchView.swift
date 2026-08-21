@@ -196,6 +196,10 @@ struct BridgeServiceWorkbenchView: View {
         }
       }
 
+      Text("GPT 调用 Codex 时，默认在当前选择的项目中执行")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+
       // Thread selector & status
       HStack(spacing: 6) {
         Image(systemName: "bubble.left.and.text.bubble.right")

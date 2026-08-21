@@ -424,6 +424,7 @@ final class SimpleServiceStoreTests: XCTestCase {
     XCTAssertEqual(defaultExposure, .readOnly)
     try await settings.setExposureMode(.full)
     try await settings.set("codex-model", for: .defaultExecutionModel)
+    try await settings.set("prj-policy", for: .workbenchProjectID)
 
     let reopened = try SimpleServiceStore(path: fixture.databasePath)
     let reopenedSettings = ServiceSettings(store: reopened)
@@ -433,10 +434,12 @@ final class SimpleServiceStoreTests: XCTestCase {
     let reopenedExecutionModel = try await reopenedSettings.string(
       for: .defaultExecutionModel
     )
+    let reopenedWorkbenchProject = try await reopenedSettings.string(for: .workbenchProjectID)
     XCTAssertEqual(storedProject?.accessPolicy, policy)
     XCTAssertEqual(storedProject?.root, project.root)
     XCTAssertEqual(reopenedExposure, .full)
     XCTAssertEqual(reopenedExecutionModel, "codex-model")
+    XCTAssertEqual(reopenedWorkbenchProject, "prj-policy")
   }
 
   func testSupervisorEnabledDefaultsTrueAndPersistsToggle() async throws {

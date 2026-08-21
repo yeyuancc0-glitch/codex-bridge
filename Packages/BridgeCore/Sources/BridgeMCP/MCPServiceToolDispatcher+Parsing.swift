@@ -18,7 +18,7 @@ extension MCPServiceToolDispatcher {
         "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
         "acceptance_criteria", "client_request_id",
       ],
-      required: ["project_id", "prompt"]
+      required: ["prompt"]
     )
     let prompt = try values.requiredText("prompt", maximumUTF8Bytes: 32 * 1_024)
     let criteria = try values.optionalStringArray(
@@ -52,7 +52,7 @@ extension MCPServiceToolDispatcher {
       )
     }
     return MCPServiceTaskSubmission(
-      projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
+      projectID: try values.optionalIdentifier("project_id", maximumUTF8Bytes: 128),
       prompt: prompt,
       skillName: try values.optionalIdentifier("skill_name", maximumUTF8Bytes: 128),
       threadID: try values.optionalIdentifier("thread_id", maximumUTF8Bytes: 1_024),
