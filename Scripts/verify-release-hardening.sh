@@ -1,0 +1,40 @@
+#!/bin/zsh
+set -euo pipefail
+
+if (( $# != 1 )); then
+  print -u2 "Usage: ${0:t} SIGNED_APP"
+  exit 64
+fi
+
+readonly app="${1:A}"
+readonly service="${app}/Contents/Resources/CodexBridgeService"
+readonly helper="${app}/Contents/Helpers/tunnel-client"
+
+[[ -d "${app}" && ! -L "${app}" ]] || { print -u2 "App bundle is missing or unsafe."; exit 66; }
+for path in "${app}" "${service}" "${helper}"; do
+  [[ -e "${path}" && ! -L "${path}" ]] || { print -u2 "Missing release component: ${path}"; exit 66; }
+done
+
+/usr/bin/codesign --verify --deep --strict --verbose=2 "${app}"
+readonly details="$(/usr/bin/codesign -dvv "${app}" 2>&1)"
+[[ "${details}" == *"TeamIdentifier="* && "${details}" != *"TeamIdentifier=not set"* ]] || {
+  print -u2 "Release app has no Developer ID team identifier."; exit 65
+}
+[[ "${details}" == *"flags=0x10000(runtime)"* || "${details}" == *"flags=0x10000(runtime,"* ]] || {
+  print -u2 "Hardened Runtime is not enabled on the release app."; exit 65
+}
+
+readonly app_team="${details##*TeamIdentifier=}"
+readonly app_team_id="${app_team%%$'\n'*}"
+for component in "${service}" "${helper}"; do
+  component_details="$(/usr/bin/codesign -dvv "${component}" 2>&1)"
+  component_team="${component_details##*TeamIdentifier=}"
+  component_team_id="${component_team%%$'\n'*}"
+  [[ -n "${component_team_id}" && "${component_team_id}" == "${app_team_id}" ]] || {
+    print -u2 "Component team identifier does not match the app: ${component}"; exit 65;
+  }
+  /usr/bin/codesign --verify --strict --verbose=2 "${component}"
+  /usr/bin/lipo "${component}" -verify_arch arm64 -verify_arch x86_64
+done
+
+print "Release hardening verified for ${app} (Team ID ${app_team_id})."

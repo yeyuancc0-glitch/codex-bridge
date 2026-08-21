@@ -1,0 +1,3 @@
+// Supply real values outside the repository for Developer ID release builds.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+CODE_SIGN_IDENTITY = Developer ID Application

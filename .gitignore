@@ -1,0 +1,46 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcresult
+*.profraw
+*.profdata
+*.xcuserstate
+xcuserdata/
+.codex-temp/
+.codex-bridge/
+SupportBundles/
+Secrets/
+*.runtime-key
+.env
+.env.*
+*.pem
+*.p12
+*.key
+*.mobileprovision
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Internal and test-only source excluded from the public snapshot
+Packages/BridgeCore/Tests/
+Packages/BridgeCore/Sources/CodexRPCFixture/
+UITests/
+Prototypes/
+Scripts/verify-stage0.sh
+Scripts/verify-mcp-inspector.sh
+Scripts/test-tunnel-helper-config.sh
+
+# AI Agent Memory
+AGENTS.md
+**/AGENTS.md
+
+# Internal Planning, Review & Handoff docs
+docs/*PLAN*
+docs/*REVIEW*
+docs/*plan*
+docs/*review*
+docs/HANDOFF_*
+docs/Codex-Bridge-Code-Review*
+docs/QWEN_STUDIO_MCP_ADAPTATION_PLAN*

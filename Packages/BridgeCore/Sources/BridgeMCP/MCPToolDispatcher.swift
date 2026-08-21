@@ -1,0 +1,402 @@
+import Foundation
+import Logging
+import MCP
+
+public actor MCPToolAdmission {
+  public let globalLimit: Int
+  public let perSessionLimit: Int
+
+  private var activeCount = 0
+  private var activeBySession: [String: Int] = [:]
+
+  public init(globalLimit: Int = 8, perSessionLimit: Int = 2) {
+    precondition(globalLimit > 0)
+    precondition(perSessionLimit > 0 && perSessionLimit <= globalLimit)
+    self.globalLimit = globalLimit
+    self.perSessionLimit = perSessionLimit
+  }
+
+  func acquire(sessionID: String) -> Bool {
+    let sessionCount = activeBySession[sessionID, default: 0]
+    guard activeCount < globalLimit, sessionCount < perSessionLimit else { return false }
+    activeCount += 1
+    activeBySession[sessionID] = sessionCount + 1
+    return true
+  }
+
+  func release(sessionID: String) {
+    guard let sessionCount = activeBySession[sessionID], sessionCount > 0 else { return }
+    activeCount -= 1
+    if sessionCount == 1 {
+      activeBySession.removeValue(forKey: sessionID)
+    } else {
+      activeBySession[sessionID] = sessionCount - 1
+    }
+  }
+}
+
+public struct MCPToolDispatcher: Sendable {
+  private let tools: ReadOnlyTools
+  private let taskTools: TaskTools
+  private let projectTools: ProjectTools
+  private let resultEncoder: MCPToolResultEncoder
+  private let admission: MCPToolAdmission
+  private let logger: Logger
+
+  public init(
+    queries: any BridgeMCPQueries,
+    taskOperations: (any BridgeMCPTaskOperations)? = nil,
+    projectOperations: (any BridgeMCPProjectOperations)? = nil,
+    resultEncoder: MCPToolResultEncoder = .init(),
+    admission: MCPToolAdmission = .init(),
+    deadlines: MCPToolDeadlines = .production,
+    taskDeadlines: MCPTaskToolDeadlines = .production,
+    logger: Logger = Logger(label: "CodexBridge.BridgeMCP.Tools")
+  ) {
+    tools = ReadOnlyTools(queries: queries, deadlines: deadlines)
+    taskTools = TaskTools(operations: taskOperations, deadlines: taskDeadlines)
+    projectTools = ProjectTools(operations: projectOperations)
+    self.resultEncoder = resultEncoder
+    self.admission = admission
+    self.logger = logger
+  }
+
+  public func call(_ parameters: CallTool.Parameters) async throws -> CallTool.Result {
+    let sessionID =
+      Server.currentHandlerContext?.httpContext?.header(HTTPHeaderName.sessionID) ?? "direct"
+    return try await call(parameters, sessionID: sessionID)
+  }
+
+  public func call(
+    _ parameters: CallTool.Parameters,
+    sessionID: String
+  ) async throws -> CallTool.Result {
+    guard let name = MCPDispatchedToolName(rawValue: parameters.name) else {
+      throw MCPError.invalidParams("Unknown tool name.")
+    }
+    let admissionKey = sessionID.isEmpty ? "direct" : sessionID
+    guard await admission.acquire(sessionID: admissionKey) else {
+      return try encodeQueryError(.busy)
+    }
+
+    do {
+      let result = try await callWithErrorMapping(name, arguments: parameters.arguments)
+      await admission.release(sessionID: admissionKey)
+      return result
+    } catch {
+      await admission.release(sessionID: admissionKey)
+      throw error
+    }
+  }
+
+  private func callWithErrorMapping(
+    _ name: MCPDispatchedToolName,
+    arguments: [String: Value]?
+  ) async throws -> CallTool.Result {
+    do {
+      return try await callAdmitted(name, arguments: arguments)
+    } catch let error as BridgeMCPQueryError {
+      return try encodeQueryError(error)
+    } catch let error as MCPToolResultEncodingError {
+      return try encodeResultError(error)
+    } catch let error as MCPError {
+      throw error
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      let correlationID = UUID().uuidString.lowercased()
+      logger.error(
+        "MCP tool request failed.",
+        metadata: ["correlation_id": .string(correlationID)]
+      )
+      throw MCPError.internalError("The tool request failed.")
+    }
+  }
+
+  private func callAdmitted(
+    _ name: MCPDispatchedToolName,
+    arguments: [String: Value]?
+  ) async throws -> CallTool.Result {
+    switch name {
+    case .bridgeStatus:
+      return try resultEncoder.encode(await tools.bridgeStatus(arguments: arguments))
+    case .listProjects:
+      return try resultEncoder.encode(await tools.listProjects(arguments: arguments))
+    case .listThreads:
+      return try resultEncoder.encode(await tools.listThreads(arguments: arguments))
+    case .readThread:
+      return try resultEncoder.encode(await tools.readThread(arguments: arguments))
+    case .listModels:
+      return try resultEncoder.encode(await tools.listModels(arguments: arguments))
+    case .getTask:
+      return try resultEncoder.encode(await taskTools.getTask(arguments: arguments))
+    case .getTaskEvents:
+      return try resultEncoder.encode(await taskTools.getTaskEvents(arguments: arguments))
+    case .getTaskDiff:
+      return try resultEncoder.encode(await taskTools.getTaskDiff(arguments: arguments))
+    case .getFinalReport:
+      return try resultEncoder.encode(await taskTools.getFinalReport(arguments: arguments))
+    case .submitTask:
+      return try resultEncoder.encode(await taskTools.submitTask(arguments: arguments))
+    case .steerTask:
+      return try resultEncoder.encode(await taskTools.steerTask(arguments: arguments))
+    case .interruptTask:
+      return try resultEncoder.encode(await taskTools.interruptTask(arguments: arguments))
+    case .getProject:
+      return try resultEncoder.encode(await projectTools.getProject(arguments: arguments))
+    case .searchProjectFiles:
+      return try resultEncoder.encode(await projectTools.searchProjectFiles(arguments: arguments))
+    case .readProjectFile:
+      return try resultEncoder.encode(await projectTools.readProjectFile(arguments: arguments))
+    case .openInCodex:
+      return try resultEncoder.encode(await projectTools.openInCodex(arguments: arguments))
+    }
+  }
+
+  private func encodeQueryError(_ error: BridgeMCPQueryError) throws -> CallTool.Result {
+    let description: MCPToolErrorDTO
+    switch error {
+    case .projectNotFound:
+      description = .init(
+        code: "project_not_found",
+        message: "The requested project is not available.",
+        retryable: false
+      )
+    case .threadNotFound:
+      description = .init(
+        code: "thread_not_found",
+        message: "The requested thread is not available in this project.",
+        retryable: false
+      )
+    case .pathDenied:
+      description = .init(
+        code: "path_denied",
+        message: "The requested data is outside the approved project boundary.",
+        retryable: false
+      )
+    case .pathNotFound:
+      description = .init(
+        code: "path_not_found",
+        message: "The path does not exist.",
+        retryable: false
+      )
+    case .taskNotFound:
+      description = .init(
+        code: "task_not_found",
+        message: "The requested task is not available.",
+        retryable: false
+      )
+    case .idempotencyConflict:
+      description = .init(
+        code: "idempotency_conflict",
+        message: "The idempotency key is already bound to a different task contract.",
+        retryable: false
+      )
+    case .turnMismatch:
+      description = .init(
+        code: "turn_mismatch",
+        message: "The expected turn is no longer the task's active turn.",
+        retryable: false
+      )
+    case .eventSequenceMismatch:
+      description = .init(
+        code: "event_sequence_mismatch",
+        message: "The task changed before this operation could be applied.",
+        retryable: false
+      )
+    case .invalidTaskState:
+      description = .init(
+        code: "invalid_task_state",
+        message: "The requested operation is not valid in the task's current state.",
+        retryable: false
+      )
+    case .contractRejected:
+      description = .init(
+        code: "contract_rejected",
+        message: "The task contract did not satisfy local policy.",
+        retryable: false
+      )
+    case .busy:
+      description = .init(
+        code: "busy",
+        message: "The Bridge is at its current request limit.",
+        retryable: true
+      )
+    case .projectBusy(let detail):
+      description = .init(
+        code: "project_busy",
+        message: "The project workspace is busy.",
+        retryable: true,
+        owner: detail.owner,
+        taskID: detail.taskID,
+        operationID: detail.operationID,
+        sessionID: detail.sessionID
+      )
+    case .timeout:
+      description = .init(
+        code: "timeout",
+        message: "The local operation did not finish before its deadline.",
+        retryable: true
+      )
+    case .unavailable:
+      description = .init(
+        code: "unavailable",
+        message: "A required local Bridge component is unavailable.",
+        retryable: true
+      )
+    case .fileRevisionConflict:
+      description = .init(
+        code: "file_revision_conflict",
+        message: "The file content does not match the expected revision.",
+        retryable: true
+      )
+    case .revisionConflict(let detail):
+      description = .init(
+        code: "revision_conflict",
+        message: "The file changed since the expected revision. Re-read the file and retry.",
+        retryable: true,
+        data: detail.errorData
+      )
+    case .pathForbidden:
+      description = .init(
+        code: "path_forbidden",
+        message: "The path is not allowed.",
+        retryable: false
+      )
+    case .pathChanged:
+      description = .init(
+        code: "path_changed",
+        message: "The target changed after it was validated.",
+        retryable: true
+      )
+    case .writeNotAllowed:
+      description = .init(
+        code: "write_not_allowed",
+        message: "The project does not allow remote writes.",
+        retryable: false
+      )
+    case .approvalRequired(let approvalID):
+      description = .init(
+        code: "approval_required",
+        message: "The local user must approve this action.",
+        retryable: true,
+        operationID: approvalID
+      )
+    case .approvalExpired:
+      description = .init(
+        code: "approval_expired",
+        message: "The local approval expired.",
+        retryable: true
+      )
+    case .approvalDenied:
+      description = .init(
+        code: "approval_denied",
+        message: "The local user denied this action.",
+        retryable: true
+      )
+    case .invalidPatch:
+      description = .init(
+        code: "invalid_patch",
+        message:
+          "Patch syntax or exact context did not match. Use paired optional Begin/End markers with "
+          + "*** Update File and space/-/+ lines, *** Add File and + lines, or a standard ---/+++ "
+          + "unified diff. Read the current file before retrying.",
+        retryable: false
+      )
+    case .notGitRepository:
+      description = .init(
+        code: "not_git_repository",
+        message: "The project is not a Git repository.",
+        retryable: false
+      )
+    case .commandSessionNotFound:
+      description = .init(
+        code: "command_session_not_found",
+        message: "The command session is unavailable.",
+        retryable: false
+      )
+    case .commandTimeout:
+      description = .init(
+        code: "command_timeout",
+        message: "The command exceeded its time limit.",
+        retryable: true
+      )
+    case .commandDenied(let reason):
+      description = .init(
+        code: "command_denied",
+        message: "The requested command was denied: \(reason)",
+        retryable: false
+      )
+    case .processLaunchFailed:
+      description = .init(
+        code: "process_launch_failed",
+        message:
+          "The command could not be launched. Check the executable path and that it is executable.",
+        retryable: true
+      )
+
+    case .gitOperationFailed(let summary):
+      description = .init(
+        code: "git_operation_failed",
+        message: "The git operation failed: \(summary)",
+        retryable: true
+      )
+    case .outputLimitExceeded:
+      description = .init(
+        code: "output_limit_exceeded",
+        message: "The command output exceeded the bounded limit.",
+        retryable: false
+      )
+    case .durabilityUncertain:
+      description = .init(
+        code: "durability_uncertain",
+        message:
+          "The mutation was applied, but crash durability was not confirmed. Read the path before retrying.",
+        retryable: false
+      )
+    case .skillNotFound:
+      description = .init(
+        code: "skill_not_found",
+        message: "The Skill is unavailable.",
+        retryable: false
+      )
+    case .skillActionNotFound:
+      description = .init(
+        code: "skill_action_not_found",
+        message: "The requested Skill action does not exist.",
+        retryable: false
+      )
+    case .skillActionNotRunnable:
+      description = .init(
+        code: "skill_action_not_runnable",
+        message: "The requested Skill action cannot be launched.",
+        retryable: false
+      )
+    case .networkIsolationUnavailable:
+      description = .init(
+        code: "network_isolation_unavailable",
+        message: "Network isolation could not be applied for this Skill action.",
+        retryable: false
+      )
+    case .unsafeContentDetected:
+      description = .init(
+        code: "unsafe_content_detected",
+        message: "The content contains restricted credential material.",
+        retryable: false
+      )
+    }
+    return try resultEncoder.encode(MCPToolErrorOutput(error: description), isError: true)
+  }
+
+  private func encodeResultError(_ error: MCPToolResultEncodingError) throws -> CallTool.Result {
+    switch error {
+    case .resultTooLarge:
+      let description = MCPToolErrorDTO(
+        code: "result_too_large",
+        message: "The result is too large. Request a smaller page.",
+        retryable: true
+      )
+      return try resultEncoder.encode(MCPToolErrorOutput(error: description), isError: true)
+    }
+  }
+}

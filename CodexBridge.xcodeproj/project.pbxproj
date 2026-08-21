@@ -1,0 +1,454 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		01A000000000000000000001 /* CodexBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000001 /* CodexBridgeApp.swift */; };
+		01A000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 01B000000000000000000002 /* Assets.xcassets */; };
+		01A000000000000000000003 /* BridgeServiceAppShell in Frameworks */ = {isa = PBXBuildFile; productRef = 01F000000000000000000001 /* BridgeServiceAppShell */; };
+		05A000000000000000000001 /* CodexBridgeServiceMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000001 /* CodexBridgeServiceMain.swift */; };
+		05A000000000000000000002 /* BridgeServiceHost in Frameworks */ = {isa = PBXBuildFile; productRef = 05G000000000000000000001 /* BridgeServiceHost */; };
+		05A000000000000000000003 /* CodexBridgeService in Embed Service */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000003 /* CodexBridgeService */; };
+		05A000000000000000000004 /* org.codexbridge.service.plist in LaunchAgents */ = {isa = PBXBuildFile; fileRef = 05B000000000000000000002 /* org.codexbridge.service.plist */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		05F000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01E000000000000000000003 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 05E000000000000000000001;
+			remoteInfo = CodexBridgeService;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		01B000000000000000000001 /* CodexBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexBridgeApp.swift; sourceTree = "<group>"; };
+		01B000000000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		01B000000000000000000003 /* CodexBridge.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CodexBridge.entitlements; sourceTree = "<group>"; };
+		01B000000000000000000004 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		01B000000000000000000005 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		01B000000000000000000006 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		01B000000000000000000007 /* Signing.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig.example; sourceTree = "<group>"; };
+		01B000000000000000000008 /* CodexBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		05B000000000000000000001 /* CodexBridgeServiceMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexBridgeServiceMain.swift; sourceTree = "<group>"; };
+		05B000000000000000000002 /* org.codexbridge.service.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = org.codexbridge.service.plist; sourceTree = "<group>"; };
+		05B000000000000000000003 /* CodexBridgeService */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = CodexBridgeService; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		05C000000000000000000001 /* Embed Service */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				05A000000000000000000003 /* CodexBridgeService in Embed Service */,
+			);
+			name = "Embed Service";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		05C000000000000000000002 /* Copy LaunchAgent */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				05A000000000000000000004 /* org.codexbridge.service.plist in LaunchAgents */,
+			);
+			name = "Copy LaunchAgent";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		01C000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				01A000000000000000000003 /* BridgeServiceAppShell in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		05C000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05A000000000000000000002 /* BridgeServiceHost in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		01D000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				01D000000000000000000002 /* App */,
+				05D000000000000000000001 /* Service */,
+				01D000000000000000000004 /* Config */,
+				01D000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		01D000000000000000000002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				01B000000000000000000001 /* CodexBridgeApp.swift */,
+				01B000000000000000000003 /* CodexBridge.entitlements */,
+				01D000000000000000000003 /* Resources */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		01D000000000000000000003 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				01B000000000000000000002 /* Assets.xcassets */,
+				05B000000000000000000002 /* org.codexbridge.service.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		01D000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				01B000000000000000000004 /* Base.xcconfig */,
+				01B000000000000000000005 /* Debug.xcconfig */,
+				01B000000000000000000006 /* Release.xcconfig */,
+				01B000000000000000000007 /* Signing.xcconfig.example */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		01D000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				01B000000000000000000008 /* CodexBridge.app */,
+				05B000000000000000000003 /* CodexBridgeService */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		05D000000000000000000001 /* Service */ = {
+			isa = PBXGroup;
+			children = (
+				05B000000000000000000001 /* CodexBridgeServiceMain.swift */,
+			);
+			path = Service;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		01E000000000000000000001 /* CodexBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 01E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridge" */;
+			buildPhases = (
+				01C000000000000000000002 /* Sources */,
+				01C000000000000000000001 /* Frameworks */,
+				01C000000000000000000003 /* Resources */,
+				05C000000000000000000001 /* Embed Service */,
+				05C000000000000000000002 /* Copy LaunchAgent */,
+				05C000000000000000000006 /* Sign Embedded Service */,
+				01C000000000000000000004 /* Stage Tunnel Helper */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				05F000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = CodexBridge;
+			packageProductDependencies = (
+				01F000000000000000000001 /* BridgeServiceAppShell */,
+			);
+			productName = CodexBridge;
+			productReference = 01B000000000000000000008 /* CodexBridge.app */;
+			productType = "com.apple.product-type.application";
+		};
+		05E000000000000000000001 /* CodexBridgeService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 05E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridgeService" */;
+			buildPhases = (
+				05C000000000000000000003 /* Sources */,
+				05C000000000000000000004 /* Frameworks */,
+				05C000000000000000000005 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CodexBridgeService;
+			packageProductDependencies = (
+				05G000000000000000000001 /* BridgeServiceHost */,
+			);
+			productName = CodexBridgeService;
+			productReference = 05B000000000000000000003 /* CodexBridgeService */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		01E000000000000000000003 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					01E000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					05E000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = 01E000000000000000000004 /* Build configuration list for PBXProject "CodexBridge" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = 01D000000000000000000001;
+			packageReferences = (
+				01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */,
+			);
+			productRefGroup = 01D000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				01E000000000000000000001 /* CodexBridge */,
+				05E000000000000000000001 /* CodexBridgeService */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		01C000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				01A000000000000000000002 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		05C000000000000000000005 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		05C000000000000000000006 /* Sign Embedded Service */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/CodexBridgeService",
+			);
+			name = "Sign Embedded Service";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"/bin/zsh\" \"$SRCROOT/Scripts/sign-embedded-service.sh\"\n";
+		};
+		01C000000000000000000004 /* Stage Tunnel Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stage Tunnel Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"${SRCROOT}/Scripts/stage-tunnel-helper.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		01C000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				01A000000000000000000001 /* CodexBridgeApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		05C000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05A000000000000000000001 /* CodexBridgeServiceMain.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		05F000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 05E000000000000000000001 /* CodexBridgeService */;
+			targetProxy = 05F000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		020000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				COPY_PHASE_STRIP = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+			};
+			name = Debug;
+		};
+		020000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				COPY_PHASE_STRIP = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+			};
+			name = Release;
+		};
+		020000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 01B000000000000000000005 /* Debug.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		020000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 01B000000000000000000006 /* Release.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		060000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_NAME = CodexBridgeService;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		060000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				ENABLE_TESTABILITY = NO;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = NO;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_NAME = CodexBridgeService;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		01E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				020000000000000000000003 /* Debug */,
+				020000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		01E000000000000000000004 /* Build configuration list for PBXProject "CodexBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				020000000000000000000001 /* Debug */,
+				020000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		05E000000000000000000002 /* Build configuration list for PBXNativeTarget "CodexBridgeService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				060000000000000000000001 /* Debug */,
+				060000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/BridgeCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		01F000000000000000000001 /* BridgeServiceAppShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */;
+			productName = BridgeServiceAppShell;
+		};
+		05G000000000000000000001 /* BridgeServiceHost */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 01F000000000000000000002 /* XCLocalSwiftPackageReference "Packages/BridgeCore" */;
+			productName = BridgeServiceHost;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 01E000000000000000000003 /* Project object */;
+}
