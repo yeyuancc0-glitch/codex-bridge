@@ -162,30 +162,19 @@ jobs:
             if (Test-Path $log) { Get-Content $log -Tail 40 }
             throw "swift.exe not found after installation"
           }
-          Write-Host "Found swift.exe in $bin"
+          # The installer splits the payload into Toolchains (compiler),
+          # Runtimes (shared libraries for PATH) and Platforms (the Windows.sdk
+          # that must be exposed as SDKROOT for target-library linking).
           Add-Content $env:GITHUB_PATH $bin
           $swiftRoot = Split-Path (Split-Path (Split-Path (Split-Path $bin)))
-          Write-Host "Searching under $swiftRoot"
-          Get-ChildItem -Path $swiftRoot -Directory -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host "ROOT DIR: $($_.FullName)" }
-          $runtime = Get-ChildItem -Path $swiftRoot -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue |
+          $runtimeBin = Get-ChildItem -Path "$swiftRoot\Runtimes" -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          if ($runtime) {
-            Write-Host "Runtime found at $($runtime.DirectoryName)"
-            Add-Content $env:GITHUB_PATH $runtime.DirectoryName
-          } else {
-            Write-Host "swiftCore.dll not found anywhere under $swiftRoot"
-          }
-          # The Windows SDK payload lives under Platforms; the Swift driver
-          # needs SDKROOT pointed at its Windows.sdk root.
-          $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Recurse -Depth 6 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue |
+          if (-not $runtimeBin) { throw "Swift runtime dlls not found under $swiftRoot\Runtimes" }
+          Add-Content $env:GITHUB_PATH $runtimeBin.DirectoryName
+          $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Depth 4 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          if ($platformSdk) {
-            Write-Host "Setting SDKROOT=$($platformSdk.FullName)"
-            Add-Content $env:GITHUB_ENV "SDKROOT=$($platformSdk.FullName)"
-          } else {
-            Write-Host "Windows.sdk not found under Platforms"
-          }
+          if (-not $platformSdk) { throw "Windows.sdk not found under $swiftRoot\Platforms" }
+          Add-Content $env:GITHUB_ENV "SDKROOT=$($platformSdk.FullName)"
           if (Test-Path $log) {
             Write-Host "=== installer log tail ==="
             Get-Content $log -Tail 25 | ForEach-Object { Write-Host $_ }
@@ -197,21 +186,7 @@ jobs:
           arch: x64
 
       - name: Record toolchain
-        shell: pwsh
-        run: |
-          $cmd = Get-Command swift -ErrorAction SilentlyContinue
-          if (-not $cmd) { throw "swift not resolvable on PATH" }
-          Write-Host "Resolved: $($cmd.Source)"
-          $item = Get-Item $cmd.Source
-          Write-Host "Size: $($item.Length) bytes"
-          try {
-            $output = & $cmd.Source --version 2>&1
-            Write-Host "Output: $output"
-            Write-Host "Exit: $LASTEXITCODE"
-          } catch {
-            Write-Host "Invocation failed: $_"
-            throw
-          }
+        run: swift --version
 
       - name: Build shared closure with tests
         run: swift build --build-tests --package-path Packages/BridgeCore
@@ -263,30 +238,19 @@ jobs:
             if (Test-Path $log) { Get-Content $log -Tail 40 }
             throw "swift.exe not found after installation"
           }
-          Write-Host "Found swift.exe in $bin"
+          # The installer splits the payload into Toolchains (compiler),
+          # Runtimes (shared libraries for PATH) and Platforms (the Windows.sdk
+          # that must be exposed as SDKROOT for target-library linking).
           Add-Content $env:GITHUB_PATH $bin
           $swiftRoot = Split-Path (Split-Path (Split-Path (Split-Path $bin)))
-          Write-Host "Searching under $swiftRoot"
-          Get-ChildItem -Path $swiftRoot -Directory -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host "ROOT DIR: $($_.FullName)" }
-          $runtime = Get-ChildItem -Path $swiftRoot -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue |
+          $runtimeBin = Get-ChildItem -Path "$swiftRoot\Runtimes" -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          if ($runtime) {
-            Write-Host "Runtime found at $($runtime.DirectoryName)"
-            Add-Content $env:GITHUB_PATH $runtime.DirectoryName
-          } else {
-            Write-Host "swiftCore.dll not found anywhere under $swiftRoot"
-          }
-          # The Windows SDK payload lives under Platforms; the Swift driver
-          # needs SDKROOT pointed at its Windows.sdk root.
-          $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Recurse -Depth 6 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue |
+          if (-not $runtimeBin) { throw "Swift runtime dlls not found under $swiftRoot\Runtimes" }
+          Add-Content $env:GITHUB_PATH $runtimeBin.DirectoryName
+          $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Depth 4 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          if ($platformSdk) {
-            Write-Host "Setting SDKROOT=$($platformSdk.FullName)"
-            Add-Content $env:GITHUB_ENV "SDKROOT=$($platformSdk.FullName)"
-          } else {
-            Write-Host "Windows.sdk not found under Platforms"
-          }
+          if (-not $platformSdk) { throw "Windows.sdk not found under $swiftRoot\Platforms" }
+          Add-Content $env:GITHUB_ENV "SDKROOT=$($platformSdk.FullName)"
           if (Test-Path $log) {
             Write-Host "=== installer log tail ==="
             Get-Content $log -Tail 25 | ForEach-Object { Write-Host $_ }
@@ -298,21 +262,7 @@ jobs:
           arch: arm64
 
       - name: Record toolchain
-        shell: pwsh
-        run: |
-          $cmd = Get-Command swift -ErrorAction SilentlyContinue
-          if (-not $cmd) { throw "swift not resolvable on PATH" }
-          Write-Host "Resolved: $($cmd.Source)"
-          $item = Get-Item $cmd.Source
-          Write-Host "Size: $($item.Length) bytes"
-          try {
-            $output = & $cmd.Source --version 2>&1
-            Write-Host "Output: $output"
-            Write-Host "Exit: $LASTEXITCODE"
-          } catch {
-            Write-Host "Invocation failed: $_"
-            throw
-          }
+        run: swift --version
 
       - name: Build shared closure with tests
         run: swift build --build-tests --package-path Packages/BridgeCore
