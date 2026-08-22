@@ -159,7 +159,8 @@ final class ConversationStreamingHostTests: XCTestCase {
         executionAppServer: execution,
         supervisorAppServer: unavailable,
         catalogAppServer: unavailable,
-        clientInfo: .bridge(version: "conversation-streaming-tests")
+        clientInfo: .bridge(version: "conversation-streaming-tests"),
+        synchronizeCodexProjects: false
       ),
       secretStore: secrets,
       randomBytes: { Data(repeating: 0x21, count: $0) }
@@ -273,7 +274,8 @@ final class ConversationStreamingHostTests: XCTestCase {
         executionAppServer: execution,
         supervisorAppServer: unavailable,
         catalogAppServer: unavailable,
-        clientInfo: .bridge(version: "conversation-rich-tests")
+        clientInfo: .bridge(version: "conversation-rich-tests"),
+        synchronizeCodexProjects: false
       ),
       secretStore: secrets,
       randomBytes: { Data(repeating: 0x23, count: $0) }

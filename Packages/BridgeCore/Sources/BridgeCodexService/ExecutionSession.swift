@@ -84,7 +84,12 @@ package actor ExecutionSession {
     beginConsumingEvents()
     do {
       try await client.start()
-      _ = try await client.initialize(clientInfo: configuration.clientInfo)
+      _ = try await client.initialize(
+        clientInfo: configuration.clientInfo,
+        capabilities: InitializeCapabilities(
+          experimentalAPI: configuration.synchronizeCodexProjects
+        )
+      )
       let fastTierID = try await validateModel(
         model: request.task.executionModel,
         effort: request.task.executionEffort,
@@ -326,8 +331,14 @@ package actor ExecutionSession {
     _ request: ExecutionRequest,
     posture: ExecutionPosture
   ) async throws -> String {
+    let projectID = try await codexProjectID(for: request.project)
     if let threadID = request.task.requestedThreadID {
-      return try await resumeThread(threadID, request: request, posture: posture)
+      return try await resumeThread(
+        threadID,
+        request: request,
+        posture: posture,
+        projectID: projectID
+      )
     }
     let response: ThreadStartResponse
     do {
@@ -339,20 +350,27 @@ package actor ExecutionSession {
           approvalsReviewer: posture.approvalsReviewer,
           serviceTier: posture.serviceTier,
           ephemeral: false,
-          model: request.task.executionModel
+          model: request.task.executionModel,
+          projectId: projectID
         )
       )
     } catch {
       throw ExecutionServiceError.processUnavailable
     }
-    try validateThreadResponse(response, expectedThreadID: nil, posture: posture)
+    try validateThreadResponse(
+      response,
+      expectedThreadID: nil,
+      expectedProjectID: projectID,
+      posture: posture
+    )
     return response.thread.id
   }
 
   private func resumeThread(
     _ threadID: String,
     request: ExecutionRequest,
-    posture: ExecutionPosture
+    posture: ExecutionPosture,
+    projectID: String?
   ) async throws -> String {
     guard Self.isSafeWireIdentifier(threadID) else {
       throw ExecutionServiceError.invalidRequest("threadID")
@@ -365,6 +383,23 @@ package actor ExecutionSession {
     }
     guard read.thread.id == threadID, read.thread.cwd == projectRoot else {
       throw ExecutionServiceError.threadMismatch(threadID)
+    }
+    if let projectID, read.thread.projectId != projectID {
+      do {
+        let updated = try await client.updateThreadMetadata(
+          ThreadMetadataUpdateParams(threadId: threadID, projectId: projectID)
+        )
+        guard updated.thread.id == threadID,
+          updated.thread.cwd == projectRoot,
+          updated.thread.projectId == projectID
+        else {
+          throw ExecutionServiceError.threadMismatch(threadID)
+        }
+      } catch let error as ExecutionServiceError {
+        throw error
+      } catch {
+        throw ExecutionServiceError.threadUnavailable(threadID)
+      }
     }
     let response: ThreadResumeResponse
     do {
@@ -382,17 +417,24 @@ package actor ExecutionSession {
     } catch {
       throw ExecutionServiceError.threadUnavailable(threadID)
     }
-    try validateThreadResponse(response, expectedThreadID: threadID, posture: posture)
+    try validateThreadResponse(
+      response,
+      expectedThreadID: threadID,
+      expectedProjectID: projectID,
+      posture: posture
+    )
     return response.thread.id
   }
 
   private func validateThreadResponse(
     _ response: ThreadStartResponse,
     expectedThreadID: String?,
+    expectedProjectID: String?,
     posture: ExecutionPosture
   ) throws {
     guard Self.isSafeWireIdentifier(response.thread.id),
       expectedThreadID == nil || response.thread.id == expectedThreadID,
+      expectedProjectID == nil || response.thread.projectId == expectedProjectID,
       response.thread.cwd == projectRoot,
       response.cwd == projectRoot,
       response.thread.ephemeral == false,

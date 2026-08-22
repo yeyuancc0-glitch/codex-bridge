@@ -14,6 +14,7 @@ public struct ExecutionManagerConfiguration: Sendable {
   public let maximumConcurrentSessions: Int
   public let maximumPendingApprovals: Int
   public let maximumKnownItems: Int
+  public let synchronizeCodexProjects: Bool
 
   public init(
     appServer: AppServerConfiguration = .codex(),
@@ -25,7 +26,8 @@ public struct ExecutionManagerConfiguration: Sendable {
     outputBufferLimit: Int = 128,
     maximumConcurrentSessions: Int = 4,
     maximumPendingApprovals: Int = 16,
-    maximumKnownItems: Int = 2_048
+    maximumKnownItems: Int = 2_048,
+    synchronizeCodexProjects: Bool = false
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
@@ -37,6 +39,7 @@ public struct ExecutionManagerConfiguration: Sendable {
     self.maximumConcurrentSessions = max(1, maximumConcurrentSessions)
     self.maximumPendingApprovals = max(1, maximumPendingApprovals)
     self.maximumKnownItems = max(1, maximumKnownItems)
+    self.synchronizeCodexProjects = synchronizeCodexProjects
   }
 }
 

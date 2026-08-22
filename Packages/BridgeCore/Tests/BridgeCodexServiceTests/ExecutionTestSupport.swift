@@ -89,7 +89,8 @@ func submitStartedExecutionTask(
 
 func makeExecutionManager(
   script: String,
-  maximumConcurrentSessions: Int = 4
+  maximumConcurrentSessions: Int = 4,
+  synchronizeCodexProjects: Bool = false
 ) -> ExecutionManager {
   ExecutionManager(
     configuration: ExecutionManagerConfiguration(
@@ -101,7 +102,8 @@ func makeExecutionManager(
       requestTimeoutNanoseconds: 3_000_000_000,
       turnStartTimeoutNanoseconds: 3_000_000_000,
       maximumSessionNanoseconds: 10_000_000_000,
-      maximumConcurrentSessions: maximumConcurrentSessions
+      maximumConcurrentSessions: maximumConcurrentSessions,
+      synchronizeCodexProjects: synchronizeCodexProjects
     )
   )
 }
@@ -142,9 +144,14 @@ enum ExecutionTestError: Error {
 }
 
 func executionThreadJSON(id: String, root: String) -> String {
-  """
-  {"id":"\(id)","cwd":"\(root)","ephemeral":false,"modelProvider":"fixture","preview":"","turns":[],"name":null,"cliVersion":"fixture/1","createdAt":1,"updatedAt":1,"sessionId":"session-1","status":{"type":"idle"},"source":"appServer"}
-  """
+  executionThreadJSON(id: id, root: root, projectID: nil)
+}
+
+func executionThreadJSON(id: String, root: String, projectID: String?) -> String {
+  let project = projectID.map { "\"\($0)\"" } ?? "null"
+  return """
+    {"id":"\(id)","cwd":"\(root)","ephemeral":false,"modelProvider":"fixture","preview":"","turns":[],"name":null,"cliVersion":"fixture/1","createdAt":1,"updatedAt":1,"sessionId":"session-1","status":{"type":"idle"},"source":"appServer","projectId":\(project)}
+    """
 }
 
 func executionTurnJSON(
@@ -207,6 +214,104 @@ func newThreadProgressScript(root: String) -> String {
       """#
     .replacingOccurrences(of: "__ROOT__", with: root)
     .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+    .replacingOccurrences(of: "__COMPLETED__", with: completed)
+}
+
+func projectAssignedExecutionScript(root: String) -> String {
+  let thread = executionThreadJSON(
+    id: "thread-project-assigned",
+    root: root,
+    projectID: "codex-project-created"
+  )
+  let project =
+    """
+    {"id":"codex-project-created","name":"Execution Fixture","roots":[{"path":"\(root)"}],"metadata":{"managedBy":"codex_bridge_macos"},"position":0,"createdAt":1,"updatedAt":1}
+    """
+  let turn = executionTurnJSON(id: "turn-project-assigned", status: "inProgress")
+  let completed = executionTurnJSON(
+    id: "turn-project-assigned",
+    status: "completed",
+    items: #"[{"type":"agentMessage","text":"Created the Codex project first."}]"#
+  )
+  return executionCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r project_list
+      case "$project_list" in *'"method":"project/list"'*) ;; *) exit 21 ;; esac
+      printf '%s\n' '{"id":3,"result":{"data":[],"nextCursor":null}}'
+      IFS= read -r project_create
+      case "$project_create" in *'"method":"project/create"'*) ;; *) exit 22 ;; esac
+      case "$project_create" in *'"idempotencyKey":"codex-bridge:prj-execution-fixture"'*) ;; *) exit 23 ;; esac
+      case "$project_create" in *'"name":"Execution Fixture"'*) ;; *) exit 24 ;; esac
+      case "$project_create" in *'"path":"__ROOT__"'*) ;; *) exit 25 ;; esac
+      printf '%s\n' '{"id":4,"result":{"project":__PROJECT__}}'
+      IFS= read -r thread_start
+      case "$thread_start" in *'"method":"thread/start"'*) ;; *) exit 26 ;; esac
+      case "$thread_start" in *'"projectId":"codex-project-created"'*) ;; *) exit 27 ;; esac
+      printf '%s\n' '{"id":5,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 28 ;; esac
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-project-assigned","turn":__TURN__}}'
+      printf '%s\n' '{"id":6,"result":{"turn":__TURN__}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-project-assigned","turn":__COMPLETED__}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__PROJECT__", with: project)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+    .replacingOccurrences(of: "__COMPLETED__", with: completed)
+}
+
+func projectAssignedResumeScript(root: String) -> String {
+  let unassigned = executionThreadJSON(
+    id: "thread-project-resume",
+    root: root,
+    projectID: nil
+  )
+  let assigned = executionThreadJSON(
+    id: "thread-project-resume",
+    root: root,
+    projectID: "codex-project-existing"
+  )
+  let project =
+    """
+    {"id":"codex-project-existing","name":"Existing","roots":[{"path":"\(root)"}],"metadata":{},"position":0,"createdAt":1,"updatedAt":1}
+    """
+  let turn = executionTurnJSON(id: "turn-project-resume", status: "inProgress")
+  let completed = executionTurnJSON(
+    id: "turn-project-resume",
+    status: "completed",
+    items: #"[{"type":"agentMessage","text":"Resumed inside the Codex project."}]"#
+  )
+  return executionCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r project_list
+      case "$project_list" in *'"method":"project/list"'*) ;; *) exit 31 ;; esac
+      printf '%s\n' '{"id":3,"result":{"data":[__PROJECT__],"nextCursor":null}}'
+      IFS= read -r thread_read
+      case "$thread_read" in *'"method":"thread/read"'*) ;; *) exit 32 ;; esac
+      printf '%s\n' '{"id":4,"result":{"thread":__UNASSIGNED__}}'
+      IFS= read -r thread_update
+      case "$thread_update" in *'"method":"thread/metadata/update"'*) ;; *) exit 33 ;; esac
+      case "$thread_update" in *'"projectId":"codex-project-existing"'*) ;; *) exit 34 ;; esac
+      printf '%s\n' '{"id":5,"result":{"thread":__ASSIGNED__}}'
+      IFS= read -r thread_resume
+      case "$thread_resume" in *'"method":"thread/resume"'*) ;; *) exit 35 ;; esac
+      printf '%s\n' '{"id":6,"result":{"thread":__ASSIGNED__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      case "$turn_start" in *'"method":"turn/start"'*) ;; *) exit 36 ;; esac
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-project-resume","turn":__TURN__}}'
+      printf '%s\n' '{"id":7,"result":{"turn":__TURN__}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-project-resume","turn":__COMPLETED__}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__PROJECT__", with: project)
+    .replacingOccurrences(of: "__UNASSIGNED__", with: unassigned)
+    .replacingOccurrences(of: "__ASSIGNED__", with: assigned)
     .replacingOccurrences(of: "__TURN__", with: turn)
     .replacingOccurrences(of: "__COMPLETED__", with: completed)
 }

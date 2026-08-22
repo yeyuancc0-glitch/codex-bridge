@@ -4,6 +4,54 @@ import XCTest
 @testable import BridgeCodexRPC
 
 final class TypedCodexMethodsTests: XCTestCase {
+  func testExperimentalProjectMethodsAndThreadAssignmentUseTypedWire() async throws {
+    let client = makeClient(
+      script: #"""
+        project='{"id":"project-1","name":"Fixture","roots":[{"path":"/tmp/project"}],"metadata":{"managedBy":"fixture"},"position":0,"createdAt":1,"updatedAt":2}'
+        thread='{"id":"thread-1","cwd":"/tmp/project","ephemeral":false,"modelProvider":"openai","preview":"","turns":[],"name":null,"cliVersion":"fake/1","createdAt":1,"updatedAt":2,"sessionId":"session-1","status":{"type":"idle"},"source":"appServer","projectId":"project-1"}'
+        IFS= read -r initialize
+        case "$initialize" in *'"experimentalApi":true'*) ;; *) exit 11 ;; esac
+        printf '%s\n' '{"id":1,"result":{"userAgent":"fake/1","codexHome":"/private/fake","platformFamily":"unix","platformOs":"macos"}}'
+        IFS= read -r initialized
+        IFS= read -r project_list
+        case "$project_list" in *'"method":"project/list"'*) ;; *) exit 12 ;; esac
+        printf '{"id":2,"result":{"data":[%s],"nextCursor":null}}\n' "$project"
+        IFS= read -r project_create
+        case "$project_create" in *'"method":"project/create"'*) ;; *) exit 13 ;; esac
+        case "$project_create" in *'"idempotencyKey":"bridge-project"'*) ;; *) exit 14 ;; esac
+        printf '{"id":3,"result":{"project":%s}}\n' "$project"
+        IFS= read -r thread_update
+        case "$thread_update" in *'"method":"thread/metadata/update"'*) ;; *) exit 15 ;; esac
+        case "$thread_update" in *'"projectId":"project-1"'*) ;; *) exit 16 ;; esac
+        printf '{"id":4,"result":{"thread":%s}}\n' "$thread"
+        sleep 1
+        """#
+    )
+    addTeardownBlock { await client.stop() }
+    try await client.start()
+    _ = try await client.initialize(
+      clientInfo: .bridge(version: "project-tests"),
+      capabilities: InitializeCapabilities(experimentalAPI: true)
+    )
+
+    let listed = try await client.listProjects(ProjectListParams(limit: 100))
+    XCTAssertEqual(listed.data.first?.roots, [CodexProjectRoot(path: "/tmp/project")])
+
+    let created = try await client.createProject(
+      ProjectCreateParams(
+        idempotencyKey: "bridge-project",
+        name: "Fixture",
+        roots: [CodexProjectRoot(path: "/tmp/project")]
+      )
+    )
+    XCTAssertEqual(created.project.id, "project-1")
+
+    let updated = try await client.updateThreadMetadata(
+      ThreadMetadataUpdateParams(threadId: "thread-1", projectId: "project-1")
+    )
+    XCTAssertEqual(updated.thread.projectId, "project-1")
+  }
+
   func testTypedTaskMethodsMatchStableWireAndParseNotification() async throws {
     let client = makeClient(
       script: #"""

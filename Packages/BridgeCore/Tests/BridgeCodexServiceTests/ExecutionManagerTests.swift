@@ -4,6 +4,61 @@ import BridgeServiceCore
 import XCTest
 
 final class ExecutionManagerTests: XCTestCase {
+  func testMissingCodexProjectIsCreatedBeforeStartingAssignedThread() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-project-assigned"
+    )
+    let manager = makeExecutionManager(
+      script: projectAssignedExecutionScript(root: fixture.root.path),
+      synchronizeCodexProjects: true
+    )
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    let binding = try await coordinator.start(taskID: task.id)
+    XCTAssertEqual(binding.threadID, "thread-project-assigned")
+    XCTAssertEqual(binding.turnID, "turn-project-assigned")
+
+    let completed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.resultSummary, "Created the Codex project first.")
+  }
+
+  func testUnassignedExistingThreadIsAttachedToMatchingCodexProjectBeforeResume() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-project-resume",
+      threadID: "thread-project-resume"
+    )
+    let manager = makeExecutionManager(
+      script: projectAssignedResumeScript(root: fixture.root.path),
+      synchronizeCodexProjects: true
+    )
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    let binding = try await coordinator.start(taskID: task.id)
+    XCTAssertEqual(binding.threadID, "thread-project-resume")
+    XCTAssertEqual(binding.turnID, "turn-project-resume")
+
+    let completed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.resultSummary, "Resumed inside the Codex project.")
+  }
+
   func testNewThreadUpdatesServiceTaskWithoutLegacyCoordinatorOrPipeline() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(
