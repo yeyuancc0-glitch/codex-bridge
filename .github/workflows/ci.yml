@@ -134,16 +134,35 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = $env:WINDOWS_SWIFT_VERSION
           if ($env:RUNNER_ARCH -eq 'ARM64') {
-            $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/Swift-$version-RELEASE-windows10-arm64.exe"
+            $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/swift-$version-RELEASE-windows10-arm64.exe"
           } else {
             $url = "https://download.swift.org/swift-$version-release/windows10/swift-$version-RELEASE/swift-$version-RELEASE-windows10.exe"
           }
           Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\swift-install.exe"
-          Start-Process -FilePath "$env:RUNNER_TEMP\swift-install.exe" -ArgumentList '/quiet' -Wait
-          $candidates = @("$env:LOCALAPPDATA\Programs\Swift\bin", "$env:ProgramFiles\Swift\bin", "C:\Swift\bin")
+          $installer = "$env:RUNNER_TEMP\swift-install.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $log = "$env:RUNNER_TEMP\swift-install.log"
+          $process = Start-Process -FilePath $installer -ArgumentList "/quiet", "/norestart", "/log", $log -Wait -PassThru
+          Write-Host "Installer exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            throw "Swift installer failed with exit code $($process.ExitCode)"
+          }
+          $candidates = @(
+            "$env:LOCALAPPDATA\Programs\Swift\bin",
+            "$env:ProgramFiles\Swift\bin",
+            "C:\Swift\bin"
+          )
           $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
-          if (-not $bin) { throw "swift.exe not found after installation" }
+          if (-not $bin) {
+            $found = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles", "$env:SystemDrive\Library" -Recurse -Filter 'swift.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $bin = $found.DirectoryName }
+          }
+          if (-not $bin) {
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            throw "swift.exe not found after installation"
+          }
+          Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
 
       - name: Record toolchain
@@ -171,16 +190,35 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $version = $env:WINDOWS_SWIFT_VERSION
           if ($env:RUNNER_ARCH -eq 'ARM64') {
-            $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/Swift-$version-RELEASE-windows10-arm64.exe"
+            $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/swift-$version-RELEASE-windows10-arm64.exe"
           } else {
             $url = "https://download.swift.org/swift-$version-release/windows10/swift-$version-RELEASE/swift-$version-RELEASE-windows10.exe"
           }
           Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\swift-install.exe"
-          Start-Process -FilePath "$env:RUNNER_TEMP\swift-install.exe" -ArgumentList '/quiet' -Wait
-          $candidates = @("$env:LOCALAPPDATA\Programs\Swift\bin", "$env:ProgramFiles\Swift\bin", "C:\Swift\bin")
+          $installer = "$env:RUNNER_TEMP\swift-install.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $log = "$env:RUNNER_TEMP\swift-install.log"
+          $process = Start-Process -FilePath $installer -ArgumentList "/quiet", "/norestart", "/log", $log -Wait -PassThru
+          Write-Host "Installer exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            throw "Swift installer failed with exit code $($process.ExitCode)"
+          }
+          $candidates = @(
+            "$env:LOCALAPPDATA\Programs\Swift\bin",
+            "$env:ProgramFiles\Swift\bin",
+            "C:\Swift\bin"
+          )
           $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
-          if (-not $bin) { throw "swift.exe not found after installation" }
+          if (-not $bin) {
+            $found = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles", "$env:SystemDrive\Library" -Recurse -Filter 'swift.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $bin = $found.DirectoryName }
+          }
+          if (-not $bin) {
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            throw "swift.exe not found after installation"
+          }
+          Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
 
       - name: Record toolchain
