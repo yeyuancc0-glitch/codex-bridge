@@ -164,28 +164,17 @@ jobs:
           }
           Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
+          $usrDir = Split-Path $bin
+          $runtimeBin = Join-Path $usrDir 'lib\swift\windows'
+          if (Test-Path $runtimeBin) {
+            Write-Host "Adding Swift runtime dir $runtimeBin"
+            Add-Content $env:GITHUB_PATH $runtimeBin
+          }
 
       - name: Activate MSVC developer environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-
-      - name: Probe each import DLL
-        shell: pwsh
-        run: |
-          Add-Type -Name K -Namespace W -MemberDefinition '[DllImport("kernel32", SetLastError=true, CharSet=CharSet.Unicode)] public extern static IntPtr LoadLibraryW(string p);'
-          $bin = Split-Path (Get-Command swift).Source
-          $deps = (& ((Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" | Select-Object -First 1).FullName) /dependents (Join-Path $bin 'swift.exe')) -match '\.dll'
-          foreach ($dep in $deps) {
-            $name = ($dep.Trim() -split '\s+')[0]
-            if (-not $name.EndsWith('.dll')) { continue }
-            $local = Join-Path $bin $name
-            $where = if (Test-Path $local) { 'bin' } elseif (Test-Path (Join-Path $env:SystemRoot 'System32' | Split-Path -Parent) ) { '?' } else { '?' }
-            $inBin = Test-Path $local
-            $handle = [W.K]::LoadLibraryW($name)
-            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-Host ("{0} inBin={1} handle={2} lasterr={3}" -f $name, $inBin, $handle, $err)
-          }
 
       - name: Record toolchain
         shell: pwsh
@@ -256,28 +245,17 @@ jobs:
           }
           Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
+          $usrDir = Split-Path $bin
+          $runtimeBin = Join-Path $usrDir 'lib\swift\windows'
+          if (Test-Path $runtimeBin) {
+            Write-Host "Adding Swift runtime dir $runtimeBin"
+            Add-Content $env:GITHUB_PATH $runtimeBin
+          }
 
       - name: Activate MSVC developer environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
-
-      - name: Probe each import DLL
-        shell: pwsh
-        run: |
-          Add-Type -Name K -Namespace W -MemberDefinition '[DllImport("kernel32", SetLastError=true, CharSet=CharSet.Unicode)] public extern static IntPtr LoadLibraryW(string p);'
-          $bin = Split-Path (Get-Command swift).Source
-          $deps = (& ((Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" | Select-Object -First 1).FullName) /dependents (Join-Path $bin 'swift.exe')) -match '\.dll'
-          foreach ($dep in $deps) {
-            $name = ($dep.Trim() -split '\s+')[0]
-            if (-not $name.EndsWith('.dll')) { continue }
-            $local = Join-Path $bin $name
-            $where = if (Test-Path $local) { 'bin' } elseif (Test-Path (Join-Path $env:SystemRoot 'System32' | Split-Path -Parent) ) { '?' } else { '?' }
-            $inBin = Test-Path $local
-            $handle = [W.K]::LoadLibraryW($name)
-            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-Host ("{0} inBin={1} handle={2} lasterr={3}" -f $name, $inBin, $handle, $err)
-          }
 
       - name: Record toolchain
         shell: pwsh
