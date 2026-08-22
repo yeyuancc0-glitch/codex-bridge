@@ -122,7 +122,7 @@
       let handle = wide.withUnsafeBufferPointer { buffer in
         CreateFileW(
           buffer.baseAddress,
-          DWORD(FILE_GENERIC_READ),
+          DWORD(0x120_089), // FILE_GENERIC_READ (macro, not exported)
           DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
           nil,
           DWORD(OPEN_EXISTING),
