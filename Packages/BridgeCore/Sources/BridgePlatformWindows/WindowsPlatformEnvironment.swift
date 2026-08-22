@@ -21,7 +21,7 @@ public struct WindowsPlatformEnvironment: PlatformEnvironmentProviding {
       &processMachine,
       &nativeMachine
     )
-    guard succeeded != 0 else {
+    guard succeeded else {
       return processArchitecture
     }
       switch Int32(nativeMachine) {
