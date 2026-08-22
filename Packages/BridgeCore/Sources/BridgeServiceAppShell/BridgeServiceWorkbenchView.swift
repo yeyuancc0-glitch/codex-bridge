@@ -8,6 +8,8 @@ struct BridgeServiceWorkbenchView: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var isInspectorVisible = true
 
+  private static let approvalAnchorID = "workbench-pending-approvals"
+
   var body: some View {
     HSplitView {
       browserPane
@@ -38,6 +40,13 @@ struct BridgeServiceWorkbenchView: View {
       if model.threads.isEmpty, let pID = model.selectedProjectID ?? model.projects.first?.projectID
       {
         model.selectProject(pID)
+      }
+    }
+    .onChange(of: pendingApprovalIDs) { previous, current in
+      guard WorkbenchApprovalPresentation.shouldReveal(previous: previous, current: current)
+      else { return }
+      withAnimation(.easeInOut(duration: 0.2)) {
+        isInspectorVisible = true
       }
     }
   }
@@ -267,6 +276,10 @@ struct BridgeServiceWorkbenchView: View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 12) {
+          Color.clear
+            .frame(height: 0)
+            .id(Self.approvalAnchorID)
+
           // Urgent Approvals
           if !model.approvals.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
@@ -309,6 +322,17 @@ struct BridgeServiceWorkbenchView: View {
         withAnimation(.easeOut(duration: 0.15)) {
           proxy.scrollTo(anchor, anchor: .bottom)
         }
+      }
+      .onChange(of: pendingApprovalIDs) { previous, current in
+        guard WorkbenchApprovalPresentation.shouldReveal(previous: previous, current: current)
+        else { return }
+        withAnimation(.easeOut(duration: 0.15)) {
+          proxy.scrollTo(Self.approvalAnchorID, anchor: .top)
+        }
+      }
+      .onAppear {
+        guard !pendingApprovalIDs.isEmpty else { return }
+        proxy.scrollTo(Self.approvalAnchorID, anchor: .top)
       }
     }
   }
@@ -450,6 +474,18 @@ struct BridgeServiceWorkbenchView: View {
     return model.threads.first(where: { $0.threadID == threadID })?.title
       ?? model.threads.first(where: { $0.threadID == threadID })?.preview
       ?? threadID.prefix(8) + "…"
+  }
+
+  private var pendingApprovalIDs: [String] {
+    model.approvals.map { "codex:\($0.approvalID)" }
+      + model.directApprovals.map { "direct:\($0.approvalID)" }
+  }
+}
+
+package enum WorkbenchApprovalPresentation {
+  package static func shouldReveal(previous: [String], current: [String]) -> Bool {
+    guard !current.isEmpty else { return false }
+    return !Set(current).isSubset(of: Set(previous))
   }
 }
 
