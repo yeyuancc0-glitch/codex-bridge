@@ -170,6 +170,23 @@ jobs:
         with:
           arch: x64
 
+      - name: Diagnose loader failure
+        shell: pwsh
+        run: |
+          $bin = Split-Path (Get-Command swift).Source
+          Write-Host "=== bin dir contents ==="
+          Get-ChildItem $bin | Select-Object Name | Format-Table -HideTableHeaders | Out-String | Write-Host
+          Write-Host "=== toolchain root scripts ==="
+          $root = Split-Path (Split-Path $bin)
+          Get-ChildItem -Path $root -Recurse -Depth 3 -Include *.bat,*.cmd,*.ps1,*.json,*.props -ErrorAction SilentlyContinue | Select-Object FullName | Out-String | Write-Host
+          $dumpbin = Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($dumpbin) {
+            Write-Host "=== dependencies of swift.exe ==="
+            & $dumpbin.FullName /dependents (Get-Command swift).Source | Out-String | Write-Host
+          } else {
+            Write-Host "dumpbin not found; VCToolsInstallDir=$env:VCToolsInstallDir"
+          }
+
       - name: Record toolchain
         shell: pwsh
         run: |
@@ -244,6 +261,23 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
+
+      - name: Diagnose loader failure
+        shell: pwsh
+        run: |
+          $bin = Split-Path (Get-Command swift).Source
+          Write-Host "=== bin dir contents ==="
+          Get-ChildItem $bin | Select-Object Name | Format-Table -HideTableHeaders | Out-String | Write-Host
+          Write-Host "=== toolchain root scripts ==="
+          $root = Split-Path (Split-Path $bin)
+          Get-ChildItem -Path $root -Recurse -Depth 3 -Include *.bat,*.cmd,*.ps1,*.json,*.props -ErrorAction SilentlyContinue | Select-Object FullName | Out-String | Write-Host
+          $dumpbin = Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($dumpbin) {
+            Write-Host "=== dependencies of swift.exe ==="
+            & $dumpbin.FullName /dependents (Get-Command swift).Source | Out-String | Write-Host
+          } else {
+            Write-Host "dumpbin not found; VCToolsInstallDir=$env:VCToolsInstallDir"
+          }
 
       - name: Record toolchain
         shell: pwsh
