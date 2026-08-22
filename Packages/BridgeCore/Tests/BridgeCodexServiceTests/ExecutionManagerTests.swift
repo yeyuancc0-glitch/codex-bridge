@@ -92,6 +92,20 @@ final class ExecutionManagerTests: XCTestCase {
     XCTAssertTrue(events.contains(where: { $0.kind == .commandCompleted }))
     XCTAssertTrue(events.contains(where: { $0.kind == .fileChanged }))
     XCTAssertEqual(events.last?.kind, .taskCompleted)
+
+    let messages = try await coordinator.conversationPage(taskID: task.id)
+    let command = try XCTUnwrap(messages.first { $0.key == "tool:item-command" })
+    XCTAssertEqual(command.kind, .toolCall)
+    XCTAssertEqual(command.toolName, "read_files")
+    XCTAssertEqual(command.toolStatus, "completed")
+    XCTAssertTrue(command.toolArguments?.contains("读取 Sources/App.swift") == true)
+    XCTAssertTrue(command.toolArguments?.contains("命令：swift test") == true)
+
+    let fileChange = try XCTUnwrap(messages.first { $0.key == "tool:item-file" })
+    XCTAssertEqual(fileChange.kind, .toolCall)
+    XCTAssertEqual(fileChange.toolName, "file_change")
+    XCTAssertEqual(fileChange.toolStatus, "completed")
+    XCTAssertEqual(fileChange.toolArguments, "编辑 Sources/App.swift")
   }
 
   func testLocalApprovalAllowsCommandAndDeferredCompletionCommitsAfterTaskState() async throws {
@@ -143,6 +157,47 @@ final class ExecutionManagerTests: XCTestCase {
         $0.kind == .approvalResolved && $0.summary.contains("approved")
       })
     )
+  }
+
+  func testSessionApprovalUsesNativeCodexDecisionAndResumesTask() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-approval-session"
+    )
+    let manager = makeExecutionManager(
+      script: commandApprovalScript(
+        root: fixture.root.path,
+        expectedDecision: "acceptForSession",
+        finalMessage: "The session approval resumed execution."
+      )
+    )
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    _ = try await coordinator.start(taskID: task.id)
+    let approval = try await waitForApproval(coordinator, taskID: task.id)
+    XCTAssertTrue(approval.availableDecisions.contains(.allowForSession))
+
+    try await coordinator.resolveApproval(
+      taskID: task.id,
+      approvalID: approval.id,
+      decision: .allowForSession
+    )
+
+    let terminal = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status.isTerminal
+    }
+    XCTAssertEqual(
+      terminal.state.status,
+      .completed,
+      "failure=\(terminal.state.failureCode ?? "nil") summary=\(terminal.state.resultSummary ?? "nil")"
+    )
+    XCTAssertEqual(terminal.state.resultSummary, "The session approval resumed execution.")
   }
 
   func testLocalApprovalDenialLetsCodexFinishWithASaferPath() async throws {
@@ -229,7 +284,8 @@ final class ExecutionManagerTests: XCTestCase {
 
     let events = try await fixture.tasks.events(taskID: task.id, limit: 50)
     XCTAssertFalse(events.contains { $0.kind == .planUpdated })
-    XCTAssertTrue(events.contains { $0.kind == .commandCompleted })
+    XCTAssertFalse(events.contains { $0.kind == .commandCompleted })
+    XCTAssertFalse(messages.contains { $0.key == "tool:child-command" })
     XCTAssertEqual(events.last?.kind, .taskCompleted)
   }
 

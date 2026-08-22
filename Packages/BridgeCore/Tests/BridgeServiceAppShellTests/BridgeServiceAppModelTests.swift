@@ -184,12 +184,12 @@ final class BridgeServiceAppModelTests: XCTestCase {
         title: "Run command",
         summary: "Run a bounded command."
       ),
-      allow: true
+      decision: "allow_for_session"
     )
 
     try await waitUntil {
       let snapshot = await client.mutationSnapshot()
-      return snapshot.approvalDecisions == ["approval-1:allow"]
+      return snapshot.approvalDecisions == ["approval-1:allow_for_session"]
     }
   }
 

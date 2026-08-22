@@ -180,7 +180,7 @@ public actor ServiceExecutionCoordinator {
     do {
       let updated = try await tasks.resumeAfterCodexApproval(
         taskID: taskID,
-        approved: decision == .allow
+        approved: decision.isApproval
       )
       await execution.finalizeApproval(
         taskID: taskID,

@@ -35,4 +35,19 @@ final class WorkbenchApprovalPresentationTests: XCTestCase {
       )
     )
   }
+
+  func testTranscriptToolPresentationUsesCodexStyleActivityLabels() {
+    XCTAssertEqual(
+      CodexTranscriptPresentation.tool(name: "read_files", status: "completed"),
+      CodexTranscriptToolPresentation(title: "已读取文件", systemImage: "book")
+    )
+    XCTAssertEqual(
+      CodexTranscriptPresentation.tool(name: "file_change", status: "inProgress"),
+      CodexTranscriptToolPresentation(title: "正在编辑文件", systemImage: "pencil")
+    )
+    XCTAssertEqual(
+      CodexTranscriptPresentation.tool(name: "command_execution", status: "failed"),
+      CodexTranscriptToolPresentation(title: "已运行命令", systemImage: "terminal")
+    )
+  }
 }

@@ -176,18 +176,20 @@ package actor ExecutionSession {
   }
 
   func respondToApproval(id: String, decision: LocalApprovalDecision) async throws {
-    guard !terminal, let pending = pendingApprovals.removeValue(forKey: id) else {
+    guard !terminal, let pending = pendingApprovals[id] else {
       throw ExecutionServiceError.approvalUnavailable(id)
     }
     guard isKnownBinding(pending.request.binding) else {
       await fail(code: "approval_binding_mismatch", summary: "Codex approval binding mismatch.")
       throw ExecutionServiceError.bindingMismatch
     }
+    let result = try pending.response.value(for: decision)
+    pendingApprovals.removeValue(forKey: id)
     approvalBarriers.insert(id)
     do {
       try await client.respond(
         to: pending.rpcRequestID,
-        result: pending.response.value(for: decision)
+        result: result
       )
     } catch {
       approvalBarriers.remove(id)

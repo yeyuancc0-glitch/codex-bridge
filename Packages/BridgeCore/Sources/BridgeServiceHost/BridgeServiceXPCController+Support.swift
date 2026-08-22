@@ -162,7 +162,8 @@ extension BridgeServiceXPCController {
       summary: approval.summary,
       displayCommand: approval.displayCommand,
       relativePaths: approval.relativePaths,
-      reason: approval.reason
+      reason: approval.reason,
+      decisionOptions: approval.availableDecisions.map(\.rawValue)
     )
   }
 

@@ -6,6 +6,68 @@ import XCTest
 @testable import BridgeCodexService
 
 final class ExecutionApprovalBuilderTests: XCTestCase {
+  func testCommandApprovalExposesNativeSessionAndRuleDecisions() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-command-approval-options"
+    )
+    let values = try commandValues(
+      root: fixture.root.path,
+      amendment: ["prefix_rule", "git", "status"]
+    )
+
+    let prepared = try build(
+      values,
+      task: task,
+      project: fixture.project,
+      root: fixture.root.path
+    )
+
+    XCTAssertEqual(
+      prepared.request.availableDecisions,
+      [.allow, .allowForSession, .allowSimilarCommands, .deny]
+    )
+    XCTAssertEqual(
+      try prepared.response.value(for: .allowForSession),
+      .object(["decision": .string("acceptForSession")])
+    )
+    XCTAssertEqual(
+      try prepared.response.value(for: .allowSimilarCommands),
+      .object([
+        "decision": .object([
+          "acceptWithExecpolicyAmendment": .object([
+            "execpolicy_amendment": .array([
+              .string("prefix_rule"), .string("git"), .string("status"),
+            ])
+          ])
+        ])
+      ])
+    )
+  }
+
+  func testCommandApprovalDoesNotInventRuleDecisionWithoutProposal() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-command-approval-without-rule"
+    )
+    let values = try commandValues(root: fixture.root.path, amendment: nil)
+
+    let prepared = try build(
+      values,
+      task: task,
+      project: fixture.project,
+      root: fixture.root.path
+    )
+
+    XCTAssertEqual(
+      prepared.request.availableDecisions,
+      [.allow, .allowForSession, .deny]
+    )
+    XCTAssertThrowsError(try prepared.response.value(for: .allowSimilarCommands))
+  }
+
   func testNetworkPermissionCannotExceedTaskPolicy() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(
@@ -96,6 +158,50 @@ final class ExecutionApprovalBuilderTests: XCTestCase {
   }
 
   private typealias PermissionValues = (CodexApprovalRequest, CodexApprovalItemEvidence, JSONValue)
+
+  private func commandValues(
+    root: String,
+    amendment: [String]?
+  ) throws -> PermissionValues {
+    var values: [String: JSONValue] = [
+      "threadId": .string("thread-1"),
+      "turnId": .string("turn-1"),
+      "itemId": .string("item-1"),
+      "startedAtMs": .integer(1),
+      "command": .string("git status"),
+      "cwd": .string(root),
+    ]
+    if let amendment {
+      values["proposedExecpolicyAmendment"] = .array(amendment.map(JSONValue.string))
+    }
+    let params = JSONValue.object(values)
+    let request = try CodexApprovalWireDecoder.decode(
+      RPCServerRequest(
+        id: .string("request-command"),
+        method: "item/commandExecution/requestApproval",
+        params: params
+      )
+    )
+    let evidence = try CodexApprovalWireDecoder.decodeItemStarted(
+      RPCNotification(
+        method: "item/started",
+        params: .object([
+          "threadId": .string("thread-1"),
+          "turnId": .string("turn-1"),
+          "startedAtMs": .integer(1),
+          "item": .object([
+            "id": .string("item-1"),
+            "type": .string("commandExecution"),
+            "command": .string("git status"),
+            "commandActions": .array([]),
+            "cwd": .string(root),
+            "status": .string("inProgress"),
+          ]),
+        ])
+      )
+    )
+    return (request, evidence, params)
+  }
 
   private func permissionValues(root: String, permissions: JSONValue) throws -> PermissionValues {
     let params: JSONValue = .object([

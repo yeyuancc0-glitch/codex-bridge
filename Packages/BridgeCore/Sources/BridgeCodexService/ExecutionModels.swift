@@ -160,9 +160,15 @@ public enum ExecutionApprovalKind: String, Codable, Equatable, Sendable {
   case permissions
 }
 
-public enum LocalApprovalDecision: String, Codable, Equatable, Sendable {
+public enum LocalApprovalDecision: String, Codable, Equatable, Hashable, Sendable {
   case allow
+  case allowForSession = "allow_for_session"
+  case allowSimilarCommands = "allow_similar_commands"
   case deny
+
+  public var isApproval: Bool {
+    self != .deny
+  }
 }
 
 public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
@@ -176,6 +182,7 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
   public let displayCommand: String?
   public let relativePaths: [String]
   public let reason: String?
+  public let availableDecisions: [LocalApprovalDecision]
 
   public init(
     id: String,
@@ -187,7 +194,8 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
     summary: String,
     displayCommand: String? = nil,
     relativePaths: [String] = [],
-    reason: String? = nil
+    reason: String? = nil,
+    availableDecisions: [LocalApprovalDecision] = [.allow, .deny]
   ) throws {
     try ExecutionValidation.identifier(id, field: "approval.id", maximumBytes: 128)
     try ExecutionValidation.identifier(itemID, field: "approval.itemID", maximumBytes: 256)
@@ -200,6 +208,13 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
     )
     try ExecutionValidation.relativePaths(relativePaths, field: "approval.relativePaths")
     try ExecutionValidation.optionalText(reason, field: "approval.reason", maximumBytes: 4 * 1_024)
+    guard !availableDecisions.isEmpty,
+      availableDecisions.count <= 4,
+      Set(availableDecisions).count == availableDecisions.count,
+      availableDecisions.contains(.deny)
+    else {
+      throw ExecutionServiceError.invalidRequest("approval.availableDecisions")
+    }
     self.id = id
     self.taskID = taskID
     self.binding = binding
@@ -210,6 +225,7 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
     self.displayCommand = displayCommand
     self.relativePaths = relativePaths
     self.reason = reason
+    self.availableDecisions = availableDecisions
   }
 }
 
@@ -314,6 +330,7 @@ public enum ExecutionToolCallStatus: String, Codable, Equatable, Sendable {
   case inProgress
   case completed
   case failed
+  case declined
 }
 
 public struct ExecutionToolCall: Codable, Equatable, Sendable {

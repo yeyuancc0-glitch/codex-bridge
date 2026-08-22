@@ -65,6 +65,9 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("approval item")
       }
       knownItems[item.key] = evidence
+      if isPrimaryBinding(threadID: item.key.threadID, turnID: item.key.turnID) {
+        yield(.toolCall(try conversationToolCall(from: evidence)))
+      }
     } catch {
       await fail(
         code: "invalid_approval_item",
@@ -99,10 +102,15 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("semantic event capacity")
       }
       evidence = try CodexApprovalWireDecoder.decodeSemanticNotification(notification)
-      if case .planChanged(let plan) = evidence,
-        !isPrimaryBinding(threadID: plan.threadID, turnID: plan.turnID)
-      {
-        try requireActiveEvidence(threadID: plan.threadID, turnID: plan.turnID)
+      let evidenceBinding = Self.binding(of: evidence)
+      if !isPrimaryBinding(
+        threadID: evidenceBinding.threadID,
+        turnID: evidenceBinding.turnID
+      ) {
+        try requireActiveEvidence(
+          threadID: evidenceBinding.threadID,
+          turnID: evidenceBinding.turnID
+        )
         seenSemanticSources.insert(sourceID)
         return
       }
@@ -114,6 +122,9 @@ extension ExecutionSession {
     do {
       let event = try makeEvent(evidence)
       seenSemanticSources.insert(sourceID)
+      if let call = try conversationToolCall(from: evidence) {
+        yield(.toolCall(call))
+      }
       yield(event)
     } catch {
       await fail(code: "invalid_semantic_event", summary: "Codex emitted invalid task progress.")

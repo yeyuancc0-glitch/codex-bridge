@@ -8,8 +8,6 @@ struct BridgeServiceWorkbenchView: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var isInspectorVisible = true
 
-  private static let approvalAnchorID = "workbench-pending-approvals"
-
   var body: some View {
     HSplitView {
       browserPane
@@ -34,6 +32,7 @@ struct BridgeServiceWorkbenchView: View {
           )
         }
         .help(isInspectorVisible ? "收起右侧实时监控面板" : "展开右侧实时监控面板")
+        .disabled(!pendingApprovalIDs.isEmpty)
       }
     }
     .task {
@@ -160,6 +159,10 @@ struct BridgeServiceWorkbenchView: View {
     VStack(spacing: 0) {
       inspectorHeader
       Divider()
+      if !pendingApprovalIDs.isEmpty {
+        approvalTray
+        Divider()
+      }
       inspectorBody
       Divider()
       inspectorFooter
@@ -276,28 +279,6 @@ struct BridgeServiceWorkbenchView: View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(alignment: .leading, spacing: 12) {
-          Color.clear
-            .frame(height: 0)
-            .id(Self.approvalAnchorID)
-
-          // Urgent Approvals
-          if !model.approvals.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              ForEach(model.approvals, id: \.approvalID) { approval in
-                ApprovalCard(model: model, approval: approval)
-              }
-            }
-          }
-
-          // Direct Workspace Approvals
-          if !model.directApprovals.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              ForEach(model.directApprovals, id: \.approvalID) { approval in
-                DirectApprovalCard(model: model, approval: approval)
-              }
-            }
-          }
-
           // Active Task Step if Running
           if let activeTask = currentActiveTask, let step = activeTask.currentStep {
             NativeCard {
@@ -323,18 +304,29 @@ struct BridgeServiceWorkbenchView: View {
           proxy.scrollTo(anchor, anchor: .bottom)
         }
       }
-      .onChange(of: pendingApprovalIDs) { previous, current in
-        guard WorkbenchApprovalPresentation.shouldReveal(previous: previous, current: current)
-        else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
-          proxy.scrollTo(Self.approvalAnchorID, anchor: .top)
+    }
+  }
+
+  private var approvalTray: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("等待本机审批", systemImage: "exclamationmark.shield.fill")
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.orange)
+
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 8) {
+          ForEach(model.approvals, id: \.approvalID) { approval in
+            ApprovalCard(model: model, approval: approval)
+          }
+          ForEach(model.directApprovals, id: \.approvalID) { approval in
+            DirectApprovalCard(model: model, approval: approval)
+          }
         }
       }
-      .onAppear {
-        guard !pendingApprovalIDs.isEmpty else { return }
-        proxy.scrollTo(Self.approvalAnchorID, anchor: .top)
-      }
+      .frame(maxHeight: 300)
     }
+    .padding(12)
+    .background(Color.orange.opacity(0.06))
   }
 
   @ViewBuilder
@@ -543,18 +535,24 @@ private struct ApprovalCard: View {
 
       HStack(spacing: 8) {
         Button("拒绝", role: .destructive) {
-          model.resolveApproval(approval, allow: false)
+          model.resolveApproval(approval, decision: "deny")
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
 
         Spacer()
 
-        Button("仅本次允许") {
-          model.resolveApproval(approval, allow: true)
+        Menu {
+          ForEach(allowDecisions, id: \.self) { decision in
+            Button(decisionLabel(decision)) {
+              model.resolveApproval(approval, decision: decision)
+            }
+          }
+        } label: {
+          Label("选择允许范围", systemImage: "chevron.down")
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
       }
     }
     .padding(10)
@@ -564,6 +562,18 @@ private struct ApprovalCard: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .strokeBorder(Color.orange.opacity(0.5), lineWidth: 1)
     )
+  }
+
+  private var allowDecisions: [String] {
+    (approval.decisionOptions ?? ["allow", "deny"]).filter { $0 != "deny" }
+  }
+
+  private func decisionLabel(_ decision: String) -> String {
+    switch decision {
+    case "allow_for_session": "本次会话允许"
+    case "allow_similar_commands": "允许此类命令"
+    default: "仅本次允许"
+    }
   }
 }
 

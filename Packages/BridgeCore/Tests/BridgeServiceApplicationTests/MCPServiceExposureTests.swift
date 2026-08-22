@@ -169,9 +169,16 @@ final class MCPServiceExposureTests: XCTestCase {
     XCTAssertTrue(description.localizedCaseInsensitiveContains("default execution path"))
     XCTAssertTrue(description.localizedCaseInsensitiveContains("codex"))
     XCTAssertTrue(description.localizedCaseInsensitiveContains("workbench"))
+    XCTAssertTrue(description.localizedCaseInsensitiveContains("omit all model and effort"))
     let required = submit.inputSchema.objectValue?["required"]?.arrayValue ?? []
     XCTAssertTrue(required.contains(.string("prompt")))
     XCTAssertFalse(required.contains(.string("project_id")))
+    let properties = try? inputProperties("submit_task", in: ["submit_task": submit])
+    let modelDescription = properties?["execution_model"]?.objectValue?["description"]
+    XCTAssertTrue(
+      modelDescription?.stringValue?.localizedCaseInsensitiveContains("Codex Bridge default")
+        == true
+    )
   }
 
   private func outputProperties(
