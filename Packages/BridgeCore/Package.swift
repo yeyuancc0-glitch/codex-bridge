@@ -263,7 +263,6 @@ let package = Package(
   dependencies: bridgeDependencies,
   targets: [
     .target(name: "BridgePlatform"),
-    .target(name: "BridgeDomain"),
   ] + windowsTargets + sharedTestTargets
 )
 #else
