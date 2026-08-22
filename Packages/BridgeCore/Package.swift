@@ -35,10 +35,6 @@ let bridgeDependencies: [Package.Dependency] = [
 let sharedTargets: [Target] = [
   .target(name: "BridgePlatform"),
   .target(name: "BridgeDomain"),
-  .target(
-    name: "BridgeSecurity",
-    dependencies: ["BridgeDomain"] + cryptoDependencies
-  ),
   .target(name: "BridgeCodexRPC"),
   .target(
     name: "BridgePersistence",
