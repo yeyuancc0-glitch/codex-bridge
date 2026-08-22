@@ -369,6 +369,31 @@ final class ProjectFileServiceTests: XCTestCase {
       XCTAssertNotNil(result.nextCursor)
     }
   }
+
+  func testSearchCooperativelyStopsWhenCancelled() async throws {
+    try await withFixture { fixture in
+      let contents = String(repeating: "ordinary line\n", count: 12_000)
+      for index in 0..<80 {
+        try fixture.write(String(format: "%03d.txt", index), contents)
+      }
+      let task = Task {
+        try await fixture.service.search(
+          try ProjectFileSearchRequest(projectID: fixture.projectID, query: "absent value")
+        )
+      }
+
+      try await Task.sleep(for: .milliseconds(10))
+      task.cancel()
+
+      do {
+        _ = try await task.value
+        XCTFail("Expected the search to observe cancellation")
+      } catch is CancellationError {
+      } catch {
+        XCTFail("Expected CancellationError, got \(error)")
+      }
+    }
+  }
 }
 
 private struct Fixture {

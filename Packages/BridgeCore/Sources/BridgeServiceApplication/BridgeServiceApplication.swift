@@ -193,6 +193,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
         nextCursor: result.nextCursor,
         skippedFileCount: result.skippedFileCount
       )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       throw Self.publicFileError(error)
     }
@@ -225,6 +227,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
         sha256: result.sha256,
         byteCount: result.byteCount
       )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       throw Self.publicFileError(error)
     }
