@@ -1,6 +1,5 @@
 import BridgeDomain
 import BridgeServiceCore
-import Darwin
 import Foundation
 import Logging
 
@@ -321,8 +320,7 @@ public actor DirectCommandSessionManager {
   private static func reapOrphans(trackedPIDs: [String: TrackedPID], logger: Logger) {
     for (sessionID, tracked) in trackedPIDs {
       let identity = tracked.identity
-      guard DirectProcessLifetime.matchesCurrentProcess(identity) else { continue }
-      _ = Darwin.kill(-identity.processGroupID, SIGKILL)
+      guard DirectProcessLifetime.terminateIfMatches(identity) else { continue }
       logger.warning(
         "Reaped orphan direct command session \(sessionID) pid \(identity.pid)"
       )

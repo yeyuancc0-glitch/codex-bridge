@@ -75,7 +75,7 @@ public struct DirectCommandRunner: Sendable {
   ) async -> DirectCommandRunResult {
     let termination =
       process.terminateAndWait(gracePeriod: gracePeriod)
-      ?? .killed(SIGKILL)
+      ?? .killed(9)
     process.drainRemainingOutput()
     process.close()
     onExit?()

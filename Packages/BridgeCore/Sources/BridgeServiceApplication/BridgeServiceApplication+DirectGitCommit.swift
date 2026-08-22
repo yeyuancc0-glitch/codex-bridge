@@ -47,7 +47,7 @@ extension BridgeServiceApplication {
     runner: DirectGitRunner
   ) async throws -> MCPDirectGitCommitReceipt {
     let root = project.root.canonicalPath
-    let git = DirectGitRunner.gitPath
+    let git = try DirectGitRunner.resolveGitPath()
     let temporaryIndex = FileManager.default.temporaryDirectory
       .appendingPathComponent("codex-bridge-git-index-\(UUID().uuidString)")
     let gitEnvironment = ["GIT_INDEX_FILE": temporaryIndex.path]

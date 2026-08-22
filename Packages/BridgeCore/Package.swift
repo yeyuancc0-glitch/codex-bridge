@@ -35,7 +35,14 @@ let bridgeDependencies: [Package.Dependency] = [
 let sharedTargets: [Target] = [
   .target(name: "BridgePlatform"),
   .target(name: "BridgeDomain"),
-  .target(name: "BridgeCodexRPC"),
+  .target(
+    name: "BridgeProcessRuntime",
+    dependencies: ["BridgePlatform"]
+  ),
+  .target(
+    name: "BridgeCodexRPC",
+    dependencies: ["BridgeProcessRuntime"]
+  ),
   .target(
     name: "BridgePersistence",
     dependencies: [
@@ -213,6 +220,7 @@ let sharedTargets: [Target] = [
     name: "BridgeDirectCommand",
     dependencies: [
       "BridgeDomain",
+      "BridgeProcessRuntime",
       "BridgeProjects",
       "BridgeSecurity",
       "BridgeServiceCore",
@@ -235,6 +243,10 @@ let sharedTestTargets: [Target] = [
     name: "BridgePlatformTests",
     dependencies: ["BridgePlatform"] + cryptoDependencies
   ),
+  .testTarget(
+    name: "BridgeProcessRuntimeTests",
+    dependencies: ["BridgePlatform", "BridgeProcessRuntime"]
+  ),
 ]
 
 #if os(Windows)
@@ -249,6 +261,36 @@ let windowsTargets: [Target] = [
     dependencies: ["BridgePlatform"]
   ),
   .target(
+    name: "BridgeProcessRuntime",
+    dependencies: ["BridgePlatform"]
+  ),
+  .target(
+    name: "BridgeCodexRPC",
+    dependencies: ["BridgeProcessRuntime"]
+  ),
+  .target(
+    name: "BridgeDirectCommand",
+    dependencies: ["BridgeProcessRuntime"],
+    path: "Sources/BridgeDirectCommand",
+    exclude: [
+      "DirectCommandPolicy.swift",
+      "DirectCommandSessionManager.swift",
+      "DirectSearchArgumentValidator.swift",
+    ],
+    sources: [
+      "DirectCommandOutputBuffer.swift",
+      "DirectCommandRunner.swift",
+      "DirectGitRunner.swift",
+      "DirectProcessLifetime.swift",
+      "DirectProcessLifetime+Windows.swift",
+    ]
+  ),
+  .executableTarget(
+    name: "WindowsProcessTreeFixture",
+    dependencies: ["BridgeProcessRuntime"],
+    path: "Tests/WindowsProcessTreeFixture"
+  ),
+  .target(
     name: "BridgeSecurity",
     dependencies: ["BridgeDomain"] + cryptoDependencies,
     path: "Sources/BridgeSecurity",
@@ -260,9 +302,25 @@ let windowsTargets: [Target] = [
       "SecureProjectFileWriter.swift",
     ]
   ),
+  .testTarget(
+    name: "BridgeCodexRPCWindowsTests",
+    dependencies: ["BridgeCodexRPC", "BridgeProcessRuntime"]
+  ),
+  .testTarget(
+    name: "BridgeDirectCommandWindowsTests",
+    dependencies: ["BridgeDirectCommand", "BridgeProcessRuntime"]
+  ),
 ]
 
-let windowsProducts: [Product] = []
+let windowsProducts: [Product] = [
+  .library(name: "BridgeCodexRPC", targets: ["BridgeCodexRPC"]),
+  .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
+  .library(name: "BridgeProcessRuntime", targets: ["BridgeProcessRuntime"]),
+  .executable(
+    name: "windows-process-tree-fixture",
+    targets: ["WindowsProcessTreeFixture"]
+  ),
+]
 
 let package = Package(
   name: "BridgeCore",

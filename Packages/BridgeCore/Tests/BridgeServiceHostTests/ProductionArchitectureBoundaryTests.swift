@@ -15,6 +15,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeMCP",
     "BridgePlatform",
     "BridgePlatformMacOS",
+    "BridgeProcessRuntime",
     "BridgeProjects",
     "BridgeSecurity",
     "BridgeServiceApplication",
@@ -43,9 +44,12 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
   /// Targets that must stay compilable on the Windows host. Extending this
   /// list requires proving the target builds on native Windows runners.
   private static let windowsClosureTargets = [
+    "BridgeCodexRPC",
+    "BridgeDirectCommand",
     "BridgeDomain",
     "BridgePlatform",
     "BridgePlatformWindows",
+    "BridgeProcessRuntime",
   ]
 
   private static let darwinOnlyModules: Set<String> = [
@@ -71,7 +75,12 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
   /// Targets whose source files differ per host under one module name. Every
   /// platform-coupled file inside them must be wrapped in a matching
   /// canImport gate.
-  private static let splitHostTargets: Set<String> = ["BridgeSecurity"]
+  private static let splitHostTargets: Set<String> = [
+    "BridgeCodexRPC",
+    "BridgeDirectCommand",
+    "BridgeProcessRuntime",
+    "BridgeSecurity",
+  ]
 
   func testProductionTargetsDoNotImportLegacyControlPlane() throws {
     let sourcesRoot = Self.packageRoot.appending(path: "Sources", directoryHint: .isDirectory)
@@ -123,6 +132,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
       let targetRoot = sourcesRoot.appending(path: target, directoryHint: .isDirectory)
       let sourceFiles = try Self.swiftFiles(in: targetRoot)
       XCTAssertFalse(sourceFiles.isEmpty, "Missing Windows closure target sources: \(target)")
+      if Self.splitHostTargets.contains(target) { continue }
       for sourceFile in sourceFiles {
         let imports = try Self.importedModules(in: sourceFile)
         let darwin = imports.intersection(Self.darwinOnlyModules)
@@ -167,7 +177,9 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
         }
         if source.contains("import Darwin") {
           XCTAssertTrue(
-            source.contains("#if canImport(Darwin)") || !source.contains("canImport(WinSDK)"),
+            source.contains("#if canImport(Darwin)")
+              || source.contains("#if !canImport(WinSDK)")
+              || !source.contains("canImport(WinSDK)"),
             "\(sourceFile.lastPathComponent) mixes Darwin with a WinSDK gate"
           )
         }

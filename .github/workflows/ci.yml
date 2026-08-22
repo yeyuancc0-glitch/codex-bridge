@@ -191,6 +191,16 @@ jobs:
       - name: Build shared closure with tests
         run: swift build --build-tests --package-path Packages/BridgeCore
 
+      - name: Require native process fixture
+        shell: pwsh
+        run: |
+          $bin = swift build --show-bin-path --package-path Packages/BridgeCore
+          $fixture = Join-Path $bin 'windows-process-tree-fixture.exe'
+          if (-not (Test-Path $fixture)) {
+            throw "Windows process fixture was not built at $fixture"
+          }
+          Add-Content $env:GITHUB_ENV "BRIDGE_WINDOWS_PROCESS_FIXTURE=$fixture"
+
       - name: Test shared closure
         run: swift test --skip-build --package-path Packages/BridgeCore
 
@@ -266,6 +276,16 @@ jobs:
 
       - name: Build shared closure with tests
         run: swift build --build-tests --package-path Packages/BridgeCore
+
+      - name: Require native process fixture
+        shell: pwsh
+        run: |
+          $bin = swift build --show-bin-path --package-path Packages/BridgeCore
+          $fixture = Join-Path $bin 'windows-process-tree-fixture.exe'
+          if (-not (Test-Path $fixture)) {
+            throw "Windows process fixture was not built at $fixture"
+          }
+          Add-Content $env:GITHUB_ENV "BRIDGE_WINDOWS_PROCESS_FIXTURE=$fixture"
 
       - name: Test shared closure
         run: swift test --skip-build --package-path Packages/BridgeCore
