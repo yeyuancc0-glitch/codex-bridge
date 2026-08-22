@@ -141,7 +141,7 @@ jobs:
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\swift-install.exe"
           Start-Process -FilePath "$env:RUNNER_TEMP\swift-install.exe" -ArgumentList '/quiet' -Wait
-          $candidates = @("$env:ProgramFiles\Swift\bin", "C:\Swift\bin", "$env:LOCALAPPDATA\Swift\bin")
+          $candidates = @("$env:LOCALAPPDATA\Programs\Swift\bin", "$env:ProgramFiles\Swift\bin", "C:\Swift\bin")
           $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
           if (-not $bin) { throw "swift.exe not found after installation" }
           Add-Content $env:GITHUB_PATH $bin
@@ -178,7 +178,7 @@ jobs:
           Write-Host "Downloading $url"
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\swift-install.exe"
           Start-Process -FilePath "$env:RUNNER_TEMP\swift-install.exe" -ArgumentList '/quiet' -Wait
-          $candidates = @("$env:ProgramFiles\Swift\bin", "C:\Swift\bin", "$env:LOCALAPPDATA\Swift\bin")
+          $candidates = @("$env:LOCALAPPDATA\Programs\Swift\bin", "$env:ProgramFiles\Swift\bin", "C:\Swift\bin")
           $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
           if (-not $bin) { throw "swift.exe not found after installation" }
           Add-Content $env:GITHUB_PATH $bin
