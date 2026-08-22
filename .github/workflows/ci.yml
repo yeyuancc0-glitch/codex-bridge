@@ -165,6 +165,11 @@ jobs:
           Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
 
+      - name: Activate MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Record toolchain
         shell: pwsh
         run: |
@@ -234,6 +239,11 @@ jobs:
           }
           Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
+
+      - name: Activate MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
 
       - name: Record toolchain
         shell: pwsh
