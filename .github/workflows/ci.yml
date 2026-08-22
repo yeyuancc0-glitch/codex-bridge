@@ -128,10 +128,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Swift ${{ env.WINDOWS_SWIFT_VERSION }}
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ env.WINDOWS_SWIFT_VERSION }}
+      - name: Install Swift ${{ env.WINDOWS_SWIFT_VERSION }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:WINDOWS_SWIFT_VERSION
+          if ($env:RUNNER_ARCH -eq 'ARM64') {
+            $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/Swift-$version-RELEASE-windows10-arm64.exe"
+          } else {
+            $url = "https://download.swift.org/swift-$version-release/windows10/swift-$version-RELEASE/swift-$version-RELEASE-windows10.exe"
+          }
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\swift-install.exe"
+          Start-Process -FilePath "$env:RUNNER_TEMP\swift-install.exe" -ArgumentList '/quiet' -Wait
+          $candidates = @("$env:ProgramFiles\Swift\bin", "C:\Swift\bin", "$env:LOCALAPPDATA\Swift\bin")
+          $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
+          if (-not $bin) { throw "swift.exe not found after installation" }
+          Add-Content $env:GITHUB_PATH $bin
 
       - name: Record toolchain
         run: swift --version
@@ -152,10 +165,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Swift ${{ env.WINDOWS_SWIFT_VERSION }}
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: ${{ env.WINDOWS_SWIFT_VERSION }}
+      - name: Install Swift ${{ env.WINDOWS_SWIFT_VERSION }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:WINDOWS_SWIFT_VERSION
+          if ($env:RUNNER_ARCH -eq 'ARM64') {
+            $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/Swift-$version-RELEASE-windows10-arm64.exe"
+          } else {
+            $url = "https://download.swift.org/swift-$version-release/windows10/swift-$version-RELEASE/swift-$version-RELEASE-windows10.exe"
+          }
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\swift-install.exe"
+          Start-Process -FilePath "$env:RUNNER_TEMP\swift-install.exe" -ArgumentList '/quiet' -Wait
+          $candidates = @("$env:ProgramFiles\Swift\bin", "C:\Swift\bin", "$env:LOCALAPPDATA\Swift\bin")
+          $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
+          if (-not $bin) { throw "swift.exe not found after installation" }
+          Add-Content $env:GITHUB_PATH $bin
 
       - name: Record toolchain
         run: swift --version
