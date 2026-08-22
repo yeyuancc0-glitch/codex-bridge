@@ -176,6 +176,21 @@ jobs:
           } else {
             Write-Host "swiftCore.dll not found anywhere under $swiftRoot"
           }
+          Get-ChildItem -Path "$swiftRoot\Platforms" -Recurse -Depth 4 -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "PLATDIR: $($_.FullName)" }
+          # The SDK root is the directory whose usr/lib/swift/windows holds the
+          # target libraries; expose it as SDKROOT for the Swift driver.
+          $sdkLib = Get-ChildItem -Path "$swiftRoot\Platforms" -Recurse -Depth 5 -Filter 'swiftCore.lib' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($sdkLib) {
+            $sdkRoot = Split-Path (Split-Path (Split-Path ($sdkLib.FullName -replace '\\lib\\swift\\windows.*$','')))
+            # walk up from the lib file: <sdk>\usr\lib\swift\windows\swiftCore.lib
+            $sdkRoot = Split-Path (Split-Path (Split-Path (Split-Path (Split-Path $sdkLib.FullName))))
+            Write-Host "Setting SDKROOT=$sdkRoot"
+            Add-Content $env:GITHUB_ENV "SDKROOT=$sdkRoot"
+          } else {
+            Write-Host "swiftCore.lib not found under Platforms"
+          }
           if (Test-Path $log) {
             Write-Host "=== installer log tail ==="
             Get-Content $log -Tail 25 | ForEach-Object { Write-Host $_ }
@@ -266,6 +281,21 @@ jobs:
             Add-Content $env:GITHUB_PATH $runtime.DirectoryName
           } else {
             Write-Host "swiftCore.dll not found anywhere under $swiftRoot"
+          }
+          Get-ChildItem -Path "$swiftRoot\Platforms" -Recurse -Depth 4 -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "PLATDIR: $($_.FullName)" }
+          # The SDK root is the directory whose usr/lib/swift/windows holds the
+          # target libraries; expose it as SDKROOT for the Swift driver.
+          $sdkLib = Get-ChildItem -Path "$swiftRoot\Platforms" -Recurse -Depth 5 -Filter 'swiftCore.lib' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($sdkLib) {
+            $sdkRoot = Split-Path (Split-Path (Split-Path ($sdkLib.FullName -replace '\\lib\\swift\\windows.*$','')))
+            # walk up from the lib file: <sdk>\usr\lib\swift\windows\swiftCore.lib
+            $sdkRoot = Split-Path (Split-Path (Split-Path (Split-Path (Split-Path $sdkLib.FullName))))
+            Write-Host "Setting SDKROOT=$sdkRoot"
+            Add-Content $env:GITHUB_ENV "SDKROOT=$sdkRoot"
+          } else {
+            Write-Host "swiftCore.lib not found under Platforms"
           }
           if (Test-Path $log) {
             Write-Host "=== installer log tail ==="
