@@ -164,13 +164,18 @@ jobs:
           }
           Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
-          $programsRoot = Split-Path (Split-Path (Split-Path $bin))
-          foreach ($needle in 'swiftCore.dll','FoundationEssentials.dll','swiftCRT.dll') {
-            Get-ChildItem -Path $programsRoot -Recurse -Filter $needle -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "RUNTIME HIT: $($_.FullName)" }
+          $swiftRoot = Split-Path (Split-Path (Split-Path (Split-Path $bin)))
+          Write-Host "Searching under $swiftRoot"
+          Get-ChildItem -Path $swiftRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "ROOT DIR: $($_.FullName)" }
+          $runtime = Get-ChildItem -Path $swiftRoot -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($runtime) {
+            Write-Host "Runtime found at $($runtime.DirectoryName)"
+            Add-Content $env:GITHUB_PATH $runtime.DirectoryName
+          } else {
+            Write-Host "swiftCore.dll not found anywhere under $swiftRoot"
           }
-          Get-ChildItem -Path (Split-Path $bin) -Directory -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-            Select-Object -First 40 | ForEach-Object { Write-Host "DIR: $($_.FullName)" }
           if (Test-Path $log) {
             Write-Host "=== installer log tail ==="
             Get-Content $log -Tail 25 | ForEach-Object { Write-Host $_ }
@@ -250,13 +255,18 @@ jobs:
           }
           Write-Host "Found swift.exe in $bin"
           Add-Content $env:GITHUB_PATH $bin
-          $programsRoot = Split-Path (Split-Path (Split-Path $bin))
-          foreach ($needle in 'swiftCore.dll','FoundationEssentials.dll','swiftCRT.dll') {
-            Get-ChildItem -Path $programsRoot -Recurse -Filter $needle -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host "RUNTIME HIT: $($_.FullName)" }
+          $swiftRoot = Split-Path (Split-Path (Split-Path (Split-Path $bin)))
+          Write-Host "Searching under $swiftRoot"
+          Get-ChildItem -Path $swiftRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "ROOT DIR: $($_.FullName)" }
+          $runtime = Get-ChildItem -Path $swiftRoot -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($runtime) {
+            Write-Host "Runtime found at $($runtime.DirectoryName)"
+            Add-Content $env:GITHUB_PATH $runtime.DirectoryName
+          } else {
+            Write-Host "swiftCore.dll not found anywhere under $swiftRoot"
           }
-          Get-ChildItem -Path (Split-Path $bin) -Directory -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-            Select-Object -First 40 | ForEach-Object { Write-Host "DIR: $($_.FullName)" }
           if (Test-Path $log) {
             Write-Host "=== installer log tail ==="
             Get-Content $log -Tail 25 | ForEach-Object { Write-Host $_ }
