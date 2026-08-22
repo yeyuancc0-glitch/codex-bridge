@@ -170,23 +170,25 @@ jobs:
         with:
           arch: x64
 
-      - name: Differential loader diagnostics
+      - name: Probe each import DLL
         shell: pwsh
         run: |
+          Add-Type -Name K -Namespace W -MemberDefinition '[DllImport("kernel32", SetLastError=true, CharSet=CharSet.Unicode)] public extern static IntPtr LoadLibraryW(string p);'
           $bin = Split-Path (Get-Command swift).Source
-          foreach ($tool in 'clang.exe','clang-cl.exe','lldb.exe','swift.exe','swift-build.exe','swift-frontend.exe') {
-            $path = Join-Path $bin $tool
-            if (-not (Test-Path $path)) { Write-Host "${tool}: NOT PRESENT"; continue }
-            try {
-              $out = & $path --version 2>&1
-              Write-Host "${tool}: exit=$LASTEXITCODE output=$($out -join ' | ')"
-            } catch {
-              Write-Host "${tool}: invocation threw: $_"
-            }
+          $deps = (& ((Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" | Select-Object -First 1).FullName) /dependents (Join-Path $bin 'swift.exe')) -match '\.dll'
+          foreach ($dep in $deps) {
+            $name = ($dep.Trim() -split '\s+')[0]
+            if (-not $name.EndsWith('.dll')) { continue }
+            $local = Join-Path $bin $name
+            $where = if (Test-Path $local) { 'bin' } elseif (Test-Path (Join-Path $env:SystemRoot 'System32' | Split-Path -Parent) ) { '?' } else { '?' }
+            $inBin = Test-Path $local
+            $handle = [W.K]::LoadLibraryW($name)
+            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Host ("{0} inBin={1} handle={2} lasterr={3}" -f $name, $inBin, $handle, $err)
           }
-          $dumpbin = (Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" | Select-Object -First 1).FullName
-          Write-Host "=== RAW dumpbin /dependents swift.exe ==="
-          & $dumpbin /dependents (Join-Path $bin 'swift.exe') 2>&1 | ForEach-Object { Write-Host "$_" }
+
+      - name: Record toolchain
+        shell: pwsh
       - name: Record toolchain
         shell: pwsh
         run: |
@@ -262,23 +264,25 @@ jobs:
         with:
           arch: arm64
 
-      - name: Differential loader diagnostics
+      - name: Probe each import DLL
         shell: pwsh
         run: |
+          Add-Type -Name K -Namespace W -MemberDefinition '[DllImport("kernel32", SetLastError=true, CharSet=CharSet.Unicode)] public extern static IntPtr LoadLibraryW(string p);'
           $bin = Split-Path (Get-Command swift).Source
-          foreach ($tool in 'clang.exe','clang-cl.exe','lldb.exe','swift.exe','swift-build.exe','swift-frontend.exe') {
-            $path = Join-Path $bin $tool
-            if (-not (Test-Path $path)) { Write-Host "${tool}: NOT PRESENT"; continue }
-            try {
-              $out = & $path --version 2>&1
-              Write-Host "${tool}: exit=$LASTEXITCODE output=$($out -join ' | ')"
-            } catch {
-              Write-Host "${tool}: invocation threw: $_"
-            }
+          $deps = (& ((Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" | Select-Object -First 1).FullName) /dependents (Join-Path $bin 'swift.exe')) -match '\.dll'
+          foreach ($dep in $deps) {
+            $name = ($dep.Trim() -split '\s+')[0]
+            if (-not $name.EndsWith('.dll')) { continue }
+            $local = Join-Path $bin $name
+            $where = if (Test-Path $local) { 'bin' } elseif (Test-Path (Join-Path $env:SystemRoot 'System32' | Split-Path -Parent) ) { '?' } else { '?' }
+            $inBin = Test-Path $local
+            $handle = [W.K]::LoadLibraryW($name)
+            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Host ("{0} inBin={1} handle={2} lasterr={3}" -f $name, $inBin, $handle, $err)
           }
-          $dumpbin = (Get-ChildItem "$env:VCToolsInstallDir\bin\Host*\x64\dumpbin.exe" | Select-Object -First 1).FullName
-          Write-Host "=== RAW dumpbin /dependents swift.exe ==="
-          & $dumpbin /dependents (Join-Path $bin 'swift.exe') 2>&1 | ForEach-Object { Write-Host "$_" }
+
+      - name: Record toolchain
+        shell: pwsh
       - name: Record toolchain
         shell: pwsh
         run: |
