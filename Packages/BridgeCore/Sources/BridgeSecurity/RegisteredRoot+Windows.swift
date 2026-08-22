@@ -46,6 +46,12 @@ public struct RegisteredRoot: Codable, Equatable, Sendable {
     }
   }
 
+
+  /// Identity re-capture used by ProjectPathResolver after path validation.
+  static func readIdentity(atPath path: String) throws -> FileSystemIdentity {
+    try RegisteredRoot(capturing: URL(fileURLWithPath: path, isDirectory: true)).identity
+  }
+
   private static func openDirectory(path: String) throws -> HANDLE {
     var wide = Array(path.utf16)
     wide.append(0)
@@ -55,7 +61,7 @@ public struct RegisteredRoot: Codable, Equatable, Sendable {
         DWORD(0),
         DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
         nil,
-        DWORD(OPEN_EXISTING.value),
+        DWORD(OPEN_EXISTING),
         DWORD(FILE_FLAG_BACKUP_SEMANTICS),
         nil
       )
