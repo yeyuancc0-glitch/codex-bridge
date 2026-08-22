@@ -189,8 +189,6 @@ jobs:
 
       - name: Record toolchain
         shell: pwsh
-      - name: Record toolchain
-        shell: pwsh
         run: |
           $cmd = Get-Command swift -ErrorAction SilentlyContinue
           if (-not $cmd) { throw "swift not resolvable on PATH" }
@@ -281,8 +279,6 @@ jobs:
             Write-Host ("{0} inBin={1} handle={2} lasterr={3}" -f $name, $inBin, $handle, $err)
           }
 
-      - name: Record toolchain
-        shell: pwsh
       - name: Record toolchain
         shell: pwsh
         run: |
