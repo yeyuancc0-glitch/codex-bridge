@@ -123,8 +123,8 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     let worktreeIdentity = [
       location.repositoryRoot.canonicalPath,
       location.root.canonicalPath,
-      "\(location.repositoryRoot.identity.device):\(location.repositoryRoot.identity.inode)",
-      "\(location.root.identity.device):\(location.root.identity.inode)",
+      "\(location.repositoryRoot.identity.volumeID):\(location.repositoryRoot.identity.fileID)",
+      "\(location.root.identity.volumeID):\(location.root.identity.fileID)",
     ].joined(separator: "\u{0}")
     return [
       "thread:\(Self.digest(threadIdentity))",
@@ -690,8 +690,8 @@ public actor IsolatedCodexTaskRuntime: DurableTaskExecutionRuntime {
     let worktreeIdentity = [
       location.repositoryRoot.canonicalPath,
       location.root.canonicalPath,
-      "\(location.repositoryRoot.identity.device):\(location.repositoryRoot.identity.inode)",
-      "\(location.root.identity.device):\(location.root.identity.inode)",
+      "\(location.repositoryRoot.identity.volumeID):\(location.repositoryRoot.identity.fileID)",
+      "\(location.root.identity.volumeID):\(location.root.identity.fileID)",
     ].joined(separator: "\u{0}")
     return [
       "thread:\(Self.digest(threadID))",

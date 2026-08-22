@@ -104,8 +104,8 @@ struct ServiceLegacyImportFixture {
           arguments: [
             project.id.rawValue,
             project.primaryRoot.canonicalPath,
-            String(project.primaryRoot.identity.device),
-            String(project.primaryRoot.identity.inode),
+            project.primaryRoot.identity.volumeID,
+            project.primaryRoot.identity.fileID,
           ]
         )
       }

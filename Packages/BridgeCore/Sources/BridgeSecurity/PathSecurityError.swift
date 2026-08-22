@@ -19,6 +19,7 @@ public enum PathSecurityError: Error, LocalizedError, Sendable, Equatable {
   case unsupportedHardLink
   case revisionConflict
   case pathChanged
+  case invalidIdentity
 
   public var errorDescription: String? {
     switch self {
@@ -58,6 +59,8 @@ public enum PathSecurityError: Error, LocalizedError, Sendable, Equatable {
       "The file content does not match the expected revision."
     case .pathChanged:
       "The target changed after it was validated."
+    case .invalidIdentity:
+      "The filesystem identity encoding is not valid for its platform kind."
     }
   }
 }

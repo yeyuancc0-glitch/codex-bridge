@@ -292,8 +292,8 @@ public struct SecureProjectDirectoryMutation: Sendable {
       throw PathSecurityError.rootUnavailable
     }
     let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
+      posixDevice: UInt64(metadata.st_dev),
+      posixInode: UInt64(metadata.st_ino)
     )
     guard identity == root.identity else {
       throw PathSecurityError.rootIdentityChanged
@@ -306,10 +306,10 @@ public struct SecureProjectDirectoryMutation: Sendable {
       return false
     }
     let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
+      posixDevice: UInt64(metadata.st_dev),
+      posixInode: UInt64(metadata.st_ino)
     )
-    return identity.device == root.identity.device
+    return identity.volumeID == root.identity.volumeID
   }
 
   private func validateRegularDescriptor(_ descriptor: Int32, root: RegisteredRoot) throws -> stat {
@@ -319,10 +319,10 @@ public struct SecureProjectDirectoryMutation: Sendable {
       throw PathSecurityError.unsupportedFileType
     }
     let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
+      posixDevice: UInt64(metadata.st_dev),
+      posixInode: UInt64(metadata.st_ino)
     )
-    guard identity.device == root.identity.device else {
+    guard identity.volumeID == root.identity.volumeID else {
       throw PathSecurityError.pathEscapeBlocked
     }
     return metadata

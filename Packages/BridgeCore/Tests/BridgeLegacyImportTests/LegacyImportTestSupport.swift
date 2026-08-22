@@ -182,8 +182,8 @@ struct LegacyImportFixture {
         role,
         ordinal,
         root.canonicalPath,
-        String(root.identity.device),
-        String(root.identity.inode),
+        root.identity.volumeID,
+        root.identity.fileID,
       ]
     )
   }

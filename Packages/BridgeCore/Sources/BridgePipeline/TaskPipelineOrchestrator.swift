@@ -575,8 +575,8 @@ public actor TaskPipelineOrchestrator: TaskPipelineLifecycle {
     try project.validateCurrentRoots()
     let repositoryRoot = project.repositoryRoot
     guard repositoryRoot.canonicalPath == baseline.canonicalRootPath,
-      repositoryRoot.identity.device == baseline.rootIdentity?.device,
-      repositoryRoot.identity.inode == baseline.rootIdentity?.inode
+      repositoryRoot.identity.posixDeviceValue == baseline.rootIdentity?.device,
+      repositoryRoot.identity.posixInodeValue == baseline.rootIdentity?.inode
     else { throw TaskPipelineOrchestratorError.scopeMismatch }
     return project.primaryRoot
   }

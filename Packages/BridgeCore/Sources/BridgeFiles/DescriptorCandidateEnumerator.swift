@@ -81,7 +81,7 @@ struct DescriptorCandidateEnumerator {
       fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
     }
     guard status == 0 else { throw ProjectFileError.unsafeFilesystemState }
-    guard UInt64(metadata.st_dev) == root.identity.device else { return }
+    guard String(UInt64(metadata.st_dev)) == root.identity.volumeID else { return }
     let type = metadata.st_mode & S_IFMT
     if type == S_IFDIR {
       try inspectDirectory(
@@ -203,8 +203,8 @@ struct DescriptorCandidateEnumerator {
       throw ProjectFileError.unsafeFilesystemState
     }
     let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
+      posixDevice: UInt64(metadata.st_dev),
+      posixInode: UInt64(metadata.st_ino)
     )
     guard identity == root.identity else { throw PathSecurityError.rootIdentityChanged }
   }
@@ -214,7 +214,7 @@ struct DescriptorCandidateEnumerator {
     guard
       fstat(descriptor, &metadata) == 0,
       metadata.st_mode & S_IFMT == S_IFDIR,
-      UInt64(metadata.st_dev) == root.identity.device
+      String(UInt64(metadata.st_dev)) == root.identity.volumeID
     else {
       throw ProjectFileError.unsafeFilesystemState
     }

@@ -237,8 +237,8 @@ struct LegacyRepositoryReader {
       guard role == entry.role,
         ordinal == entry.ordinal,
         path == entry.root.canonicalPath,
-        device == String(entry.root.identity.device),
-        inode == String(entry.root.identity.inode)
+        device == entry.root.identity.volumeID,
+        inode == entry.root.identity.fileID
       else {
         throw LegacyImportError.corruptRepository
       }
@@ -255,8 +255,7 @@ struct LegacyRepositoryReader {
         name: project.name,
         root: ServiceRootIdentity(
           canonicalPath: project.primaryRoot.canonicalPath,
-          device: project.primaryRoot.identity.device,
-          inode: project.primaryRoot.identity.inode
+          identity: project.primaryRoot.identity
         ),
         accessPolicy: project.accessPolicy,
         createdAt: project.createdAt,

@@ -229,8 +229,8 @@ private enum SearchCursor {
     let bindingParts =
       [
         projectID.rawValue,
-        String(root.identity.device),
-        String(root.identity.inode),
+        root.identity.volumeID,
+        root.identity.fileID,
         query,
         scope?.value ?? "",
         caseSensitive ? "1" : "0",

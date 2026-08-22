@@ -174,7 +174,8 @@ final class PipelinePreflightStoreTests: XCTestCase {
       baseline: GitBaselineEvidence(
         projectIdentifier: submission.projectID.rawValue,
         canonicalRootPath: root.canonicalPath,
-        rootIdentity: GitRootIdentity(device: root.identity.device, inode: root.identity.inode),
+        rootIdentity: GitRootIdentity(
+          device: root.identity.posixDeviceValue ?? 0, inode: root.identity.posixInodeValue ?? 0),
         capturedAt: Date(timeIntervalSince1970: 10),
         status: .notGitRepository,
         changeAttribution: .unavailableForNonGitProject

@@ -50,9 +50,7 @@ public actor ServiceProjectRepositoryAdapter: ProjectRepository {
     let root = try RegisteredRoot(
       capturing: URL(fileURLWithPath: source.root.canonicalPath, isDirectory: true)
     )
-    guard root.identity.device == source.root.device,
-      root.identity.inode == source.root.inode
-    else {
+    guard root.identity == source.root.identity else {
       throw ServiceStoreError.invalidArgument("project.rootIdentity")
     }
     return RegisteredProject(

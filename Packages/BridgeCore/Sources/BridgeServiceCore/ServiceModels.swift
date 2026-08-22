@@ -54,11 +54,10 @@ public enum ServiceStoreError: Error, Equatable, LocalizedError, Sendable {
 
 public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
   public let canonicalPath: String
-  public let device: UInt64
-  public let inode: UInt64
+  public let identity: FileSystemIdentity
 
-  public init(canonicalPath: String, device: UInt64, inode: UInt64) throws {
-    guard canonicalPath.hasPrefix("/"),
+  public init(canonicalPath: String, identity: FileSystemIdentity) throws {
+    guard !canonicalPath.isEmpty,
       canonicalPath.utf8.count <= 16_384,
       !canonicalPath.contains("\0"),
       canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil
@@ -66,17 +65,12 @@ public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
       throw ServiceStoreError.invalidArgument("project.root")
     }
     self.canonicalPath = canonicalPath
-    self.device = device
-    self.inode = inode
+    self.identity = identity
   }
 
   public init(capturing url: URL) throws {
     let root = try RegisteredRoot(capturing: url)
-    try self.init(
-      canonicalPath: root.canonicalPath,
-      device: root.identity.device,
-      inode: root.identity.inode
-    )
+    try self.init(canonicalPath: root.canonicalPath, identity: root.identity)
   }
 
   public func validateCurrentIdentity() throws {

@@ -127,8 +127,10 @@ final class LegacyConfigurationImporterTests: XCTestCase {
       Set([valid.id, withWorktree.id, differentRepository.id, offline.id])
     )
     XCTAssertEqual(importedOffline.root.canonicalPath, offline.primaryRoot.canonicalPath)
-    XCTAssertEqual(importedOffline.root.device, offline.primaryRoot.identity.device)
-    XCTAssertEqual(importedOffline.root.inode, offline.primaryRoot.identity.inode)
+    XCTAssertEqual(
+      importedOffline.root.identity.posixDeviceValue, offline.primaryRoot.identity.posixDeviceValue)
+    XCTAssertEqual(
+      importedOffline.root.identity.posixInodeValue, offline.primaryRoot.identity.posixInodeValue)
   }
 
   func testExistingNewProjectAndTunnelSettingAreNeverOverwritten() async throws {
@@ -144,8 +146,7 @@ final class LegacyConfigurationImporterTests: XCTestCase {
       name: "New Service Name",
       root: ServiceRootIdentity(
         canonicalPath: legacy.primaryRoot.canonicalPath,
-        device: legacy.primaryRoot.identity.device,
-        inode: legacy.primaryRoot.identity.inode
+        identity: legacy.primaryRoot.identity
       ),
       accessPolicy: ProjectAccessPolicy(
         read: .allowed,

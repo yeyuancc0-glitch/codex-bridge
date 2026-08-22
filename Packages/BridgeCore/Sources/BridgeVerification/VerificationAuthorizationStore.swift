@@ -118,13 +118,18 @@ public actor VerificationAuthorizationStore: VerificationAuthorizationRetentionS
       let nonce = try makeUniqueNonce(in: retained)
       let handle = try VerificationAuthorizationHandle(nonce: nonce)
       let nonceDigest = Self.digest(Data(nonce.utf8))
+      guard let rootDevice = workingDirectory.identity.posixDeviceValue,
+        let rootInode = workingDirectory.identity.posixInodeValue
+      else {
+        throw VerificationAuthorizationError.invalidArgument("workingDirectory.identity")
+      }
       let record = AuthorizationRecord(
         nonceDigest: nonceDigest,
         taskID: taskID,
         projectID: project.id.rawValue,
         commandID: command.identifier.rawValue,
-        rootDevice: workingDirectory.identity.device,
-        rootInode: workingDirectory.identity.inode,
+        rootDevice: rootDevice,
+        rootInode: rootInode,
         generation: generation,
         issuedAt: issuedAt.timeIntervalSince1970,
         expiresAt: issuedAt.addingTimeInterval(lifetime).timeIntervalSince1970,
@@ -410,7 +415,7 @@ private struct AuthorizationRecord: Codable {
     generation: Int64
   ) -> Bool {
     self.taskID == taskID && self.projectID == projectID && self.commandID == commandID
-      && rootDevice == root.identity.device && rootInode == root.identity.inode
+      && rootDevice == root.identity.posixDeviceValue && rootInode == root.identity.posixInodeValue
       && self.generation == generation
   }
 

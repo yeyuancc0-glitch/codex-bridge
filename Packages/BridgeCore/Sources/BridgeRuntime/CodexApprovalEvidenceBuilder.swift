@@ -163,11 +163,16 @@ enum CodexApprovalEvidenceBuilder {
         }.joined()
       )
     }
+    guard let rootDevice = root.identity.posixDeviceValue,
+      let rootInode = root.identity.posixInodeValue
+    else {
+      throw IsolatedCodexTaskRuntimeError.protocolViolation
+    }
     return try CodexApprovalFileChangeManifest(
       entries: entries,
       totalDiffBytes: totalBytes,
-      rootDevice: root.identity.device,
-      rootInode: root.identity.inode
+      rootDevice: rootDevice,
+      rootInode: rootInode
     )
   }
 

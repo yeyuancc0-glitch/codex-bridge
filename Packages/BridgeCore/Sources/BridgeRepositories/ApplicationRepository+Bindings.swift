@@ -71,8 +71,8 @@ extension ApplicationRepository {
       arguments: [
         projectID.rawValue,
         root.canonicalPath,
-        String(root.identity.device),
-        String(root.identity.inode),
+        root.identity.volumeID,
+        root.identity.fileID,
       ]
     ) ?? false
   }
@@ -91,8 +91,8 @@ extension ApplicationRepository {
         binding.threadID,
         binding.projectID.rawValue,
         binding.root.canonicalPath,
-        String(binding.root.identity.device),
-        String(binding.root.identity.inode),
+        binding.root.identity.volumeID,
+        binding.root.identity.fileID,
         binding.boundAt.timeIntervalSince1970,
       ]
     )
@@ -123,8 +123,8 @@ extension ApplicationRepository {
     guard
       let root = allowedRoots(of: project).lazy.map(\.root).first(where: {
         $0.canonicalPath == canonicalPath
-          && String($0.identity.device) == device
-          && String($0.identity.inode) == inode
+          && $0.identity.volumeID == device
+          && $0.identity.fileID == inode
       })
     else {
       throw ApplicationRepositoryError.corruptRecord("thread_binding.root")

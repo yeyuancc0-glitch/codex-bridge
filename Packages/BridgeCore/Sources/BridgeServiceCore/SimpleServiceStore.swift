@@ -17,6 +17,10 @@ public actor SimpleServiceStore {
         openedDatabase,
         sourcePath: path
       )
+      try ServiceStoreSchema.createPreVersionNineBackupIfNeeded(
+        openedDatabase,
+        sourcePath: path
+      )
       try ServiceStoreSchema.prepare(openedDatabase)
       database = openedDatabase
     } catch let error as ServiceStoreError {

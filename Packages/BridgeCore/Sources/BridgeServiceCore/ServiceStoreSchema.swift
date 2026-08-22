@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 8
+  static let version: Int64 = 9
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -30,9 +30,10 @@ enum ServiceStoreSchema {
   static let migrationV6 = "BridgeServiceCore.v6"
   static let migrationV7 = "BridgeServiceCore.v7"
   static let migrationV8 = "BridgeServiceCore.v8"
+  static let migrationV9 = "BridgeServiceCore.v9"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
-    migrationV8,
+    migrationV8, migrationV9,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -61,6 +62,39 @@ enum ServiceStoreSchema {
     }
     guard requiresBackup else { return }
     let backupPath = sourcePath + ".pre-v8"
+    if FileManager.default.fileExists(atPath: backupPath) {
+      try validatePrivateBackup(at: backupPath)
+      return
+    }
+    var configuration = Configuration()
+    configuration.foreignKeysEnabled = true
+    let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
+    do {
+      try database.backup(to: destination)
+      guard chmod(backupPath, 0o600) == 0 else {
+        throw ServiceStoreError.storageFailure
+      }
+      try validatePrivateBackup(at: backupPath)
+    } catch {
+      try? FileManager.default.removeItem(atPath: backupPath)
+      throw error
+    }
+  }
+
+  static func createPreVersionNineBackupIfNeeded(
+    _ database: DatabaseQueue,
+    sourcePath: String
+  ) throws {
+    guard sourcePath != ":memory:" else { return }
+    let requiresBackup = try database.read { db -> Bool in
+      guard try db.tableExists("bridge_service_meta") else { return false }
+      return try Int64.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      ) == 8
+    }
+    guard requiresBackup else { return }
+    let backupPath = sourcePath + ".pre-v9"
     if FileManager.default.fileExists(atPath: backupPath) {
       try validatePrivateBackup(at: backupPath)
       return
@@ -116,6 +150,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV8) { db in
       try createVersionEight(in: db)
+    }
+    migrator.registerMigration(migrationV9) { db in
+      try createVersionNine(in: db)
     }
     return migrator
   }
@@ -568,6 +605,78 @@ enum ServiceStoreSchema {
     }
   }
 
+  static func createVersionNine(in db: Database) throws {
+    let projectCount =
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_projects") ?? 0
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_projects RENAME TO bridge_service_projects_v8;
+
+        CREATE TABLE bridge_service_projects (
+            project_id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            canonical_path TEXT NOT NULL,
+            root_identity_kind TEXT NOT NULL,
+            root_identity_volume TEXT NOT NULL,
+            root_identity_file TEXT NOT NULL,
+            read_permission TEXT NOT NULL
+              CHECK (read_permission IN ('denied', 'requiresLocalApproval', 'allowed')),
+            write_permission TEXT NOT NULL
+              CHECK (write_permission IN ('denied', 'requiresLocalApproval', 'allowed')),
+            network_permission TEXT NOT NULL
+              CHECK (network_permission IN ('denied', 'requiresLocalApproval', 'allowed')),
+            direct_command_mode TEXT NOT NULL DEFAULT 'safe'
+              CHECK (direct_command_mode IN ('denied', 'safe', 'full')),
+            workspace_commands_json BLOB NOT NULL DEFAULT '[]',
+            direct_blacklist_json BLOB NOT NULL DEFAULT '[]',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE (canonical_path),
+            UNIQUE (root_identity_kind, root_identity_volume, root_identity_file),
+            CHECK (length(CAST(project_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 1024),
+            CHECK (length(CAST(canonical_path AS BLOB)) BETWEEN 1 AND 16384),
+            CHECK (root_identity_kind IN ('posix-v1', 'windows-fileid128-v1')),
+            CHECK (length(root_identity_volume) BETWEEN 1 AND 20
+              AND root_identity_volume NOT GLOB '*[^0-9]*'),
+            CHECK (
+              (root_identity_kind = 'posix-v1'
+                AND length(root_identity_file) BETWEEN 1 AND 20
+                AND root_identity_file NOT GLOB '*[^0-9]*')
+              OR (root_identity_kind = 'windows-fileid128-v1'
+                AND length(root_identity_file) = 32
+                AND root_identity_file NOT GLOB '*[^0-9a-f]*')
+            ),
+            CHECK (updated_at >= created_at)
+        ) WITHOUT ROWID;
+
+        INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path,
+            root_identity_kind, root_identity_volume, root_identity_file,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json, direct_blacklist_json,
+            created_at, updated_at
+        )
+        SELECT
+            project_id, name, canonical_path,
+            'posix-v1', root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json, direct_blacklist_json,
+            created_at, updated_at
+        FROM bridge_service_projects_v8;
+
+        DROP TABLE bridge_service_projects_v8;
+
+        UPDATE bridge_service_meta SET schema_version = 9 WHERE singleton = 1;
+        """)
+    guard
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_projects") == projectCount,
+      try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty
+    else {
+      throw ServiceStoreError.corruptSchema
+    }
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -726,7 +835,8 @@ enum ServiceStoreSchema {
       let requiredColumns: [String: Set<String>] = [
         "bridge_service_meta": ["singleton", "schema_version"],
         "bridge_service_projects": [
-          "project_id", "name", "canonical_path", "root_device", "root_inode",
+          "project_id", "name", "canonical_path",
+          "root_identity_kind", "root_identity_volume", "root_identity_file",
           "read_permission", "write_permission", "network_permission", "created_at", "updated_at",
           "direct_command_mode", "workspace_commands_json",
           "direct_blacklist_json",

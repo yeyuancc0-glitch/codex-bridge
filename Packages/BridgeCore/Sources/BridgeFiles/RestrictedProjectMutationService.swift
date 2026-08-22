@@ -348,7 +348,7 @@ public struct RestrictedProjectMutationService: Sendable {
     switch error {
     case .invalidRelativePath, .sensitiveFileBlocked, .pathEscapeBlocked:
       return .forbiddenPath
-    case .rootUnavailable, .rootIdentityChanged, .fileIdentityChanged:
+    case .rootUnavailable, .rootIdentityChanged, .fileIdentityChanged, .invalidIdentity:
       return .unsafeFilesystemState
     case .pathDoesNotExist:
       return .pathMissing

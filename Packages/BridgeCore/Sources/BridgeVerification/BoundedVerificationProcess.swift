@@ -23,8 +23,8 @@ final class OpenedVerificationDirectory: @unchecked Sendable {
       throw BoundedVerificationProcessError.invalidWorkingDirectory
     }
     let openedIdentity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
+      posixDevice: UInt64(metadata.st_dev),
+      posixInode: UInt64(metadata.st_ino)
     )
     guard openedIdentity == root.identity else {
       Darwin.close(opened)
@@ -43,8 +43,8 @@ final class OpenedVerificationDirectory: @unchecked Sendable {
     var metadata = stat()
     let status = canonicalPath.withCString { Darwin.lstat($0, &metadata) }
     let current = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
+      posixDevice: UInt64(metadata.st_dev),
+      posixInode: UInt64(metadata.st_ino)
     )
     guard status == 0, metadata.st_mode & S_IFMT == S_IFDIR, current == identity else {
       throw BoundedVerificationProcessError.invalidWorkingDirectory

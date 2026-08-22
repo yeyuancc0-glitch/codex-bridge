@@ -44,7 +44,8 @@ final class ProjectRegistryTests: XCTestCase {
     XCTAssertEqual(stored.primaryRoot.canonicalPath, projectURL.resolvingSymlinksInPath().path)
     XCTAssertEqual(
       stored.repositoryRoot.canonicalPath, repositoryURL.resolvingSymlinksInPath().path)
-    XCTAssertNotEqual(stored.primaryRoot.identity.inode, 0)
+    XCTAssertNotEqual(stored.primaryRoot.identity.kind, FileSystemIdentity.windowsFileID128Kind)
+    XCTAssertFalse(stored.primaryRoot.identity.fileID.isEmpty)
     XCTAssertEqual(stored.verificationCommands, [command])
     XCTAssertEqual(stored.forbiddenPatterns, [forbidden])
   }

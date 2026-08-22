@@ -209,8 +209,10 @@ final class IsolatedCodexTaskRuntimeTests: XCTestCase {
     XCTAssertEqual(manifest.entries[0].movePath, "Sources/Main.swift")
     XCTAssertEqual(manifest.entries[0].diffByteCount, "secret-diff-payload".utf8.count)
     XCTAssertEqual(manifest.totalDiffBytes, "secret-diff-payload".utf8.count)
-    XCTAssertEqual(manifest.rootDevice, try RegisteredRoot(capturing: fixture.root).identity.device)
-    XCTAssertEqual(manifest.rootInode, try RegisteredRoot(capturing: fixture.root).identity.inode)
+    XCTAssertEqual(
+      manifest.rootDevice, try RegisteredRoot(capturing: fixture.root).identity.posixDeviceValue)
+    XCTAssertEqual(
+      manifest.rootInode, try RegisteredRoot(capturing: fixture.root).identity.posixInodeValue)
     XCTAssertFalse(String(describing: evidence).contains("secret-diff-payload"))
 
     try await runtime.resolveApproval(taskID: taskID, approvalID: approvalID, approved: false)

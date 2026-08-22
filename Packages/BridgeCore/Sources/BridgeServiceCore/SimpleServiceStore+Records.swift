@@ -1,5 +1,6 @@
 import BridgeDomain
 import BridgeProjects
+import BridgeSecurity
 import Foundation
 import GRDB
 
@@ -114,18 +115,20 @@ extension SimpleServiceStore {
     try db.execute(
       sql: """
         INSERT INTO bridge_service_projects (
-          project_id, name, canonical_path, root_device, root_inode,
+          project_id, name, canonical_path,
+          root_identity_kind, root_identity_volume, root_identity_file,
           read_permission, write_permission, network_permission, created_at, updated_at,
           direct_command_mode, workspace_commands_json,
           direct_blacklist_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
       arguments: [
         project.id.rawValue,
         project.name,
         project.root.canonicalPath,
-        String(project.root.device),
-        String(project.root.inode),
+        project.root.identity.kind,
+        project.root.identity.volumeID,
+        project.root.identity.fileID,
         project.accessPolicy.read.rawValue,
         project.accessPolicy.write.rawValue,
         project.accessPolicy.network.rawValue,
@@ -251,10 +254,16 @@ extension SimpleServiceStore {
       db,
       sql: """
         SELECT * FROM bridge_service_projects
-        WHERE canonical_path = ? OR (root_device = ? AND root_inode = ?)
+        WHERE canonical_path = ?
+          OR (root_identity_kind = ? AND root_identity_volume = ? AND root_identity_file = ?)
         LIMIT 1
         """,
-      arguments: [root.canonicalPath, String(root.device), String(root.inode)]
+      arguments: [
+        root.canonicalPath,
+        root.identity.kind,
+        root.identity.volumeID,
+        root.identity.fileID,
+      ]
     )
   }
 
@@ -303,10 +312,18 @@ extension SimpleServiceStore {
   }
 
   static func decodeProject(_ row: Row) throws -> ServiceProjectRecord {
-    guard let device = UInt64(row["root_device"] as String),
-      let inode = UInt64(row["root_inode"] as String),
-      let directCommandMode = ServiceDirectCommandMode(rawValue: row["direct_command_mode"])
+    guard let directCommandMode = ServiceDirectCommandMode(rawValue: row["direct_command_mode"])
     else {
+      throw ServiceStoreError.corruptRecord
+    }
+    let identity: FileSystemIdentity
+    do {
+      identity = try FileSystemIdentity(
+        kind: row["root_identity_kind"],
+        volumeID: row["root_identity_volume"],
+        fileID: row["root_identity_file"]
+      )
+    } catch {
       throw ServiceStoreError.corruptRecord
     }
     let workspaceCommandsData: Data = row["workspace_commands_json"]
@@ -329,8 +346,7 @@ extension SimpleServiceStore {
       name: row["name"],
       root: ServiceRootIdentity(
         canonicalPath: row["canonical_path"],
-        device: device,
-        inode: inode
+        identity: identity
       ),
       accessPolicy: ProjectAccessPolicy(
         read: ProjectPermission(rawValue: row["read_permission"]),

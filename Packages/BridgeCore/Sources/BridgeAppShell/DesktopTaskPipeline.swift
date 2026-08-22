@@ -264,8 +264,8 @@ private struct AuthorizationKey: Hashable {
     self.threadID = threadID
     self.turnID = turnID
     self.generation = generation
-    rootDevice = root.identity.device
-    rootInode = root.identity.inode
+    rootDevice = root.identity.posixDeviceValue ?? 0
+    rootInode = root.identity.posixInodeValue ?? 0
     self.commandID = commandID
   }
 }

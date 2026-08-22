@@ -60,8 +60,8 @@ final class CodexApprovalEvidenceBuilderTests: XCTestCase {
     )
 
     let manifest = try XCTUnwrap(evidence.fileChangeManifest)
-    XCTAssertEqual(manifest.rootDevice, root.identity.device)
-    XCTAssertEqual(manifest.rootInode, root.identity.inode)
+    XCTAssertEqual(manifest.rootDevice, root.identity.posixDeviceValue)
+    XCTAssertEqual(manifest.rootInode, root.identity.posixInodeValue)
     XCTAssertEqual(manifest.totalDiffBytes, diffs.reduce(0) { $0 + $1.utf8.count })
     XCTAssertEqual(manifest.entries.count, 3)
     XCTAssertEqual(manifest.entries[0].path, "Sources/New.swift")

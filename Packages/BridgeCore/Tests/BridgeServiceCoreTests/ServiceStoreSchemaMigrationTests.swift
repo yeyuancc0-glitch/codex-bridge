@@ -1,4 +1,6 @@
 import BridgeDomain
+import BridgeProjects
+import BridgeSecurity
 import Darwin
 import GRDB
 import XCTest
@@ -605,5 +607,176 @@ final class ServiceStoreSchemaMigrationTests: XCTestCase {
     XCTAssertNotEqual(chat.task.id, qwen.task.id)
     XCTAssertEqual(qwenReplay.task.id, qwen.task.id)
     XCTAssertTrue(qwenReplay.reusedExistingTask)
+  }
+
+  func testVersionEightDatabaseMigratesToGenericRootIdentityAndCreatesPrivateBackup() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-schema-migration-v9-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "service.sqlite").path
+
+    let legacy = try DatabaseQueue(path: path)
+    try await legacy.writeWithoutTransaction { db in
+      try db.execute(
+        sql: """
+          CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+          INSERT INTO grdb_migrations (identifier)
+          VALUES ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+                 ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4'),
+                 ('BridgeServiceCore.v5'), ('BridgeServiceCore.v6'),
+                 ('BridgeServiceCore.v7'), ('BridgeServiceCore.v8');
+          """)
+      try ServiceStoreSchema.createVersionOne(in: db)
+      try ServiceStoreSchema.createVersionTwo(in: db)
+      try ServiceStoreSchema.createVersionThree(in: db)
+      try ServiceStoreSchema.createVersionFour(in: db)
+      try ServiceStoreSchema.createVersionFive(in: db)
+      try ServiceStoreSchema.createVersionSix(in: db)
+      try ServiceStoreSchema.createVersionSeven(in: db)
+      try ServiceStoreSchema.createVersionEight(in: db)
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_projects (
+            project_id, name, canonical_path, root_device, root_inode,
+            read_permission, write_permission, network_permission,
+            direct_command_mode, workspace_commands_json, direct_blacklist_json,
+            created_at, updated_at
+          ) VALUES ('prj-v8', 'V8', '/tmp/v8', '16777229', '678',
+            'allowed', 'requiresLocalApproval', 'denied', 'safe',
+            CAST('[]' AS BLOB), CAST('[]' AS BLOB), 1, 2);
+
+          INSERT INTO bridge_service_tasks (
+            task_id, project_id, source, source_client_id, client_request_id, prompt,
+            requested_thread_id, codex_thread_id, codex_turn_id, status,
+            supervisor_status, execution_model, execution_effort, supervisor_model,
+            supervisor_effort, permission_mode, network_allowed, access_mode, fast_mode,
+            current_step, changed_files_json, result_summary, supervisor_summary,
+            failure_code, created_at, updated_at
+          ) VALUES ('tsk-v8', 'prj-v8', 'chatgpt.mcp', '', NULL, 'Legacy prompt', NULL,
+            'thread-v8', NULL, 'completed', 'disabled', 'legacy-model', 'medium', NULL, NULL,
+            'read-only', 0, 'request-approval', 0, NULL,
+            CAST('[]' AS BLOB), 'Done', NULL, NULL, 3, 4);
+          """)
+    }
+
+    let store = try SimpleServiceStore(path: path)
+
+    let project = try await store.project(id: ProjectID(rawValue: "prj-v8"))
+    XCTAssertEqual(project?.name, "V8")
+    XCTAssertEqual(project?.root.canonicalPath, "/tmp/v8")
+    XCTAssertEqual(project?.root.identity.kind, FileSystemIdentity.posixKind)
+    XCTAssertEqual(project?.root.identity.volumeID, "16777229")
+    XCTAssertEqual(project?.root.identity.fileID, "678")
+    XCTAssertEqual(project?.accessPolicy.read, .allowed)
+    XCTAssertEqual(project?.accessPolicy.write, .requiresLocalApproval)
+    XCTAssertEqual(project?.directCommandMode, .safe)
+    XCTAssertEqual(project?.createdAt, Date(timeIntervalSince1970: 1))
+
+    let task = try await store.task(id: TaskID(rawValue: "tsk-v8"))
+    XCTAssertEqual(task?.state.status, .completed)
+    XCTAssertEqual(task?.state.resultSummary, "Done")
+
+    let backupPath = path + ".pre-v9"
+    var metadata = stat()
+    XCTAssertEqual(lstat(backupPath, &metadata), 0)
+    XCTAssertEqual(metadata.st_mode & 0o777, 0o600)
+    let backup = try DatabaseQueue(path: backupPath)
+    let backupVersion = try await backup.read { db in
+      try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+    }
+    XCTAssertEqual(backupVersion, 8)
+
+    // Reopening the migrated database must not require re-registering projects.
+    let reopened = try SimpleServiceStore(path: path)
+    let reloaded = try await reopened.project(id: ProjectID(rawValue: "prj-v8"))
+    XCTAssertEqual(reloaded?.root, project?.root)
+    XCTAssertEqual(reloaded?.accessPolicy.read, project?.accessPolicy.read)
+  }
+
+  func testGenericRootIdentityAcceptsWindowsFileIDAndRejectsInvalidEncodings() async throws {
+    let store = try SimpleServiceStore.inMemory()
+    let windowsIdentity = try FileSystemIdentity(
+      kind: FileSystemIdentity.windowsFileID128Kind,
+      volumeID: "16777229",
+      fileID: String(repeating: "0a1b2c3d", count: 4)
+    )
+    let windowsRoot = try ServiceRootIdentity(
+      canonicalPath: "C:\\Projects\\demo",
+      identity: windowsIdentity
+    )
+    let project = try ServiceProjectRecord(
+      id: ProjectID(rawValue: "prj-win"),
+      name: "Windows",
+      root: windowsRoot,
+      accessPolicy: ProjectAccessPolicy(),
+      createdAt: Date(timeIntervalSince1970: 5),
+      updatedAt: Date(timeIntervalSince1970: 5)
+    )
+    try await store.insertProject(project)
+    let loaded = try await store.project(id: ProjectID(rawValue: "prj-win"))
+    XCTAssertEqual(loaded?.root.identity, windowsIdentity)
+
+    let sameIdentityDifferentPath = try ServiceProjectRecord(
+      id: ProjectID(rawValue: "prj-win-clone"),
+      name: "Clone",
+      root: ServiceRootIdentity(
+        canonicalPath: "C:\\Projects\\other",
+        identity: windowsIdentity
+      ),
+      accessPolicy: ProjectAccessPolicy(),
+      createdAt: Date(timeIntervalSince1970: 5),
+      updatedAt: Date(timeIntervalSince1970: 5)
+    )
+    do {
+      try await store.insertProject(sameIdentityDifferentPath)
+      XCTFail("Duplicate root identity must be rejected.")
+    } catch let error as ServiceStoreError {
+      guard case .duplicateProjectRoot = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+
+    for invalid in [
+      ["kind": FileSystemIdentity.windowsFileID128Kind, "volume": "16777229", "file": "A1B2"],
+      [
+        "kind": FileSystemIdentity.windowsFileID128Kind, "volume": "16777229",
+        "file": String(repeating: "a", count: 31),
+      ],
+      ["kind": "unknown-kind", "volume": "1", "file": "2"],
+      ["kind": FileSystemIdentity.posixKind, "volume": "16_7", "file": "2"],
+      [String: String](),
+    ] {
+      XCTAssertThrowsError(
+        try FileSystemIdentity(
+          kind: invalid["kind"] ?? "",
+          volumeID: invalid["volume"] ?? "",
+          fileID: invalid["file"] ?? ""
+        ),
+        "Invalid identity \(invalid) must be rejected."
+      )
+    }
+
+    // The schema itself must enforce the same encodings against raw writes.
+    try await store.database.write { db in
+      XCTAssertThrowsError(
+        try db.execute(
+          sql: """
+            INSERT INTO bridge_service_projects (
+              project_id, name, canonical_path,
+              root_identity_kind, root_identity_volume, root_identity_file,
+              read_permission, write_permission, network_permission,
+              created_at, updated_at
+            ) VALUES ('prj-raw-bad', 'Bad', 'C:\\Bad', 'windows-fileid128-v1', '1', 'ZZ',
+              'denied', 'denied', 'denied', 1, 1)
+            """
+        )
+      )
+    }
   }
 }

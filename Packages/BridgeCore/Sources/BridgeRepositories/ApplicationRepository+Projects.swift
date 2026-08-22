@@ -224,8 +224,8 @@ extension ApplicationRepository {
         """,
       arguments: [
         root.canonicalPath,
-        String(root.identity.device),
-        String(root.identity.inode),
+        root.identity.volumeID,
+        root.identity.fileID,
       ]
     ) ?? false
   }
@@ -247,8 +247,8 @@ extension ApplicationRepository {
       arguments: [
         projectID.rawValue,
         root.canonicalPath,
-        String(root.identity.device),
-        String(root.identity.inode),
+        root.identity.volumeID,
+        root.identity.fileID,
       ]
     ) ?? false
   }
@@ -271,8 +271,8 @@ extension ApplicationRepository {
         role,
         ordinal,
         root.canonicalPath,
-        String(root.identity.device),
-        String(root.identity.inode),
+        root.identity.volumeID,
+        root.identity.fileID,
       ]
     )
   }
@@ -351,8 +351,8 @@ extension ApplicationRepository {
       let inode: String = row["inode"]
       guard role == root.role, ordinal == root.ordinal,
         canonicalPath == root.root.canonicalPath,
-        device == String(root.root.identity.device),
-        inode == String(root.root.identity.inode)
+        device == root.root.identity.volumeID,
+        inode == root.root.identity.fileID
       else {
         throw ApplicationRepositoryError.corruptRecord("project_roots.identity")
       }
