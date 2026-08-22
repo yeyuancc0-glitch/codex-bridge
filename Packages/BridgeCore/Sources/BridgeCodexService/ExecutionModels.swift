@@ -111,7 +111,7 @@ public enum ExecutionServiceError: Error, Equatable, LocalizedError, Sendable {
   }
 }
 
-public struct ExecutionBinding: Codable, Equatable, Sendable {
+public struct ExecutionBinding: Codable, Equatable, Hashable, Sendable {
   public let threadID: String
   public let turnID: String
 

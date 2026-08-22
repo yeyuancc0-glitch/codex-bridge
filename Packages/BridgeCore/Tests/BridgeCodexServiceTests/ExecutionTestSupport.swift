@@ -287,6 +287,50 @@ func commandApprovalScript(root: String, expectedDecision: String, finalMessage:
     .replacingOccurrences(of: "__DECISION__", with: expectedDecision)
 }
 
+func collaborationApprovalScript(root: String) -> String {
+  let thread = executionThreadJSON(id: "thread-primary", root: root)
+  let primaryTurn = executionTurnJSON(id: "turn-primary", status: "inProgress")
+  let childTurn = executionTurnJSON(id: "turn-child", status: "inProgress")
+  let completedChild = executionTurnJSON(
+    id: "turn-child",
+    status: "completed",
+    items: #"[{"id":"child-message","type":"agentMessage","text":"child-only output"}]"#
+  )
+  let completedPrimary = executionTurnJSON(
+    id: "turn-primary",
+    status: "completed",
+    items:
+      #"[{"id":"primary-message","type":"agentMessage","text":"The parent integrated the child result."}]"#
+  )
+  return executionCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r thread_start
+      printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-primary","turn":__PRIMARY_TURN__}}'
+      printf '%s\n' '{"id":4,"result":{"turn":__PRIMARY_TURN__}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-child","turn":__CHILD_TURN__}}'
+      printf '%s\n' '{"method":"turn/plan/updated","params":{"threadId":"thread-child","turnId":"turn-child","plan":[{"step":"Child-only plan","status":"inProgress"}]}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-child","turnId":"turn-child","itemId":"child-message","delta":"child-only output"}}'
+      printf '%s\n' '{"method":"item/started","params":{"threadId":"thread-child","turnId":"turn-child","startedAtMs":1,"item":{"id":"child-command","type":"commandExecution","command":"/usr/bin/git status","commandActions":[],"cwd":"__ROOT__","status":"inProgress"}}}'
+      printf '%s\n' '{"id":"approval-child","method":"item/commandExecution/requestApproval","params":{"threadId":"thread-child","turnId":"turn-child","itemId":"child-command","startedAtMs":1,"command":"/usr/bin/git status","cwd":"__ROOT__","reason":"Inspect from a child agent."}}'
+      IFS= read -r approval
+      case "$approval" in *'"id":"approval-child"'*) ;; *) exit 31 ;; esac
+      case "$approval" in *'"decision":"accept"'*) ;; *) exit 32 ;; esac
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-child","turnId":"turn-child","completedAtMs":2,"item":{"id":"child-command","type":"commandExecution","command":"/usr/bin/git status","commandActions":[],"cwd":"__ROOT__","status":"completed","exitCode":0,"aggregatedOutput":"ignored"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-child","turn":__COMPLETED_CHILD__}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-primary","turn":__COMPLETED_PRIMARY__}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__PRIMARY_TURN__", with: primaryTurn)
+    .replacingOccurrences(of: "__CHILD_TURN__", with: childTurn)
+    .replacingOccurrences(of: "__COMPLETED_CHILD__", with: completedChild)
+    .replacingOccurrences(of: "__COMPLETED_PRIMARY__", with: completedPrimary)
+}
+
 func resumeSteerInterruptExecutionScript(root: String) -> String {
   let thread = executionThreadJSON(id: "thread-existing", root: root)
   let turn = executionTurnJSON(id: "turn-existing", status: "inProgress")

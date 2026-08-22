@@ -131,6 +131,53 @@ final class ExecutionManagerTests: XCTestCase {
     )
   }
 
+  func testCollaborationTurnCanRequestApprovalWithoutReplacingPrimaryTurn() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-collaboration"
+    )
+    let manager = makeExecutionManager(
+      script: collaborationApprovalScript(root: fixture.root.path)
+    )
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    let binding = try await coordinator.start(taskID: task.id)
+    XCTAssertEqual(binding.threadID, "thread-primary")
+    XCTAssertEqual(binding.turnID, "turn-primary")
+
+    let approval = try await waitForApproval(coordinator, taskID: task.id)
+    XCTAssertEqual(approval.binding.threadID, "thread-child")
+    XCTAssertEqual(approval.binding.turnID, "turn-child")
+    try await coordinator.resolveApproval(
+      taskID: task.id,
+      approvalID: approval.id,
+      decision: .allow
+    )
+
+    let completed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.codexThreadID, "thread-primary")
+    XCTAssertEqual(completed.state.codexTurnID, "turn-primary")
+    XCTAssertEqual(completed.state.currentStep, nil)
+    XCTAssertEqual(completed.state.resultSummary, "The parent integrated the child result.")
+
+    let messages = try await coordinator.conversationPage(taskID: task.id)
+    XCTAssertFalse(messages.contains { $0.content.contains("child-only output") })
+    XCTAssertTrue(messages.contains { $0.content.contains("parent integrated") })
+
+    let events = try await fixture.tasks.events(taskID: task.id, limit: 50)
+    XCTAssertFalse(events.contains { $0.kind == .planUpdated })
+    XCTAssertTrue(events.contains { $0.kind == .commandCompleted })
+    XCTAssertEqual(events.last?.kind, .taskCompleted)
+  }
+
   func testExistingThreadCanBeSteeredAndInterruptedOnlyWithExactTurn() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(

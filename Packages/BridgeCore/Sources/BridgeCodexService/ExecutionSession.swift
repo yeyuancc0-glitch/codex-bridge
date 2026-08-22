@@ -34,6 +34,7 @@ package actor ExecutionSession {
   var expectedThreadID: String?
   var binding: ExecutionBinding?
   var startedTurnIDs: Set<String> = []
+  var collaborationBindings: Set<ExecutionBinding> = []
   var seenItems: [CodexApprovalItemKey: String] = [:]
   var knownItems: [CodexApprovalItemKey: CodexApprovalItemEvidence] = [:]
   var usedApprovalRequests: Set<ApprovalRequestKey> = []
@@ -173,7 +174,7 @@ package actor ExecutionSession {
     guard !terminal, let pending = pendingApprovals.removeValue(forKey: id) else {
       throw ExecutionServiceError.approvalUnavailable(id)
     }
-    guard let binding, pending.request.binding == binding else {
+    guard isKnownBinding(pending.request.binding) else {
       await fail(code: "approval_binding_mismatch", summary: "Codex approval binding mismatch.")
       throw ExecutionServiceError.bindingMismatch
     }

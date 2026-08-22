@@ -8,6 +8,19 @@ extension ExecutionSession {
       else {
         throw ExecutionServiceError.protocolViolation("turn completed")
       }
+      let completedBinding = try ExecutionBinding(
+        threadID: completed.threadId,
+        turnID: completed.turn.id
+      )
+      guard isKnownBinding(completedBinding) else {
+        throw ExecutionServiceError.bindingMismatch
+      }
+      if collaborationBindings.remove(completedBinding) != nil {
+        guard Self.isTerminalTurnStatus(completed.turn.status) else {
+          throw ExecutionServiceError.protocolViolation("collaboration turn status")
+        }
+        return
+      }
       guard let binding else {
         guard deferredCompletion == nil else {
           throw ExecutionServiceError.protocolViolation("duplicate deferred completion")
@@ -178,9 +191,13 @@ extension ExecutionSession {
   }
 
   func requireActiveEvidence(threadID: String, turnID: String) throws {
-    guard threadID == expectedThreadID, startedTurnIDs.contains(turnID) else {
+    guard isKnownBinding(threadID: threadID, turnID: turnID) else {
       throw ExecutionServiceError.bindingMismatch
     }
+  }
+
+  static func isTerminalTurnStatus(_ status: String) -> Bool {
+    status == "completed" || status == "interrupted" || status == "failed"
   }
 
   private func requireKnownCompletedItem(
