@@ -252,6 +252,18 @@ let windowsTargets: [Target] = [
     name: "BridgePlatformWindows",
     dependencies: ["BridgePlatform"]
   ),
+  .target(
+    name: "BridgeSecurity",
+    dependencies: ["BridgeDomain"] + cryptoDependencies,
+    path: "Sources/BridgeSecurity",
+    exclude: [
+      "KeychainSecretStore.swift",
+      "RegisteredRoot.swift",
+      "SecureFileReader.swift",
+      "SecureProjectDirectoryMutation.swift",
+      "SecureProjectFileWriter.swift",
+    ]
+  ),
 ]
 
 let windowsProducts: [Product] = []
@@ -269,6 +281,10 @@ let package = Package(
 // macOS host: full current production closure plus the historical control-plane
 // targets retained until their staged retirement.
 let macOSOnlyTargets: [Target] = [
+  .target(
+    name: "BridgeSecurity",
+    dependencies: ["BridgeDomain"] + cryptoDependencies
+  ),
   .target(
     name: "BridgePlatformMacOS",
     dependencies: ["BridgePlatform"]
