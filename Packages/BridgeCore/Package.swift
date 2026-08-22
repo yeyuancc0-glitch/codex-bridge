@@ -244,7 +244,10 @@ let sharedTestTargets: [Target] = [
 #if os(Windows)
 // Windows host: only the shared closure that is verified Windows-clean today.
 // Each later porting stage extends this list after its Mac regression passes.
+// BridgeIPC is intentionally absent until the MCP Swift SDK ships its Windows
+// build fix (upstream issue #261); it pulls BridgeMCP transitively.
 let windowsTargets: [Target] = [
+  .target(name: "BridgeDomain"),
   .target(
     name: "BridgePlatformWindows",
     dependencies: ["BridgePlatform"]
@@ -258,7 +261,10 @@ let package = Package(
   platforms: [.macOS(.v14)],
   products: sharedProducts + windowsProducts,
   dependencies: bridgeDependencies,
-  targets: sharedTargets + sharedTestTargets + windowsTargets
+  targets: [
+    .target(name: "BridgePlatform"),
+    .target(name: "BridgeDomain"),
+  ] + windowsTargets + sharedTestTargets
 )
 #else
 // macOS host: full current production closure plus the historical control-plane
