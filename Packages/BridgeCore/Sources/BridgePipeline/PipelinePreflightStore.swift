@@ -1,7 +1,7 @@
 import BridgeCoordinator
 import BridgeDomain
 import BridgeGit
-import CryptoKit
+import Crypto
 import Darwin
 import Foundation
 

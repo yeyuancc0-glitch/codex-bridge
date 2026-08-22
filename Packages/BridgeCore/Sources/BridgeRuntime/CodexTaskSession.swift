@@ -2,7 +2,7 @@ import BridgeCodexRPC
 import BridgeCoordinator
 import BridgeDomain
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Foundation
 
 actor CodexTaskSession {

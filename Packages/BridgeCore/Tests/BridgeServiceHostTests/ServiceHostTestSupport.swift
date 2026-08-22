@@ -1,5 +1,6 @@
 import BridgeCodexRPC
 import BridgeIPC
+import BridgeIPCMacOS
 import BridgeMCP
 import BridgeSecurity
 import BridgeServiceHost

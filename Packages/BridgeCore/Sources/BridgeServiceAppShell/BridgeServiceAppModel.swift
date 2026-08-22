@@ -1,5 +1,6 @@
 import AppKit
 import BridgeIPC
+import BridgeIPCMacOS
 import BridgeMCP
 import Foundation
 import SwiftUI

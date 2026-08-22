@@ -1,6 +1,6 @@
 import BridgeIPC
 import BridgeMCP
-import CryptoKit
+import Crypto
 import Foundation
 
 extension MCPServiceTaskSnapshot {

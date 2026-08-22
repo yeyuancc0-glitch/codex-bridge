@@ -1,6 +1,6 @@
 @preconcurrency import AppKit
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Foundation
 @preconcurrency import UserNotifications
 

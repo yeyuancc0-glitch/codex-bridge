@@ -1,6 +1,6 @@
 import BridgeDomain
 import BridgePersistence
-import CryptoKit
+import Crypto
 import Foundation
 
 public actor TaskCoordinator {

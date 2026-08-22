@@ -1,5 +1,5 @@
 import BridgeDomain
-import CryptoKit
+import Crypto
 import Foundation
 import GRDB
 

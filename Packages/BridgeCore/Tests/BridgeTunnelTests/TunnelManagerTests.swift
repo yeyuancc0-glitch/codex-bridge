@@ -1,5 +1,5 @@
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Darwin
 import Foundation
 import XCTest

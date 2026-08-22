@@ -1,7 +1,7 @@
 import BridgePersistence
 import BridgePipeline
 import BridgeRepositories
-import CryptoKit
+import Crypto
 import Darwin
 import Foundation
 import GRDB

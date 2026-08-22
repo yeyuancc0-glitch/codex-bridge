@@ -1,7 +1,7 @@
 import BridgeDomain
 import BridgeProjects
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Foundation
 import XCTest
 

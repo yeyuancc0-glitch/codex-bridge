@@ -8,7 +8,7 @@ import BridgeProjects
 import BridgeReporting
 import BridgeRepositories
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Foundation
 import XCTest
 

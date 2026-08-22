@@ -1,4 +1,5 @@
 import BridgeIPC
+import BridgeIPCMacOS
 import BridgeMCP
 import BridgeSkills
 import Foundation

@@ -2,10 +2,12 @@ import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDomain
 import BridgeIPC
+import BridgeIPCMacOS
 import BridgeProjects
 import BridgeServiceCore
 import Foundation
 import XCTest
+
 @testable import BridgeServiceHost
 
 final class ConversationStreamingHostTests: XCTestCase {

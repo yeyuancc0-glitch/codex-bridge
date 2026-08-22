@@ -1,7 +1,7 @@
 import BridgeDomain
 import BridgeMCP
 import BridgeServiceCore
-import CryptoKit
+import Crypto
 import Foundation
 
 public enum DirectApprovalKind: String, Codable, Sendable {

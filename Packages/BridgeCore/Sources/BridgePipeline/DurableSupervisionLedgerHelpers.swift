@@ -1,6 +1,6 @@
 import BridgeDomain
 import BridgeSupervisor
-import CryptoKit
+import Crypto
 import Foundation
 import GRDB
 

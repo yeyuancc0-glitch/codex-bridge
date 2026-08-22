@@ -1,6 +1,6 @@
 import BridgeDomain
 import BridgeProjects
-import CryptoKit
+import Crypto
 import Foundation
 
 public enum ServiceDirectCommandMode: String, Codable, CaseIterable, Sendable {

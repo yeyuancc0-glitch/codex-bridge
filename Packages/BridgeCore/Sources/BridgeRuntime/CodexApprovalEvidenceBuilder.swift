@@ -1,7 +1,7 @@
 import BridgeCodexRPC
 import BridgeDomain
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Foundation
 
 enum CodexApprovalEvidenceBuilder {

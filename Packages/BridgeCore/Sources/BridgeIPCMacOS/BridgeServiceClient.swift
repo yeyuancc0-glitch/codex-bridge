@@ -1,3 +1,4 @@
+import BridgeIPC
 import BridgeMCP
 import Foundation
 

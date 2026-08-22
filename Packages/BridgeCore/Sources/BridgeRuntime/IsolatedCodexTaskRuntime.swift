@@ -3,7 +3,7 @@ import BridgeCoordinator
 import BridgeDomain
 import BridgeProjects
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Foundation
 
 public struct IsolatedCodexTaskRuntimeConfiguration: Sendable {

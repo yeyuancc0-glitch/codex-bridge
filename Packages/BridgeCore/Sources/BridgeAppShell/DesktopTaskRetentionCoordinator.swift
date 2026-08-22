@@ -5,7 +5,7 @@ import BridgePersistence
 import BridgePipeline
 import BridgeRepositories
 import BridgeVerification
-import CryptoKit
+import Crypto
 import Foundation
 
 public struct DesktopTaskRetentionRunResult: Equatable, Sendable {

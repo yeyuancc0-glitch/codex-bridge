@@ -1,4 +1,5 @@
 import BridgeIPC
+import BridgeIPCMacOS
 import Foundation
 
 public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,

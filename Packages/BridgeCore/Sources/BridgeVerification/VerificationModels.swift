@@ -1,5 +1,5 @@
 import BridgeProjects
-import CryptoKit
+import Crypto
 import Foundation
 
 public struct VerificationCommandIdentifier: RawRepresentable, Codable, Equatable, Hashable,

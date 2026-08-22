@@ -1,6 +1,6 @@
 import BridgeProjects
 import BridgeSecurity
-import CryptoKit
+import Crypto
 import Darwin
 import Foundation
 import Security

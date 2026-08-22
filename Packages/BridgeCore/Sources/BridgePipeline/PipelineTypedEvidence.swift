@@ -2,7 +2,7 @@ import BridgeDomain
 import BridgeReporting
 import BridgeSupervisor
 import BridgeVerification
-import CryptoKit
+import Crypto
 import Foundation
 
 public enum PipelineTypedEvidenceError: Error, Equatable, Sendable {
