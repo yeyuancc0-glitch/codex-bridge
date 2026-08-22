@@ -68,6 +68,11 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "WinUI",
   ]
 
+  /// Targets whose source files differ per host under one module name. Every
+  /// platform-coupled file inside them must be wrapped in a matching
+  /// canImport gate.
+  private static let splitHostTargets: Set<String> = ["BridgeSecurity"]
+
   func testProductionTargetsDoNotImportLegacyControlPlane() throws {
     let sourcesRoot = Self.packageRoot.appending(path: "Sources", directoryHint: .isDirectory)
     for target in Self.productionTargets {
@@ -133,6 +138,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     let sourcesRoot = Self.packageRoot.appending(path: "Sources", directoryHint: .isDirectory)
     let macOSTargets = Set(Self.productionTargets).union(Self.legacyControlPlaneTargets)
       .subtracting(Self.windowsClosureTargets)
+      .subtracting(Self.splitHostTargets)
     for target in macOSTargets.sorted() {
       let targetRoot = sourcesRoot.appending(path: target, directoryHint: .isDirectory)
       guard FileManager.default.fileExists(atPath: targetRoot.path) else { continue }
@@ -143,6 +149,28 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
           windows.isEmpty,
           "macOS target \(target) imports Windows-only modules \(windows.sorted()) in \(sourceFile.lastPathComponent)"
         )
+      }
+    }
+  }
+
+  func testSplitHostTargetsGatePlatformImports() throws {
+    let sourcesRoot = Self.packageRoot.appending(path: "Sources", directoryHint: .isDirectory)
+    for target in Self.splitHostTargets {
+      let targetRoot = sourcesRoot.appending(path: target, directoryHint: .isDirectory)
+      for sourceFile in try Self.swiftFiles(in: targetRoot) {
+        let source = try String(contentsOf: sourceFile, encoding: .utf8)
+        if source.contains("import WinSDK") {
+          XCTAssertTrue(
+            source.contains("#if canImport(WinSDK)"),
+            "\(sourceFile.lastPathComponent) must wrap its WinSDK usage in canImport(WinSDK)"
+          )
+        }
+        if source.contains("import Darwin") {
+          XCTAssertTrue(
+            source.contains("#if canImport(Darwin)") || !source.contains("canImport(WinSDK)"),
+            "\(sourceFile.lastPathComponent) mixes Darwin with a WinSDK gate"
+          )
+        }
       }
     }
   }
