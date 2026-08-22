@@ -14,17 +14,16 @@ public struct WindowsPlatformEnvironment: PlatformEnvironmentProviding {
 
   public var nativeOSArchitecture: PlatformArchitecture {
     #if canImport(WinSDK)
-      var processMachine: WORD = 0
-      var nativeMachine: WORD = 0
-      guard
-        IsWow64Process2(
-          GetCurrentProcess(),
-          &processMachine,
-          &nativeMachine
-        ) != FALSE
-      else {
-        return processArchitecture
-      }
+    var processMachine: WORD = 0
+    var nativeMachine: WORD = 0
+    let succeeded = IsWow64Process2(
+      GetCurrentProcess(),
+      &processMachine,
+      &nativeMachine
+    )
+    guard succeeded != 0 else {
+      return processArchitecture
+    }
       switch Int32(nativeMachine) {
       case IMAGE_FILE_MACHINE_ARM64:
         return .arm64
