@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feature/windows-port
   workflow_dispatch:
 
 permissions:
@@ -16,9 +17,11 @@ concurrency:
 
 env:
   CODEX_BRIDGE_XCODE_DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+  WINDOWS_SWIFT_VERSION: "6.1.2"
 
 jobs:
   core:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     name: Swift package and MCP contract
     runs-on: xcode-27
     timeout-minutes: 45
@@ -49,6 +52,7 @@ jobs:
         run: git diff --exit-code -- Packages/BridgeCore/Package.resolved
 
   native:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     name: Native app and accessibility smoke test
     runs-on: xcode-27
     timeout-minutes: 35
@@ -81,6 +85,7 @@ jobs:
           test
 
   universal2:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     name: Unsigned Universal 2 archive
     runs-on: xcode-27
     timeout-minutes: 35
@@ -112,3 +117,51 @@ jobs:
           test "$architectures" = "x86_64 arm64" || test "$architectures" = "arm64 x86_64"
           /usr/bin/lipo "$app" -verify_arch x86_64
           /usr/bin/lipo "$app" -verify_arch arm64
+
+  windows-x64:
+    name: Windows x64 shared closure
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Swift ${{ env.WINDOWS_SWIFT_VERSION }}
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: ${{ env.WINDOWS_SWIFT_VERSION }}
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Build shared closure with tests
+        run: swift build --build-tests --package-path Packages/BridgeCore
+
+      - name: Test shared closure
+        run: swift test --skip-build --package-path Packages/BridgeCore
+
+  windows-arm64:
+    name: Windows ARM64 shared closure
+    runs-on: windows-11-arm
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Swift ${{ env.WINDOWS_SWIFT_VERSION }}
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: ${{ env.WINDOWS_SWIFT_VERSION }}
+
+      - name: Record toolchain
+        run: swift --version
+
+      - name: Build shared closure with tests
+        run: swift build --build-tests --package-path Packages/BridgeCore
+
+      - name: Test shared closure
+        run: swift test --skip-build --package-path Packages/BridgeCore
