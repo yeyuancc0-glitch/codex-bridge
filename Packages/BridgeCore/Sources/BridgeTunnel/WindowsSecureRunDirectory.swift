@@ -37,7 +37,7 @@
       let path = try Self.validatedExistingPath(existingRoot)
       let handle = try Self.openDirectory(path: path)
       do {
-        try Self.validateDirectory(handle: handle, path: path)
+        try Self.validateDirectory(handle: handle)
         try Self.validateProtectedDACL(path: path)
         self.path = path
         self.handle = handle
@@ -58,7 +58,7 @@
       do {
         let handle = try Self.openDirectory(path: path)
         do {
-          try Self.validateDirectory(handle: handle, path: path)
+          try Self.validateDirectory(handle: handle)
           try Self.validateProtectedDACL(path: path)
           self.path = path
           self.handle = handle
@@ -95,7 +95,7 @@
       guard let entryHandle = try? Self.openDirectory(path: entryPath) else { return false }
       defer { CloseHandle(entryHandle) }
       guard
-        (try? Self.validateDirectory(handle: entryHandle, path: entryPath)) != nil,
+        (try? Self.validateDirectory(handle: entryHandle)) != nil,
         let entryIdentity = try? Self.identity(of: entryHandle),
         entryIdentity == directory.identity,
         (try? Self.validateProtectedDACL(path: entryPath)) != nil
@@ -129,7 +129,7 @@
       let path = Self.join(self.path, name)
       let file = try Self.openFile(path: path)
       defer { CloseHandle(file) }
-      try Self.validateRegularFile(handle: file, path: path)
+      try Self.validateRegularFile(handle: file)
 
       var standard = FILE_STANDARD_INFO()
       guard
@@ -277,7 +277,7 @@
       return handle
     }
 
-    private static func validateDirectory(handle: HANDLE, path: String) throws {
+    private static func validateDirectory(handle: HANDLE) throws {
       let attributes = try attributes(of: handle)
       guard attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0 else {
         throw WindowsSecureRunDirectoryError.reparsePointDenied
@@ -287,12 +287,9 @@
       else {
         throw WindowsSecureRunDirectoryError.notDirectory
       }
-      guard equivalent(try finalPath(handle: handle), path) else {
-        throw WindowsSecureRunDirectoryError.reparsePointDenied
-      }
     }
 
-    private static func validateRegularFile(handle: HANDLE, path: String) throws {
+    private static func validateRegularFile(handle: HANDLE) throws {
       let attributes = try attributes(of: handle)
       guard attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0 else {
         throw WindowsSecureRunDirectoryError.reparsePointDenied
@@ -301,9 +298,6 @@
         GetFileType(handle) == DWORD(FILE_TYPE_DISK)
       else {
         throw WindowsSecureRunDirectoryError.notRegularFile
-      }
-      guard equivalent(try finalPath(handle: handle), path) else {
-        throw WindowsSecureRunDirectoryError.reparsePointDenied
       }
     }
 
@@ -351,29 +345,14 @@
       path: String,
       expected: WindowsSecureRunDirectoryIdentity
     ) -> Bool {
-      guard
-        (try? validateDirectory(handle: handle, path: path)) != nil,
-        let current = try? identity(of: handle),
-        current == expected
+      guard (try? validateDirectory(handle: handle)) != nil,
+        let reopened = try? openDirectory(path: path)
       else {
         return false
       }
-      return true
-    }
-
-    private static func finalPath(handle: HANDLE) throws -> String {
-      let flags = DWORD(FILE_NAME_NORMALIZED | VOLUME_NAME_DOS)
-      let length = GetFinalPathNameByHandleW(handle, nil, 0, flags)
-      guard length > 0 else {
-        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
-      }
-      var buffer = [WCHAR](repeating: 0, count: Int(length) + 1)
-      let written = GetFinalPathNameByHandleW(handle, &buffer, DWORD(buffer.count), flags)
-      guard written > 0, written < DWORD(buffer.count) else {
-        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
-      }
-      let value = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
-      return value.hasPrefix("\\\\?\\") ? String(value.dropFirst(4)) : value
+      defer { CloseHandle(reopened) }
+      guard (try? validateDirectory(handle: reopened)) != nil else { return false }
+      return (try? identity(of: reopened)) == expected
     }
 
     private static func validateProtectedDACL(path: String) throws {
@@ -436,10 +415,6 @@
 
     private static func normalize(_ value: String) -> String {
       WindowsTunnelPathRules.normalize(value)
-    }
-
-    private static func equivalent(_ lhs: String, _ rhs: String) -> Bool {
-      normalize(lhs).caseInsensitiveCompare(normalize(rhs)) == .orderedSame
     }
 
     private static func isLocalAbsolutePath(_ path: String) -> Bool {
