@@ -67,7 +67,7 @@
       }
     }
 
-    private func withServicePaths(_ body: (WindowsServicePaths) throws -> Void) rethrows {
+    private func withServicePaths(_ body: (WindowsServicePaths) throws -> Void) throws {
       let root = FileManager.default.temporaryDirectory
         .appendingPathComponent(
           "codex-bridge-tunnel-runtime-\(UUID().uuidString)",

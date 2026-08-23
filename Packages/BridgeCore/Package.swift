@@ -405,7 +405,8 @@ let sharedTestTargets: [Target] = [
     ),
     .testTarget(
       name: "BridgeTunnelWindowsTests",
-      dependencies: ["BridgePlatform", "BridgeTunnel"] + cryptoDependencies
+      dependencies: ["BridgePlatform", "BridgePlatformWindows", "BridgeTunnel"]
+        + cryptoDependencies
     ),
     .testTarget(
       name: "BridgeTunnelContractWindowsTests",

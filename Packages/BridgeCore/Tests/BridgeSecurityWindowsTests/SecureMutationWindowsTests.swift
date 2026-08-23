@@ -307,9 +307,11 @@ final class SecureMutationWindowsTests: XCTestCase {
 
   private func createDirectorySymbolicLink(link: String, target: String) -> Bool {
     let flags = DWORD(0x1 | 0x2)
-    return withWide(link) { linkPath in
-      withWide(target) { targetPath in
-        CreateSymbolicLinkW(linkPath, targetPath, flags)
+    let linkWide = Array(link.utf16) + [0]
+    let targetWide = Array(target.utf16) + [0]
+    return linkWide.withUnsafeBufferPointer { linkBuffer -> Bool in
+      targetWide.withUnsafeBufferPointer { targetBuffer -> Bool in
+        CreateSymbolicLinkW(linkBuffer.baseAddress!, targetBuffer.baseAddress!, flags) != 0
       }
     }
   }

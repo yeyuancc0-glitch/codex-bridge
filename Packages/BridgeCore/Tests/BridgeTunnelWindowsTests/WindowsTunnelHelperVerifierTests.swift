@@ -1,5 +1,6 @@
 #if canImport(WinSDK)
   import BridgePlatform
+  import BridgePlatformWindows
   import Crypto
   import Foundation
   import WinSDK
@@ -17,7 +18,7 @@
           executable: helper,
           expectedSHA256: expected,
           expectedArchitecture: TargetPlatformArchitecture.current
-        ) != 0
+        )
 
       XCTAssertEqual(verified.sha256, expected)
       XCTAssertEqual(verified.executable.path.lowercased(), helper.path.lowercased())
@@ -133,7 +134,7 @@
         linkWide.pointer,
         targetWide.pointer,
         DWORD(0x2)  // SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
-      )
+      ) != 0
     }
   }
 #endif
