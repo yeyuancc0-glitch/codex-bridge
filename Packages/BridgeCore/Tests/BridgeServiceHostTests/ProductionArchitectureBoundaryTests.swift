@@ -47,6 +47,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeCodexRPC",
     "BridgeDirectCommand",
     "BridgeDomain",
+    "BridgeIPCWindows",
     "BridgePlatform",
     "BridgePlatformWindows",
     "BridgeProcessRuntime",

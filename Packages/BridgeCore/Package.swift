@@ -10,9 +10,14 @@ let cryptoDependencies: [Target.Dependency] = [
 ]
 
 let bridgeDependencies: [Package.Dependency] = [
+  // Temporary pinned fork: upstream 0.12.1 (a0ae212) plus exactly one commit
+  // (5d58f77, upstream PR #271) that gates EventSource/FoundationNetworking on
+  // canImport so the MCP target compiles for Windows (upstream issue #261).
+  // No selection change on Apple/Linux. Drop this fork for an official
+  // release as soon as one contains the fix.
   .package(
-    url: "https://github.com/modelcontextprotocol/swift-sdk.git",
-    exact: "0.12.1"
+    url: "https://github.com/LionheartTechnology/swift-sdk.git",
+    revision: "5d58f7763e9de3fff5e7785350dfe04c7a315290"
   ),
   .package(
     url: "https://github.com/groue/GRDB.swift.git",
@@ -250,12 +255,15 @@ let sharedTestTargets: [Target] = [
 ]
 
 #if os(Windows)
-  // Windows host: only the shared closure that is verified Windows-clean today.
-  // Each later porting stage extends this list after its Mac regression passes.
-  // BridgeIPC is intentionally absent until the MCP Swift SDK ships its Windows
-  // build fix (upstream issue #261); it pulls BridgeMCP transitively.
+  // Windows host: the shared closure verified Windows-clean today, plus the
+  // Named Pipe transport unlocked by the pinned MCP SDK fork. Each later
+  // porting stage extends this list after its Mac regression passes.
   let windowsTargets: [Target] = [
     .target(name: "BridgeDomain"),
+    .target(
+      name: "BridgeIPCWindows",
+      dependencies: ["BridgePlatform"]
+    ),
     .target(
       name: "BridgePlatformWindows",
       dependencies: ["BridgePlatform"]
@@ -312,10 +320,15 @@ let sharedTestTargets: [Target] = [
       name: "BridgeSecurityWindowsTests",
       dependencies: ["BridgeSecurity"] + cryptoDependencies
     ),
+    .testTarget(
+      name: "BridgeIPCWindowsTests",
+      dependencies: ["BridgeIPCWindows", "BridgePlatform"]
+    ),
   ]
 
   let windowsProducts: [Product] = [
     .library(name: "BridgeCodexRPC", targets: ["BridgeCodexRPC"]),
+    .library(name: "BridgeIPCWindows", targets: ["BridgeIPCWindows"]),
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
     .library(name: "BridgeProcessRuntime", targets: ["BridgeProcessRuntime"]),
     .library(name: "BridgeSecurity", targets: ["BridgeSecurity"]),
