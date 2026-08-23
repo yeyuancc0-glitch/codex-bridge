@@ -423,10 +423,13 @@ let sharedTestTargets: [Target] = [
       path: "Sources/BridgeTunnel",
       sources: [
         "RedactedOutputBuffer.swift",
+        "TunnelManager.swift",
         "TunnelTypes.swift",
+        "WindowsLoopbackHealthClient.swift",
         "WindowsSecureRunDirectory.swift",
         "WindowsTunnelHelperVerifier.swift",
         "WindowsTunnelPathRules.swift",
+        "WindowsTunnelPlatform.swift",
         "WindowsTunnelProcessLauncher.swift",
       ]
     ),

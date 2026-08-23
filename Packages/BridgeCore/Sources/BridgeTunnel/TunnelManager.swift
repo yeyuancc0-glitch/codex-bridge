@@ -1,12 +1,15 @@
 import BridgeSecurity
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 public actor TunnelManager {
   public typealias Now = @Sendable () -> Date
 
   private struct RunContext: Sendable {
-    let id: UUID
+    let id: Foundation.UUID
     let name: String
     let root: TunnelDirectoryHandle
     let run: TunnelDirectoryHandle
@@ -229,19 +232,31 @@ public actor TunnelManager {
     let urlText = configuration.localMCPURL.absoluteString
     let headerSecret = configuration.localMCPHeaderSecret
     guard context.hasExpectedIdentity else { throw TunnelManagerError.launchFailed }
-    return try launcher.spawn(
-      verifiedHelper: verifiedHelper,
-      helperVerifier: helperVerifier,
-      arguments: arguments,
-      runtimeKey: key,
-      localMCPHeaderSecret: Data(headerSecret.utf8),
-      runtimeDirectory: context.directory,
-      sensitiveValues: [keyText, urlText, headerSecret],
-      outputLimit: outputLimit
-    )
+    #if canImport(WinSDK)
+      return try launcher.spawn(
+        verifiedHelper: verifiedHelper,
+        arguments: arguments,
+        runtimeKey: key,
+        localMCPHeaderSecret: Data(headerSecret.utf8),
+        runtimeDirectory: context.directory,
+        sensitiveValues: [keyText, urlText, headerSecret],
+        outputLimit: outputLimit
+      )
+    #else
+      return try launcher.spawn(
+        verifiedHelper: verifiedHelper,
+        helperVerifier: helperVerifier,
+        arguments: arguments,
+        runtimeKey: key,
+        localMCPHeaderSecret: Data(headerSecret.utf8),
+        runtimeDirectory: context.directory,
+        sensitiveValues: [keyText, urlText, headerSecret],
+        outputLimit: outputLimit
+      )
+    #endif
   }
 
-  private func waitUntilReady(runID: UUID) async throws {
+  private func waitUntilReady(runID: Foundation.UUID) async throws {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: configuration.readinessTimeout)
     while clock.now < deadline {
@@ -262,7 +277,7 @@ public actor TunnelManager {
     throw TunnelManagerError.readinessTimedOut
   }
 
-  private func beginMonitor(runID: UUID) {
+  private func beginMonitor(runID: Foundation.UUID) {
     monitor = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: self?.configuration.healthInterval ?? .seconds(5))
@@ -272,7 +287,7 @@ public actor TunnelManager {
     }
   }
 
-  private func inspectRun(runID: UUID) {
+  private func inspectRun(runID: Foundation.UUID) {
     guard runContext?.id == runID, let child = process else { return }
     if child.pollExit() != nil {
       captureDiagnostics(from: child)
@@ -328,7 +343,7 @@ public actor TunnelManager {
 
   private func prepareRunContext() throws -> RunContext {
     let root = try TunnelDirectoryHandle(existingRoot: configuration.runtimeDirectory)
-    let id = UUID()
+    let id = Foundation.UUID()
     let name = "r-\(id.uuidString.prefix(12))"
     let run = try TunnelDirectoryHandle(creating: name, in: root)
     let directory = URL(fileURLWithPath: run.path, isDirectory: true)
@@ -397,9 +412,7 @@ public actor TunnelManager {
   private func cleanup(_ context: RunContext) -> Bool {
     guard context.hasExpectedIdentity else { return false }
     do {
-      for name in [
-        "observed.json", LoopbackHealthClient.urlFileName, "tunnel.pid",
-      ] {
+      for name in Self.cleanupFileNames {
         try context.run.removeEntry(name: name)
       }
       try context.run.removeEntry(name: "codex-home", directory: true)
@@ -424,10 +437,18 @@ public actor TunnelManager {
       let deadline = clock.now.advanced(by: duration)
       while clock.now < deadline {
         if let exit = child.pollExit() { return exit }
-        usleep(50_000)
+        try? await Task.sleep(for: .milliseconds(50))
       }
       return child.pollExit()
     }.value
+  }
+
+  private static var cleanupFileNames: [String] {
+    var names = ["observed.json", LoopbackHealthClient.urlFileName, "tunnel.pid"]
+    #if canImport(WinSDK)
+      names += ["runtime.key", "mcp-header.key"]
+    #endif
+    return names
   }
 
   private func captureDiagnostics() {
