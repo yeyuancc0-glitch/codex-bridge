@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Security.Principal;
 using CodexBridge.Ipc;
@@ -7,6 +8,7 @@ namespace BridgeIPC.Client.Tests;
 public sealed class ProtocolValidationTests
 {
     [Fact]
+    [SupportedOSPlatform("windows")]
     public void PipeNameIsScopedToCurrentWindowsUser()
     {
         Assert.True(OperatingSystem.IsWindows());
