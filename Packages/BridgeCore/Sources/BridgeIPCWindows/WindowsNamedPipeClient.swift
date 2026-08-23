@@ -95,18 +95,20 @@
           let capacity = 64 * 1_024
           var chunk = [UInt8](repeating: 0, count: capacity)
           var received = DWORD(0)
-          let ok = chunk.withUnsafeMutableBytes { raw in
-            ReadFile(rawHandle(), raw.baseAddress, DWORD(capacity), &received, nil)
+          let (ok, readError) = chunk.withUnsafeMutableBytes { raw in
+            let succeeded = ReadFile(
+              rawHandle(), raw.baseAddress, DWORD(capacity), &received, nil
+            )
+            return (succeeded, succeeded ? DWORD(0) : GetLastError())
           }
-          if ok || GetLastError() == Constants.errorMoreData {
+          if ok || readError == Constants.errorMoreData {
             guard received > 0 else { break }
             accumulated.append(contentsOf: chunk.prefix(Int(received)))
             // A clean return means the complete message arrived.
             if ok { break }
             continue
           }
-          let code = GetLastError()
-          if code == Constants.errorBrokenPipe || code == Constants.errorNoData {
+          if readError == Constants.errorBrokenPipe || readError == Constants.errorNoData {
             break
           }
           throw PipeTransportError.connectionClosed

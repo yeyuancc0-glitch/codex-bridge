@@ -385,16 +385,17 @@
         var offset = 0
         while offset < buffer.count {
           let remaining = buffer.count - offset
-          let ok = buffer.withUnsafeMutableBytes { raw in
-            ReadFile(
+          let (ok, readError) = buffer.withUnsafeMutableBytes { raw in
+            let succeeded = ReadFile(
               handle,
               raw.baseAddress!.advanced(by: offset),
               DWORD(remaining),
               &received,
               nil
             )
+            return (succeeded, succeeded ? DWORD(0) : GetLastError())
           }
-          if ok || GetLastError() == Constants.errorMoreData {
+          if ok || readError == Constants.errorMoreData {
             guard received > 0 else { return false }
             offset += Int(received)
             continue
