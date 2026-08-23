@@ -15,7 +15,7 @@ public sealed class GoldenContractTests
         var decoded = BridgeWireCodec.Decode(fixture);
         Assert.Equal(kind, decoded.Kind);
         var encoded = BridgeWireCodec.Encode(decoded.Kind, decoded.Message);
-        Assert.True(JsonElement.DeepEquals(Parse(fixture), Parse(encoded)));
+        AssertJsonEqual(Parse(fixture), Parse(encoded));
     }
 
     [Fact]
@@ -44,6 +44,52 @@ public sealed class GoldenContractTests
     }
 
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
+
+    private static void AssertJsonEqual(JsonElement expected, JsonElement actual)
+    {
+        Assert.Equal(expected.ValueKind, actual.ValueKind);
+        switch (expected.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var expectedProperties = expected.EnumerateObject().ToDictionary(
+                    property => property.Name,
+                    property => property.Value);
+                var actualProperties = actual.EnumerateObject().ToDictionary(
+                    property => property.Name,
+                    property => property.Value);
+                Assert.Equal(
+                    expectedProperties.Keys.OrderBy(name => name),
+                    actualProperties.Keys.OrderBy(name => name));
+                foreach (var property in expectedProperties)
+                {
+                    AssertJsonEqual(property.Value, actualProperties[property.Key]);
+                }
+                break;
+            case JsonValueKind.Array:
+                var expectedItems = expected.EnumerateArray().ToArray();
+                var actualItems = actual.EnumerateArray().ToArray();
+                Assert.Equal(expectedItems.Length, actualItems.Length);
+                for (var index = 0; index < expectedItems.Length; index++)
+                {
+                    AssertJsonEqual(expectedItems[index], actualItems[index]);
+                }
+                break;
+            case JsonValueKind.String:
+                Assert.Equal(expected.GetString(), actual.GetString());
+                break;
+            case JsonValueKind.Number:
+                Assert.Equal(expected.GetRawText(), actual.GetRawText());
+                break;
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                Assert.Equal(expected.GetBoolean(), actual.GetBoolean());
+                break;
+            case JsonValueKind.Null:
+                break;
+            default:
+                throw new Xunit.Sdk.XunitException("Unsupported JSON value kind.");
+        }
+    }
 
     private sealed record MutationResponse(bool Accepted);
 }
