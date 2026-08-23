@@ -27,15 +27,46 @@ if (-not (Test-Path $sqlite)) { throw "SQLite runtime is missing at $sqlite" }
 Copy-Item -LiteralPath $sqlite -Destination (Join-Path $payload 'sqlite3.dll')
 
 $runtimeIdentifier = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
-$arguments = @(
-  'build',
-  'Windows/CodexBridge.App/CodexBridge.App.csproj',
-  '--configuration', 'Release',
+$project = 'Windows/CodexBridge.App/CodexBridge.App.csproj'
+$properties = @(
   "-p:Platform=$Architecture",
   "-p:RuntimeIdentifier=$runtimeIdentifier",
   '-p:BuildMsix=true',
   '-p:AppxPackageSigningEnabled=false',
   "-p:BridgeServicePayload=$payload"
+)
+
+& dotnet restore $project @properties
+if ($LASTEXITCODE -ne 0) { throw "MSIX restore failed with exit code $LASTEXITCODE" }
+
+$assets = Get-Content 'Windows/CodexBridge.App/obj/project.assets.json' -Raw | ConvertFrom-Json
+$packageRoot = ($assets.packageFolders.PSObject.Properties | Select-Object -First 1).Name
+
+function Resolve-PackagePath([string]$Prefix) {
+  $packages = @($assets.libraries.PSObject.Properties | Where-Object { $_.Name -like "$Prefix/*" })
+  if ($packages.Count -ne 1) {
+    throw "Expected one $Prefix package, found $($packages.Count)."
+  }
+  return Join-Path $packageRoot $packages[0].Value.path
+}
+
+# The MSIX task has an undeclared System.Security.Permissions dependency. Keep
+# the workaround isolated to its load directory instead of shipping it with the app.
+$msixPackage = Resolve-PackagePath 'Microsoft.Windows.SDK.BuildTools.MSIX'
+$permissionsPackage = Resolve-PackagePath 'System.Security.Permissions'
+$taskDirectory = Join-Path $env:RUNNER_TEMP "CodexBridge-MSIX-Tasks-$Architecture"
+New-Item -ItemType Directory -Path $taskDirectory -Force | Out-Null
+Copy-Item -Path (Join-Path $msixPackage 'tools/net6.0/*') -Destination $taskDirectory
+Copy-Item -LiteralPath (Join-Path $permissionsPackage 'lib/net8.0/System.Security.Permissions.dll') -Destination $taskDirectory
+$taskAssemblyLocation = $taskDirectory.TrimEnd('\') + '\'
+
+$arguments = @(
+  'build',
+  $project,
+  '--no-restore',
+  '--configuration', 'Release',
+  $properties,
+  "-p:MsixTaskAssemblyLocation=$taskAssemblyLocation"
 )
 & dotnet @arguments
 if ($LASTEXITCODE -ne 0) { throw "MSIX build failed with exit code $LASTEXITCODE" }
