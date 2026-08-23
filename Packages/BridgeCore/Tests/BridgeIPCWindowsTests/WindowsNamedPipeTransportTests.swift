@@ -34,7 +34,7 @@ import XCTest
           try connections[index].send(Data("request-\(index)".utf8))
         }
         for index in 0..<4 {
-          let response = try connections[index].receive(timeout: 5)
+          let response = try connections[index].receive()
           XCTAssertEqual(response, Data("request-\(index)".utf8))
         }
       }
@@ -48,20 +48,15 @@ import XCTest
         hostile.append(Data("payload that must never be read".utf8))
         try connection.sendRawFrameForTesting(hostile)
         // The server must drop us without echoing anything readable.
-        XCTAssertThrowsError(try connection.receive(timeout: 5))
+        XCTAssertThrowsError(try connection.receive())
       }
     }
 
     private static func transactWithRetry(path: String, request: Data) throws -> Data {
-      for attempt in 0..<100 {
-        do {
-          return try WindowsNamedPipeClient.transact(path: path, request: request)
-        } catch PipeTransportError.connectionFailed {
-          if attempt == 99 { throw PipeTransportError.connectionFailed(-1) }
-          Thread.sleep(forTimeInterval: 0.02)
-        }
-      }
-      throw PipeTransportError.connectionFailed(-1)
+      let connection = try connectWithRetry(path: path)
+      defer { connection.close() }
+      try connection.send(request)
+      return try connection.receive()
     }
 
     private static func connectWithRetry(

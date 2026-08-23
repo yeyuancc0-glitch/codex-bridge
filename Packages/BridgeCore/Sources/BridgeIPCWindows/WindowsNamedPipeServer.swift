@@ -331,7 +331,7 @@
                 return
               }
             }
-            readRequest(Data(body))
+            dispatchAndSend(Data(body))
           } catch {
             // Protocol violation (oversize declaration): drop the client.
             close()
@@ -372,8 +372,13 @@
         }
       }
 
-      private func readRequest(_ request: Data) {
+      /// Keeps one request/response transaction in flight per connection.
+      /// A synchronous Named Pipe handle must not start its next blocking
+      /// read while another task writes the current response.
+      private func dispatchAndSend(_ request: Data) {
+        let completion = ResponseCompletion()
         Task.detached(priority: .userInitiated) { [weakServer, id] in
+          defer { completion.finish() }
           guard let server = weakServer.value else { return }
           let response = await server.dispatch(request: request, connectionID: id)
           do {
@@ -382,6 +387,7 @@
             self.close()
           }
         }
+        completion.wait()
       }
 
       private func readExactly(handle: HANDLE, buffer: inout [UInt8]) -> Bool {
@@ -415,6 +421,24 @@
 
       init(_ value: WindowsNamedPipeServer) {
         self.value = value
+      }
+    }
+
+    private final class ResponseCompletion: @unchecked Sendable {
+      private let condition = NSCondition()
+      private var finished = false
+
+      func finish() {
+        condition.lock()
+        finished = true
+        condition.broadcast()
+        condition.unlock()
+      }
+
+      func wait() {
+        condition.lock()
+        while !finished { condition.wait() }
+        condition.unlock()
       }
     }
   }

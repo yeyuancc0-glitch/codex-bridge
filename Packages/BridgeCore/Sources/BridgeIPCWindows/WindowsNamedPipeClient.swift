@@ -13,7 +13,7 @@
       let connection = try connect(path: path)
       defer { connection.close() }
       try connection.send(request)
-      return try connection.receive(timeout: 5)
+      return try connection.receive()
     }
 
     public static func connect(path: String) throws -> PipeConnection {
@@ -42,7 +42,6 @@
 
     private enum Constants {
       static let pipeReadmodeMessage = DWORD(0x0000_0002)
-      static let pipeReadmodeMessageNowait = DWORD(0x0000_0003)
       static let errorMoreData = DWORD(234)
       static let errorBrokenPipe = DWORD(109)
       static let errorNoData = DWORD(232)
@@ -117,49 +116,12 @@
         return try Self.decodeSingleFrame(accumulated)
       }
 
-      func receive(timeout: TimeInterval) throws -> Data {
-        try setReadMode(Constants.pipeReadmodeMessageNowait)
-        defer { try? setReadMode(Constants.pipeReadmodeMessage) }
-        let deadline = Date().addingTimeInterval(timeout)
-        var accumulated = Data()
-        while Date() < deadline {
-          let capacity = 64 * 1_024
-          var chunk = [UInt8](repeating: 0, count: capacity)
-          var received = DWORD(0)
-          let (ok, readError) = chunk.withUnsafeMutableBytes { raw in
-            let succeeded = ReadFile(
-              rawHandle(), raw.baseAddress, DWORD(capacity), &received, nil
-            )
-            return (succeeded, succeeded ? DWORD(0) : GetLastError())
-          }
-          if ok || readError == Constants.errorMoreData {
-            guard received > 0 else { throw PipeTransportError.invalidFrame }
-            accumulated.append(contentsOf: chunk.prefix(Int(received)))
-            if ok { return try Self.decodeSingleFrame(accumulated) }
-            continue
-          }
-          if readError == Constants.errorNoData {
-            Thread.sleep(forTimeInterval: 0.01)
-            continue
-          }
-          throw PipeTransportError.connectionClosed
-        }
-        throw PipeTransportError.deadlineExceeded
-      }
-
       private static func decodeSingleFrame(_ data: Data) throws -> Data {
         let (frames, consumed) = try BridgeWireFraming.extractFrames(from: data)
         guard frames.count == 1, consumed == data.count else {
           throw PipeTransportError.invalidFrame
         }
         return frames[0]
-      }
-
-      private func setReadMode(_ requestedMode: DWORD) throws {
-        var mode = requestedMode
-        guard SetNamedPipeHandleState(rawHandle(), &mode, nil, nil) else {
-          throw PipeTransportError.connectionFailed(Int32(GetLastError()))
-        }
       }
 
       private func rawHandle() -> HANDLE {
