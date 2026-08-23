@@ -66,9 +66,21 @@ public actor MCPHTTPListener {
     let handler = self.handler
     let emissionObserver = self.emissionObserver
     let admission = self.admission
-    let bootstrap = ServerBootstrap(group: group)
+    let baseBootstrap = ServerBootstrap(group: group)
       .serverChannelOption(ChannelOptions.backlog, value: 64)
-      .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+
+    #if os(Windows)
+      // Winsock SO_REUSEADDR permits a second listener to take the same port.
+      // A fixed Qwen endpoint must instead fail closed on port conflicts.
+      let bootstrap = baseBootstrap
+    #else
+      let bootstrap =
+        baseBootstrap
+        .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+    #endif
+
+    let configuredBootstrap =
+      bootstrap
       .childChannelInitializer { channel in
         guard admission.register(channel) else {
           return channel.close()
@@ -102,7 +114,7 @@ public actor MCPHTTPListener {
       )
 
     do {
-      let channel = try await bootstrap.bind(
+      let channel = try await configuredBootstrap.bind(
         host: MCPHTTPConfiguration.loopbackHost,
         port: configuration.port
       ).get()
