@@ -35,7 +35,7 @@ public sealed partial class MainWindow : Window
         RefreshButton.IsEnabled = false;
         try
         {
-            var response = await _connection.GetStatusAsync(_lifetime.Token);
+            var response = await GetStatusStartingServiceIfNeededAsync();
             PresentStatus(response);
         }
         catch (Exception error) when (
@@ -147,6 +147,22 @@ public sealed partial class MainWindow : Window
                     null,
                     _lifetime.Token)).Clients;
                 break;
+            case "settings":
+                await PresentStartupTaskAsync();
+                break;
+        }
+    }
+
+    private async Task<ServiceStatusResponse> GetStatusStartingServiceIfNeededAsync()
+    {
+        try
+        {
+            return await _connection.GetStatusAsync(_lifetime.Token);
+        }
+        catch (IOException) when (WindowsServiceLauncher.TryStartOnce())
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(500), _lifetime.Token);
+            return await _connection.GetStatusAsync(_lifetime.Token);
         }
     }
 
@@ -220,6 +236,33 @@ public sealed partial class MainWindow : Window
         {
             PresentError(error.Message);
         }
+    }
+
+    private async void EnableStartupTaskClick(object sender, RoutedEventArgs args)
+    {
+        EnableStartupTaskButton.IsEnabled = false;
+        try
+        {
+            PresentStartupTask(await StartupTaskController.RequestEnableAsync());
+        }
+        catch (Exception error)
+        {
+            PresentError(error.Message);
+        }
+    }
+
+    private async Task PresentStartupTaskAsync()
+    {
+        PresentStartupTask(await StartupTaskController.ReadAsync());
+    }
+
+    private void PresentStartupTask(StartupTaskPresentation presentation)
+    {
+        StartupTaskStateLabel.Text = presentation.State;
+        EnableStartupTaskButton.Visibility = presentation.CanRequestEnable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        EnableStartupTaskButton.IsEnabled = presentation.CanRequestEnable;
     }
 
     private async void WindowClosed(object sender, WindowEventArgs args)

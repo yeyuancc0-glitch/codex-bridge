@@ -194,9 +194,14 @@
                     </ListView>
                 </Grid>
                 <Grid x:Name="SettingsView" Visibility="Collapsed" Padding="32,24">
-                    <StackPanel Spacing="8">
+                    <StackPanel Spacing="16">
                         <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}" />
-                        <TextBlock Text="模型、Supervisor、Tunnel 与 StartupTask 设置将在此处读取并写回 Service。" Opacity="0.72" />
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="后台 Service" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                            <TextBlock x:Name="StartupTaskStateLabel" Text="正在读取 StartupTask 状态" />
+                            <Button x:Name="EnableStartupTaskButton" Content="登录后自动启动" Click="EnableStartupTaskClick" Visibility="Collapsed" HorizontalAlignment="Left" />
+                        </StackPanel>
+                        <TextBlock Text="模型、Supervisor 与 Tunnel 设置继续由 Service 持有。" Opacity="0.72" />
                     </StackPanel>
                 </Grid>
                 <views:WorkbenchHost x:Name="Workbench" Visibility="Collapsed" />
