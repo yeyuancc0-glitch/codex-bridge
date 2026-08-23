@@ -183,13 +183,13 @@
       }
     }
 
-    private static func isHeaderValue(_ value: Substring) -> Bool {
+    private static func isHeaderValue(_ value: String) -> Bool {
       value.unicodeScalars.allSatisfy { scalar in
         scalar.value == 9 || (0x20...0x7E).contains(scalar.value)
       }
     }
 
-    private static func decimalLength(_ value: Substring) -> Int? {
+    private static func decimalLength(_ value: String) -> Int? {
       let digits = value.trimmingCharacters(in: .whitespaces)
       guard !digits.isEmpty,
         digits.utf8.allSatisfy({ (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) })
