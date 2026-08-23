@@ -18,6 +18,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Web.WebView2" />
+    <PackageReference Include="System.Security.Permissions"
+                      Condition="'$(BuildMsix)' == 'true'"
+                      PrivateAssets="all" />
     <ProjectReference Include="..\BridgeIPC.Client\BridgeIPC.Client.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(BuildMsix)' == 'true'">
