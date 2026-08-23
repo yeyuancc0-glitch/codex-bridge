@@ -82,7 +82,7 @@ public protocol ServiceTunnelManaging: Sendable {
   func diagnostics() async -> TunnelDiagnostics
 }
 
-#if canImport(Darwin)
+#if canImport(Darwin) || canImport(WinSDK)
   extension TunnelManager: ServiceTunnelManaging {}
 #endif
 
