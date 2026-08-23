@@ -64,17 +64,24 @@
         throw XCTSkip("SDDL conversion failed: \(GetLastError())")
       }
       defer { LocalFree(descriptor) }
+      var present = false
+      var defaulted = false
+      var dacl: PACL?
+      guard GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted), let dacl
+      else {
+        throw XCTSkip("GetSecurityDescriptorDacl failed: \(GetLastError())")
+      }
       let pathWide = WideBuffer(path)
       guard
         SetNamedSecurityInfoW(
           pathWide.pointer,
-          SE_OBJECT_TYPE(1),
+          SE_OBJECT_TYPE(rawValue: 1),
           // DACL_SECURITY_INFORMATION.
           DWORD(0x0000_0004),
           nil,
           nil,
-          nil,
-          descriptor
+          dacl,
+          nil
         ) == ERROR_SUCCESS
       else {
         throw XCTSkip("SetNamedSecurityInfoW failed: \(GetLastError())")
