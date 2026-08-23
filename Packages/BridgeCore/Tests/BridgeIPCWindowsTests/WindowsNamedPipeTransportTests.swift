@@ -52,6 +52,35 @@ import XCTest
       }
     }
 
+    func testConnectionLimitRejectsExcessClient() throws {
+      let path = Self.uniquePipePath()
+      let server = WindowsNamedPipeServer(path: path, maximumConnections: 1) { _, request in
+        request
+      }
+      server.start()
+      defer { server.stop() }
+      let first = try Self.connectWithRetry(path: path)
+      defer { first.close() }
+      let second = try Self.connectWithRetry(path: path)
+      defer { second.close() }
+      try second.send(Data("excess".utf8))
+      XCTAssertThrowsError(try second.receive())
+    }
+
+    func testResponseDeadlineDropsStalledConnection() throws {
+      let path = Self.uniquePipePath()
+      let server = WindowsNamedPipeServer(path: path, responseTimeout: 0.05) { _, request in
+        try? await Task.sleep(for: .seconds(1))
+        return request
+      }
+      server.start()
+      defer { server.stop() }
+      let connection = try Self.connectWithRetry(path: path)
+      defer { connection.close() }
+      try connection.send(Data("stall".utf8))
+      XCTAssertThrowsError(try connection.receive())
+    }
+
     private static func transactWithRetry(path: String, request: Data) throws -> Data {
       let connection = try connectWithRetry(path: path)
       defer { connection.close() }
@@ -77,7 +106,7 @@ import XCTest
       onRequest: @escaping @Sendable (Data) -> Void = { _ in },
       body: (String) throws -> Void
     ) rethrows {
-      let path = "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
+      let path = Self.uniquePipePath()
       let server = WindowsNamedPipeServer(path: path) { _, request in
         onRequest(request)
         return request
@@ -85,6 +114,10 @@ import XCTest
       server.start()
       defer { server.stop() }
       try body(path)
+    }
+
+    private static func uniquePipePath() -> String {
+      "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
     }
 
     private final class RequestProbe: @unchecked Sendable {

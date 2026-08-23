@@ -45,6 +45,8 @@
     private let path: String
     private let handler: Handler
     private let disconnectHandler: DisconnectHandler
+    private let maximumConnections: Int
+    private let responseTimeout: TimeInterval
     private let state = NSCondition()
     private var connections: [Foundation.UUID: Connection] = [:]
     private var started = false
@@ -53,10 +55,16 @@
 
     public init(
       path: String = BridgeServiceIPC.windowsPipeName,
+      maximumConnections: Int = 32,
+      responseTimeout: TimeInterval = 60,
       handler: @escaping Handler,
       onDisconnect: @escaping DisconnectHandler = { _ in }
     ) {
+      precondition((1...Int(Constants.pipeUnlimitedInstances)).contains(maximumConnections))
+      precondition(responseTimeout > 0)
       self.path = path
+      self.maximumConnections = maximumConnections
+      self.responseTimeout = responseTimeout
       self.handler = handler
       disconnectHandler = onDisconnect
     }
@@ -111,7 +119,7 @@
 
     func register(_ connection: Connection) {
       state.lock()
-      if stopped {
+      if stopped || connections.count >= maximumConnections {
         state.unlock()
         connection.close()
         return
@@ -331,7 +339,7 @@
                 return
               }
             }
-            dispatchAndSend(Data(body))
+            guard dispatchAndSend(Data(body)) else { return }
           } catch {
             // Protocol violation (oversize declaration): drop the client.
             close()
@@ -375,7 +383,7 @@
       /// Keeps one request/response transaction in flight per connection.
       /// A synchronous Named Pipe handle must not start its next blocking
       /// read while another task writes the current response.
-      private func dispatchAndSend(_ request: Data) {
+      private func dispatchAndSend(_ request: Data) -> Bool {
         let completion = ResponseCompletion()
         Task.detached(priority: .userInitiated) { [weakServer, id] in
           defer { completion.finish() }
@@ -387,7 +395,11 @@
             self.close()
           }
         }
-        completion.wait()
+        guard completion.wait(timeout: weakServer.value?.responseTimeout ?? 0) else {
+          close()
+          return false
+        }
+        return true
       }
 
       private func readExactly(handle: HANDLE, buffer: inout [UInt8]) -> Bool {
@@ -435,10 +447,13 @@
         condition.unlock()
       }
 
-      func wait() {
+      func wait(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
         condition.lock()
-        while !finished { condition.wait() }
+        while !finished, condition.wait(until: deadline) {}
+        let result = finished
         condition.unlock()
+        return result
       }
     }
   }
