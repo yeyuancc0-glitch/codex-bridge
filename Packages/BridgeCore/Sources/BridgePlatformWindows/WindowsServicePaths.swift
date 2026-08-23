@@ -58,20 +58,19 @@
     }
 
     public static func prepare(at requestedRoot: URL) throws -> WindowsServicePaths {
-      guard isDriveAbsolute(requestedRoot.path) else {
+      guard let rootPath = localDrivePath(requestedRoot) else {
         throw PathsError.invalidRoot
       }
-      let root = requestedRoot.standardizedFileURL
-      try prepareOwnerOnlyDirectory(root.path)
-      let scratch = root.appending(path: "SupervisorScratch", directoryHint: .isDirectory)
-      try prepareOwnerOnlyDirectory(scratch.path)
-      let tunnelRuntime = root.appending(path: "TunnelRuntime", directoryHint: .isDirectory)
-      try prepareOwnerOnlyDirectory(tunnelRuntime.path)
+      try prepareOwnerOnlyDirectory(rootPath)
+      let scratchPath = join(rootPath, "SupervisorScratch")
+      try prepareOwnerOnlyDirectory(scratchPath)
+      let tunnelRuntimePath = join(rootPath, "TunnelRuntime")
+      try prepareOwnerOnlyDirectory(tunnelRuntimePath)
       return WindowsServicePaths(
-        rootURL: root,
-        databaseURL: root.appending(path: "service.sqlite"),
-        supervisorScratchURL: scratch,
-        tunnelRuntimeURL: tunnelRuntime
+        rootURL: URL(fileURLWithPath: rootPath, isDirectory: true),
+        databaseURL: URL(fileURLWithPath: join(rootPath, "service.sqlite")),
+        supervisorScratchURL: URL(fileURLWithPath: scratchPath, isDirectory: true),
+        tunnelRuntimeURL: URL(fileURLWithPath: tunnelRuntimePath, isDirectory: true)
       )
     }
 
@@ -234,6 +233,27 @@
       guard units.count >= 3 else { return false }
       return units[1] == 58 && units[2] == 92
         && ((65...90).contains(Int(units[0])) || (97...122).contains(Int(units[0])))
+    }
+
+    /// Swift Foundation represents a native `C:\...` file URL as `/C:/...`
+    /// on some Windows toolchains. Normalize that URL spelling before passing
+    /// the path to Win32, without accepting network or non-file URLs.
+    private static func localDrivePath(_ url: URL) -> String? {
+      guard url.isFileURL else { return nil }
+      var path = url.path.replacingOccurrences(of: "/", with: "\\")
+      let units = Array(path.utf16)
+      if units.count >= 4, units[0] == 92, units[2] == 58, units[3] == 92 {
+        path.removeFirst()
+      }
+      guard isDriveAbsolute(path), !path.contains("\0"),
+        path.rangeOfCharacter(from: .controlCharacters) == nil
+      else { return nil }
+      while path.count > 3, path.hasSuffix("\\") { path.removeLast() }
+      return path
+    }
+
+    private static func join(_ root: String, _ component: String) -> String {
+      root.hasSuffix("\\") ? root + component : root + "\\" + component
     }
   }
 #endif

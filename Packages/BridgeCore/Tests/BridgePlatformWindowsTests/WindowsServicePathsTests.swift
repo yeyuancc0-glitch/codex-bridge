@@ -18,7 +18,7 @@
 
     func testPrepareRejectsRelativeOrUNCRoots() {
       XCTAssertThrowsError(
-        try WindowsServicePaths.prepare(at: URL(fileURLWithPath: "relative/path"))
+        try WindowsServicePaths.prepare(at: URL(string: "relative/path")!)
       )
       XCTAssertThrowsError(
         try WindowsServicePaths.prepare(
