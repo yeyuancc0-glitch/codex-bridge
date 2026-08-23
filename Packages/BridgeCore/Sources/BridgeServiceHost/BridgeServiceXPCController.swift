@@ -1,19 +1,16 @@
 import BridgeIPC
-import BridgeIPCMacOS
 import Foundation
 
-public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCProtocol,
-  @unchecked Sendable
-{
+public final class BridgeServiceXPCController: @unchecked Sendable {
   let composition: ServiceComposition
   let admission: XPCRequestAdmission
-  let streamProxy: CodexBridgeTaskStreamListener?
+  let streamProxy: (any BridgeServiceIPCStreamSink)?
   let streams = StreamRegistry()
   let conversationStreamGate = AsyncMutex()
 
   public init(
     composition: ServiceComposition,
-    streamProxy: CodexBridgeTaskStreamListener? = nil,
+    streamProxy: (any BridgeServiceIPCStreamSink)? = nil,
     maximumConcurrentRequests: Int = 8
   ) {
     precondition(maximumConcurrentRequests > 0)
@@ -22,7 +19,6 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
     self.admission = XPCRequestAdmission(
       maximumConcurrent: maximumConcurrentRequests
     )
-    super.init()
   }
 
   public func perform(_ request: Data, withReply reply: @escaping (Data) -> Void) {
@@ -63,6 +59,29 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       self?.admission.release()
       replyBox.call(response)
     }
+  }
+
+  public func perform(_ request: Data) async -> Data {
+    let decoded: BridgeServiceIPCRequest
+    do {
+      decoded = try BridgeServiceIPCCodec.decodeRequest(request)
+    } catch {
+      return Self.fallbackFailure(
+        requestID: "invalid",
+        code: "invalid_request",
+        message: "The IPC request is invalid."
+      )
+    }
+    guard admission.acquire() else {
+      return Self.fallbackFailure(
+        requestID: decoded.requestID,
+        code: "busy",
+        message: "The service is busy.",
+        retryable: true
+      )
+    }
+    defer { admission.release() }
+    return await handle(decoded)
   }
 
   public func stopStreaming() {

@@ -48,11 +48,11 @@
 
       switch kind {
       case .regularFile:
-        guard attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0 else {
+        guard currentAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0 else {
           throw WindowsLocalPathError.wrongKind
         }
       case .directory:
-        guard attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0 else {
+        guard currentAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0 else {
           throw WindowsLocalPathError.wrongKind
         }
       }

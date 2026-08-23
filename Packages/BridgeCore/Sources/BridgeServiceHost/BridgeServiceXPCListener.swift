@@ -11,9 +11,9 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
   }
 
   private let listener: NSXPCListener
-  private let makeController: (CodexBridgeTaskStreamListener?) -> BridgeServiceXPCController
+  private let makeController: ((any BridgeServiceIPCStreamSink)?) -> BridgeServiceXPCController
   private let lock = NSLock()
-  private var controllers: [NSXPCConnection: BridgeServiceXPCController] = [:]
+  private var controllers: [NSXPCConnection: BridgeServiceXPCAdapter] = [:]
   private var resumed = false
   private var invalidated = false
 
@@ -57,7 +57,7 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
       return
     }
     invalidated = true
-    let active = Array(controllers.values)
+    let active = controllers.values.map(\.controller)
     controllers.removeAll(keepingCapacity: false)
     lock.unlock()
     for controller in active {
@@ -77,12 +77,12 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
     newConnection.remoteObjectInterface = NSXPCInterface(
       with: CodexBridgeTaskStreamListener.self
     )
-    let controller = makeController(
-      newConnection.remoteObjectProxy as? CodexBridgeTaskStreamListener
-    )
-    newConnection.exportedObject = controller
+    let remote = newConnection.remoteObjectProxy as? CodexBridgeTaskStreamListener
+    let controller = makeController(remote.map(BridgeServiceXPCStreamSink.init(listener:)))
+    let adapter = BridgeServiceXPCAdapter(controller: controller)
+    newConnection.exportedObject = adapter
     lock.lock()
-    controllers[newConnection] = controller
+    controllers[newConnection] = adapter
     lock.unlock()
     newConnection.invalidationHandler = { [weak self] in
       self?.remove(newConnection)
@@ -93,7 +93,7 @@ public final class BridgeServiceXPCListener: NSObject, NSXPCListenerDelegate,
 
   private func remove(_ connection: NSXPCConnection) {
     lock.lock()
-    let controller = controllers.removeValue(forKey: connection)
+    let controller = controllers.removeValue(forKey: connection)?.controller
     lock.unlock()
     controller?.stopStreaming()
   }

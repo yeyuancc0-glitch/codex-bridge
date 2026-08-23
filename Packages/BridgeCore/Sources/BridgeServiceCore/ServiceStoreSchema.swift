@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 import GRDB
 
@@ -62,8 +61,8 @@ enum ServiceStoreSchema {
     }
     guard requiresBackup else { return }
     let backupPath = sourcePath + ".pre-v8"
-    if FileManager.default.fileExists(atPath: backupPath) {
-      try validatePrivateBackup(at: backupPath)
+    if try ServiceStorePrivateBackup.prepare(at: backupPath) == .existing {
+      try ServiceStorePrivateBackup.validate(at: backupPath)
       return
     }
     var configuration = Configuration()
@@ -71,10 +70,7 @@ enum ServiceStoreSchema {
     let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
     do {
       try database.backup(to: destination)
-      guard chmod(backupPath, 0o600) == 0 else {
-        throw ServiceStoreError.storageFailure
-      }
-      try validatePrivateBackup(at: backupPath)
+      try ServiceStorePrivateBackup.protectAndValidate(at: backupPath)
     } catch {
       try? FileManager.default.removeItem(atPath: backupPath)
       throw error
@@ -95,8 +91,8 @@ enum ServiceStoreSchema {
     }
     guard requiresBackup else { return }
     let backupPath = sourcePath + ".pre-v9"
-    if FileManager.default.fileExists(atPath: backupPath) {
-      try validatePrivateBackup(at: backupPath)
+    if try ServiceStorePrivateBackup.prepare(at: backupPath) == .existing {
+      try ServiceStorePrivateBackup.validate(at: backupPath)
       return
     }
     var configuration = Configuration()
@@ -104,24 +100,10 @@ enum ServiceStoreSchema {
     let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
     do {
       try database.backup(to: destination)
-      guard chmod(backupPath, 0o600) == 0 else {
-        throw ServiceStoreError.storageFailure
-      }
-      try validatePrivateBackup(at: backupPath)
+      try ServiceStorePrivateBackup.protectAndValidate(at: backupPath)
     } catch {
       try? FileManager.default.removeItem(atPath: backupPath)
       throw error
-    }
-  }
-
-  private static func validatePrivateBackup(at path: String) throws {
-    var metadata = stat()
-    guard lstat(path, &metadata) == 0,
-      metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFREG,
-      metadata.st_mode & 0o777 == 0o600
-    else {
-      throw ServiceStoreError.storageFailure
     }
   }
 

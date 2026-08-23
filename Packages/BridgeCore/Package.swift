@@ -252,6 +252,11 @@ let sharedTestTargets: [Target] = [
     name: "BridgeProcessRuntimeTests",
     dependencies: ["BridgePlatform", "BridgeProcessRuntime"]
   ),
+  .testTarget(
+    name: "BridgeIPCContractTests",
+    dependencies: ["BridgeIPC", "BridgePlatform"],
+    resources: [.copy("Fixtures")]
+  ),
 ]
 
 #if os(Windows)
@@ -262,7 +267,7 @@ let sharedTestTargets: [Target] = [
     .target(name: "BridgeDomain"),
     .target(
       name: "BridgeIPCWindows",
-      dependencies: ["BridgePlatform", "BridgePlatformWindows"]
+      dependencies: ["BridgeIPC", "BridgePlatform", "BridgePlatformWindows"]
     ),
     .target(
       name: "BridgePlatformWindows",
@@ -308,6 +313,68 @@ let sharedTestTargets: [Target] = [
         "SecureFileReader.swift",
       ]
     ),
+    .target(
+      name: "BridgeProjects",
+      dependencies: ["BridgeDomain", "BridgeSecurity"]
+    ),
+    .target(
+      name: "BridgeSkills",
+      dependencies: ["BridgeSecurity"]
+    ),
+    .target(
+      name: "BridgeFiles",
+      dependencies: [
+        "BridgeDirectCommand",
+        "BridgeDomain",
+        "BridgeProjects",
+        "BridgeSecurity",
+      ]
+    ),
+    .target(
+      name: "BridgeMCP",
+      dependencies: [
+        "BridgeDomain",
+        "BridgeFiles",
+        "BridgeSkills",
+        "BridgeSecurity",
+        .product(name: "Logging", package: "swift-log"),
+        .product(name: "MCP", package: "swift-sdk"),
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ]
+    ),
+    .target(
+      name: "BridgeIPC",
+      dependencies: ["BridgeMCP"]
+    ),
+    .target(
+      name: "BridgeServiceCore",
+      dependencies: [
+        "BridgeDomain",
+        "BridgePlatformWindows",
+        "BridgeProjects",
+        "BridgeSecurity",
+        .product(name: "GRDB", package: "GRDB.swift"),
+      ] + cryptoDependencies
+    ),
+    .target(
+      name: "BridgeTunnel",
+      dependencies: [
+        "BridgePlatform",
+        "BridgePlatformWindows",
+        "BridgeProcessRuntime",
+        "BridgeSecurity",
+      ] + cryptoDependencies,
+      path: "Sources/BridgeTunnel",
+      sources: [
+        "RedactedOutputBuffer.swift",
+        "TunnelTypes.swift",
+        "WindowsSecureRunDirectory.swift",
+        "WindowsTunnelHelperVerifier.swift",
+        "WindowsTunnelPathRules.swift",
+      ]
+    ),
     .testTarget(
       name: "BridgeCodexRPCWindowsTests",
       dependencies: ["BridgeCodexRPC", "BridgeProcessRuntime"]
@@ -328,6 +395,24 @@ let sharedTestTargets: [Target] = [
       name: "BridgePlatformWindowsTests",
       dependencies: ["BridgePlatformWindows"]
     ),
+    .testTarget(
+      name: "BridgeFilesWindowsTests",
+      dependencies: ["BridgeFiles", "BridgeSecurity"]
+    ),
+    .testTarget(
+      name: "BridgeMCPWindowsTests",
+      dependencies: ["BridgeMCP"]
+    ),
+    .testTarget(
+      name: "BridgeTunnelWindowsTests",
+      dependencies: ["BridgePlatform", "BridgeTunnel"] + cryptoDependencies
+    ),
+    .testTarget(
+      name: "BridgeTunnelContractWindowsTests",
+      dependencies: ["BridgeTunnel"],
+      path: "Tests/BridgeTunnelTests",
+      sources: ["WindowsTunnelPathRulesTests.swift"]
+    ),
   ]
 
   let windowsProducts: [Product] = [
@@ -336,6 +421,13 @@ let sharedTestTargets: [Target] = [
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
     .library(name: "BridgeProcessRuntime", targets: ["BridgeProcessRuntime"]),
     .library(name: "BridgeSecurity", targets: ["BridgeSecurity"]),
+    .library(name: "BridgeFiles", targets: ["BridgeFiles"]),
+    .library(name: "BridgeIPC", targets: ["BridgeIPC"]),
+    .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
+    .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
+    .library(name: "BridgeSkills", targets: ["BridgeSkills"]),
+    .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
+    .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
     .executable(
       name: "windows-process-tree-fixture",
       targets: ["WindowsProcessTreeFixture"]

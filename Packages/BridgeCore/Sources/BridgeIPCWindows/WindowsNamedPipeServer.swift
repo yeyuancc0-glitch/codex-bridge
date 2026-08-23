@@ -1,4 +1,5 @@
 #if canImport(WinSDK)
+  import BridgeIPC
   import BridgePlatform
   import BridgePlatformWindows
   import Foundation
@@ -22,12 +23,13 @@
         _ connectionID: Foundation.UUID,
         _ request: Data
       ) async -> Data
+    public typealias DisconnectHandler = @Sendable (Foundation.UUID) async -> Void
 
     private enum Constants {
       // Inlined Win32 values; several are macros the Swift bindings do not
       // export (same class of issue as commit 05044c4).
-      // dwOpenMode: PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE.
-      static let openMode = DWORD(0x0008_0003)
+      static let openMode = DWORD(0x0000_0003)
+      static let firstPipeInstance = DWORD(0x0008_0000)
       // dwPipeMode: PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE
       //            | PIPE_REJECT_REMOTE_CLIENTS.
       static let pipeMode = DWORD(0x0000_000E)
@@ -42,21 +44,29 @@
 
     private let path: String
     private let handler: Handler
+    private let disconnectHandler: DisconnectHandler
     private let state = NSLock()
     private var connections: [Foundation.UUID: Connection] = [:]
+    private var started = false
     private var stopped = false
 
-    public init(path: String = BridgeServiceIPC.windowsPipeName, handler: Handler) {
+    public init(
+      path: String = BridgeServiceIPC.windowsPipeName,
+      handler: @escaping Handler,
+      onDisconnect: @escaping DisconnectHandler = { _ in }
+    ) {
       self.path = path
       self.handler = handler
+      disconnectHandler = onDisconnect
     }
 
     public func start() {
       state.lock()
-      if stopped {
+      if stopped || started {
         state.unlock()
         return
       }
+      started = true
       state.unlock()
       Thread.detachNewThread { [weak self] in
         self?.acceptLoop()
@@ -72,6 +82,7 @@
       state.unlock()
       for connection in active {
         connection.close()
+        notifyDisconnected(connection.id)
       }
       // Wake an accept thread parked in ConnectNamedPipe with a throwaway
       // local client so it observes `stopped` promptly.
@@ -80,6 +91,14 @@
 
     func dispatch(request: Data, connectionID: Foundation.UUID) async -> Data {
       await handler(connectionID, request)
+    }
+
+    @discardableResult
+    public func push(_ payload: Data, to connectionID: Foundation.UUID) -> Bool {
+      state.lock()
+      let connection = connections[connectionID]
+      state.unlock()
+      return connection?.push(payload) == true
     }
 
     func register(_ connection: Connection) {
@@ -99,26 +118,42 @@
 
     private func unregister(_ connection: Connection) {
       state.lock()
-      connections.removeValue(forKey: connection.id)
+      let removed = connections.removeValue(forKey: connection.id) != nil
       state.unlock()
+      if removed { notifyDisconnected(connection.id) }
+    }
+
+    private func notifyDisconnected(_ connectionID: Foundation.UUID) {
+      Task { [disconnectHandler] in
+        await disconnectHandler(connectionID)
+      }
     }
 
     private func acceptLoop() {
+      var isFirstInstance = true
       while true {
         state.lock()
         let shouldStop = stopped
         state.unlock()
         if shouldStop { return }
 
-        guard let instance = Self.createPipeInstance(path: path) else {
+        guard
+          let instance = Self.createPipeInstance(
+            path: path,
+            requireFirstInstance: isFirstInstance
+          )
+        else {
           Thread.sleep(forTimeInterval: 0.05)
           continue
         }
+        isFirstInstance = false
         var connected = ConnectNamedPipe(instance, nil)
         if !connected, GetLastError() == Constants.errorPipeConnected {
           connected = true
         }
-        guard connected, let peerSID = Self.clientUserSIDString(instance) else {
+        guard connected, let peerSID = Self.clientUserSIDString(instance),
+          Self.isCurrentUserSID(peerSID)
+        else {
           DisconnectNamedPipe(instance)
           CloseHandle(instance)
           continue
@@ -127,9 +162,8 @@
       }
     }
 
-    static func createPipeInstance(path: String) -> HANDLE? {
+    static func createPipeInstance(path: String, requireFirstInstance: Bool = false) -> HANDLE? {
       guard let descriptor = currentUserSDLSecurityDescriptor() else { return nil }
-      defer { LocalFree(descriptor.pointer) }
       var attributes = SECURITY_ATTRIBUTES(
         nLength: DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size),
         lpSecurityDescriptor: descriptor.pointer,
@@ -138,7 +172,7 @@
       let name = WideBuffer(path)
       let handle = CreateNamedPipeW(
         name.pointer,
-        Constants.openMode,
+        Constants.openMode | (requireFirstInstance ? Constants.firstPipeInstance : 0),
         Constants.pipeMode,
         Constants.pipeUnlimitedInstances,
         Constants.bufferSize,
@@ -162,13 +196,16 @@
       else { return nil }
       defer { CloseHandle(process) }
       guard let sidString = WindowsSecurity.processUserSIDString(process) else { return nil }
-      defer { LocalFree(UnsafeMutableRawPointer(sidString.pointer)) }
       return sidString.value
+    }
+
+    static func isCurrentUserSID(_ peerSID: String) -> Bool {
+      guard let current = WindowsSecurity.currentUserSIDString() else { return false }
+      return current.value.caseInsensitiveCompare(peerSID) == .orderedSame
     }
 
     static func currentUserSDLSecurityDescriptor() -> SecurityDescriptorBox? {
       guard let sidString = WindowsSecurity.currentUserSIDString() else { return nil }
-      defer { LocalFree(UnsafeMutableRawPointer(sidString.pointer)) }
       let sddl = WindowsSecurity.ownerOnlySDDL(userSID: sidString.value)
       var descriptor: UnsafeMutableRawPointer?
       let sddlWide = WideBuffer(sddl)
@@ -198,8 +235,13 @@
       }
 
       /// Server-pushed event frame (task conversation updates and similar).
-      func push(_ payload: Data) {
-        try? send(payload)
+      func push(_ payload: Data) -> Bool {
+        do {
+          try send(payload)
+          return true
+        } catch {
+          return false
+        }
       }
 
       func close() {
@@ -208,7 +250,6 @@
         handle = nil
         ioLock.unlock()
         guard let current else { return }
-        FlushFileBuffers(current)
         DisconnectNamedPipe(current)
         CloseHandle(current)
       }
@@ -248,8 +289,10 @@
         try frame.withUnsafeBytes { bytes in
           ioLock.lock()
           let current = handle
-          ioLock.unlock()
-          guard let current else { throw PipeTransportError.connectionClosed }
+          guard let current else {
+            ioLock.unlock()
+            throw PipeTransportError.connectionClosed
+          }
           var offset = 0
           while offset < frame.count {
             var written = DWORD(0)
@@ -261,11 +304,15 @@
               nil
             )
             if !ok || written == 0 {
-              close()
+              handle = nil
+              ioLock.unlock()
+              DisconnectNamedPipe(current)
+              CloseHandle(current)
               throw PipeTransportError.connectionClosed
             }
             offset += Int(written)
           }
+          ioLock.unlock()
         }
       }
 

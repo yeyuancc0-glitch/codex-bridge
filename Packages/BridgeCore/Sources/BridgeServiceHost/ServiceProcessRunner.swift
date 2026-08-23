@@ -1,6 +1,7 @@
 import BridgeCodexRPC
 import BridgeIPC
 import BridgeLegacyImport
+import BridgeSecurity
 import Darwin
 import Foundation
 
@@ -76,7 +77,8 @@ public enum ServiceProcessRunner {
         dataRootURL: options.dataRootURL,
         clientInfo: .bridge(version: appVersion),
         legacyDataRootURL: LegacyConfigurationImporter.defaultSourceRoot()
-      )
+      ),
+      secretStore: KeychainSecretStore()
     )
     let endpoint = try await composition.startLocalMCP()
     let listener: BridgeServiceXPCListener?

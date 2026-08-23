@@ -2,13 +2,18 @@ import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDirectCommand
 import BridgeDomain
-import BridgeLegacyImport
 import BridgeMCP
 import BridgeSecurity
 import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
-import Security
+
+#if canImport(Darwin)
+  import BridgeLegacyImport
+  public typealias ServiceLegacyImportReport = LegacyImportReport
+#else
+  public struct ServiceLegacyImportReport: Sendable {}
+#endif
 
 public enum ServiceLocalMCPError: Error, Equatable, Sendable {
   case localPortUnavailable(Int)
@@ -81,7 +86,7 @@ public actor ServiceComposition {
   public let application: BridgeServiceApplication
   public let tunnel: ServiceTunnelController
   public let mcpClients: ServiceMCPClientRegistry
-  public let legacyImportReport: LegacyImportReport?
+  public let legacyImportReport: ServiceLegacyImportReport?
 
   private let configuration: ServiceCompositionConfiguration
   private var mcpServer: MCPBridgeServer?
@@ -91,14 +96,8 @@ public actor ServiceComposition {
 
   public static func make(
     configuration: ServiceCompositionConfiguration,
-    secretStore: any SecretStore = KeychainSecretStore(),
-    randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
-      var bytes = [UInt8](repeating: 0, count: count)
-      guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
-        throw ServiceMCPSecretError.randomGenerationFailed
-      }
-      return Data(bytes)
-    },
+    secretStore: any SecretStore,
+    randomBytes: (@Sendable (Int) throws -> Data)? = nil,
     tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
     let paths = try ServiceDataPaths.prepare(at: configuration.dataRootURL)
@@ -157,8 +156,8 @@ public actor ServiceComposition {
     )
     let resolvedTunnelFactory =
       tunnelFactory
-      ?? BundledServiceTunnelManagerFactory(
-        appBundleURL: configuration.appBundleURL ?? URL(fileURLWithPath: "/"),
+      ?? DefaultServiceTunnelManagerFactory.make(
+        appBundleURL: configuration.appBundleURL,
         runtimeDirectory: paths.tunnelRuntimeURL,
         secretStore: secretStore
       )
@@ -168,10 +167,15 @@ public actor ServiceComposition {
       secretStore: secretStore,
       factory: resolvedTunnelFactory
     )
-    let secretProvider = ServiceMCPSecretProvider(
-      store: secretStore,
-      randomBytes: randomBytes
-    )
+    let secretProvider: ServiceMCPSecretProvider
+    if let randomBytes {
+      secretProvider = ServiceMCPSecretProvider(
+        store: secretStore,
+        randomBytes: randomBytes
+      )
+    } else {
+      secretProvider = ServiceMCPSecretProvider(store: secretStore)
+    }
     let mcpClients = try await ServiceMCPClientRegistry.make(
       settings: settings,
       secrets: secretProvider
@@ -210,7 +214,7 @@ public actor ServiceComposition {
     application: BridgeServiceApplication,
     tunnel: ServiceTunnelController,
     mcpClients: ServiceMCPClientRegistry,
-    legacyImportReport: LegacyImportReport?
+    legacyImportReport: ServiceLegacyImportReport?
   ) {
     self.configuration = configuration
     self.paths = paths
@@ -446,19 +450,24 @@ public actor ServiceComposition {
     from rootURL: URL?,
     into store: SimpleServiceStore
   ) async -> LegacyConfigurationImportBootstrap {
-    guard let rootURL else { return .disabled }
-    do {
-      let report = try await LegacyConfigurationImporter(
-        legacyRootURL: rootURL,
-        store: store
-      ).importIfNeeded()
-      return LegacyConfigurationImportBootstrap(
-        report: report,
-        degradations: []
-      )
-    } catch {
-      return .failed
-    }
+    #if canImport(Darwin)
+      guard let rootURL else { return .disabled }
+      do {
+        let report = try await LegacyConfigurationImporter(
+          legacyRootURL: rootURL,
+          store: store
+        ).importIfNeeded()
+        return LegacyConfigurationImportBootstrap(
+          report: report,
+          degradations: []
+        )
+      } catch {
+        return .failed
+      }
+    #else
+      _ = (rootURL, store)
+      return .disabled
+    #endif
   }
 
   private static func mcpExposureMode(
@@ -492,6 +501,6 @@ private struct LegacyConfigurationImportBootstrap: Sendable {
     ]
   )
 
-  let report: LegacyImportReport?
+  let report: ServiceLegacyImportReport?
   let degradations: [String]
 }

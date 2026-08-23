@@ -64,8 +64,8 @@
         throw XCTSkip("SDDL conversion failed: \(GetLastError())")
       }
       defer { LocalFree(descriptor) }
-      var present = false
-      var defaulted = false
+      var present = WindowsBool(0)
+      var defaulted = WindowsBool(0)
       var dacl: PACL?
       guard GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted), let dacl
       else {

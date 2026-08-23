@@ -65,7 +65,7 @@ public enum ServiceTunnelError: Error, Equatable, LocalizedError, Sendable {
     case .invalidStoredConfiguration:
       "The stored Tunnel configuration is invalid."
     case .secretStoreUnavailable:
-      "The Tunnel Runtime Key is unavailable in Keychain."
+      "The Tunnel Runtime Key is unavailable in the platform credential store."
     case .serviceStopped:
       "The background Service is stopping."
     case .startFailed:
@@ -82,7 +82,9 @@ public protocol ServiceTunnelManaging: Sendable {
   func diagnostics() async -> TunnelDiagnostics
 }
 
-extension TunnelManager: ServiceTunnelManaging {}
+#if canImport(Darwin)
+  extension TunnelManager: ServiceTunnelManaging {}
+#endif
 
 public protocol ServiceTunnelManagerBuilding: Sendable {
   func helperAvailable() -> Bool

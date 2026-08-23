@@ -11,6 +11,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeGit",
     "BridgeIPC",
     "BridgeIPCMacOS",
+    "BridgeIPCWindows",
     "BridgeLegacyImport",
     "BridgeMCP",
     "BridgePlatform",
@@ -47,11 +48,18 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeCodexRPC",
     "BridgeDirectCommand",
     "BridgeDomain",
+    "BridgeFiles",
+    "BridgeIPC",
     "BridgeIPCWindows",
+    "BridgeMCP",
     "BridgePlatform",
     "BridgePlatformWindows",
     "BridgeProcessRuntime",
+    "BridgeProjects",
     "BridgeSecurity",
+    "BridgeServiceCore",
+    "BridgeSkills",
+    "BridgeTunnel",
   ]
 
   private static let darwinOnlyModules: Set<String> = [
@@ -80,8 +88,11 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
   private static let splitHostTargets: Set<String> = [
     "BridgeCodexRPC",
     "BridgeDirectCommand",
+    "BridgeFiles",
     "BridgeProcessRuntime",
     "BridgeSecurity",
+    "BridgeServiceCore",
+    "BridgeTunnel",
   ]
 
   func testProductionTargetsDoNotImportLegacyControlPlane() throws {

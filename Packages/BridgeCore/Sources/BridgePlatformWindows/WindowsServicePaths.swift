@@ -99,7 +99,6 @@
       guard let currentUser = WindowsSecurity.currentUserSIDString() else {
         throw PathsError.unavailable(Int32(GetLastError()))
       }
-      defer { LocalFree(UnsafeMutableRawPointer(currentUser.pointer)) }
       // D:P(...) = protected DACL; FA = FILE_ALL_ACCESS; SY = LOCAL SYSTEM.
       let sddl = "D:P(A;;FA;;;\(currentUser.value))(A;;FA;;;SY)"
       var descriptor: UnsafeMutableRawPointer?
@@ -157,19 +156,18 @@
 
     /// True when the DACL is protected and every allow-ACE names the current
     /// user or LOCAL SYSTEM.
-    static func hasTrustedProtection(_ path: String) throws -> Bool {
+    public static func hasTrustedProtection(_ path: String) throws -> Bool {
       var descriptorPointer: UnsafeMutableRawPointer?
       var owner: PSID?
       var dacl: PACL?
       let result = GetNamedSecurityInfoW(
         WideBuffer(path).pointer,
-        SE_OBJECT_TYPE(rawValue: Constants.seFileObject),
+        SE_OBJECT_TYPE(rawValue: Int32(Constants.seFileObject)),
         DWORD(Constants.ownerSecurityInformation | Constants.daclSecurityInformation),
         &owner,
         nil,
-        nil,
-        nil,
         &dacl,
+        nil,
         &descriptorPointer
       )
       guard result == Constants.errorSuccess, let descriptorPointer else {
@@ -182,17 +180,18 @@
       else {
         throw PathsError.unavailable(Int32(GetLastError()))
       }
-      defer { LocalFree(UnsafeMutableRawPointer(currentUser.pointer)) }
-
-      var daclPresent = false
-      var daclDefaulted = false
+      guard let owner, let ownerSID = stringSIDBox(ofSID: owner),
+        ownerSID.value.caseInsensitiveCompare(currentUser.value) == .orderedSame
+      else { return false }
+      var daclPresent = WindowsBool(0)
+      var daclDefaulted = WindowsBool(0)
       guard GetSecurityDescriptorDacl(descriptorPointer, &daclPresent, &dacl, &daclDefaulted)
       else { return false }
       var control = SECURITY_DESCRIPTOR_CONTROL()
       var revision = DWORD(0)
       _ = GetSecurityDescriptorControl(descriptorPointer, &control, &revision)
-      guard daclPresent, let dacl,
-        (control.rawValue & Constants.seDaclProtected) != 0
+      guard daclPresent != 0, let dacl,
+        (control & UInt16(Constants.seDaclProtected)) != 0
       else { return false }
 
       var sizeInfo = ACL_SIZE_INFORMATION()
@@ -212,12 +211,10 @@
         guard header.AceType == Constants.accessAllowedAceType else { continue }
         // ACCESS_ALLOWED_ACE layout: ACE_HEADER (4 bytes) + DWORD mask,
         // so the SID starts at byte 8 regardless of pointer width.
-        let sid = UnsafeRawPointer(acePointer).advanced(by: 8)
-          .bindMemory(to: SID.self, capacity: 1)
+        let sid = acePointer.advanced(by: 8)
         guard let sidBox = stringSIDBox(ofSID: sid) else {
           return false
         }
-        defer { LocalFree(UnsafeMutableRawPointer(sidBox.pointer)) }
         guard sidBox.value == currentUser.value || sidBox.value == Constants.systemSIDString
         else {
           return false

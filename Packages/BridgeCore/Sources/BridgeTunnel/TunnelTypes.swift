@@ -62,10 +62,10 @@ public struct TunnelConfiguration: Sendable {
     metricsFreshness: Duration = .seconds(70),
     expectedHelperSHA256: String
   ) throws {
-    guard helperExecutable.isFileURL, helperExecutable.path.hasPrefix("/") else {
+    guard Self.isValidPlatformFileURL(helperExecutable) else {
       throw TunnelConfigurationError.invalidHelperExecutable
     }
-    guard runtimeDirectory.isFileURL, runtimeDirectory.path.hasPrefix("/") else {
+    guard Self.isValidPlatformFileURL(runtimeDirectory) else {
       throw TunnelConfigurationError.invalidRuntimeDirectory
     }
     guard Self.isValidLocalMCPURL(localMCPURL) else {
@@ -109,10 +109,10 @@ public struct TunnelConfiguration: Sendable {
     metricsFreshness: Duration = .seconds(70),
     expectedHelperSHA256: String
   ) throws {
-    guard helperExecutable.isFileURL, helperExecutable.path.hasPrefix("/") else {
+    guard Self.isValidPlatformFileURL(helperExecutable) else {
       throw TunnelConfigurationError.invalidHelperExecutable
     }
-    guard runtimeDirectory.isFileURL, runtimeDirectory.path.hasPrefix("/") else {
+    guard Self.isValidPlatformFileURL(runtimeDirectory) else {
       throw TunnelConfigurationError.invalidRuntimeDirectory
     }
     guard Self.isValidHeaderMCPURL(localMCPURL) else {
@@ -162,6 +162,17 @@ public struct TunnelConfiguration: Sendable {
         || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0)
         || $0 == UInt8(ascii: "_") || $0 == UInt8(ascii: "-")
     }
+  }
+
+  private static func isValidPlatformFileURL(_ url: URL) -> Bool {
+    guard url.isFileURL else { return false }
+    #if canImport(WinSDK)
+      return WindowsTunnelPathRules.isLocalAbsolutePath(
+        WindowsTunnelPathRules.normalize(url.path)
+      )
+    #else
+      return url.path.hasPrefix("/")
+    #endif
   }
 
   private static func isValidHeaderMCPURL(_ url: URL) -> Bool {
