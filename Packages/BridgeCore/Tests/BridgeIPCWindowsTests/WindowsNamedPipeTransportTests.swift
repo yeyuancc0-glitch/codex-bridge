@@ -63,8 +63,12 @@ import XCTest
       defer { first.close() }
       let second = try Self.connectWithRetry(path: path)
       defer { second.close() }
-      try second.send(Data("excess".utf8))
-      XCTAssertThrowsError(try second.receive())
+      XCTAssertThrowsError(
+        try {
+          try second.send(Data("excess".utf8))
+          return try second.receive()
+        }()
+      )
     }
 
     func testResponseDeadlineDropsStalledConnection() throws {
