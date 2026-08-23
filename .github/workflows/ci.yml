@@ -207,7 +207,8 @@ jobs:
         run: swift --version
 
       - name: Cache Windows Swift build
-        uses: actions/cache@v4
+        id: windows-build-cache
+        uses: actions/cache/restore@v4
         with:
           path: Packages/BridgeCore/.build
           key: bridge-core-windows-${{ runner.arch }}-${{ hashFiles('Packages/BridgeCore/Package.resolved') }}
@@ -232,6 +233,13 @@ jobs:
       - name: Test shared closure
         shell: pwsh
         run: .github/scripts/run-windows-test-targets.ps1
+
+      - name: Save Windows Swift build cache
+        if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Packages/BridgeCore/.build
+          key: bridge-core-windows-${{ runner.arch }}-${{ hashFiles('Packages/BridgeCore/Package.resolved') }}
 
   windows-arm64:
     name: Windows ARM64 shared closure
@@ -322,7 +330,8 @@ jobs:
         run: swift --version
 
       - name: Cache Windows Swift build
-        uses: actions/cache@v4
+        id: windows-build-cache
+        uses: actions/cache/restore@v4
         with:
           path: Packages/BridgeCore/.build
           key: bridge-core-windows-${{ runner.arch }}-${{ hashFiles('Packages/BridgeCore/Package.resolved') }}
@@ -347,3 +356,10 @@ jobs:
       - name: Test shared closure
         shell: pwsh
         run: .github/scripts/run-windows-test-targets.ps1
+
+      - name: Save Windows Swift build cache
+        if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: Packages/BridgeCore/.build
+          key: bridge-core-windows-${{ runner.arch }}-${{ hashFiles('Packages/BridgeCore/Package.resolved') }}

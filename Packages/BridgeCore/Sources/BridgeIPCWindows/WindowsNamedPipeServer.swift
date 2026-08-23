@@ -376,7 +376,11 @@
         Task.detached(priority: .userInitiated) { [weakServer, id] in
           guard let server = weakServer.value else { return }
           let response = await server.dispatch(request: request, connectionID: id)
-          try? self.send(response)
+          do {
+            try self.send(response)
+          } catch {
+            self.close()
+          }
         }
       }
 
