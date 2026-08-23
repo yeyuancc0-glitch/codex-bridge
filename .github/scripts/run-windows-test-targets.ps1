@@ -16,7 +16,8 @@ $targets = @(
   'BridgeFilesWindowsTests',
   'BridgeMCPWindowsTests',
   'BridgeTunnelWindowsTests',
-  'BridgeTunnelContractWindowsTests'
+  'BridgeTunnelContractWindowsTests',
+  'BridgeServiceHostWindowsTests'
 )
 
 $swift = (Get-Command swift.exe -ErrorAction Stop).Source

@@ -371,6 +371,33 @@ let sharedTestTargets: [Target] = [
       exclude: ["DirectGitIndexTransaction.swift"]
     ),
     .target(
+      name: "BridgeServiceHost",
+      dependencies: [
+        "BridgeCodexRPC",
+        "BridgeCodexService",
+        "BridgeDirectCommand",
+        "BridgeDomain",
+        "BridgeIPC",
+        "BridgeIPCWindows",
+        "BridgeMCP",
+        "BridgeProjects",
+        "BridgeSecurity",
+        "BridgeServiceApplication",
+        "BridgeServiceCore",
+        "BridgeTunnel",
+      ],
+      path: "Sources/BridgeServiceHost",
+      exclude: [
+        "BridgeServiceXPCAdapter.swift",
+        "BridgeServiceXPCListener.swift",
+        "ServiceProcessRunner.swift",
+      ]
+    ),
+    .executableTarget(
+      name: "CodexBridgeServiceWindowsExecutable",
+      dependencies: ["BridgeServiceHost"]
+    ),
+    .target(
       name: "BridgeIPC",
       dependencies: ["BridgeMCP"]
     ),
@@ -440,6 +467,10 @@ let sharedTestTargets: [Target] = [
       path: "Tests/BridgeTunnelTests",
       sources: ["WindowsTunnelPathRulesTests.swift"]
     ),
+    .testTarget(
+      name: "BridgeServiceHostWindowsTests",
+      dependencies: ["BridgeServiceHost"]
+    ),
   ]
 
   let windowsProducts: [Product] = [
@@ -457,10 +488,15 @@ let sharedTestTargets: [Target] = [
     .library(name: "BridgeSkills", targets: ["BridgeSkills"]),
     .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
     .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
+    .library(name: "BridgeServiceHost", targets: ["BridgeServiceHost"]),
     .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
     .executable(
       name: "windows-process-tree-fixture",
       targets: ["WindowsProcessTreeFixture"]
+    ),
+    .executable(
+      name: "codex-bridge-service",
+      targets: ["CodexBridgeServiceWindowsExecutable"]
     ),
   ]
 
