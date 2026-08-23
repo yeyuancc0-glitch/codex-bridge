@@ -373,7 +373,7 @@
       }
 
       private func readRequest(_ request: Data) {
-        Task { [weakServer, id] in
+        Task.detached(priority: .userInitiated) { [weakServer, id] in
           guard let server = weakServer.value else { return }
           let response = await server.dispatch(request: request, connectionID: id)
           try? self.send(response)
