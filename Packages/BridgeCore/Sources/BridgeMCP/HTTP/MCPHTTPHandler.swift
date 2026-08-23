@@ -420,7 +420,9 @@ package final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         headers[name] = value
       }
     }
-    let body = state.body.getBytes(at: 0, length: state.body.readableBytes).map(Data.init)
+    let body = state.body.getBytes(at: 0, length: state.body.readableBytes).map {
+      (bytes: [UInt8]) in Data(bytes)
+    }
     return AuthenticatedMCPRequest(
       request: MCP.HTTPRequest(
         method: state.head.method.rawValue,
