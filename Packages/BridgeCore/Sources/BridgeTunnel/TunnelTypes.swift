@@ -1,6 +1,9 @@
 import BridgeSecurity
 import Foundation
 
+/// Marker for helper verification failures that require intervention by the local user.
+public protocol TunnelHelperValidationError: Error, Sendable {}
+
 public struct TunnelID: Hashable, RawRepresentable, Sendable {
   public let rawValue: String
 

@@ -69,9 +69,9 @@
     }
 
     private func disconnect(_ connectionID: Foundation.UUID) async {
-      state.lock()
-      let controller = controllers.removeValue(forKey: connectionID)
-      state.unlock()
+      let controller = state.withLock {
+        controllers.removeValue(forKey: connectionID)
+      }
       controller?.stopStreaming()
     }
 

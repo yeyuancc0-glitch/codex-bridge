@@ -601,7 +601,7 @@ public actor ServiceTunnelController {
   }
 
   private static func requiresLocalAction(_ error: any Error) -> Bool {
-    if error is TunnelHelperError { return true }
+    if error is any TunnelHelperValidationError { return true }
     if let error = error as? TunnelManagerError {
       switch error {
       case .invalidRuntimeKey, .doctorFailed:

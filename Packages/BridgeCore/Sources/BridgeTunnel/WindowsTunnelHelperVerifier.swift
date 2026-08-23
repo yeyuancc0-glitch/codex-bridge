@@ -6,7 +6,7 @@
   import Foundation
   import WinSDK
 
-  public enum WindowsTunnelHelperError: Error, Equatable, Sendable {
+  public enum WindowsTunnelHelperError: TunnelHelperValidationError, Equatable, Sendable {
     case invalidPath
     case networkPathDenied
     case reparsePointDenied

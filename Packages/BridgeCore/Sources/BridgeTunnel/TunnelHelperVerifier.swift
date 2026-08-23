@@ -186,7 +186,7 @@ package struct TunnelVerifiedHelper: Sendable {
   let codeIdentity: TunnelCodeIdentity
 }
 
-public enum TunnelHelperError: Error, Equatable, Sendable {
+public enum TunnelHelperError: TunnelHelperValidationError, Equatable, Sendable {
   case unavailable
   case notRegularFile
   case notExecutable
