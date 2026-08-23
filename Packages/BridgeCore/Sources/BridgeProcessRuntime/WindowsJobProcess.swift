@@ -9,6 +9,7 @@
     case invalidWorkingDirectory
     case invalidEnvironment
     case commandLineTooLong
+    case executableIdentityChanged
     case win32(operation: String, code: Int32)
     case executable(WindowsExecutableValidationError)
   }
@@ -24,6 +25,8 @@
         return "invalid Windows process environment"
       case .commandLineTooLong:
         return "Windows command line exceeds 32767 UTF-16 code units"
+      case .executableIdentityChanged:
+        return "executable identity changed after verification"
       case .win32(let operation, let code):
         return "\(operation) failed with Win32 error \(code)"
       case .executable(let error):
@@ -38,19 +41,22 @@
     public let currentDirectoryURL: URL?
     public let environment: [String: String]?
     public let createNewProcessGroup: Bool
+    public let expectedExecutableIdentity: WindowsExecutableIdentity?
 
     public init(
       executableURL: URL,
       arguments: [String],
       currentDirectoryURL: URL? = nil,
       environment: [String: String]? = nil,
-      createNewProcessGroup: Bool = true
+      createNewProcessGroup: Bool = true,
+      expectedExecutableIdentity: WindowsExecutableIdentity? = nil
     ) {
       self.executableURL = executableURL
       self.arguments = arguments
       self.currentDirectoryURL = currentDirectoryURL
       self.environment = environment
       self.createNewProcessGroup = createNewProcessGroup
+      self.expectedExecutableIdentity = expectedExecutableIdentity
     }
   }
 
@@ -92,6 +98,11 @@
         throw WindowsJobProcessError.executable(error)
       }
       defer { lease.close() }
+      if let expected = configuration.expectedExecutableIdentity,
+        lease.identity != expected
+      {
+        throw WindowsJobProcessError.executableIdentityChanged
+      }
 
       let workingDirectory = try Self.validatedWorkingDirectory(
         configuration.currentDirectoryURL

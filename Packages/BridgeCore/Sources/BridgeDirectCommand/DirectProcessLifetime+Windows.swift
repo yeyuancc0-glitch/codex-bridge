@@ -57,7 +57,7 @@
           throw DirectProcessError.invalidArgument
         case .win32(_, let code):
           throw DirectProcessError.processLaunchFailed(code)
-        case .executable:
+        case .executable, .executableIdentityChanged:
           throw DirectProcessError.processLaunchFailed(193)
         }
       } catch {

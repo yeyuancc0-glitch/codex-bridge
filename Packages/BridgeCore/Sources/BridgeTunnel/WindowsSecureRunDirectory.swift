@@ -179,6 +179,83 @@
       return result
     }
 
+    public func createRegularFile(name: String, data: Data) throws {
+      guard Self.isSafeEntryName(name), matchesPath() else {
+        throw WindowsSecureRunDirectoryError.invalidEntryName
+      }
+      guard !data.isEmpty, data.count <= 16 * 1_024 else {
+        throw WindowsSecureRunDirectoryError.fileTooLarge
+      }
+      let path = Self.join(self.path, name)
+      guard let currentUser = WindowsSecurity.currentUserSIDString() else {
+        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
+      }
+      let descriptorText = WindowsSecurity.ownerOnlySDDL(userSID: currentUser.value)
+      let descriptorWide = WideBuffer(descriptorText)
+      var descriptor: UnsafeMutableRawPointer?
+      guard
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+          descriptorWide.pointer,
+          DWORD(1),
+          &descriptor,
+          nil
+        ), let descriptor
+      else {
+        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
+      }
+      defer { LocalFree(descriptor) }
+
+      var security = SECURITY_ATTRIBUTES(
+        nLength: DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size),
+        lpSecurityDescriptor: descriptor,
+        bInheritHandle: false
+      )
+      let wide = WideBuffer(path)
+      let file = CreateFileW(
+        wide.pointer,
+        DWORD(0x4000_0000),  // GENERIC_WRITE
+        DWORD(FILE_SHARE_READ),
+        &security,
+        DWORD(CREATE_NEW),
+        DWORD(FILE_ATTRIBUTE_TEMPORARY),
+        nil
+      )
+      guard let file, file != INVALID_HANDLE_VALUE else {
+        let error = GetLastError()
+        throw error == DWORD(80)  // ERROR_FILE_EXISTS
+          ? WindowsSecureRunDirectoryError.entryAlreadyExists
+          : WindowsSecureRunDirectoryError.unavailable(Int32(error))
+      }
+
+      var completed = false
+      defer {
+        CloseHandle(file)
+        if !completed { _ = Self.removeFile(path: path) }
+      }
+      try data.withUnsafeBytes { bytes in
+        var offset = 0
+        while offset < bytes.count {
+          var written = DWORD(0)
+          guard
+            WriteFile(
+              file,
+              bytes.baseAddress!.advanced(by: offset),
+              DWORD(bytes.count - offset),
+              &written,
+              nil
+            ), written > 0
+          else {
+            throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
+          }
+          offset += Int(written)
+        }
+      }
+      guard FlushFileBuffers(file) else {
+        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
+      }
+      completed = true
+    }
+
     public func removeEntry(name: String, directory: Bool = false) throws {
       guard Self.isSafeEntryName(name), matchesPath() else {
         throw WindowsSecureRunDirectoryError.invalidEntryName

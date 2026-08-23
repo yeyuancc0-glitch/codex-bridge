@@ -427,6 +427,7 @@ let sharedTestTargets: [Target] = [
         "WindowsSecureRunDirectory.swift",
         "WindowsTunnelHelperVerifier.swift",
         "WindowsTunnelPathRules.swift",
+        "WindowsTunnelProcessLauncher.swift",
       ]
     ),
     .testTarget(

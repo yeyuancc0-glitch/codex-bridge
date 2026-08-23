@@ -17,6 +17,17 @@
         XCTAssertTrue(root.contains(name: name, directory: run))
 
         try run.createDirectory(name: "codex-home")
+        let secret = Data("runtime-secret".utf8)
+        try run.createRegularFile(name: "runtime.key", data: secret)
+        XCTAssertEqual(
+          try run.readRegularFile(name: "runtime.key", maximumBytes: 16 * 1_024),
+          secret
+        )
+        XCTAssertTrue(
+          try WindowsServicePaths.hasTrustedProtection(
+            URL(fileURLWithPath: run.path).appendingPathComponent("runtime.key").path
+          )
+        )
         let file = URL(fileURLWithPath: run.path).appendingPathComponent("health.url")
         try Data("http://127.0.0.1:43210".utf8).write(to: file)
         XCTAssertEqual(
@@ -25,6 +36,7 @@
         )
 
         try run.removeEntry(name: "health.url")
+        try run.removeEntry(name: "runtime.key")
         try run.removeEntry(name: "codex-home", directory: true)
         try root.removeEntry(name: name, directory: true)
         XCTAssertFalse(root.contains(name: name, directory: run))
