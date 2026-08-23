@@ -13,7 +13,7 @@
       let connection = try connect(path: path)
       defer { connection.close() }
       try connection.send(request)
-      return try connection.receive()
+      return try connection.receive(timeout: 5)
     }
 
     public static func connect(path: String) throws -> PipeConnection {
@@ -116,6 +116,19 @@
           throw PipeTransportError.invalidFrame
         }
         return frames[0]
+      }
+
+      func receive(timeout: TimeInterval) throws -> Data {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+          var available = DWORD(0)
+          guard PeekNamedPipe(rawHandle(), nil, 0, nil, &available, nil) else {
+            throw PipeTransportError.connectionClosed
+          }
+          if available > 0 { return try receive() }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw PipeTransportError.deadlineExceeded
       }
 
       private func rawHandle() -> HANDLE {

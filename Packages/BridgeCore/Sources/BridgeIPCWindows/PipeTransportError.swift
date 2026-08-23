@@ -3,6 +3,7 @@
   enum PipeTransportError: Error, Equatable {
     case connectionFailed(Int32)
     case connectionClosed
+    case deadlineExceeded
     case invalidFrame
   }
 #endif

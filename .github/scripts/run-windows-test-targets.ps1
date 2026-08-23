@@ -34,7 +34,11 @@ foreach ($target in $targets) {
   }
 
   $filters = if ($target -eq 'BridgeIPCWindowsTests') {
-    $matchingTests
+    @($matchingTests | Sort-Object {
+      if ($_ -match '/testEcho') { return 0 }
+      if ($_ -match '/testConcurrent') { return 1 }
+      return 2
+    })
   } else {
     @($filter)
   }

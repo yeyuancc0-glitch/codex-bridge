@@ -27,7 +27,7 @@ import XCTest
           try connections[index].send(Data("request-\(index)".utf8))
         }
         for index in 0..<4 {
-          let response = try connections[index].receive()
+          let response = try connections[index].receive(timeout: 5)
           XCTAssertEqual(response, Data("request-\(index)".utf8))
         }
       }
@@ -41,7 +41,7 @@ import XCTest
         hostile.append(Data("payload that must never be read".utf8))
         try connection.sendRawFrameForTesting(hostile)
         // The server must drop us without echoing anything readable.
-        XCTAssertThrowsError(try connection.receive())
+        XCTAssertThrowsError(try connection.receive(timeout: 5))
       }
     }
 
