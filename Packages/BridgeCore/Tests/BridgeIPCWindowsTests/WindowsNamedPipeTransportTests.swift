@@ -1,4 +1,5 @@
 import BridgePlatform
+import Foundation
 import XCTest
 
 #if canImport(WinSDK)
@@ -13,17 +14,22 @@ import XCTest
       }
     }
 
-    func testConcurrentClientsAreIndependent() async throws {
-      try await withAsyncEchoServer { path in
-        try await withThrowingTaskGroup(of: Void.self) { group in
-          for index in 0..<4 {
-            group.addTask {
-              let request = Data("request-\(index)".utf8)
-              let response = try Self.transactWithRetry(path: path, request: request)
-              XCTAssertEqual(response, request)
+    func testConcurrentClientsAreIndependent() throws {
+      try withEchoServer { path in
+        let results = ConcurrentPipeResults()
+        for index in 0..<4 {
+          Thread.detachNewThread {
+            let request = Data("request-\(index)".utf8)
+            let result = Result {
+              try Self.transactWithRetry(path: path, request: request)
             }
+            results.record(result, for: index)
           }
-          try await group.waitForAll()
+        }
+        XCTAssertTrue(results.waitForCount(4, timeout: 10))
+        for index in 0..<4 {
+          let result = try XCTUnwrap(results.result(for: index))
+          XCTAssertEqual(try result.get(), Data("request-\(index)".utf8))
         }
       }
     }
@@ -76,16 +82,32 @@ import XCTest
       try body(path)
     }
 
-    private func withAsyncEchoServer(
-      _ body: (String) async throws -> Void
-    ) async rethrows {
-      let path = "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
-      let server = WindowsNamedPipeServer(path: path) { _, request in
-        request
+    private final class ConcurrentPipeResults: @unchecked Sendable {
+      private let condition = NSCondition()
+      private var values: [Int: Result<Data, Error>] = [:]
+
+      func record(_ result: Result<Data, Error>, for index: Int) {
+        condition.lock()
+        values[index] = result
+        condition.broadcast()
+        condition.unlock()
       }
-      server.start()
-      defer { server.stop() }
-      try await body(path)
+
+      func waitForCount(_ count: Int, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        condition.lock()
+        defer { condition.unlock() }
+        while values.count < count {
+          if !condition.wait(until: deadline) { return values.count >= count }
+        }
+        return true
+      }
+
+      func result(for index: Int) -> Result<Data, Error>? {
+        condition.lock()
+        defer { condition.unlock() }
+        return values[index]
+      }
     }
   }
 #endif
