@@ -68,14 +68,15 @@
     }
 
     private func withServicePaths(_ body: (WindowsServicePaths) throws -> Void) throws {
-      let root = FileManager.default.temporaryDirectory
+      let container = FileManager.default.temporaryDirectory
         .appendingPathComponent(
           "codex-bridge-tunnel-runtime-\(UUID().uuidString)",
           isDirectory: true
         )
-      try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
-      defer { try? FileManager.default.removeItem(at: root) }
-      try body(try WindowsServicePaths.prepare(at: root))
+      try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
+      defer { try? FileManager.default.removeItem(at: container) }
+      let serviceRoot = container.appendingPathComponent("Service", isDirectory: true)
+      try body(try WindowsServicePaths.prepare(at: serviceRoot))
     }
 
     private static func applySDDL(_ sddl: String, to path: String) throws {
