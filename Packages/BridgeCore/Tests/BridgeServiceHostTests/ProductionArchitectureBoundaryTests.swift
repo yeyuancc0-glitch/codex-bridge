@@ -59,6 +59,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeSecurity",
     "BridgeServiceCore",
     "BridgeSkills",
+    "BridgeSupervisor",
     "BridgeTunnel",
   ]
 
@@ -92,6 +93,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeProcessRuntime",
     "BridgeSecurity",
     "BridgeServiceCore",
+    "BridgeSupervisor",
     "BridgeTunnel",
   ]
 

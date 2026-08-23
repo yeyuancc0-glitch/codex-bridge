@@ -282,6 +282,10 @@ let sharedTestTargets: [Target] = [
       dependencies: ["BridgeProcessRuntime"]
     ),
     .target(
+      name: "BridgeSupervisor",
+      dependencies: ["BridgeCodexRPC", "BridgeSecurity"]
+    ),
+    .target(
       name: "BridgeDirectCommand",
       dependencies: ["BridgeProcessRuntime"],
       path: "Sources/BridgeDirectCommand",
@@ -418,6 +422,7 @@ let sharedTestTargets: [Target] = [
 
   let windowsProducts: [Product] = [
     .library(name: "BridgeCodexRPC", targets: ["BridgeCodexRPC"]),
+    .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
     .library(name: "BridgeIPCWindows", targets: ["BridgeIPCWindows"]),
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
     .library(name: "BridgeProcessRuntime", targets: ["BridgeProcessRuntime"]),
