@@ -121,6 +121,8 @@ func waitForTask(
     }
     try await Task.sleep(for: .milliseconds(10))
   }
+  if let task = try await fixture.tasks.task(id: taskID) {
+  }
   throw ExecutionTestError.timedOut
 }
 

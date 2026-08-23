@@ -42,7 +42,7 @@
           &returnedLength
         )
       else { return nil }
-      let sid = buffer.assumingMemoryBound(to: TOKEN_USER.self).User.Sid
+      let sid = buffer.assumingMemoryBound(to: TOKEN_USER.self).pointee.User.Sid
       guard let sid else { return nil }
       var stringSID: UnsafeMutablePointer<WCHAR>?
       guard ConvertSidToStringSidW(sid, &stringSID), let stringSID else { return nil }

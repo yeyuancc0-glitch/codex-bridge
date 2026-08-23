@@ -66,7 +66,7 @@ import XCTest
     }
 
     private func withEchoServer(_ body: (String) throws -> Void) rethrows {
-      let path = "\\\\.\\pipe\\org.codexbridge.test.\(UUID().uuidString.lowercased())"
+      let path = "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
       let server = WindowsNamedPipeServer(path: path) { _, request in
         request
       }

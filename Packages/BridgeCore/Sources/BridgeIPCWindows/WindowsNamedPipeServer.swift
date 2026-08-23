@@ -17,7 +17,11 @@
   /// - Frame length headers are validated against the shared contract limit
   ///   before any body allocation; violations drop the connection.
   public final class WindowsNamedPipeServer: @unchecked Sendable {
-    public typealias Handler = @Sendable (_ connectionID: UUID, _ request: Data) async -> Data
+    public typealias Handler =
+      @Sendable (
+        _ connectionID: Foundation.UUID,
+        _ request: Data
+      ) async -> Data
 
     private enum Constants {
       // Inlined Win32 values; several are macros the Swift bindings do not
@@ -39,10 +43,10 @@
     private let path: String
     private let handler: Handler
     private let state = NSLock()
-    private var connections: [UUID: Connection] = [:]
+    private var connections: [Foundation.UUID: Connection] = [:]
     private var stopped = false
 
-    public init(path: String = BridgeServiceIPC.windowsPipeName, handler: @escaping Handler) {
+    public init(path: String = BridgeServiceIPC.windowsPipeName, handler: Handler) {
       self.path = path
       self.handler = handler
     }
@@ -74,7 +78,7 @@
       _ = try? WindowsNamedPipeClient.transact(path: path, request: Data())
     }
 
-    func dispatch(request: Data, connectionID: UUID) async -> Data {
+    func dispatch(request: Data, connectionID: Foundation.UUID) async -> Data {
       await handler(connectionID, request)
     }
 
@@ -180,7 +184,7 @@
     }
 
     final class Connection: @unchecked Sendable {
-      let id = UUID()
+      let id = Foundation.UUID()
 
       let peerUserSID: String
       private let weakServer: WeakServer

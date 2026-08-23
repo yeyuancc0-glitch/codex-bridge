@@ -88,10 +88,11 @@
       public func receive() throws -> Data {
         var accumulated = Data()
         while true {
-          var chunk = [UInt8](repeating: 0, count: 64 * 1_024)
+          let capacity = 64 * 1_024
+          var chunk = [UInt8](repeating: 0, count: capacity)
           var received = DWORD(0)
           let ok = chunk.withUnsafeMutableBytes { raw in
-            ReadFile(rawHandle(), raw.baseAddress, DWORD(chunk.count), &received, nil)
+            ReadFile(rawHandle(), raw.baseAddress, DWORD(capacity), &received, nil)
           }
           if ok || GetLastError() == Constants.errorMoreData {
             guard received > 0 else { break }
