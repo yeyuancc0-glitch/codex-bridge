@@ -18,6 +18,12 @@
     private var aggregatePathBytes = 0
     private var candidates: [String] = []
 
+    init(root: RegisteredRoot, policy: ProjectFilePolicy, limits: ProjectFileLimits) {
+      self.root = root
+      self.policy = policy
+      self.limits = limits
+    }
+
     mutating func candidates(scope: SecureRelativePath?) throws -> ProjectFileCandidates {
       if let scope {
         try WindowsEnumeratorSupport.validate(scope: scope)

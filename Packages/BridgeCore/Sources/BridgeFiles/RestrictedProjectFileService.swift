@@ -289,6 +289,20 @@ private struct SearchPageScanner {
   private var bytesRead = 0
   private var scannedLines = 0
 
+  init(
+    root: RegisteredRoot,
+    limits: ProjectFileLimits,
+    query: String,
+    caseSensitive: Bool,
+    limit: Int
+  ) {
+    self.root = root
+    self.limits = limits
+    self.query = query
+    self.caseSensitive = caseSensitive
+    self.limit = limit
+  }
+
   mutating func scan(paths: [String], from start: SearchPosition) throws -> SearchScanPage {
     guard start.candidateIndex < paths.count else {
       return page(start: start, continuation: nil)
