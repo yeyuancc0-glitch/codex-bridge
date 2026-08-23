@@ -34,6 +34,9 @@
       guard GetFileSizeEx(handle, &size) else {
         throw PathSecurityError.readFailed(Int32(GetLastError()))
       }
+      guard size.QuadPart >= 0, UInt64(size.QuadPart) <= UInt64(Int.max) else {
+        throw PathSecurityError.readFailed(ERROR_FILE_INVALID)
+      }
       let byteCount = Int(size.QuadPart)
       guard byteCount <= maximumBytes else {
         throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
@@ -84,14 +87,33 @@
           continue
         }
 
-        let identity = try RegisteredRoot(capturing: directoryURL(current)).identity
+        guard attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0 else {
+          throw PathSecurityError.unsupportedFileType
+        }
+        let identity = try WindowsSecureMutationSupport.identity(of: handle)
         guard identity.volumeID == root.identity.volumeID else {
           throw PathSecurityError.pathEscapeBlocked
         }
         guard identity == resolved.identity else {
           throw PathSecurityError.fileIdentityChanged
         }
-        return try reopenForRead(path: current)
+
+        let reopened = try reopenForRead(path: current)
+        do {
+          let reopenedAttributes = try attributes(of: reopened)
+          guard reopenedAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+            reopenedAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0
+          else {
+            throw PathSecurityError.pathEscapeBlocked
+          }
+          guard try WindowsSecureMutationSupport.identity(of: reopened) == resolved.identity else {
+            throw PathSecurityError.fileIdentityChanged
+          }
+          return reopened
+        } catch {
+          CloseHandle(reopened)
+          throw error
+        }
       }
       throw PathSecurityError.pathDoesNotExist
     }
@@ -169,25 +191,36 @@
     }
 
     private static func relativeComponents(fullPath: String, base: String) throws -> [String] {
-      let loweredFull = fullPath.lowercased()
-      let loweredBase = base.lowercased()
-      guard loweredFull.hasPrefix(loweredBase) else {
+      let normalizedFull = windowsNormalized(fullPath)
+      let normalizedBase = windowsNormalized(base)
+      guard
+        let prefix = normalizedFull.range(
+          of: normalizedBase + "\\",
+          options: [.anchored, .caseInsensitive]
+        )
+      else {
         throw PathSecurityError.invalidRelativePath("resolved outside registered root")
       }
-      var rest = String(fullPath.dropFirst(base.count))
-      while rest.hasPrefix("/") || rest.hasPrefix("\\") { rest.removeFirst() }
+      let rest = normalizedFull[prefix.upperBound...]
       guard !rest.isEmpty else {
         throw PathSecurityError.invalidRelativePath("empty")
       }
-      let parts = rest.split(whereSeparator: { $0 == "/" || $0 == "\\" }).map(String.init)
-      guard !parts.isEmpty else {
-        throw PathSecurityError.invalidRelativePath("empty")
-      }
+      let parts = rest.split(separator: "\\", omittingEmptySubsequences: false).map(String.init)
+      try WindowsSecurePathRules.validate(components: parts)
       return parts
     }
 
-    private static func directoryURL(_ path: String) -> URL {
-      URL(fileURLWithPath: path, isDirectory: true)
+    private static func windowsNormalized(_ path: String) -> String {
+      var value = path.replacingOccurrences(of: "/", with: "\\")
+      if value.hasPrefix("\\\\?\\") { value = String(value.dropFirst(4)) }
+      if value.count >= 4, value.hasPrefix("\\"),
+        value[value.index(after: value.startIndex)].isLetter,
+        value[value.index(value.startIndex, offsetBy: 2)] == ":"
+      {
+        value.removeFirst()
+      }
+      while value.count > 3, value.hasSuffix("\\") { value.removeLast() }
+      return value
     }
   }
 #endif

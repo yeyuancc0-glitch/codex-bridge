@@ -54,15 +54,56 @@ public struct ProjectPathResolver: Sendable {
   }
 
   private func contains(_ candidate: String) -> Bool {
-    candidate == root.canonicalPath || candidate.hasPrefix(root.canonicalPath + "/")
+    #if os(Windows)
+      let rootPath = windowsNormalized(root.canonicalPath)
+      let candidatePath = windowsNormalized(candidate)
+      if candidatePath.caseInsensitiveCompare(rootPath) == .orderedSame { return true }
+      return candidatePath.range(
+        of: rootPath + "\\",
+        options: [.anchored, .caseInsensitive]
+      ) != nil
+    #else
+      return candidate == root.canonicalPath || candidate.hasPrefix(root.canonicalPath + "/")
+    #endif
   }
 
   private func relativePathForResolvedURL(_ url: URL) throws -> SecureRelativePath {
-    let start = url.path.index(url.path.startIndex, offsetBy: root.canonicalPath.count)
-    let suffix = url.path[start...].drop(while: { $0 == "/" })
-    guard !suffix.isEmpty else {
-      throw PathSecurityError.unsupportedFileType
-    }
-    return try SecureRelativePath(String(suffix))
+    #if os(Windows)
+      let rootPath = windowsNormalized(root.canonicalPath)
+      let candidatePath = windowsNormalized(url.path)
+      guard
+        let rootRange = candidatePath.range(
+          of: rootPath,
+          options: [.anchored, .caseInsensitive]
+        )
+      else {
+        throw PathSecurityError.pathEscapeBlocked
+      }
+      let suffix = candidatePath[rootRange.upperBound...].drop(while: { $0 == "\\" })
+      guard !suffix.isEmpty else { throw PathSecurityError.unsupportedFileType }
+      return try SecureRelativePath(String(suffix).replacingOccurrences(of: "\\", with: "/"))
+    #else
+      let start = url.path.index(url.path.startIndex, offsetBy: root.canonicalPath.count)
+      let suffix = url.path[start...].drop(while: { $0 == "/" })
+      guard !suffix.isEmpty else {
+        throw PathSecurityError.unsupportedFileType
+      }
+      return try SecureRelativePath(String(suffix))
+    #endif
   }
+
+  #if os(Windows)
+    private func windowsNormalized(_ path: String) -> String {
+      var value = path.replacingOccurrences(of: "/", with: "\\")
+      if value.hasPrefix("\\\\?\\") { value = String(value.dropFirst(4)) }
+      if value.count >= 4, value.hasPrefix("\\"),
+        value[value.index(after: value.startIndex)].isLetter,
+        value[value.index(value.startIndex, offsetBy: 2)] == ":"
+      {
+        value.removeFirst()
+      }
+      while value.count > 3, value.hasSuffix("\\") { value.removeLast() }
+      return value
+    }
+  #endif
 }

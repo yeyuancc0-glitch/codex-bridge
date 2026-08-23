@@ -50,6 +50,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgePlatform",
     "BridgePlatformWindows",
     "BridgeProcessRuntime",
+    "BridgeSecurity",
   ]
 
   private static let darwinOnlyModules: Set<String> = [

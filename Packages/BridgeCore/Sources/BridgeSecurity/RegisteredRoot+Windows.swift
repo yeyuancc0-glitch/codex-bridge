@@ -26,7 +26,7 @@
       defer { CloseHandle(handle) }
 
       let finalPath = try Self.finalPath(handle: handle)
-      guard !finalPath.hasPrefix("\\\\?\\UNC\\") else {
+      guard !finalPath.hasPrefix("\\\\") else {
         throw PathSecurityError.rootUnavailable
       }
       canonicalPath = finalPath
@@ -48,10 +48,16 @@
 
     /// Identity re-capture used by ProjectPathResolver after path validation.
     static func readIdentity(atPath path: String) throws -> FileSystemIdentity {
-      try RegisteredRoot(capturing: URL(fileURLWithPath: path, isDirectory: true)).identity
+      let handle = try openExisting(path: path)
+      defer { CloseHandle(handle) }
+      return try identity(handle: handle)
     }
 
     private static func openDirectory(path: String) throws -> HANDLE {
+      try openExisting(path: path)
+    }
+
+    private static func openExisting(path: String) throws -> HANDLE {
       var wide = Array(path.utf16)
       wide.append(0)
       let handle = wide.withUnsafeBufferPointer { buffer in
@@ -61,7 +67,7 @@
           DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
           nil,
           DWORD(OPEN_EXISTING),
-          DWORD(FILE_FLAG_BACKUP_SEMANTICS),
+          DWORD(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT),
           nil
         )
       }
@@ -75,12 +81,15 @@
       let flags = DWORD(FILE_NAME_NORMALIZED | VOLUME_NAME_DOS)
       let length = GetFinalPathNameByHandleW(handle, nil, 0, flags)
       guard length > 0 else { throw PathSecurityError.readFailed(Int32(GetLastError())) }
-      var buffer = [WCHAR](repeating: 0, count: Int(length))
-      let written = GetFinalPathNameByHandleW(handle, &buffer, length, flags)
-      guard written > 0, written <= length else {
+      var buffer = [WCHAR](repeating: 0, count: Int(length) + 1)
+      let written = GetFinalPathNameByHandleW(handle, &buffer, DWORD(buffer.count), flags)
+      guard written > 0, written < DWORD(buffer.count) else {
         throw PathSecurityError.readFailed(Int32(GetLastError()))
       }
       let value = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
+      if value.hasPrefix("\\\\?\\UNC\\") {
+        return "\\\\" + String(value.dropFirst(8))
+      }
       if value.hasPrefix("\\\\?\\") {
         return String(value.dropFirst(4))
       }
