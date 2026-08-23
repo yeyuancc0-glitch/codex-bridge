@@ -1,5 +1,6 @@
 #if canImport(WinSDK)
   import BridgePlatform
+  import BridgePlatformWindows
   import Foundation
   import WinSDK
 
@@ -31,7 +32,6 @@
       static let errorMoreData = DWORD(234)
       static let errorNoData = DWORD(232)
       static let errorBrokenPipe = DWORD(109)
-      static let tokenQuery = DWORD(0x0008)
       static let sddlRevision = DWORD(1)
       static let bufferSize = DWORD(256 * 1_024)
     }
@@ -157,16 +157,15 @@
         )
       else { return nil }
       defer { CloseHandle(process) }
-      guard let sidString = userSIDString(ofProcess: process) else { return nil }
+      guard let sidString = WindowsSecurity.processUserSIDString(process) else { return nil }
       defer { LocalFree(UnsafeMutableRawPointer(sidString.pointer)) }
       return sidString.value
     }
 
     static func currentUserSDLSecurityDescriptor() -> SecurityDescriptorBox? {
-      guard let sidString = currentUserSIDString() else { return nil }
+      guard let sidString = WindowsSecurity.currentUserSIDString() else { return nil }
       defer { LocalFree(UnsafeMutableRawPointer(sidString.pointer)) }
-      // D:P(...) = protected DACL; GA = GENERIC_ALL; SY = LOCAL SYSTEM.
-      let sddl = "D:P(A;;GA;;;\(sidString.value))(A;;GA;;;SY)"
+      let sddl = WindowsSecurity.ownerOnlySDDL(userSID: sidString.value)
       var descriptor: UnsafeMutableRawPointer?
       let sddlWide = WideBuffer(sddl)
       guard
@@ -180,52 +179,7 @@
       return SecurityDescriptorBox(pointer: descriptor)
     }
 
-    private static func currentUserSIDString() -> WideStringBox? {
-      var token: HANDLE?
-      guard OpenProcessToken(GetCurrentProcess(), Constants.tokenQuery, &token), let token
-      else { return nil }
-      defer { CloseHandle(token) }
-      return stringSid(ofToken: token)
-    }
-
-    private static func userSIDString(ofProcess process: HANDLE) -> WideStringBox? {
-      var token: HANDLE?
-      guard OpenProcessToken(process, Constants.tokenQuery, &token), let token else {
-        return nil
-      }
-      defer { CloseHandle(token) }
-      return stringSid(ofToken: token)
-    }
-
-    private static func stringSid(ofToken token: HANDLE) -> WideStringBox? {
-      var returnedLength = DWORD(0)
-      _ = GetTokenInformation(
-        token, TOKEN_INFORMATION_CLASS(rawValue: TokenUser.rawValue), nil, 0, &returnedLength
-      )
-      guard returnedLength > 0 else { return nil }
-      let buffer = UnsafeMutableRawPointer.allocate(
-        byteCount: Int(returnedLength),
-        alignment: MemoryLayout<Int>.alignment
-      )
-      defer { buffer.deallocate() }
-      guard
-        GetTokenInformation(
-          token,
-          TOKEN_INFORMATION_CLASS(rawValue: TokenUser.rawValue),
-          buffer,
-          returnedLength,
-          &returnedLength
-        )
-      else { return nil }
-      let userSID = buffer.assumingMemoryBound(to: TOKEN_USER.self).User.Sid
-      var stringSID: UnsafeMutablePointer<WCHAR>?
-      guard let userSID, ConvertSidToStringSidW(userSID, &stringSID), let stringSID else {
-        return nil
-      }
-      return WideStringBox(pointer: stringSID)
-    }
-
-    final class Connection: @unchecked Sendable, IPCEventSink {
+    final class Connection: @unchecked Sendable {
       let id = UUID()
 
       let peerUserSID: String
@@ -361,45 +315,6 @@
 
     deinit {
       LocalFree(pointer)
-    }
-  }
-
-  final class WideStringBox: @unchecked Sendable {
-    let pointer: UnsafeMutablePointer<WCHAR>
-
-    init(pointer: UnsafeMutablePointer<WCHAR>) {
-      self.pointer = pointer
-    }
-
-    var value: String {
-      var units: [UInt16] = []
-      var index = 0
-      while pointer[index] != 0 {
-        units.append(UInt16(pointer[index]))
-        index += 1
-      }
-      return String(decoding: units, as: UTF16.self)
-    }
-
-    deinit {
-      LocalFree(UnsafeMutableRawPointer(pointer))
-    }
-  }
-
-  final class WideBuffer: @unchecked Sendable {
-    let pointer: UnsafeMutablePointer<WCHAR>
-
-    init(_ value: String) {
-      var units = Array(value.utf16)
-      units.append(0)
-      pointer = .allocate(capacity: units.count)
-      units.withUnsafeBufferPointer { buffer in
-        pointer.initialize(from: buffer.baseAddress!, count: buffer.count)
-      }
-    }
-
-    deinit {
-      pointer.deallocate()
     }
   }
 #endif

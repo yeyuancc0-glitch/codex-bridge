@@ -262,7 +262,7 @@ let sharedTestTargets: [Target] = [
     .target(name: "BridgeDomain"),
     .target(
       name: "BridgeIPCWindows",
-      dependencies: ["BridgePlatform"]
+      dependencies: ["BridgePlatform", "BridgePlatformWindows"]
     ),
     .target(
       name: "BridgePlatformWindows",
@@ -323,6 +323,10 @@ let sharedTestTargets: [Target] = [
     .testTarget(
       name: "BridgeIPCWindowsTests",
       dependencies: ["BridgeIPCWindows", "BridgePlatform"]
+    ),
+    .testTarget(
+      name: "BridgePlatformWindowsTests",
+      dependencies: ["BridgePlatformWindows"]
     ),
   ]
 
