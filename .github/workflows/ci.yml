@@ -224,7 +224,8 @@ jobs:
           Add-Content $env:GITHUB_ENV "BRIDGE_WINDOWS_PROCESS_FIXTURE=$fixture"
 
       - name: Test shared closure
-        run: swift test --skip-build --package-path Packages/BridgeCore
+        shell: pwsh
+        run: .github/scripts/run-windows-test-targets.ps1
 
   windows-arm64:
     name: Windows ARM64 shared closure
@@ -332,4 +333,5 @@ jobs:
           Add-Content $env:GITHUB_ENV "BRIDGE_WINDOWS_PROCESS_FIXTURE=$fixture"
 
       - name: Test shared closure
-        run: swift test --skip-build --package-path Packages/BridgeCore
+        shell: pwsh
+        run: .github/scripts/run-windows-test-targets.ps1
