@@ -85,7 +85,7 @@ import XCTest
       let path = "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
       let server = WindowsNamedPipeServer(path: path) { _, request in
         onRequest(request)
-        request
+        return request
       }
       server.start()
       defer { server.stop() }
