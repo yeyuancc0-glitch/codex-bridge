@@ -43,6 +43,19 @@ public sealed class GoldenContractTests
         Assert.Equal(200, payload.GetProperty("limit").GetInt32());
     }
 
+    [Fact]
+    public void McpClientMutationUsesSwiftFieldAndModeValues()
+    {
+        var request = BridgeServiceCodec.Request(
+            "set_mcp_client_exposure_mode",
+            new { ClientId = "qwen.studio", ExposureMode = "read-only" },
+            "request-mcp-client");
+        var base64 = request.GetProperty("payload").GetString();
+        var payload = JsonDocument.Parse(Convert.FromBase64String(base64!)).RootElement;
+        Assert.Equal("qwen.studio", payload.GetProperty("client_id").GetString());
+        Assert.Equal("read-only", payload.GetProperty("exposure_mode").GetString());
+    }
+
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
 
     private static void AssertJsonEqual(JsonElement expected, JsonElement actual)

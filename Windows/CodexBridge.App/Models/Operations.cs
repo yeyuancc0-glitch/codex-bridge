@@ -69,5 +69,12 @@ public sealed record McpClientStatus(
     int ActiveSessionCount,
     string? LastConnectedAt)
 {
+    public bool CanToggleEnabled => ClientId == "qwen.studio";
+    public bool CanManageCredential => CanToggleEnabled && Enabled;
+    public bool CanChangeExposure => Enabled;
+    public string EnabledAction => Enabled ? "停用" : "启用";
+    public string ExposureAction => ExposureMode == "full" ? "改为只读" : "允许完整工具";
     public string State => Enabled ? $"{ExposureMode} · {ActiveSessionCount} 个活动会话" : "已停用";
 }
+
+public sealed record McpClientConfigurationExport(string ConfigurationJson);
