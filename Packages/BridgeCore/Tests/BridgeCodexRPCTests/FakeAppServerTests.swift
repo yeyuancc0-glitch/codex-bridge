@@ -349,29 +349,34 @@ final class FakeAppServerTests: XCTestCase {
     XCTAssertEqual(killError, ESRCH)
   }
 
-  func testEventOverflowTerminatesInsteadOfDroppingApprovalRequests() async throws {
+  func testEventBufferBackpressuresInsteadOfDroppingApprovalRequests() async throws {
     let client = makeClient(
       script: #"""
         IFS= read -r request
         printf '%s\n' '{"id":"approval-1","method":"future/requestApproval"}'
         printf '%s\n' '{"id":"approval-2","method":"future/requestApproval"}'
+        printf '%s\n' '{"id":1,"result":{"ok":true}}'
         sleep 2
         """#,
       eventBufferLimit: 1
     )
     addTeardownBlock { await client.stop() }
     try await client.start()
-
-    do {
-      _ = try await client.performRequest(
-        method: "test/overflow", params: .object([:]))
-      XCTFail("Expected event buffer overflow")
-    } catch {
-      XCTAssertEqual(
-        error as? CodexRPCError,
-        .eventBufferOverflow(maximumEvents: 1)
-      )
+    let response = Task {
+      try await client.performRequest(method: "test/backpressure", params: .object([:]))
     }
+    try await Task.sleep(for: .milliseconds(50))
+    var events = client.events.makeAsyncIterator()
+
+    guard case .serverRequest(let first)? = await events.next(),
+      case .serverRequest(let second)? = await events.next()
+    else {
+      return XCTFail("Expected both approval requests")
+    }
+    XCTAssertEqual(first.id, .string("approval-1"))
+    XCTAssertEqual(second.id, .string("approval-2"))
+    let responseValue = try await response.value
+    XCTAssertEqual(responseValue.objectValue?["ok"], .bool(true))
   }
 
   private func makeClient(

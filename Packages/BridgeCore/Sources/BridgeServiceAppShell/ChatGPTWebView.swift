@@ -22,6 +22,7 @@ public struct ChatGPTWebView: NSViewRepresentable {
     // Reuse an existing instance (kept alive by the app model) so that leaving
     // and re-entering this view does not reload the page or lose its state.
     if let existing = webViewReference {
+      Self.attachDelegates(to: existing, coordinator: context.coordinator)
       return existing
     }
 
@@ -34,8 +35,7 @@ public struct ChatGPTWebView: NSViewRepresentable {
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.customUserAgent =
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
-    webView.navigationDelegate = context.coordinator
-    webView.uiDelegate = context.coordinator
+    Self.attachDelegates(to: webView, coordinator: context.coordinator)
     webView.allowsBackForwardNavigationGestures = true
 
     let request = URLRequest(
@@ -52,7 +52,14 @@ public struct ChatGPTWebView: NSViewRepresentable {
     return webView
   }
 
-  public func updateNSView(_ nsView: WKWebView, context: Context) {}
+  public func updateNSView(_ nsView: WKWebView, context: Context) {
+    Self.attachDelegates(to: nsView, coordinator: context.coordinator)
+  }
+
+  static func attachDelegates(to webView: WKWebView, coordinator: Coordinator) {
+    webView.navigationDelegate = coordinator
+    webView.uiDelegate = coordinator
+  }
 
   public final class Coordinator: NSObject, WKDownloadDelegate, WKNavigationDelegate, WKUIDelegate {
     let parent: ChatGPTWebView

@@ -4,6 +4,17 @@ import XCTest
 @testable import BridgeServiceAppShell
 
 final class ChatGPTWebViewDelegateTests: XCTestCase {
+  @MainActor
+  func testReusedWebViewReattachesCurrentCoordinatorDelegates() {
+    let webView = WKWebView()
+    let coordinator = ChatGPTWebView.Coordinator(ChatGPTWebView())
+
+    ChatGPTWebView.attachDelegates(to: webView, coordinator: coordinator)
+
+    XCTAssertTrue(webView.navigationDelegate === coordinator)
+    XCTAssertTrue(webView.uiDelegate === coordinator)
+  }
+
   private let policySelector = NSSelectorFromString(
     "webView:decidePolicyForNavigationAction:preferences:decisionHandler:")
   private let createWebViewSelector = NSSelectorFromString(

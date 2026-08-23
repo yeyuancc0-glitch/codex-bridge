@@ -35,7 +35,8 @@ public struct MCPServiceServerFactory: Sendable {
         + "Threads and models before submitting work. Task submission never grants local "
         + "approval; the user must approve execution in the macOS App. When submitting a task, "
         + "omit execution_model, execution_effort, supervisor_model and supervisor_effort unless "
-        + "the user explicitly requested a per-task override; Codex Bridge owns those defaults.",
+        + "the user explicitly requested a per-task override; Codex Bridge owns those defaults. "
+        + "Set model_override to true only for such an explicit request.",
       capabilities: .init(tools: .init(listChanged: false)),
       configuration: .default
     )

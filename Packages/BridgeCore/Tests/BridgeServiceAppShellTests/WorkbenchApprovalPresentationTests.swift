@@ -50,4 +50,30 @@ final class WorkbenchApprovalPresentationTests: XCTestCase {
       CodexTranscriptToolPresentation(title: "已运行命令", systemImage: "terminal")
     )
   }
+
+  func testTaskModelPresentationUsesActualTaskValues() {
+    XCTAssertEqual(
+      WorkbenchTaskModelPresentation.label(
+        modelID: "gpt-5.6-luna",
+        effort: "max",
+        displayName: "Luna"
+      ),
+      "Luna · Max"
+    )
+    XCTAssertEqual(
+      WorkbenchTaskModelPresentation.label(
+        modelID: "gpt-5.6-sol",
+        effort: "high",
+        displayName: nil
+      ),
+      "gpt-5.6-sol · High"
+    )
+    XCTAssertNil(
+      WorkbenchTaskModelPresentation.label(
+        modelID: nil,
+        effort: "high",
+        displayName: nil
+      )
+    )
+  }
 }

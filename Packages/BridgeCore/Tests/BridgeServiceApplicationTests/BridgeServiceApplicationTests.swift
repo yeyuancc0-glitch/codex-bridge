@@ -67,6 +67,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(snapshot.status, ServiceTaskStatus.running.rawValue)
     XCTAssertEqual(snapshot.source, ServiceTaskSource.mcpClient.rawValue)
     XCTAssertEqual(snapshot.sourceClientID, MCPClientID.chatGPT.rawValue)
+    XCTAssertEqual(snapshot.executionModel, "execution-model")
+    XCTAssertEqual(snapshot.executionEffort, "high")
     XCTAssertEqual(
       snapshot.recentEvents.map(\.kind),
       [
@@ -220,6 +222,64 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(task.executionEffort, configured.executionEffort)
     XCTAssertEqual(task.supervisorModel, configured.supervisorModel)
     XCTAssertEqual(task.supervisorEffort, configured.supervisorEffort)
+  }
+
+  func testUnmarkedSubmissionModelFieldsCannotOverrideBridgeDefaults() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    try await application.setServiceModelPreferences(
+      ServiceModelPreferences(
+        executionModel: "execution-model",
+        executionEffort: "high",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium"
+      ),
+      deadline: deadline
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the Bridge defaults despite stale client fields.",
+        executionModel: "gpt-5.6-luna",
+        executionEffort: "medium"
+      ),
+      deadline: deadline
+    )
+
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.executionModel, "execution-model")
+    XCTAssertEqual(task.executionEffort, "high")
+  }
+
+  func testMarkedSubmissionModelOverrideWinsOverBridgeDefaults() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the explicitly requested task model.",
+        executionModel: "gpt-5.6-luna",
+        executionEffort: "medium",
+        modelOverride: true
+      ),
+      deadline: deadline
+    )
+
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.executionModel, "gpt-5.6-luna")
+    XCTAssertEqual(task.executionEffort, "medium")
   }
 
   func testConfiguredAccessModeAndFastModeApplyToSubmittedTasks() async throws {

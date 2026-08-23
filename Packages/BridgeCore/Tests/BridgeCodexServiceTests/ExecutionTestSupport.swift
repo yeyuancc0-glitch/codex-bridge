@@ -90,6 +90,8 @@ func submitStartedExecutionTask(
 func makeExecutionManager(
   script: String,
   maximumConcurrentSessions: Int = 4,
+  eventBufferLimit: Int = 256,
+  outputBufferLimit: Int = 128,
   synchronizeCodexProjects: Bool = false
 ) -> ExecutionManager {
   ExecutionManager(
@@ -102,10 +104,59 @@ func makeExecutionManager(
       requestTimeoutNanoseconds: 3_000_000_000,
       turnStartTimeoutNanoseconds: 3_000_000_000,
       maximumSessionNanoseconds: 10_000_000_000,
+      eventBufferLimit: eventBufferLimit,
+      outputBufferLimit: outputBufferLimit,
       maximumConcurrentSessions: maximumConcurrentSessions,
       synchronizeCodexProjects: synchronizeCodexProjects
     )
   )
+}
+
+func burstyOutputExecutionScript(root: String) -> String {
+  let thread = executionThreadJSON(id: "thread-burst", root: root)
+  let turn = executionTurnJSON(id: "turn-burst", status: "inProgress")
+  let completed = executionTurnJSON(
+    id: "turn-burst",
+    status: "completed",
+    items: #"[{"type":"agentMessage","text":"alpha beta gamma"}]"#
+  )
+  return executionCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r thread_start
+      printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-burst","turn":__TURN__}}'
+      printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-burst","turnId":"turn-burst","itemId":"message-burst","delta":"alpha "}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-burst","turnId":"turn-burst","itemId":"message-burst","delta":"beta "}}'
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"threadId":"thread-burst","turnId":"turn-burst","itemId":"message-burst","delta":"gamma"}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-burst","turn":__COMPLETED__}}'
+      sleep 1
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
+    .replacingOccurrences(of: "__COMPLETED__", with: completed)
+}
+
+func unexpectedExitExecutionScript(root: String) -> String {
+  let thread = executionThreadJSON(id: "thread-exit", root: root)
+  let turn = executionTurnJSON(id: "turn-exit", status: "inProgress")
+  return executionCommonHandshake()
+    + "\n"
+      + #"""
+      IFS= read -r thread_start
+      printf '%s\n' '{"id":3,"result":{"thread":__THREAD__,"model":"fixture-model","modelProvider":"fixture","reasoningEffort":"medium","cwd":"__ROOT__","sandbox":{"type":"workspaceWrite","networkAccess":false,"writableRoots":["__ROOT__"],"excludeSlashTmp":false,"excludeTmpdirEnvVar":false},"approvalPolicy":"on-request","approvalsReviewer":"user","serviceTier":null}}'
+      IFS= read -r turn_start
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-exit","turn":__TURN__}}'
+      printf '%s\n' '{"id":4,"result":{"turn":__TURN__}}'
+      sleep 0.05
+      exit 23
+      """#
+    .replacingOccurrences(of: "__ROOT__", with: root)
+    .replacingOccurrences(of: "__THREAD__", with: thread)
+    .replacingOccurrences(of: "__TURN__", with: turn)
 }
 
 func waitForTask(

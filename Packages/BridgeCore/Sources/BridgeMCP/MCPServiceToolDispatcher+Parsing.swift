@@ -14,7 +14,7 @@ extension MCPServiceToolDispatcher {
       arguments,
       allowed: [
         "project_id", "prompt", "thread_id", "execution_model", "execution_effort",
-        "skill_name",
+        "model_override", "skill_name",
         "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
         "acceptance_criteria", "client_request_id",
       ],
@@ -64,6 +64,7 @@ extension MCPServiceToolDispatcher {
         "execution_effort",
         maximumUTF8Bytes: 64
       ),
+      modelOverride: try values.optionalBoolean("model_override"),
       supervisorModel: supervisorModel,
       supervisorEffort: supervisorEffort,
       permissionMode: permissionMode,

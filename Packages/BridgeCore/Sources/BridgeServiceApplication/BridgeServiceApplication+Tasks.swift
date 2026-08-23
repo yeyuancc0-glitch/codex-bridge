@@ -33,6 +33,8 @@ extension BridgeServiceApplication {
       source: task.source.rawValue,
       sourceClientID: task.sourceClientID.isEmpty ? nil : task.sourceClientID,
       status: task.state.status.rawValue,
+      executionModel: task.executionModel,
+      executionEffort: task.executionEffort,
       threadID: task.state.codexThreadID,
       turnID: task.state.codexTurnID,
       currentStep: task.state.currentStep,

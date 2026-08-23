@@ -4,6 +4,69 @@ import BridgeServiceCore
 import XCTest
 
 final class ExecutionManagerTests: XCTestCase {
+  func testBurstOutputBackpressuresWithoutLosingContentOrCompletion() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-burst-backpressure"
+    )
+    let manager = makeExecutionManager(
+      script: burstyOutputExecutionScript(root: fixture.root.path),
+      eventBufferLimit: 1,
+      outputBufferLimit: 1
+    )
+    addTeardownBlock { await manager.shutdown() }
+
+    let handle = try await manager.start(
+      try ExecutionRequest(task: task, project: fixture.project)
+    )
+    try await Task.sleep(for: .milliseconds(100))
+
+    var content = ""
+    var completion: String?
+    for await event in handle.events {
+      switch event {
+      case .agentMessageDelta(let delta):
+        content.append(delta.delta)
+      case .completed(let summary):
+        completion = summary
+      default:
+        break
+      }
+    }
+
+    XCTAssertEqual(content, "alpha beta gamma")
+    XCTAssertEqual(completion, "alpha beta gamma")
+  }
+
+  func testUnexpectedProcessExitPreservesSpecificFailureReason() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-process-exit"
+    )
+    let manager = makeExecutionManager(
+      script: unexpectedExitExecutionScript(root: fixture.root.path)
+    )
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: manager
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    _ = try await coordinator.start(taskID: task.id)
+    let failed = try await waitForTask(fixture, taskID: task.id) {
+      $0.state.status == .failed
+    }
+
+    XCTAssertEqual(failed.state.failureCode, "codex_process_exited")
+    XCTAssertEqual(
+      failed.state.resultSummary,
+      "Codex app-server exited before the active Turn completed (status 23)."
+    )
+  }
+
   func testMissingCodexProjectIsCreatedBeforeStartingAssignedThread() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(

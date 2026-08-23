@@ -15,7 +15,7 @@ extension ExecutionSession {
         itemID: delta.itemId,
         delta: delta.delta
       )
-      yield(.agentMessageDelta(event))
+      await yield(.agentMessageDelta(event))
     } catch {
       await fail(
         code: "invalid_agent_delta",
@@ -38,7 +38,7 @@ extension ExecutionSession {
         itemID: delta.itemId,
         delta: delta.delta
       )
-      yield(.reasoningDelta(event))
+      await yield(.reasoningDelta(event))
     } catch {
       await fail(
         code: "invalid_reasoning_delta",
@@ -58,7 +58,7 @@ extension ExecutionSession {
       guard Self.isSafeWireIdentifier(progress.itemId) else {
         throw ExecutionServiceError.protocolViolation("tool call progress item")
       }
-      yield(.toolCallProgress(itemID: progress.itemId, progress: progress.message))
+      await yield(.toolCallProgress(itemID: progress.itemId, progress: progress.message))
     } catch {
       await fail(
         code: "invalid_tool_progress",

@@ -179,6 +179,15 @@ final class MCPServiceExposureTests: XCTestCase {
       modelDescription?.stringValue?.localizedCaseInsensitiveContains("Codex Bridge default")
         == true
     )
+    XCTAssertEqual(
+      properties?["model_override"]?.objectValue?["type"]?.arrayValue,
+      [
+        .string("boolean"), .string("null"),
+      ])
+    XCTAssertTrue(
+      properties?["model_override"]?.objectValue?["description"]?.stringValue?
+        .localizedCaseInsensitiveContains("explicitly requests") == true
+    )
   }
 
   private func outputProperties(

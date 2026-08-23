@@ -18,7 +18,7 @@ public actor RPCDispatcher {
     let eventBufferLimit = max(1, eventBufferLimit)
     let pair = AsyncStream.makeStream(
       of: AppServerEvent.self,
-      bufferingPolicy: .bufferingNewest(eventBufferLimit)
+      bufferingPolicy: .bufferingOldest(eventBufferLimit)
     )
     events = pair.stream
     eventContinuation = pair.continuation
@@ -47,8 +47,8 @@ public actor RPCDispatcher {
     }
   }
 
-  func receive(_ value: JSONValue) throws {
-    try dispatch(RPCEnvelope.decode(value))
+  func receive(_ value: JSONValue) async throws {
+    try await dispatch(RPCEnvelope.decode(value))
   }
 
   func terminate(with error: CodexRPCError) {
@@ -63,6 +63,10 @@ public actor RPCDispatcher {
       request.continuation.resume(throwing: error)
     }
     eventContinuation.finish()
+  }
+
+  func terminalFailure() -> CodexRPCError? {
+    terminalError
   }
 
   private func beginRequest(
@@ -113,7 +117,7 @@ public actor RPCDispatcher {
     )
   }
 
-  private func dispatch(_ message: InboundRPCMessage) throws {
+  private func dispatch(_ message: InboundRPCMessage) async throws {
     switch message {
     case .response(let id, let result):
       complete(id: id, with: .success(result))
@@ -125,22 +129,23 @@ public actor RPCDispatcher {
         )
       )
     case .notification(let notification):
-      try publish(.notification(notification))
+      try await publish(.notification(notification))
     case .serverRequest(let request):
-      try publish(.serverRequest(request))
+      try await publish(.serverRequest(request))
     }
   }
 
-  private func publish(_ event: AppServerEvent) throws {
-    switch eventContinuation.yield(event) {
-    case .enqueued:
-      return
-    case .dropped:
-      throw CodexRPCError.eventBufferOverflow(maximumEvents: eventBufferLimit)
-    case .terminated:
-      return
-    @unknown default:
-      throw CodexRPCError.eventBufferOverflow(maximumEvents: eventBufferLimit)
+  private func publish(_ event: AppServerEvent) async throws {
+    while true {
+      try Task.checkCancellation()
+      switch eventContinuation.yield(event) {
+      case .enqueued, .terminated:
+        return
+      case .dropped:
+        try await Task.sleep(for: .milliseconds(1))
+      @unknown default:
+        throw CodexRPCError.eventBufferOverflow(maximumEvents: eventBufferLimit)
+      }
     }
   }
 

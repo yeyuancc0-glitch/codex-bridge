@@ -81,7 +81,7 @@ extension ExecutionSession {
         response: prepared.response,
         request: prepared.request
       )
-      yield(.approvalRequested(prepared.request))
+      await yield(.approvalRequested(prepared.request))
     } catch {
       await rejectInvalidApproval(rpcRequest)
     }

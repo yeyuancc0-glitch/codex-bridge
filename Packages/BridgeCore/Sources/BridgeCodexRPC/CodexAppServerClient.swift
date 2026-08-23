@@ -334,6 +334,10 @@ public actor CodexAppServerClient {
     await process.stderrSnapshot()
   }
 
+  package func terminalFailure() async -> CodexRPCError? {
+    await dispatcher.terminalFailure()
+  }
+
   public func stop() async {
     guard lifecycle != .stopped else { return }
     lifecycle = .stopped
