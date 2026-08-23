@@ -69,7 +69,7 @@
           appVersion: appVersion,
           dataRootURL: options.dataRootURL,
           clientInfo: .bridge(version: appVersion),
-          appBundleURL: nil,
+          appBundleURL: ServiceBundleLocator.currentAppBundleURL(),
           legacyDataRootURL: nil
         ),
         secretStore: WindowsCredentialSecretStore()

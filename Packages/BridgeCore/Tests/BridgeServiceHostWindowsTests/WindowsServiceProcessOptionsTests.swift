@@ -5,6 +5,12 @@
   @testable import BridgeServiceHost
 
   final class WindowsServiceProcessOptionsTests: XCTestCase {
+    func testServiceBundleLocatorReturnsCurrentExecutableDirectory() throws {
+      let directory = try XCTUnwrap(ServiceBundleLocator.currentAppBundleURL())
+      XCTAssertTrue(directory.isFileURL)
+      XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+    }
+
     func testParsesForegroundAndLocalDataRoot() throws {
       let options = try WindowsServiceProcessOptions.parse([
         "--foreground", "--data-root", "C:\\Users\\bridge\\Service",

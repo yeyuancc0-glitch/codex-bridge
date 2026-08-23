@@ -33,7 +33,31 @@ import Foundation
     }
   }
 #else
-  public enum ServiceBundleLocator {
-    public static func currentAppBundleURL() -> URL? { nil }
-  }
+  #if canImport(WinSDK)
+    import WinSDK
+
+    public enum ServiceBundleLocator {
+      public static func currentAppBundleURL() -> URL? {
+        var capacity = 512
+        while capacity <= 32_768 {
+          var buffer = [WCHAR](repeating: 0, count: capacity)
+          let bufferCount = DWORD(buffer.count)
+          let length = GetModuleFileNameW(nil, &buffer, bufferCount)
+          guard length > 0 else { return nil }
+          if length < DWORD(buffer.count - 1) {
+            let path = buffer.withUnsafeBufferPointer {
+              String(decodingCString: $0.baseAddress!, as: UTF16.self)
+            }
+            return URL(fileURLWithPath: path).deletingLastPathComponent()
+          }
+          capacity *= 2
+        }
+        return nil
+      }
+    }
+  #else
+    public enum ServiceBundleLocator {
+      public static func currentAppBundleURL() -> URL? { nil }
+    }
+  #endif
 #endif

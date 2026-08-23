@@ -14,6 +14,13 @@ enum DefaultServiceTunnelManagerFactory {
         runtimeDirectory: runtimeDirectory,
         secretStore: secretStore
       )
+    #elseif canImport(WinSDK)
+      guard let appBundleURL else { return UnavailableServiceTunnelManagerFactory() }
+      return BundledWindowsServiceTunnelManagerFactory(
+        installDirectory: appBundleURL,
+        runtimeDirectory: runtimeDirectory,
+        secretStore: secretStore
+      )
     #else
       return UnavailableServiceTunnelManagerFactory()
     #endif

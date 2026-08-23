@@ -431,6 +431,7 @@ let sharedTestTargets: [Target] = [
         "WindowsTunnelPathRules.swift",
         "WindowsTunnelPlatform.swift",
         "WindowsTunnelProcessLauncher.swift",
+        "WindowsTunnelBundle.swift",
       ]
     ),
     .testTarget(
