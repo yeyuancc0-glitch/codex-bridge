@@ -84,9 +84,6 @@
       guard attributes.FileAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0 else {
         throw WindowsTunnelBundleError.reparsePointDenied
       }
-      guard try finalPath(handle: handle).caseInsensitiveCompare(path) == .orderedSame else {
-        throw WindowsTunnelBundleError.reparsePointDenied
-      }
       guard attributes.FileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0,
         GetFileType(handle) == DWORD(FILE_TYPE_DISK)
       else {
@@ -125,22 +122,6 @@
         throw WindowsTunnelBundleError.invalidDigest
       }
       return value
-    }
-
-    private static func finalPath(handle: HANDLE) throws -> String {
-      let flags = DWORD(FILE_NAME_NORMALIZED | VOLUME_NAME_DOS)
-      let length = GetFinalPathNameByHandleW(handle, nil, 0, flags)
-      guard length > 0 else {
-        throw WindowsTunnelBundleError.unavailable(Int32(GetLastError()))
-      }
-      var buffer = [WCHAR](repeating: 0, count: Int(length) + 1)
-      let bufferCount = DWORD(buffer.count)
-      let written = GetFinalPathNameByHandleW(handle, &buffer, bufferCount, flags)
-      guard written > 0, written < bufferCount else {
-        throw WindowsTunnelBundleError.unavailable(Int32(GetLastError()))
-      }
-      let value = String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
-      return value.hasPrefix("\\\\?\\") ? String(value.dropFirst(4)) : value
     }
 
     private static func join(_ parent: String, _ child: String) -> String {
