@@ -9,10 +9,12 @@
   /// conversation subscription registry. Disconnect always tears it down.
   public final class WindowsServiceController: @unchecked Sendable {
     private let composition: ServiceComposition
+    private let pipePath: String
     private let state = NSLock()
     private var controllers: [Foundation.UUID: BridgeServiceXPCController] = [:]
 
     private lazy var server = WindowsNamedPipeServer(
+      path: pipePath,
       handler: { [weak self] connectionID, request in
         await self?.dispatch(request, connectionID: connectionID)
           ?? Self.unavailableResponse()
@@ -22,8 +24,9 @@
       }
     )
 
-    public init(composition: ServiceComposition) {
+    public init(composition: ServiceComposition) throws {
       self.composition = composition
+      pipePath = try WindowsPipeEndpoint.currentUserPath()
     }
 
     public func start() {

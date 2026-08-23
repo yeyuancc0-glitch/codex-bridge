@@ -1,10 +1,19 @@
 using System.Text.Json;
+using System.Security.Principal;
 using CodexBridge.Ipc;
 
 namespace BridgeIPC.Client.Tests;
 
 public sealed class ProtocolValidationTests
 {
+    [Fact]
+    public void PipeNameIsScopedToCurrentWindowsUser()
+    {
+        Assert.True(OperatingSystem.IsWindows());
+        var sid = WindowsIdentity.GetCurrent().User!.Value;
+        Assert.Equal($"org.codexbridge.service.{sid}", NamedPipeBridgeClient.PipeName);
+    }
+
     [Theory]
     [InlineData("{\"type\":\"unknown\",\"message\":{}}")]
     [InlineData("{\"type\":\"response\",\"message\":[]}")]

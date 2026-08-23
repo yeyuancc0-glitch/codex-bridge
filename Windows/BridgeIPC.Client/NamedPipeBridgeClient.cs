@@ -1,13 +1,14 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.IO.Pipes;
+using System.Security.Principal;
 using System.Text.Json;
 
 namespace CodexBridge.Ipc;
 
 public sealed class NamedPipeBridgeClient : IAsyncDisposable
 {
-    public const string PipeName = "org.codexbridge.service";
+    public static string PipeName { get; } = CurrentUserPipeName();
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -177,5 +178,21 @@ public sealed class NamedPipeBridgeClient : IAsyncDisposable
                 completion.TrySetException(error);
             }
         }
+    }
+
+    private static string CurrentUserPipeName()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("Bridge Named Pipe IPC requires Windows.");
+        }
+        var sid = WindowsIdentity.GetCurrent().User?.Value;
+        if (string.IsNullOrEmpty(sid) || !sid.StartsWith("S-1-", StringComparison.Ordinal) ||
+            sid.Length > 184 || sid.Any(character =>
+                !char.IsAsciiLetterOrDigit(character) && character != '-'))
+        {
+            throw new InvalidOperationException("The current Windows user SID is unavailable.");
+        }
+        return $"org.codexbridge.service.{sid}";
     }
 }

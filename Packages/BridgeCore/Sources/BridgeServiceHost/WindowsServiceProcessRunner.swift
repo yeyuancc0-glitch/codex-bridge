@@ -75,7 +75,7 @@
         secretStore: WindowsCredentialSecretStore()
       )
       let endpoint = try await composition.startLocalMCP()
-      let controller = WindowsServiceController(composition: composition)
+      let controller = try WindowsServiceController(composition: composition)
       controller.start()
       if options.foreground {
         FileHandle.standardOutput.write(

@@ -1,4 +1,5 @@
 #if canImport(WinSDK)
+  import BridgeIPCWindows
   import BridgePlatformWindows
   import Foundation
   import WinSDK
@@ -36,7 +37,8 @@
         lpSecurityDescriptor: descriptor,
         bInheritHandle: false
       )
-      let name = WideBuffer("Local\\org.codexbridge.service")
+      let identifier = try WindowsPipeEndpoint.currentUserIdentifier()
+      let name = WideBuffer("Global\\org.codexbridge.service.\(identifier)")
       guard let mutex = CreateMutexW(&security, false, name.pointer) else {
         throw WindowsServiceInstanceLeaseError.unavailable(Int32(GetLastError()))
       }
