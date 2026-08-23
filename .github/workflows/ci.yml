@@ -185,11 +185,33 @@ jobs:
         with:
           arch: x64
 
+      - name: Install SQLite development package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $triplet = 'x64-windows'
+          $vcpkg = (Get-Command vcpkg.exe -ErrorAction Stop).Source
+          & $vcpkg install "sqlite3:$triplet" --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg sqlite3 install failed with exit code $LASTEXITCODE" }
+          $installed = Join-Path (Split-Path $vcpkg) "installed\$triplet"
+          $include = Join-Path $installed 'include'
+          $library = Join-Path $installed 'lib'
+          $runtime = Join-Path $installed 'bin'
+          if (-not (Test-Path (Join-Path $include 'sqlite3.h'))) { throw "sqlite3.h not found under $include" }
+          if (-not (Test-Path (Join-Path $library 'sqlite3.lib'))) { throw "sqlite3.lib not found under $library" }
+          Add-Content $env:GITHUB_ENV "SQLITE_INCLUDE_DIR=$include"
+          Add-Content $env:GITHUB_ENV "SQLITE_LIBRARY_DIR=$library"
+          Add-Content $env:GITHUB_PATH $runtime
+
       - name: Record toolchain
         run: swift --version
 
       - name: Build shared closure with tests
-        run: swift build --build-tests --package-path Packages/BridgeCore
+        shell: pwsh
+        run: >-
+          swift build --build-tests --package-path Packages/BridgeCore
+          -Xcc "-I$env:SQLITE_INCLUDE_DIR"
+          -Xlinker "/LIBPATH:$env:SQLITE_LIBRARY_DIR"
 
       - name: Require native process fixture
         shell: pwsh
@@ -271,11 +293,33 @@ jobs:
         with:
           arch: arm64
 
+      - name: Install SQLite development package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $triplet = 'arm64-windows'
+          $vcpkg = (Get-Command vcpkg.exe -ErrorAction Stop).Source
+          & $vcpkg install "sqlite3:$triplet" --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg sqlite3 install failed with exit code $LASTEXITCODE" }
+          $installed = Join-Path (Split-Path $vcpkg) "installed\$triplet"
+          $include = Join-Path $installed 'include'
+          $library = Join-Path $installed 'lib'
+          $runtime = Join-Path $installed 'bin'
+          if (-not (Test-Path (Join-Path $include 'sqlite3.h'))) { throw "sqlite3.h not found under $include" }
+          if (-not (Test-Path (Join-Path $library 'sqlite3.lib'))) { throw "sqlite3.lib not found under $library" }
+          Add-Content $env:GITHUB_ENV "SQLITE_INCLUDE_DIR=$include"
+          Add-Content $env:GITHUB_ENV "SQLITE_LIBRARY_DIR=$library"
+          Add-Content $env:GITHUB_PATH $runtime
+
       - name: Record toolchain
         run: swift --version
 
       - name: Build shared closure with tests
-        run: swift build --build-tests --package-path Packages/BridgeCore
+        shell: pwsh
+        run: >-
+          swift build --build-tests --package-path Packages/BridgeCore
+          -Xcc "-I$env:SQLITE_INCLUDE_DIR"
+          -Xlinker "/LIBPATH:$env:SQLITE_LIBRARY_DIR"
 
       - name: Require native process fixture
         shell: pwsh
