@@ -7,6 +7,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Windows.Storage.Pickers;
 using WinRT.Interop;
 
 namespace CodexBridge.App;
@@ -176,6 +177,88 @@ public sealed partial class MainWindow : Window
             "list_direct_approvals",
             null,
             _lifetime.Token)).Approvals;
+    }
+
+    private async void AddProjectClick(object sender, RoutedEventArgs args)
+    {
+        var picker = new FolderPicker();
+        picker.FileTypeFilter.Add("*");
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null || string.IsNullOrWhiteSpace(folder.Path))
+        {
+            return;
+        }
+
+        var name = new TextBox
+        {
+            Header = "项目名称",
+            Text = folder.Name,
+            MaxLength = 120,
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "注册本机项目",
+            Content = name,
+            PrimaryButtonText = "注册",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+        var projectName = name.Text.Trim();
+        if (projectName.Length == 0)
+        {
+            PresentError("项目名称不能为空");
+            return;
+        }
+        await ResolveWithStatusAsync(async () =>
+        {
+            await _connection.SendAsync<JsonElement>(
+                "register_project",
+                new
+                {
+                    name = projectName,
+                    absolutePath = folder.Path,
+                    readPermission = "allowed",
+                    writePermission = "requiresLocalApproval",
+                    networkPermission = "denied",
+                },
+                _lifetime.Token);
+            await LoadSectionAsync("projects");
+        });
+    }
+
+    private async void RemoveProjectClick(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button { DataContext: ProjectSummary project })
+        {
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            Title = $"移除“{project.Name}”？",
+            Content = "只移除 Bridge 注册信息，不会删除项目文件。",
+            PrimaryButtonText = "移除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+        await ResolveWithStatusAsync(async () =>
+        {
+            await _connection.SendAsync<JsonElement>(
+                "remove_project",
+                new { project.ProjectId },
+                _lifetime.Token);
+            await LoadSectionAsync("projects");
+        });
     }
 
     private async void ApproveCodexApprovalClick(object sender, RoutedEventArgs args)
