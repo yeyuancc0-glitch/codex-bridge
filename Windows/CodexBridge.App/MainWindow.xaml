@@ -73,10 +73,130 @@
                         </Border>
                     </StackPanel>
                 </ScrollViewer>
-                <Grid x:Name="Placeholder" Visibility="Collapsed" Padding="32,24">
+                <Grid x:Name="TasksView" Visibility="Collapsed" Padding="32,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="任务" Style="{ThemeResource TitleTextBlockStyle}" Margin="0,0,0,16" />
+                    <ListView x:Name="TaskList" Grid.Row="1" SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="8" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding TaskId}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{Binding Status}" />
+                                    <TextBlock Grid.Column="2" Text="{Binding CurrentStep}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="3" Text="{Binding UpdatedAt}" FontFamily="Consolas" Opacity="0.72" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+                <Grid x:Name="ProjectsView" Visibility="Collapsed" Padding="32,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="已注册项目" Style="{ThemeResource TitleTextBlockStyle}" Margin="0,0,0,16" />
+                    <ListView x:Name="ProjectList" Grid.Row="1" SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="8" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Name}" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ProjectId}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="2" Text="{Binding Capabilities.Summary}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+                <ScrollViewer x:Name="ApprovalsView" Visibility="Collapsed" Padding="32,24">
+                    <StackPanel Spacing="24">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="本机审批" Style="{ThemeResource TitleTextBlockStyle}" />
+                            <TextBlock Text="批准只发送给本机 Service；App 不生成或持久化授权。" Opacity="0.72" />
+                        </StackPanel>
+                        <ListView x:Name="ApprovalList" SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{Binding Title}" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding DisplayCommand}" FontFamily="Consolas" Opacity="0.72" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="拒绝" DataContext="{Binding}" Click="DenyCodexApprovalClick" />
+                                        <Button Grid.Column="2" Content="批准" DataContext="{Binding}" Click="ApproveCodexApprovalClick" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock Text="Direct 审批" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                        <ListView x:Name="DirectApprovalList" SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Padding="8" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="{Binding Kind}" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                                            <TextBlock Text="{Binding ProjectId}" FontFamily="Consolas" Opacity="0.72" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="拒绝" DataContext="{Binding}" Click="DenyDirectApprovalClick" />
+                                        <Button Grid.Column="2" Content="批准" DataContext="{Binding}" Click="ApproveDirectApprovalClick" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </ScrollViewer>
+                <Grid x:Name="ConnectionsView" Visibility="Collapsed" Padding="32,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="MCP Clients" Style="{ThemeResource TitleTextBlockStyle}" Margin="0,0,0,16" />
+                    <ListView x:Name="McpClientList" Grid.Row="1" SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="8" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding DisplayName}" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ClientId}" FontFamily="Consolas" />
+                                    <TextBlock Grid.Column="2" Text="{Binding State}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+                <Grid x:Name="SettingsView" Visibility="Collapsed" Padding="32,24">
                     <StackPanel Spacing="8">
-                        <TextBlock x:Name="PlaceholderTitle" Style="{ThemeResource TitleTextBlockStyle}" />
-                        <TextBlock Text="该视图将直接读取 Bridge Service 的权威状态。" Opacity="0.72" />
+                        <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}" />
+                        <TextBlock Text="模型、Supervisor、Tunnel 与 StartupTask 设置将在此处读取并写回 Service。" Opacity="0.72" />
                     </StackPanel>
                 </Grid>
                 <views:WorkbenchHost x:Name="Workbench" Visibility="Collapsed" />

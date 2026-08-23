@@ -1,5 +1,7 @@
 using CodexBridge.App.Models;
 using CodexBridge.App.Services;
+using CodexBridge.Ipc;
+using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -36,7 +38,9 @@ public sealed partial class MainWindow : Window
             var response = await _connection.GetStatusAsync(_lifetime.Token);
             PresentStatus(response);
         }
-        catch (Exception error) when (error is IOException or TimeoutException or OperationCanceledException)
+        catch (Exception error) when (
+            error is IOException or TimeoutException or OperationCanceledException or
+            BridgeProtocolException or BridgeRemoteException)
         {
             PresentDisconnected();
         }
@@ -53,27 +57,26 @@ public sealed partial class MainWindow : Window
         var tag = args.IsSettingsSelected
             ? "settings"
             : (args.SelectedItemContainer?.Tag as string ?? "overview");
-        Overview.Visibility = tag == "overview" ? Visibility.Visible : Visibility.Collapsed;
-        Placeholder.Visibility = tag is not ("overview" or "workbench")
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        if (tag == "workbench")
+        SetSectionVisibility(tag);
+        try
         {
-            await Workbench.ActivateAsync();
+            if (tag == "workbench")
+            {
+                await Workbench.ActivateAsync();
+            }
+            else
+            {
+                Workbench.Deactivate();
+            }
+            await LoadSectionAsync(tag);
         }
-        else
+        catch (OperationCanceledException)
         {
-            Workbench.Deactivate();
         }
-        PlaceholderTitle.Text = tag switch
+        catch (Exception error)
         {
-            "tasks" => "任务",
-            "projects" => "项目",
-            "approvals" => "审批",
-            "connections" => "连接",
-            "settings" => "设置",
-            _ => string.Empty,
-        };
+            PresentError(error.Message);
+        }
     }
 
     private void PresentStatus(ServiceStatusResponse response)
@@ -101,6 +104,122 @@ public sealed partial class MainWindow : Window
         TunnelState.Text = "不可用";
         ApprovalSummary.Text = "启动 Codex Bridge Service 后重试。";
         Degradations.ItemsSource = null;
+    }
+
+    private void PresentError(string message)
+    {
+        ConnectionIndicator.Fill = new SolidColorBrush(Colors.DarkOrange);
+        ConnectionLabel.Text = message;
+    }
+
+    private void SetSectionVisibility(string tag)
+    {
+        Overview.Visibility = tag == "overview" ? Visibility.Visible : Visibility.Collapsed;
+        TasksView.Visibility = tag == "tasks" ? Visibility.Visible : Visibility.Collapsed;
+        ProjectsView.Visibility = tag == "projects" ? Visibility.Visible : Visibility.Collapsed;
+        ApprovalsView.Visibility = tag == "approvals" ? Visibility.Visible : Visibility.Collapsed;
+        ConnectionsView.Visibility = tag == "connections" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsView.Visibility = tag == "settings" ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async Task LoadSectionAsync(string tag)
+    {
+        switch (tag)
+        {
+            case "tasks":
+                TaskList.ItemsSource = (await _connection.SendAsync<TaskListResponse>(
+                    "list_tasks",
+                    new { projectId = (string?)null, limit = 100 },
+                    _lifetime.Token)).Tasks;
+                break;
+            case "projects":
+                ProjectList.ItemsSource = (await _connection.SendAsync<ProjectListResponse>(
+                    "list_projects",
+                    null,
+                    _lifetime.Token)).Projects;
+                break;
+            case "approvals":
+                await LoadApprovalsAsync();
+                break;
+            case "connections":
+                McpClientList.ItemsSource = (await _connection.SendAsync<McpClientListResponse>(
+                    "list_mcp_clients",
+                    null,
+                    _lifetime.Token)).Clients;
+                break;
+        }
+    }
+
+    private async Task LoadApprovalsAsync()
+    {
+        ApprovalList.ItemsSource = (await _connection.SendAsync<ApprovalListResponse>(
+            "list_approvals",
+            new { taskId = (string?)null },
+            _lifetime.Token)).Approvals;
+        DirectApprovalList.ItemsSource = (await _connection.SendAsync<DirectApprovalListResponse>(
+            "list_direct_approvals",
+            null,
+            _lifetime.Token)).Approvals;
+    }
+
+    private async void ApproveCodexApprovalClick(object sender, RoutedEventArgs args)
+    {
+        await ResolveWithStatusAsync(() => ResolveCodexApprovalAsync(sender, "allow"));
+    }
+
+    private async void DenyCodexApprovalClick(object sender, RoutedEventArgs args)
+    {
+        await ResolveWithStatusAsync(() => ResolveCodexApprovalAsync(sender, "deny"));
+    }
+
+    private async Task ResolveCodexApprovalAsync(object sender, string decision)
+    {
+        if (sender is not Button { DataContext: ApprovalSummary approval })
+        {
+            return;
+        }
+        await _connection.SendAsync<JsonElement>(
+            "resolve_approval",
+            new { approval.TaskId, approval.ApprovalId, decision },
+            _lifetime.Token);
+        await LoadApprovalsAsync();
+    }
+
+    private async void ApproveDirectApprovalClick(object sender, RoutedEventArgs args)
+    {
+        await ResolveWithStatusAsync(
+            () => ResolveDirectApprovalAsync(sender, "approve_direct_approval"));
+    }
+
+    private async void DenyDirectApprovalClick(object sender, RoutedEventArgs args)
+    {
+        await ResolveWithStatusAsync(
+            () => ResolveDirectApprovalAsync(sender, "deny_direct_approval"));
+    }
+
+    private async Task ResolveDirectApprovalAsync(object sender, string operation)
+    {
+        if (sender is not Button { DataContext: DirectApprovalSummary approval })
+        {
+            return;
+        }
+        await _connection.SendAsync<JsonElement>(
+            operation,
+            new { approval.ApprovalId },
+            _lifetime.Token);
+        await LoadApprovalsAsync();
+    }
+
+    private async Task ResolveWithStatusAsync(Func<Task> operation)
+    {
+        try
+        {
+            await operation();
+        }
+        catch (Exception error)
+        {
+            PresentError(error.Message);
+        }
     }
 
     private async void WindowClosed(object sender, WindowEventArgs args)
