@@ -116,6 +116,20 @@ public sealed class GoldenContractTests
         Assert.Equal("denied", payload.GetProperty("network_permission").GetString());
     }
 
+    [Fact]
+    public void TaskConversationRequestUsesSwiftCursorFields()
+    {
+        var request = BridgeServiceCodec.Request(
+            "get_task_conversation",
+            new { TaskId = "task-fixture", BeforeMessageId = (long?)null, Limit = 200 },
+            "request-task-conversation");
+        var base64 = request.GetProperty("payload").GetString();
+        var payload = JsonDocument.Parse(Convert.FromBase64String(base64!)).RootElement;
+        Assert.Equal("task-fixture", payload.GetProperty("task_id").GetString());
+        Assert.False(payload.TryGetProperty("before_message_id", out _));
+        Assert.Equal(200, payload.GetProperty("limit").GetInt32());
+    }
+
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
 
     private static void AssertJsonEqual(JsonElement expected, JsonElement actual)

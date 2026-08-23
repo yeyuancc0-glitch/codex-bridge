@@ -90,13 +90,15 @@
                                     <ColumnDefinition Width="180" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding TaskId}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="1" Text="{Binding Status}" />
                                     <TextBlock Grid.Column="2" Text="{Binding CurrentStep}" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="3" Text="{Binding UpdatedAt}" FontFamily="Consolas" Opacity="0.72" />
-                                    <Button Grid.Column="4" Content="停止" DataContext="{Binding}" Click="StopTaskClick" />
-                                    <Button Grid.Column="5" Content="删除" DataContext="{Binding}" Click="DeleteTaskClick" />
+                                    <Button Grid.Column="4" Content="详情" DataContext="{Binding}" Click="TaskDetailsClick" />
+                                    <Button Grid.Column="5" Content="停止" DataContext="{Binding}" Click="StopTaskClick" />
+                                    <Button Grid.Column="6" Content="删除" DataContext="{Binding}" Click="DeleteTaskClick" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

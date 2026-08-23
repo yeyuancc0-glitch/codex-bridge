@@ -107,3 +107,18 @@ public sealed record ModelPreferences(
     bool FastModeEnabled);
 
 public sealed record SelectionOption(string Value, string Label);
+
+public sealed record TaskConversationPage(
+    string TaskId,
+    IReadOnlyList<TaskConversationMessage> Messages);
+
+public sealed record TaskConversationMessage(
+    long? MessageId,
+    string Key,
+    string Role,
+    string Kind,
+    string Content,
+    string? ToolName,
+    string? ToolStatus,
+    string? ToolArguments,
+    bool Final);
