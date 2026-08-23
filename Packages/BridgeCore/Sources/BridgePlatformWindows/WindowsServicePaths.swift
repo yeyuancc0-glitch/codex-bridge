@@ -98,10 +98,8 @@
       guard let currentUser = WindowsSecurity.currentUserSIDString() else {
         throw PathsError.unavailable(Int32(GetLastError()))
       }
-      // Explicitly set the owner as well as the protected DACL. Elevated
-      // tokens can otherwise default ownership to Administrators even though
-      // the creating process belongs to the interactive user.
-      let sddl = "O:\(currentUser.value)D:P(A;;FA;;;\(currentUser.value))(A;;FA;;;SY)"
+      // Elevated tokens can otherwise default ownership to Administrators.
+      let sddl = WindowsSecurity.ownerOnlySDDL(userSID: currentUser.value)
       var descriptor: UnsafeMutableRawPointer?
       let sddlWide = WideBuffer(sddl)
       guard

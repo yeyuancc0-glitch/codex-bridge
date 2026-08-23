@@ -38,7 +38,7 @@
       let handle = try Self.openDirectory(path: path)
       do {
         try Self.validateDirectory(handle: handle, path: path)
-        try Self.validateProtectedDACL(handle: handle)
+        try Self.validateProtectedDACL(path: path)
         self.path = path
         self.handle = handle
         identity = try Self.identity(of: handle)
@@ -59,7 +59,7 @@
         let handle = try Self.openDirectory(path: path)
         do {
           try Self.validateDirectory(handle: handle, path: path)
-          try Self.validateProtectedDACL(handle: handle)
+          try Self.validateProtectedDACL(path: path)
           self.path = path
           self.handle = handle
           identity = try Self.identity(of: handle)
@@ -81,7 +81,7 @@
       guard Self.isCurrentDirectory(handle: handle, path: path, expected: identity) else {
         return false
       }
-      return (try? Self.validateProtectedDACL(handle: handle)) != nil
+      return (try? Self.validateProtectedDACL(path: path)) != nil
     }
 
     public func contains(
@@ -98,7 +98,7 @@
         (try? Self.validateDirectory(handle: entryHandle, path: entryPath)) != nil,
         let entryIdentity = try? Self.identity(of: entryHandle),
         entryIdentity == directory.identity,
-        (try? Self.validateProtectedDACL(handle: entryHandle)) != nil
+        (try? Self.validateProtectedDACL(path: entryPath)) != nil
       else {
         return false
       }
@@ -376,94 +376,10 @@
       return value.hasPrefix("\\\\?\\") ? String(value.dropFirst(4)) : value
     }
 
-    private static func validateProtectedDACL(handle: HANDLE) throws {
-      guard let currentUser = WindowsSecurity.currentUserSIDString() else {
-        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
-      }
-      var descriptor: UnsafeMutableRawPointer?
-      var owner: PSID?
-      var dacl: PACL?
-      let result = GetSecurityInfo(
-        handle,
-        SE_OBJECT_TYPE(rawValue: Int32(1)),
-        DWORD(0x0000_0001 | 0x0000_0004),  // owner + DACL security information
-        &owner,
-        nil,
-        &dacl,
-        nil,
-        &descriptor
-      )
-      guard result == DWORD(ERROR_SUCCESS), let descriptor else {
-        throw WindowsSecureRunDirectoryError.unavailable(Int32(result))
-      }
-      defer { LocalFree(descriptor) }
-
-      var daclPresent = WindowsBool(false)
-      var daclDefaulted = WindowsBool(false)
-      guard GetSecurityDescriptorDacl(descriptor, &daclPresent, &dacl, &daclDefaulted),
-        daclPresent.boolValue,
-        let dacl
-      else {
+    private static func validateProtectedDACL(path: String) throws {
+      guard (try? WindowsServicePaths.hasTrustedProtection(path)) == true else {
         throw WindowsSecureRunDirectoryError.insecureDirectory
       }
-
-      var control = SECURITY_DESCRIPTOR_CONTROL()
-      var revision = DWORD(0)
-      guard GetSecurityDescriptorControl(descriptor, &control, &revision),
-        (control & UInt16(0x1000)) != 0  // SE_DACL_PROTECTED
-      else {
-        throw WindowsSecureRunDirectoryError.insecureDirectory
-      }
-
-      var sizeInfo = ACL_SIZE_INFORMATION()
-      guard
-        GetAclInformation(
-          dacl,
-          &sizeInfo,
-          DWORD(MemoryLayout<ACL_SIZE_INFORMATION>.size),
-          AclSizeInformation
-        )
-      else {
-        throw WindowsSecureRunDirectoryError.unavailable(Int32(GetLastError()))
-      }
-
-      var hasCurrentUser = false
-      var hasSystem = false
-      for index in 0..<sizeInfo.AceCount {
-        var acePointer: UnsafeMutableRawPointer?
-        guard GetAce(dacl, DWORD(index), &acePointer), let acePointer else {
-          throw WindowsSecureRunDirectoryError.insecureDirectory
-        }
-        let header = acePointer.load(as: ACE_HEADER.self)
-        guard header.AceType == 0 else {
-          throw WindowsSecureRunDirectoryError.insecureDirectory
-        }
-        let sid = acePointer.advanced(by: 8)
-        guard let sidValue = Self.sidString(sid) else {
-          throw WindowsSecureRunDirectoryError.insecureDirectory
-        }
-        guard sidValue == currentUser.value || sidValue == "S-1-5-18" else {
-          throw WindowsSecureRunDirectoryError.insecureDirectory
-        }
-        hasCurrentUser = hasCurrentUser || sidValue == currentUser.value
-        hasSystem = hasSystem || sidValue == "S-1-5-18"
-      }
-      guard hasCurrentUser, hasSystem else {
-        throw WindowsSecureRunDirectoryError.insecureDirectory
-      }
-    }
-
-    private static func sidString(_ sid: PSID) -> String? {
-      var pointer: UnsafeMutablePointer<WCHAR>?
-      guard ConvertSidToStringSidW(sid, &pointer), let pointer else { return nil }
-      defer { LocalFree(UnsafeMutableRawPointer(pointer)) }
-      var units: [UInt16] = []
-      var index = 0
-      while pointer[index] != 0 {
-        units.append(UInt16(pointer[index]))
-        index += 1
-      }
-      return String(decoding: units, as: UTF16.self)
     }
 
     private static func createProtectedDirectory(path: String) throws {

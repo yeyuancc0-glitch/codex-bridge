@@ -69,7 +69,7 @@
       let verifier = WindowsTunnelHelperVerifier()
       XCTAssertThrowsError(
         try verifier.verify(
-          executable: URL(fileURLWithPath: "tunnel-client.exe"),
+          executable: URL(string: "tunnel-client.exe")!,
           expectedSHA256: String(repeating: "0", count: 64)
         )
       ) { error in

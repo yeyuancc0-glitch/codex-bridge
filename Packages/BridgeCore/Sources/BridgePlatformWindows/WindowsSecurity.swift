@@ -52,7 +52,7 @@
     /// SDDL protected DACL granting full access only to the given user and
     /// LOCAL SYSTEM.
     public static func ownerOnlySDDL(userSID: String) -> String {
-      "D:P(A;;GA;;;\(userSID))(A;;GA;;;SY)"
+      "O:\(userSID)D:P(A;;GA;;;\(userSID))(A;;GA;;;SY)"
     }
   }
 
