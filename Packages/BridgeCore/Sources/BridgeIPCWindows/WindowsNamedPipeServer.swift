@@ -93,9 +93,11 @@
         notifyDisconnected(connection.id)
       }
       // Wake an accept thread parked in ConnectNamedPipe with a throwaway
-      // local client so it observes `stopped` promptly.
+      // local client. A shutdown wakeup never enters the framed protocol or
+      // waits for a response, so stop cannot deadlock behind its own server.
       if shouldWakeAcceptLoop {
-        _ = try? WindowsNamedPipeClient.transact(path: path, request: Data())
+        Self.wakeAcceptLoop(path: path)
+        waitForAcceptLoopExit()
       }
     }
 
@@ -190,6 +192,35 @@
           continue
         }
         register(Connection(handle: instance, server: self, peerUserSID: peerSID))
+      }
+    }
+
+    private func waitForAcceptLoopExit() {
+      let deadline = Date().addingTimeInterval(2)
+      state.lock()
+      defer { state.unlock() }
+      while acceptLoopRunning {
+        if !state.wait(until: deadline) { return }
+      }
+    }
+
+    private static func wakeAcceptLoop(path: String) {
+      let name = WideBuffer(path)
+      for attempt in 0..<100 {
+        let handle = CreateFileW(
+          name.pointer,
+          DWORD(0xC000_0000),
+          0,
+          nil,
+          DWORD(OPEN_EXISTING),
+          0,
+          nil
+        )
+        if let handle, handle != INVALID_HANDLE_VALUE {
+          CloseHandle(handle)
+          return
+        }
+        if attempt < 99 { Thread.sleep(forTimeInterval: 0.02) }
       }
     }
 

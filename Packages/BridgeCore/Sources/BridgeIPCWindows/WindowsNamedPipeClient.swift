@@ -61,7 +61,6 @@
         handle = nil
         ioLock.unlock()
         guard let current else { return }
-        FlushFileBuffers(current)
         CloseHandle(current)
       }
 
