@@ -71,8 +71,12 @@ $arguments = @(
 & dotnet @arguments
 if ($LASTEXITCODE -ne 0) { throw "MSIX build failed with exit code $LASTEXITCODE" }
 
-$packages = Get-ChildItem -Path 'Windows/CodexBridge.App' -Recurse -Filter '*.msix'
+$architectureSuffix = "_$($Architecture.ToLowerInvariant()).msix"
+$packages = @(Get-ChildItem -Path 'Windows/CodexBridge.App' -Recurse -Filter '*.msix' | Where-Object {
+  $_.Name.StartsWith('CodexBridge.App_', [System.StringComparison]::OrdinalIgnoreCase) -and
+    $_.Name.EndsWith($architectureSuffix, [System.StringComparison]::OrdinalIgnoreCase)
+})
 if ($packages.Count -ne 1) {
-  throw "Expected one unsigned MSIX, found $($packages.Count)."
+  throw "Expected one unsigned Codex Bridge $Architecture MSIX, found $($packages.Count)."
 }
 Write-Host "Unsigned MSIX: $($packages[0].FullName)"
