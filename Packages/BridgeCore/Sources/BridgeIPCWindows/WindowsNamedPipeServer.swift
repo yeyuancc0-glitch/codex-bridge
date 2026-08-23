@@ -328,11 +328,12 @@
         var received = DWORD(0)
         var offset = 0
         while offset < buffer.count {
+          let remaining = buffer.count - offset
           let ok = buffer.withUnsafeMutableBytes { raw in
             ReadFile(
               handle,
               raw.baseAddress!.advanced(by: offset),
-              DWORD(buffer.count - offset),
+              DWORD(remaining),
               &received,
               nil
             )

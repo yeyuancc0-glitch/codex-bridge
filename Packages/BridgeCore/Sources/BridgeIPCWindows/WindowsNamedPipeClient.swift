@@ -1,5 +1,6 @@
 #if canImport(WinSDK)
   import BridgePlatform
+  import BridgePlatformWindows
   import Foundation
   import WinSDK
 
