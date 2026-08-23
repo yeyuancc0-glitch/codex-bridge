@@ -401,7 +401,7 @@
       var daclPresent = WindowsBool(false)
       var daclDefaulted = WindowsBool(false)
       guard GetSecurityDescriptorDacl(descriptor, &daclPresent, &dacl, &daclDefaulted),
-        daclPresent,
+        daclPresent.boolValue,
         let dacl
       else {
         throw WindowsSecureRunDirectoryError.insecureDirectory

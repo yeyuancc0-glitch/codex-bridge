@@ -67,7 +67,8 @@
       var present = WindowsBool(false)
       var defaulted = WindowsBool(false)
       var dacl: PACL?
-      guard GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted), let dacl
+      guard GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted),
+        present.boolValue, let dacl
       else {
         throw XCTSkip("GetSecurityDescriptorDacl failed: \(GetLastError())")
       }
@@ -93,7 +94,7 @@
       let flags = DWORD(0x3)
       let linkWide = WideBuffer(link)
       let targetWide = WideBuffer(target)
-      return CreateSymbolicLinkW(linkWide.pointer, targetWide.pointer, flags) != 0
+      return CreateSymbolicLinkW(linkWide.pointer, targetWide.pointer, flags)
     }
 
     private func withTempRoot(_ body: (URL) throws -> Void) rethrows {

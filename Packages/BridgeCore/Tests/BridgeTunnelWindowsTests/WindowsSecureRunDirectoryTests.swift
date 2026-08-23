@@ -97,7 +97,9 @@
       var present = WindowsBool(false)
       var defaulted = WindowsBool(false)
       var dacl: PACL?
-      guard GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted), let dacl else {
+      guard GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted),
+        present.boolValue, let dacl
+      else {
         throw XCTSkip("GetSecurityDescriptorDacl failed: \(GetLastError())")
       }
       let pathWide = WideBuffer(path)
@@ -123,7 +125,7 @@
         linkWide.pointer,
         targetWide.pointer,
         DWORD(0x2)  // SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
-      ) != 0
+      )
     }
   }
 #endif

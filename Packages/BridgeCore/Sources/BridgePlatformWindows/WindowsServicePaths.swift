@@ -190,7 +190,7 @@
       var control = SECURITY_DESCRIPTOR_CONTROL()
       var revision = DWORD(0)
       _ = GetSecurityDescriptorControl(descriptorPointer, &control, &revision)
-      guard daclPresent, let dacl,
+      guard daclPresent.boolValue, let dacl,
         (control & UInt16(Constants.seDaclProtected)) != 0
       else { return false }
 
