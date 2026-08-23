@@ -67,6 +67,10 @@
 
       public func send(_ message: Data) throws {
         let frame = try BridgeWireFraming.frame(message)
+        try sendRawFrameForTesting(frame)
+      }
+
+      func sendRawFrameForTesting(_ frame: Data) throws {
         try frame.withUnsafeBytes { bytes in
           var offset = 0
           while offset < frame.count {

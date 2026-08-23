@@ -2,7 +2,7 @@ import BridgePlatform
 import XCTest
 
 #if canImport(WinSDK)
-  import BridgeIPCWindows
+  @testable import BridgeIPCWindows
   import WinSDK
 
   final class WindowsNamedPipeTransportTests: XCTestCase {
@@ -14,8 +14,8 @@ import XCTest
     }
 
     func testConcurrentClientsAreIndependent() async throws {
-      try withEchoServer { path in
-        await withTaskGroup(of: Void.self) { group in
+      try await withAsyncEchoServer { path in
+        try await withThrowingTaskGroup(of: Void.self) { group in
           for index in 0..<4 {
             group.addTask {
               let request = Data("request-\(index)".utf8)
@@ -23,6 +23,7 @@ import XCTest
               XCTAssertEqual(response, request)
             }
           }
+          try await group.waitForAll()
         }
       }
     }
@@ -33,7 +34,7 @@ import XCTest
         defer { connection.close() }
         var hostile = Data([0xFF, 0xFF, 0xFF, 0xFF])
         hostile.append(Data("payload that must never be read".utf8))
-        try connection.send(hostile)
+        try connection.sendRawFrameForTesting(hostile)
         // The server must drop us without echoing anything readable.
         XCTAssertThrowsError(try connection.receive())
       }
@@ -73,6 +74,18 @@ import XCTest
       server.start()
       defer { server.stop() }
       try body(path)
+    }
+
+    private func withAsyncEchoServer(
+      _ body: (String) async throws -> Void
+    ) async rethrows {
+      let path = "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
+      let server = WindowsNamedPipeServer(path: path) { _, request in
+        request
+      }
+      server.start()
+      defer { server.stop() }
+      try await body(path)
     }
   }
 #endif
