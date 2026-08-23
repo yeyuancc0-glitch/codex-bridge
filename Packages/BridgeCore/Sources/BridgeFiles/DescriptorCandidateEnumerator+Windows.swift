@@ -194,7 +194,7 @@
           break
         }
       }
-      return names.sorted()
+      return WindowsEnumeratorSupport.sortedPaths(names)
     }
 
     private func openScope(_ scope: SecureRelativePath?) throws -> (handle: HANDLE, path: String) {
@@ -236,7 +236,7 @@
       trackedPaths: [String]?,
       scope: SecureRelativePath?
     ) -> ProjectFileCandidates {
-      let enumerated = candidates.sorted()
+      let enumerated = WindowsEnumeratorSupport.sortedPaths(candidates)
       guard let trackedPaths else {
         return ProjectFileCandidates(paths: enumerated, usedTrackedPathPriority: false)
       }
@@ -412,6 +412,13 @@
       normalize(lhs).caseInsensitiveCompare(normalize(rhs)) == .orderedSame
     }
 
+    static func sortedPaths<S: Sequence>(_ paths: S) -> [String] where S.Element == String {
+      paths.sorted { lhs, rhs in
+        let comparison = lhs.caseInsensitiveCompare(rhs)
+        return comparison == .orderedSame ? lhs < rhs : comparison == .orderedAscending
+      }
+    }
+
     static func findFirst(
       pattern: String,
       data: UnsafeMutablePointer<WIN32_FIND_DATAW>
@@ -556,7 +563,7 @@
         if let path = entry.path { paths.append(path) }
         if paths.count > limits.maximumCandidateFiles { return nil }
       }
-      return Array(Set(paths)).sorted()
+      return WindowsEnumeratorSupport.sortedPaths(Set(paths))
     }
 
     private func parseEntry(
