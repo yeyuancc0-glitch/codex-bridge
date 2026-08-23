@@ -60,13 +60,13 @@ public static class BridgeServiceCodec
             return JsonSerializer.Deserialize<T>(bytes, Options)
                 ?? throw new BridgeProtocolException("Response payload is empty.");
         }
-        catch (FormatException error)
+        catch (FormatException formatError)
         {
-            throw new BridgeProtocolException("Response payload is not valid base64.", error);
+            throw new BridgeProtocolException("Response payload is not valid base64.", formatError);
         }
-        catch (JsonException error)
+        catch (JsonException jsonError)
         {
-            throw new BridgeProtocolException("Response payload JSON is invalid.", error);
+            throw new BridgeProtocolException("Response payload JSON is invalid.", jsonError);
         }
     }
 

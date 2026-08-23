@@ -34,7 +34,15 @@ public sealed class NamedPipeBridgeClient : IAsyncDisposable
             cancellationToken,
             _lifetime.Token);
         deadline.CancelAfter(timeout);
-        await pipe.ConnectAsync(deadline.Token).ConfigureAwait(false);
+        try
+        {
+            await pipe.ConnectAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            await pipe.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
         _pipe = pipe;
         _reader = ReadLoopAsync(pipe, _lifetime.Token);
     }
