@@ -44,7 +44,10 @@ jobs:
           global-json-file: Windows/global.json
 
       - name: Test C# IPC contract
-        run: dotnet test Windows/CodexBridge.Windows.sln --configuration Release
+        run: dotnet test Windows/BridgeIPC.Client.Tests/BridgeIPC.Client.Tests.csproj --configuration Release
+
+      - name: Build WinUI client
+        run: dotnet build Windows/CodexBridge.App/CodexBridge.App.csproj --configuration Release -p:Platform=${{ matrix.arch }}
 
   core:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')

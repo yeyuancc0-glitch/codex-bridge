@@ -1,0 +1,86 @@
+<Window
+    x:Class="CodexBridge.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="using:CodexBridge.App.Views"
+    Title="Codex Bridge">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <Ellipse x:Name="ConnectionIndicator" Width="10" Height="10" Fill="{ThemeResource SystemFillColorCautionBrush}" />
+                    <TextBlock x:Name="ConnectionLabel" Text="正在连接 Service" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                </StackPanel>
+                <TextBlock x:Name="PathSummary" Grid.Column="1" Text="Named Pipe → Bridge Core → Codex" FontFamily="Consolas" Opacity="0.72" />
+                <Button x:Name="RefreshButton" Grid.Column="2" Content="刷新" Click="RefreshButtonClick" AutomationProperties.Name="刷新服务状态" />
+            </Grid>
+        </Border>
+
+        <NavigationView x:Name="Navigation" Grid.Row="1" IsBackButtonVisible="Collapsed" IsSettingsVisible="True" PaneTitle="Codex Bridge" SelectionChanged="NavigationSelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="概览" Tag="overview" Icon="Home" />
+                <NavigationViewItem Content="任务" Tag="tasks" Icon="AllApps" />
+                <NavigationViewItem Content="项目" Tag="projects" Icon="Folder" />
+                <NavigationViewItem Content="审批" Tag="approvals" Icon="Important" />
+                <NavigationViewItem Content="连接" Tag="connections" Icon="World" />
+                <NavigationViewItem Content="工作台" Tag="workbench" Icon="Globe" />
+            </NavigationView.MenuItems>
+            <Grid>
+                <ScrollViewer x:Name="Overview" Padding="32,24">
+                    <StackPanel MaxWidth="920" HorizontalAlignment="Left" Spacing="24">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="本机运行状态" Style="{ThemeResource TitleTextBlockStyle}" />
+                            <TextBlock Text="状态来自 Swift Service；Windows App 只负责呈现和本机决策。" Opacity="0.72" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="32" RowSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="220" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="MCP" Style="{ThemeResource CaptionTextBlockStyle}" />
+                                <TextBlock x:Name="McpState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="McpEndpoint" Text="—" FontFamily="Consolas" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="4">
+                                <TextBlock Text="CODEX" Style="{ThemeResource CaptionTextBlockStyle}" />
+                                <TextBlock x:Name="CodexState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="CodexVersion" Text="—" FontFamily="Consolas" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="SECURE TUNNEL" Style="{ThemeResource CaptionTextBlockStyle}" />
+                                <TextBlock x:Name="TunnelState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="TunnelDetail" Text="—" FontFamily="Consolas" />
+                            </StackPanel>
+                        </Grid>
+                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="16">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="需要处理" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                <TextBlock x:Name="ApprovalSummary" Text="等待 Service 状态" />
+                                <ItemsControl x:Name="Degradations" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+                <Grid x:Name="Placeholder" Visibility="Collapsed" Padding="32,24">
+                    <StackPanel Spacing="8">
+                        <TextBlock x:Name="PlaceholderTitle" Style="{ThemeResource TitleTextBlockStyle}" />
+                        <TextBlock Text="该视图将直接读取 Bridge Service 的权威状态。" Opacity="0.72" />
+                    </StackPanel>
+                </Grid>
+                <views:WorkbenchHost x:Name="Workbench" Visibility="Collapsed" />
+            </Grid>
+        </NavigationView>
+    </Grid>
+</Window>
