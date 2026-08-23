@@ -382,7 +382,10 @@ public actor ServiceExecutionCoordinator {
     do {
       guard let handle = try await supervisor.launch(task: task) else { return }
       let events = handle.events
-      supervisorCollectors[task.id] = Task { [weak self] in
+      // Elevated priority: this consumer owns supervisor state transitions.
+      // Inheriting ambient priority let full-suite load starve it for tens of
+      // seconds, freezing tasks at .running after the session had degraded.
+      supervisorCollectors[task.id] = Task(priority: .userInitiated) { [weak self] in
         for await event in events {
           guard let self else { return }
           await self.consumeSupervisor(event, taskID: task.id)
