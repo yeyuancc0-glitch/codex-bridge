@@ -45,10 +45,12 @@
     private let path: String
     private let handler: Handler
     private let disconnectHandler: DisconnectHandler
-    private let state = NSLock()
+    private let state = NSCondition()
     private var connections: [Foundation.UUID: Connection] = [:]
     private var started = false
     private var stopped = false
+    private var acceptLoopRunning = false
+    private var acceptingConnection = false
 
     public init(
       path: String = BridgeServiceIPC.windowsPipeName,
@@ -67,6 +69,7 @@
         return
       }
       started = true
+      acceptLoopRunning = true
       state.unlock()
       Thread.detachNewThread { [weak self] in
         self?.acceptLoop()
@@ -75,10 +78,15 @@
 
     public func stop() {
       let active: [Connection]
+      let shouldWakeAcceptLoop: Bool
       state.lock()
       stopped = true
       active = Array(connections.values)
       connections.removeAll(keepingCapacity: false)
+      while acceptLoopRunning, !acceptingConnection {
+        state.wait()
+      }
+      shouldWakeAcceptLoop = acceptLoopRunning
       state.unlock()
       for connection in active {
         connection.close()
@@ -86,7 +94,9 @@
       }
       // Wake an accept thread parked in ConnectNamedPipe with a throwaway
       // local client so it observes `stopped` promptly.
-      _ = try? WindowsNamedPipeClient.transact(path: path, request: Data())
+      if shouldWakeAcceptLoop {
+        _ = try? WindowsNamedPipeClient.transact(path: path, request: Data())
+      }
     }
 
     func dispatch(request: Data, connectionID: Foundation.UUID) async -> Data {
@@ -130,6 +140,13 @@
     }
 
     private func acceptLoop() {
+      defer {
+        state.lock()
+        acceptLoopRunning = false
+        acceptingConnection = false
+        state.broadcast()
+        state.unlock()
+      }
       var isFirstInstance = true
       while true {
         state.lock()
@@ -147,8 +164,22 @@
           continue
         }
         isFirstInstance = false
+        state.lock()
+        if stopped {
+          state.unlock()
+          CloseHandle(instance)
+          return
+        }
+        acceptingConnection = true
+        state.broadcast()
+        state.unlock()
         var connected = ConnectNamedPipe(instance, nil)
-        if !connected, GetLastError() == Constants.errorPipeConnected {
+        let connectError = connected ? DWORD(0) : GetLastError()
+        state.lock()
+        acceptingConnection = false
+        state.broadcast()
+        state.unlock()
+        if !connected, connectError == Constants.errorPipeConnected {
           connected = true
         }
         guard connected, let peerSID = Self.clientUserSIDString(instance),
