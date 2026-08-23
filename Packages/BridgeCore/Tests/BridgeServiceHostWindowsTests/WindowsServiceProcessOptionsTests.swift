@@ -23,5 +23,13 @@
         try WindowsServiceProcessOptions.parse(["--data-root", "\\\\server\\share"])
       )
     }
+
+    func testServiceInstanceLeaseRejectsSecondHost() throws {
+      let first = try WindowsServiceInstanceLease()
+      XCTAssertThrowsError(try WindowsServiceInstanceLease()) { error in
+        XCTAssertEqual(error as? WindowsServiceInstanceLeaseError, .alreadyRunning)
+      }
+      withExtendedLifetime(first) {}
+    }
   }
 #endif

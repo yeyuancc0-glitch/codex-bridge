@@ -63,6 +63,7 @@
       appVersion: String = "0.2.0"
     ) async throws {
       let options = try WindowsServiceProcessOptions.parse(arguments)
+      let instanceLease = try WindowsServiceInstanceLease()
       let composition = try await ServiceComposition.make(
         configuration: ServiceCompositionConfiguration(
           appVersion: appVersion,
@@ -89,6 +90,7 @@
       await composition.shutdown()
       termination.finish()
       WindowsServiceTerminationSignal.uninstall(termination)
+      withExtendedLifetime(instanceLease) {}
     }
   }
 

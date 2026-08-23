@@ -380,6 +380,7 @@ let sharedTestTargets: [Target] = [
         "BridgeIPC",
         "BridgeIPCWindows",
         "BridgeMCP",
+        "BridgePlatformWindows",
         "BridgeProjects",
         "BridgeSecurity",
         "BridgeServiceApplication",
