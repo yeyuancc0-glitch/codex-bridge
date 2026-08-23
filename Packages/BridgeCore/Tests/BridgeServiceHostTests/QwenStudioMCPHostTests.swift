@@ -9,8 +9,8 @@ import MCP
 import XCTest
 
 final class QwenStudioMCPHostTests: XCTestCase {
-  func testMCPClientXPCOperationsUseSchemaVersionThreeAndRoundTrip() throws {
-    XCTAssertEqual(BridgeServiceIPC.schemaVersion, 3)
+  func testMCPClientXPCOperationsUseSchemaVersionFourAndRoundTrip() throws {
+    XCTAssertEqual(BridgeServiceIPC.schemaVersion, 4)
     let operations: [BridgeServiceIPCOperation] = [
       .listMCPClients,
       .setMCPClientEnabled,
@@ -25,7 +25,7 @@ final class QwenStudioMCPHostTests: XCTestCase {
         requestID: "qwen-xpc-\(operation.rawValue)"
       )
       let request = try BridgeServiceIPCCodec.decodeRequest(data)
-      XCTAssertEqual(request.schemaVersion, 3)
+      XCTAssertEqual(request.schemaVersion, 4)
       XCTAssertEqual(request.operation, operation)
     }
   }

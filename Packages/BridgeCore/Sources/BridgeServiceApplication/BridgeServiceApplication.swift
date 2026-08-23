@@ -94,6 +94,21 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     )
   }
 
+  public func serviceCustomInstructions(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String {
+    try Self.checkDeadline(deadline)
+    return try await settings.customInstructions()
+  }
+
+  public func setServiceCustomInstructions(
+    _ instructions: String,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setCustomInstructions(instructions)
+  }
+
   public func serviceProjects(
     cursor: String?,
     limit: Int,

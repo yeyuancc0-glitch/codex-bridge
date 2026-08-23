@@ -26,6 +26,8 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func setProjectCommandMode(projectID: String, commandMode: String) async throws
     -> MCPProjectDetail
   func setWorkbenchProject(projectID: String?) async throws
+  func customInstructions() async throws -> String
+  func setCustomInstructions(_ instructions: String) async throws
   func removeProject(projectID: String) async throws
   func models() async throws -> MCPModelList
   func modelCatalog() async throws -> IPCModelCatalogResponse
@@ -67,6 +69,14 @@ extension BridgeServiceClient: BridgeServiceClientProtocol {
 }
 
 extension BridgeServiceClientProtocol {
+  public func customInstructions() async throws -> String {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setCustomInstructions(_ instructions: String) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
   public func mcpClients() async throws -> [IPCMCPClientStatus] {
     throw BridgeServiceClientError.unavailable
   }

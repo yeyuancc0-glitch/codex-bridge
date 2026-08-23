@@ -123,6 +123,21 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func customInstructions() async throws -> String {
+    let response: IPCCustomInstructions = try await call(
+      operation: .getCustomInstructions,
+      payload: Optional<IPCMutationResponse>.none
+    )
+    return response.instructions
+  }
+
+  public func setCustomInstructions(_ instructions: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setCustomInstructions,
+      payload: IPCCustomInstructions(instructions: instructions)
+    )
+  }
+
   public func models() async throws -> MCPModelList {
     try await call(operation: .listModels, payload: Optional<IPCMutationResponse>.none)
   }

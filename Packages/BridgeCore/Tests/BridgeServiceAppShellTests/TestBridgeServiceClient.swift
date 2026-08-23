@@ -12,6 +12,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     let tunnelDisconnectCount: Int
     let tunnelClearCount: Int
     let modelPreferences: IPCModelPreferences
+    let customInstructions: String
   }
 
   private var closes = 0
@@ -27,6 +28,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     supervisorModel: "fixture-model",
     supervisorEffort: "medium"
   )
+  private var customInstructionsValue = "Fixture global instructions"
   private let failModelCatalog: Bool
   private var failSubscription = false
   private var threadListCalls = 0
@@ -140,6 +142,14 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
         network: request.networkPermission
       )
     )
+  }
+
+  func customInstructions() async throws -> String {
+    customInstructionsValue
+  }
+
+  func setCustomInstructions(_ instructions: String) async throws {
+    customInstructionsValue = instructions
   }
 
   func removeProject(projectID _: String) async throws {}
@@ -493,7 +503,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       configuredTunnelIDs: configuredTunnelIDs,
       tunnelDisconnectCount: tunnelDisconnectCount,
       tunnelClearCount: tunnelClearCount,
-      modelPreferences: modelPreferencesValue
+      modelPreferences: modelPreferencesValue,
+      customInstructions: customInstructionsValue
     )
   }
 

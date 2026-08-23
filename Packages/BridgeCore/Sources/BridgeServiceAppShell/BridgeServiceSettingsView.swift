@@ -10,7 +10,7 @@ struct BridgeServiceSettingsView: View {
         HStack(spacing: 8) {
           Image(systemName: "checkmark.circle.fill")
             .foregroundStyle(.green)
-          Text("偏好设置修改后会自动同步至后台 Service，无需手动点击保存。")
+          Text("模型偏好会自动同步；自定义指令点击保存后生效。")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -22,6 +22,8 @@ struct BridgeServiceSettingsView: View {
         icon: "cpu",
         description: "MCP 客户端提交新任务时，若未显式指定模型，将默认使用该配置。"
       )
+
+      CustomInstructionsEditor(model: model)
 
       modelDefaultsSection(
         title: "Supervisor 只读监督",
@@ -309,5 +311,56 @@ struct BridgeServiceSettingsView: View {
     case .requiresApproval: "等待批准"
     case .notFound: "配置缺失"
     }
+  }
+}
+
+private struct CustomInstructionsEditor: View {
+  @ObservedObject var model: BridgeServiceAppModel
+  @State private var draft = ""
+  @State private var savedValue = ""
+
+  private let maximumBytes = 32_768
+
+  var body: some View {
+    Section {
+      if model.customInstructions == nil {
+        ProgressView("正在从 Service 读取自定义指令…")
+      } else {
+        TextEditor(text: $draft)
+          .font(.body)
+          .frame(minHeight: 150, maxHeight: 220)
+          .accessibilityLabel("全局自定义指令")
+
+        HStack {
+          Text("网页 GPT 会在调用 Codex Bridge 插件前收到这段指令；不会传给 Codex。安全策略与本机审批始终优先。")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Spacer()
+          Text("\(draft.utf8.count) / \(maximumBytes) 字节")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(isWithinLimit ? Color.secondary : Color.red)
+          Button("保存") {
+            model.saveCustomInstructions(draft)
+          }
+          .disabled(
+            draft == savedValue || !isWithinLimit || model.isSavingCustomInstructions
+          )
+        }
+      }
+    } header: {
+      Label("全局自定义指令", systemImage: "text.badge.checkmark")
+    }
+    .onAppear { synchronizeDraft(model.customInstructions) }
+    .onChange(of: model.customInstructions) { _, value in synchronizeDraft(value) }
+  }
+
+  private var isWithinLimit: Bool {
+    draft.utf8.count <= maximumBytes
+  }
+
+  private func synchronizeDraft(_ value: String?) {
+    guard let value, value == draft || draft == savedValue else { return }
+    draft = value
+    savedValue = value
   }
 }

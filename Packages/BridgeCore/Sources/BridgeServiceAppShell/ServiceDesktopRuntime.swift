@@ -88,6 +88,7 @@ extension BridgeServiceAppModel {
       mcpClients = []
       models = []
       modelPreferences = nil
+      customInstructions = nil
       modelCatalogError = nil
       threads = []
       skills = []
@@ -268,6 +269,9 @@ extension BridgeServiceAppModel {
         models = []
         modelPreferences = nil
         modelCatalogError = Self.message(error)
+      }
+      if let value = await optional({ try await client.customInstructions() }) {
+        customInstructions = value
       }
     }
   }

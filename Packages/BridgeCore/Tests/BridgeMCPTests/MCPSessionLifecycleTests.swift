@@ -142,7 +142,11 @@ final class MCPSessionLifecycleTests: XCTestCase {
   }
 
   func testServerDiscoverAnswersOpenAIClientProbeAndInitializationStillWorks() async throws {
-    let registry = makeRegistry(port: 19_327)
+    let registry = MCPSessionRegistry(
+      boundPort: 19_327,
+      serverFactory: { _ in Self.makeServer() },
+      discoveryInstructionsProvider: { _ in "全局 GPT 自定义指令" }
+    )
     addTeardownBlock { await registry.stop() }
 
     let discoverBody = Data(
@@ -180,6 +184,7 @@ final class MCPSessionLifecycleTests: XCTestCase {
     XCTAssertEqual(versions, ["2026-07-28", Version.latest])
     XCTAssertNotNil(result["capabilities"])
     XCTAssertNotNil(result["_meta"])
+    XCTAssertEqual(result["instructions"] as? String, "全局 GPT 自定义指令")
     let countAfterDiscover = await registry.activeSessionCount
     XCTAssertEqual(countAfterDiscover, 0, "discovery must not create a session")
 

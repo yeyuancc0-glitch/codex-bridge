@@ -30,7 +30,29 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.tasks.map(\.taskID), ["task-1"])
     XCTAssertEqual(model.models.map(\.modelID), ["fixture-model"])
     XCTAssertEqual(model.modelPreferences?.executionEffort, "medium")
+    XCTAssertEqual(model.customInstructions, "Fixture global instructions")
     XCTAssertEqual(factory.makeCount, 1)
+  }
+
+  func testGlobalCustomInstructionsReachServiceClient() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.saveCustomInstructions("GPT should summarize before plugin calls.")
+
+    try await waitUntil {
+      let snapshot = await client.mutationSnapshot()
+      return snapshot.customInstructions == "GPT should summarize before plugin calls."
+    }
+    XCTAssertEqual(model.customInstructions, "GPT should summarize before plugin calls.")
   }
 
   func testModelPreferencesReachServiceClient() async throws {

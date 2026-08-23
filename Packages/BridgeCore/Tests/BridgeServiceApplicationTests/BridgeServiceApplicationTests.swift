@@ -31,6 +31,13 @@ final class BridgeServiceApplicationTests: XCTestCase {
       catalogScript: serviceModelCatalogScript
     )
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let gptOnlyInstructions = "GPT only: explain the plugin call before using it."
+    try await application.setServiceCustomInstructions(
+      gptOnlyInstructions,
+      deadline: deadline
+    )
+    let storedInstructions = try await application.serviceCustomInstructions(deadline: deadline)
+    XCTAssertEqual(storedInstructions, gptOnlyInstructions)
 
     let receipt = try await application.serviceSubmitTask(
       MCPServiceTaskSubmission(
@@ -56,6 +63,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(task.permissionMode, .workspaceWrite)
     XCTAssertTrue(task.prompt.contains("Acceptance criteria:"))
     XCTAssertTrue(task.prompt.contains("The relevant tests pass."))
+    XCTAssertFalse(task.prompt.contains(gptOnlyInstructions))
     XCTAssertEqual(task.state.codexThreadID, "thread-execution")
     XCTAssertEqual(task.state.codexTurnID, "turn-execution")
 

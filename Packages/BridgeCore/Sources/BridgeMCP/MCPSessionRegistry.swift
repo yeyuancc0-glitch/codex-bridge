@@ -80,6 +80,7 @@ public actor MCPSessionRegistry {
   public typealias StatelessServerFactory = @Sendable () async throws -> Server
   public typealias AuthenticatedStatelessServerFactory =
     @Sendable (MCPClientID) async throws -> Server
+  public typealias DiscoveryInstructionsProvider = @Sendable (MCPClientID) async -> String
 
   public struct Limits: Equatable, Sendable {
     public let maximumSessions: Int
@@ -137,6 +138,7 @@ public actor MCPSessionRegistry {
   private let serverFactory: AuthenticatedServerFactory
   private let statelessServerFactory: AuthenticatedStatelessServerFactory?
   private let clientAdmission: MCPClientAdmissionGate?
+  private let discoveryInstructionsProvider: DiscoveryInstructionsProvider?
   private let clock = ContinuousClock()
   private var sessions: [String: SessionContext] = [:]
   private var activeStatelessServers: [UUID: ActiveStatelessServer] = [:]
@@ -149,7 +151,8 @@ public actor MCPSessionRegistry {
     limits: Limits = .init(),
     serverFactory: @escaping ServerFactory,
     statelessServerFactory: StatelessServerFactory? = nil,
-    clientAdmission: MCPClientAdmissionGate? = nil
+    clientAdmission: MCPClientAdmissionGate? = nil,
+    discoveryInstructionsProvider: DiscoveryInstructionsProvider? = nil
   ) {
     self.boundPort = boundPort
     self.limits = limits
@@ -160,6 +163,7 @@ public actor MCPSessionRegistry {
       self.statelessServerFactory = nil
     }
     self.clientAdmission = clientAdmission
+    self.discoveryInstructionsProvider = discoveryInstructionsProvider
   }
 
   public init(
@@ -167,13 +171,15 @@ public actor MCPSessionRegistry {
     limits: Limits = .init(),
     authenticatedServerFactory: @escaping AuthenticatedServerFactory,
     authenticatedStatelessServerFactory: AuthenticatedStatelessServerFactory? = nil,
-    clientAdmission: MCPClientAdmissionGate? = nil
+    clientAdmission: MCPClientAdmissionGate? = nil,
+    discoveryInstructionsProvider: DiscoveryInstructionsProvider? = nil
   ) {
     self.boundPort = boundPort
     self.limits = limits
     self.serverFactory = authenticatedServerFactory
     self.statelessServerFactory = authenticatedStatelessServerFactory
     self.clientAdmission = clientAdmission
+    self.discoveryInstructionsProvider = discoveryInstructionsProvider
   }
 
   public func handle(_ request: HTTPRequest) async -> HTTPResponse {
@@ -199,7 +205,7 @@ public actor MCPSessionRegistry {
     }
     if isDiscover(request) {
       if let rejection = validateModernRequest(request, clientID: clientID) { return rejection }
-      return await handleDiscover(for: request)
+      return await handleDiscover(for: request, clientID: clientID)
     }
     if isInitialize(request) {
       return await createSession(for: request, clientID: clientID)
@@ -428,13 +434,20 @@ public actor MCPSessionRegistry {
     return .data(encoded, headers: headers)
   }
 
-  private func handleDiscover(for request: HTTPRequest) async -> HTTPResponse {
+  private func handleDiscover(
+    for request: HTTPRequest,
+    clientID: MCPClientID
+  ) async -> HTTPResponse {
     guard let body = request.body,
       let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
     else {
       return .error(statusCode: 400, .invalidRequest("Bad Request: Invalid discovery request"))
     }
     let id = object["id"] ?? NSNull()
+    let instructions =
+      await discoveryInstructionsProvider?(clientID)
+      ?? "Codex Bridge exposes locally registered projects and Codex tasks. All actions are "
+      + "executed on the user's machine after local approval."
     let result: [String: Any] = [
       "resultType": "complete",
       "supportedVersions": [Self.modernProtocolVersion, Version.latest],
@@ -445,8 +458,7 @@ public actor MCPSessionRegistry {
           "version": "1.0.0",
         ]
       ],
-      "instructions":
-        "Codex Bridge exposes locally registered projects and Codex tasks. All actions are executed on the user's machine after local approval.",
+      "instructions": instructions,
     ]
     let response: [String: Any] = [
       "jsonrpc": "2.0",

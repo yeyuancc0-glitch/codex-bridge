@@ -461,4 +461,34 @@ final class SimpleServiceStoreTests: XCTestCase {
     let reenabled = try await reopenedSettings.isSupervisorEnabled()
     XCTAssertEqual(reenabled, true)
   }
+
+  func testGlobalCustomInstructionsPersistClearAndValidateContent() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let settings = ServiceSettings(store: store)
+
+    let initialInstructions = try await settings.customInstructions()
+    XCTAssertEqual(initialInstructions, "")
+    try await settings.setCustomInstructions("调用工具前先说明目标。\n保留多行内容。")
+
+    let reopened = ServiceSettings(store: try SimpleServiceStore(path: fixture.databasePath))
+    let persistedInstructions = try await reopened.customInstructions()
+    XCTAssertEqual(persistedInstructions, "调用工具前先说明目标。\n保留多行内容。")
+
+    do {
+      try await settings.setCustomInstructions("bad\u{0}value")
+      XCTFail("NUL must be rejected")
+    } catch {}
+    do {
+      try await settings.setCustomInstructions(
+        String(repeating: "a", count: ServiceSettings.maximumCustomInstructionsBytes + 1)
+      )
+      XCTFail("oversized instructions must be rejected")
+    } catch {}
+
+    try await settings.setCustomInstructions("")
+    let clearedInstructions = try await settings.customInstructions()
+    XCTAssertEqual(clearedInstructions, "")
+  }
 }

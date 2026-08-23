@@ -11,6 +11,7 @@ public enum ServiceDirectApprovalMode: String, Codable, CaseIterable, Sendable {
 }
 
 public enum ServiceSettingKey: String, CaseIterable, Sendable {
+  case customInstructions = "mcp.custom_instructions"
   case mcpExposureMode = "mcp.exposure_mode"
   case mcpLocalPort = "mcp.local_port"
   case qwenStudioEnabled = "mcp.client.qwen-studio.enabled"
@@ -54,6 +55,7 @@ public struct ServiceModelPreferences: Codable, Equatable, Sendable {
 }
 
 public actor ServiceSettings {
+  public static let maximumCustomInstructionsBytes = 32_768
   private let store: SimpleServiceStore
   private let now: @Sendable () -> Date
 
@@ -74,6 +76,20 @@ public actor ServiceSettings {
       throw ServiceStoreError.corruptRecord
     }
     return mode
+  }
+
+  public func customInstructions() async throws -> String {
+    try await string(for: .customInstructions) ?? ""
+  }
+
+  public func setCustomInstructions(_ instructions: String) async throws {
+    try ServiceValidation.text(
+      instructions,
+      field: "mcp.customInstructions",
+      maximumBytes: Self.maximumCustomInstructionsBytes,
+      allowEmpty: true
+    )
+    try await set(instructions, for: .customInstructions)
   }
 
   public func setExposureMode(_ mode: ServiceMCPExposureMode) async throws {

@@ -189,6 +189,14 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(status.exposureMode, .readOnly)
     XCTAssertNotNil(status.localMCPURL)
 
+    let initialCustomInstructions = try await client.customInstructions()
+    XCTAssertEqual(initialCustomInstructions, "")
+    try await client.setCustomInstructions("GPT reads this before Bridge plugin calls.")
+    let customInstructions = try await client.customInstructions()
+    XCTAssertEqual(customInstructions, "GPT reads this before Bridge plugin calls.")
+    let persistedInstructions = try await fixture.composition.settings.customInstructions()
+    XCTAssertEqual(persistedInstructions, customInstructions)
+
     let projectRoot = fixture.root.appending(path: "XPCProject", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
     let registered = try await client.registerProject(
