@@ -55,7 +55,8 @@ extension MCPServiceToolCatalog {
       + "the MCP client to modify files or run commands directly. Omit project_id to use the "
       + "project currently selected in the Codex Bridge workbench; an explicit project_id overrides "
       + "that default. Omit all model and effort fields unless the user explicitly requests a "
-      + "different model for this task; omitted values use the defaults configured in Codex Bridge.",
+      + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
+      + "Model and effort fields are applied only when model_override is true.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -72,6 +73,11 @@ extension MCPServiceToolCatalog {
           description:
             "Omit to use the Codex Bridge default effort. Set only with an explicit user-requested per-task override."
         ),
+        "model_override": [
+          "type": ["boolean", "null"],
+          "description":
+            "Set true only when the user explicitly requests a per-task model or effort override. Otherwise omit; supplied model fields are ignored for compatibility.",
+        ],
         "supervisor_model": nullableStringSchema(
           maximum: 256,
           description:

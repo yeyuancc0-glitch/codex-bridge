@@ -212,6 +212,27 @@ struct BridgeServiceWorkbenchView: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
 
+      if let task = currentTask,
+        let modelLabel = WorkbenchTaskModelPresentation.label(
+          modelID: task.executionModel,
+          effort: task.executionEffort,
+          displayName: model.models.first(where: { $0.modelID == task.executionModel })?
+            .displayName
+        )
+      {
+        Label {
+          Text("使用模型 \(modelLabel)")
+            .lineLimit(1)
+            .truncationMode(.middle)
+        } icon: {
+          Image(systemName: "cpu")
+        }
+        .font(.caption2.weight(.medium))
+        .foregroundStyle(.secondary)
+        .help("当前任务实际使用：\(task.executionModel ?? modelLabel) · \(task.executionEffort ?? "未知")")
+        .accessibilityLabel("当前任务实际使用模型：\(modelLabel)")
+      }
+
       // Thread selector & status
       HStack(spacing: 6) {
         Image(systemName: "bubble.left.and.text.bubble.right")
@@ -488,6 +509,18 @@ package enum WorkbenchThreadTitlePresentation {
     guard !normalized.isEmpty else { return "未命名会话" }
     guard normalized.count > maximumCharacters else { return normalized }
     return String(normalized.prefix(maximumCharacters - 1)) + "…"
+  }
+}
+
+package enum WorkbenchTaskModelPresentation {
+  package static func label(
+    modelID: String?,
+    effort: String?,
+    displayName: String?
+  ) -> String? {
+    guard let modelID, !modelID.isEmpty, let effort, !effort.isEmpty else { return nil }
+    let model = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? modelID
+    return "\(model) · \(effort.prefix(1).uppercased())\(effort.dropFirst())"
   }
 }
 

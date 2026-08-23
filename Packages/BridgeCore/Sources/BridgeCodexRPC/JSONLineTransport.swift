@@ -8,6 +8,41 @@ private final class SendableFileHandle: @unchecked Sendable {
   }
 }
 
+private final class TransportChunkGate: @unchecked Sendable {
+  private let condition = NSCondition()
+  private var availableSlots: Int
+  private var isClosed = false
+
+  init(capacity: Int) {
+    availableSlots = capacity
+  }
+
+  func acquire() -> Bool {
+    condition.lock()
+    defer { condition.unlock() }
+    while availableSlots == 0, !isClosed {
+      condition.wait()
+    }
+    guard !isClosed else { return false }
+    availableSlots -= 1
+    return true
+  }
+
+  func release() {
+    condition.lock()
+    availableSlots += 1
+    condition.signal()
+    condition.unlock()
+  }
+
+  func close() {
+    condition.lock()
+    isClosed = true
+    condition.broadcast()
+    condition.unlock()
+  }
+}
+
 public actor JSONLineTransport {
   private static let maximumBufferedChunks = 16
 
@@ -38,9 +73,10 @@ public actor JSONLineTransport {
     let output = output
     let dispatcher = dispatcher
     let maximumLineBytes = maximumLineBytes
+    let chunkGate = TransportChunkGate(capacity: Self.maximumBufferedChunks)
     let pair = AsyncStream.makeStream(
       of: Data.self,
-      bufferingPolicy: .bufferingOldest(Self.maximumBufferedChunks)
+      bufferingPolicy: .unbounded
     )
     readContinuation = pair.continuation
     output.value.readabilityHandler = { handle in
@@ -48,23 +84,19 @@ public actor JSONLineTransport {
       if data.isEmpty {
         pair.continuation.finish()
       } else {
-        if case .dropped = pair.continuation.yield(data) {
-          pair.continuation.finish()
-          Task {
-            await dispatcher.terminate(
-              with: .transportReadOverflow(
-                maximumBufferedChunks: Self.maximumBufferedChunks
-              )
-            )
-          }
-          onProtocolFailure()
+        guard chunkGate.acquire() else { return }
+        if case .terminated = pair.continuation.yield(data) {
+          chunkGate.release()
+          chunkGate.close()
         }
       }
     }
     readerTask = Task.detached(priority: .userInitiated) {
+      defer { chunkGate.close() }
       var parser = JSONLineParser(maximumLineBytes: maximumLineBytes)
       do {
         for await data in pair.stream {
+          chunkGate.release()
           try Task.checkCancellation()
           for message in try parser.ingest(data) {
             try await dispatcher.receive(message)

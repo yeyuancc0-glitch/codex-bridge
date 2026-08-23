@@ -21,12 +21,12 @@ public struct ExecutionManagerConfiguration: Sendable {
     clientInfo: CodexClientInfo,
     requestTimeoutNanoseconds: UInt64 = 30_000_000_000,
     turnStartTimeoutNanoseconds: UInt64 = 10_000_000_000,
-    maximumSessionNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000,
+    maximumSessionNanoseconds: UInt64 = 24 * 60 * 60 * 1_000_000_000,
     eventBufferLimit: Int = 256,
     outputBufferLimit: Int = 128,
     maximumConcurrentSessions: Int = 4,
     maximumPendingApprovals: Int = 16,
-    maximumKnownItems: Int = 2_048,
+    maximumKnownItems: Int = 16_384,
     synchronizeCodexProjects: Bool = false
   ) {
     self.appServer = appServer

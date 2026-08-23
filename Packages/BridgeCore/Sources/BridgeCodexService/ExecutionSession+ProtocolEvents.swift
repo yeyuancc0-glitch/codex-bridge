@@ -55,7 +55,7 @@ extension ExecutionSession {
         )
         return
       }
-      yield(.toolCall(call))
+      await yield(.toolCall(call))
       return
     }
     guard item.type == "commandExecution" || item.type == "fileChange" else { return }
@@ -66,7 +66,7 @@ extension ExecutionSession {
       }
       knownItems[item.key] = evidence
       if isPrimaryBinding(threadID: item.key.threadID, turnID: item.key.turnID) {
-        yield(.toolCall(try conversationToolCall(from: evidence)))
+        await yield(.toolCall(try conversationToolCall(from: evidence)))
       }
     } catch {
       await fail(
@@ -123,9 +123,9 @@ extension ExecutionSession {
       let event = try makeEvent(evidence)
       seenSemanticSources.insert(sourceID)
       if let call = try conversationToolCall(from: evidence) {
-        yield(.toolCall(call))
+        await yield(.toolCall(call))
       }
-      yield(event)
+      await yield(event)
     } catch {
       await fail(code: "invalid_semantic_event", summary: "Codex emitted invalid task progress.")
     }

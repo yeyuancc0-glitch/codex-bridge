@@ -38,7 +38,7 @@ extension ExecutionSession {
           )
           return
         }
-        yield(.toolCall(call))
+        await yield(.toolCall(call))
         return
       }
       guard item.type == "commandExecution" || item.type == "fileChange" else { return }

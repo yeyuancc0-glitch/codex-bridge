@@ -150,8 +150,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   }
 
   private func builtInCommands() -> [MCPBuiltInCommand] {
-    commandPolicy.safeCommandRules.compactMap { rule in
-      guard !rule.executable.hasPrefix("/") else { return nil }
+    commandPolicy.effectiveSafeCommandRules.map { rule in
       return MCPBuiltInCommand(
         executable: rule.executable,
         argumentsPrefix: rule.argumentsPrefix,

@@ -13,7 +13,7 @@ public struct AppServerConfiguration: Equatable, Sendable {
     arguments: [String],
     currentDirectoryURL: URL? = nil,
     environment: [String: String]? = nil,
-    maximumProtocolLineBytes: Int = 8 * 1024 * 1024,
+    maximumProtocolLineBytes: Int = 64 * 1024 * 1024,
     stderrBufferBytes: Int = 64 * 1024
   ) {
     self.executableURL = executableURL
