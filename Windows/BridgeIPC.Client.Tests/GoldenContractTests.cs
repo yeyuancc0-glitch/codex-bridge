@@ -56,6 +56,30 @@ public sealed class GoldenContractTests
         Assert.Equal("read-only", payload.GetProperty("exposure_mode").GetString());
     }
 
+    [Fact]
+    public void ModelPreferencesUseSwiftFieldValues()
+    {
+        var request = BridgeServiceCodec.Request(
+            "set_model_preferences",
+            new
+            {
+                ExecutionModel = "gpt-5.6-sol",
+                ExecutionEffort = "high",
+                SupervisorModel = "gpt-5.6-luna",
+                SupervisorEffort = "medium",
+                SupervisorEnabled = true,
+                AccessMode = "request-approval",
+                FastModeEnabled = false,
+            },
+            "request-model-preferences");
+        var base64 = request.GetProperty("payload").GetString();
+        var payload = JsonDocument.Parse(Convert.FromBase64String(base64!)).RootElement;
+        Assert.Equal("gpt-5.6-sol", payload.GetProperty("execution_model").GetString());
+        Assert.Equal("gpt-5.6-luna", payload.GetProperty("supervisor_model").GetString());
+        Assert.Equal("request-approval", payload.GetProperty("access_mode").GetString());
+        Assert.False(payload.GetProperty("fast_mode_enabled").GetBoolean());
+    }
+
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
 
     private static void AssertJsonEqual(JsonElement expected, JsonElement actual)

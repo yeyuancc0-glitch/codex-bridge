@@ -37,7 +37,7 @@ public sealed partial class MainWindow
         }
 
         var nextMode = client.ExposureMode == "full" ? "read-only" : "full";
-        if (nextMode == "full" && !await ConfirmMcpClientActionAsync(
+        if (nextMode == "full" && !await ConfirmLocalActionAsync(
                 $"允许 {client.DisplayName} 使用完整工具？",
                 "项目权限、workspace gate、网络限制和本机审批仍然生效，但该客户端将能看到任务提交与 Direct 工具。",
                 "允许完整工具"))
@@ -84,7 +84,7 @@ public sealed partial class MainWindow
         {
             return;
         }
-        if (!await ConfirmMcpClientActionAsync(
+        if (!await ConfirmLocalActionAsync(
                 "重新生成 Qwen Studio 凭证？",
                 "现有 Qwen 会话与旧 JSON 配置将立即失效。重新连接前需要再次复制配置。",
                 "重新生成"))
@@ -115,7 +115,7 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task<bool> ConfirmMcpClientActionAsync(
+    private async Task<bool> ConfirmLocalActionAsync(
         string title,
         string message,
         string primaryButtonText)

@@ -78,3 +78,32 @@ public sealed record McpClientStatus(
 }
 
 public sealed record McpClientConfigurationExport(string ConfigurationJson);
+
+public sealed record ModelCatalogResponse(
+    IReadOnlyList<ModelSummary> Models,
+    ModelPreferences Preferences);
+
+public sealed record ModelSummary(
+    string ModelId,
+    string DisplayName,
+    bool IsDefault,
+    IReadOnlyList<string> ReasoningEfforts,
+    string? DefaultReasoningEffort,
+    IReadOnlyList<string> ServiceTiers,
+    IReadOnlyList<string> AdditionalSpeedTiers)
+{
+    public string DisplayLabel => $"{DisplayName} · {ModelId}";
+    public bool SupportsFastMode =>
+        ServiceTiers.Contains("fast") || AdditionalSpeedTiers.Contains("fast");
+}
+
+public sealed record ModelPreferences(
+    string ExecutionModel,
+    string ExecutionEffort,
+    string SupervisorModel,
+    string SupervisorEffort,
+    bool SupervisorEnabled,
+    string AccessMode,
+    bool FastModeEnabled);
+
+public sealed record SelectionOption(string Value, string Label);

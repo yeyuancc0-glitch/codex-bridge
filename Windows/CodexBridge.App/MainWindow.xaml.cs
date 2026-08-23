@@ -150,6 +150,7 @@ public sealed partial class MainWindow : Window
                 break;
             case "settings":
                 await PresentStartupTaskAsync();
+                await LoadModelSettingsAsync();
                 break;
         }
     }

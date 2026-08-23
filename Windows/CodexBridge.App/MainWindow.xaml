@@ -219,17 +219,58 @@
                         </ListView.ItemTemplate>
                     </ListView>
                 </Grid>
-                <Grid x:Name="SettingsView" Visibility="Collapsed" Padding="32,24">
-                    <StackPanel Spacing="16">
+                <ScrollViewer x:Name="SettingsView" Visibility="Collapsed" Padding="32,24">
+                    <StackPanel Spacing="20" MaxWidth="920" HorizontalAlignment="Left">
                         <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}" />
                         <StackPanel Spacing="4">
                             <TextBlock Text="后台 Service" Style="{ThemeResource BodyStrongTextBlockStyle}" />
                             <TextBlock x:Name="StartupTaskStateLabel" Text="正在读取 StartupTask 状态" />
                             <Button x:Name="EnableStartupTaskButton" Content="登录后自动启动" Click="EnableStartupTaskClick" Visibility="Collapsed" HorizontalAlignment="Left" />
                         </StackPanel>
-                        <TextBlock Text="模型、Supervisor 与 Tunnel 设置继续由 Service 持有。" Opacity="0.72" />
+                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="16">
+                            <StackPanel Spacing="14">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="Codex 默认模型" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="新任务未显式指定模型时使用；配置始终由后台 Service 持有。" Opacity="0.72" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="16" RowSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200" />
+                                        <ColumnDefinition Width="360" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="执行模型" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="ExecutionModelBox" Grid.Column="1" DisplayMemberPath="DisplayLabel" SelectionChanged="ExecutionModelSelectionChanged" />
+                                    <TextBlock Grid.Row="1" Text="执行推理强度" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="ExecutionEffortBox" Grid.Row="1" Grid.Column="1" />
+                                    <TextBlock Grid.Row="2" Text="访问模式" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="AccessModeBox" Grid.Row="2" Grid.Column="1" DisplayMemberPath="Label" />
+                                    <TextBlock Grid.Row="3" Text="Fast 模式" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="FastModeSwitch" Grid.Row="3" Grid.Column="1" OffContent="关闭" OnContent="启用" />
+                                    <TextBlock Grid.Row="4" Text="Supervisor" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="SupervisorEnabledSwitch" Grid.Row="4" Grid.Column="1" OffContent="关闭" OnContent="只读监督" />
+                                    <TextBlock Grid.Row="5" Text="Supervisor 模型" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="SupervisorModelBox" Grid.Row="5" Grid.Column="1" DisplayMemberPath="DisplayLabel" SelectionChanged="SupervisorModelSelectionChanged" />
+                                    <TextBlock Grid.Row="6" Text="Supervisor 推理强度" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="SupervisorEffortBox" Grid.Row="6" Grid.Column="1" />
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Button Content="保存模型偏好" Click="SaveModelPreferencesClick" />
+                                    <TextBlock x:Name="ModelSettingsStatus" VerticalAlignment="Center" Opacity="0.72" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Text="Tunnel 配置仍由 Service 持有；未打包官方 Windows helper 时保持 fail-closed。" Opacity="0.72" />
                     </StackPanel>
-                </Grid>
+                </ScrollViewer>
                 <views:WorkbenchHost x:Name="Workbench" Visibility="Collapsed" />
             </Grid>
         </NavigationView>
