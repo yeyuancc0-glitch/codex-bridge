@@ -80,6 +80,19 @@ public sealed class GoldenContractTests
         Assert.False(payload.GetProperty("fast_mode_enabled").GetBoolean());
     }
 
+    [Fact]
+    public void TunnelConfigurationUsesSwiftSecretFieldNames()
+    {
+        var request = BridgeServiceCodec.Request(
+            "configure_tunnel",
+            new { TunnelId = "tunnel-fixture", RuntimeKey = "runtime-key-fixture" },
+            "request-tunnel-configuration");
+        var base64 = request.GetProperty("payload").GetString();
+        var payload = JsonDocument.Parse(Convert.FromBase64String(base64!)).RootElement;
+        Assert.Equal("tunnel-fixture", payload.GetProperty("tunnel_id").GetString());
+        Assert.Equal("runtime-key-fixture", payload.GetProperty("runtime_key").GetString());
+    }
+
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
 
     private static void AssertJsonEqual(JsonElement expected, JsonElement actual)

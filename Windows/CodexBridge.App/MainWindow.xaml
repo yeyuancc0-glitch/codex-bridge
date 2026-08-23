@@ -268,7 +268,35 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                        <TextBlock Text="Tunnel 配置仍由 Service 持有；未打包官方 Windows helper 时保持 fail-closed。" Opacity="0.72" />
+                        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="16">
+                            <StackPanel Spacing="14">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="OpenAI Secure MCP Tunnel" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="Runtime Key 只通过当前用户的 Named Pipe 发送给 Service，并由 Windows Secret Store 持有。" Opacity="0.72" />
+                                </StackPanel>
+                                <Grid ColumnSpacing="16" RowSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200" />
+                                        <ColumnDefinition Width="420" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Tunnel ID" VerticalAlignment="Center" />
+                                    <TextBox x:Name="TunnelIdBox" Grid.Column="1" PlaceholderText="tunnel_..." />
+                                    <TextBlock Grid.Row="1" Text="Runtime Key" VerticalAlignment="Center" />
+                                    <PasswordBox x:Name="TunnelRuntimeKeyBox" Grid.Row="1" Grid.Column="1" PasswordChar="●" />
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="ConfigureTunnelButton" Content="保存并连接" Click="ConfigureTunnelClick" />
+                                    <Button x:Name="ConnectTunnelButton" Content="连接" Click="ConnectTunnelClick" />
+                                    <Button x:Name="DisconnectTunnelButton" Content="断开" Click="DisconnectTunnelClick" />
+                                    <Button x:Name="ClearTunnelButton" Content="清除配置" Click="ClearTunnelClick" />
+                                </StackPanel>
+                                <TextBlock x:Name="TunnelSettingsStatus" TextWrapping="Wrap" Opacity="0.72" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
                 <views:WorkbenchHost x:Name="Workbench" Visibility="Collapsed" />

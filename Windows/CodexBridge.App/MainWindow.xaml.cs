@@ -151,6 +151,7 @@ public sealed partial class MainWindow : Window
             case "settings":
                 await PresentStartupTaskAsync();
                 await LoadModelSettingsAsync();
+                await LoadTunnelSettingsAsync();
                 break;
         }
     }
