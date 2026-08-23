@@ -263,6 +263,15 @@ jobs:
         shell: pwsh
         run: .github/scripts/run-windows-test-targets.ps1
 
+      - name: Install .NET SDK for Service IPC probe
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: Windows/global.json
+
+      - name: Probe real Service dispatcher from C#
+        shell: pwsh
+        run: .github/scripts/run-windows-service-probe.ps1
+
       - name: Save Windows Swift build cache
         if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -385,6 +394,15 @@ jobs:
       - name: Test shared closure
         shell: pwsh
         run: .github/scripts/run-windows-test-targets.ps1
+
+      - name: Install .NET SDK for Service IPC probe
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: Windows/global.json
+
+      - name: Probe real Service dispatcher from C#
+        shell: pwsh
+        run: .github/scripts/run-windows-service-probe.ps1
 
       - name: Save Windows Swift build cache
         if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'
