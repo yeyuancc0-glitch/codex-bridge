@@ -100,7 +100,7 @@
 
         let reopened = try reopenForRead(path: current)
         do {
-          let reopenedAttributes = try attributes(of: reopened)
+          let reopenedAttributes = try Self.attributes(of: reopened)
           guard reopenedAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0,
             reopenedAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0
           else {

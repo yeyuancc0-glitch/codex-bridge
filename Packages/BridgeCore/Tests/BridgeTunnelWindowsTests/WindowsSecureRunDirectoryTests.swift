@@ -125,7 +125,7 @@
         linkWide.pointer,
         targetWide.pointer,
         DWORD(0x2)  // SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
-      )
+      ) != 0
     }
   }
 #endif

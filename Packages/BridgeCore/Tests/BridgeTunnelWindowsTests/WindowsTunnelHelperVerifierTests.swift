@@ -12,11 +12,12 @@
       let helper = try helperURL()
       let data = try Data(contentsOf: helper)
       let expected = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-      let verified = try WindowsTunnelHelperVerifier().verify(
-        executable: helper,
-        expectedSHA256: expected,
-        expectedArchitecture: TargetPlatformArchitecture.current
-      )
+      let verified =
+        try WindowsTunnelHelperVerifier().verify(
+          executable: helper,
+          expectedSHA256: expected,
+          expectedArchitecture: TargetPlatformArchitecture.current
+        ) != 0
 
       XCTAssertEqual(verified.sha256, expected)
       XCTAssertEqual(verified.executable.path.lowercased(), helper.path.lowercased())

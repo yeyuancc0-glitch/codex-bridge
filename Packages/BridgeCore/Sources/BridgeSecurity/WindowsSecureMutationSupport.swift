@@ -122,9 +122,8 @@
             access: genericRead | genericWrite,
             share: defaultShare,
             disposition: DWORD(CREATE_NEW),
-            flags: DWORD(
-              FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH
-            )
+            flags: DWORD(FILE_ATTRIBUTE_NORMAL) | DWORD(FILE_FLAG_OPEN_REPARSE_POINT)
+              | DWORD(FILE_FLAG_WRITE_THROUGH)
           )
           let snapshot = try validateRegularFile(
             handle: handle.value,

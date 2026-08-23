@@ -1,5 +1,5 @@
 #if canImport(WinSDK)
-  import BridgePlatformWindows
+  @testable import BridgePlatformWindows
   import Foundation
   import WinSDK
   import XCTest
@@ -94,10 +94,10 @@
       let flags = DWORD(0x3)
       let linkWide = WideBuffer(link)
       let targetWide = WideBuffer(target)
-      return CreateSymbolicLinkW(linkWide.pointer, targetWide.pointer, flags)
+      return CreateSymbolicLinkW(linkWide.pointer, targetWide.pointer, flags) != 0
     }
 
-    private func withTempRoot(_ body: (URL) throws -> Void) rethrows {
+    private func withTempRoot(_ body: (URL) throws -> Void) throws {
       let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("codex-bridge-paths-\(UUID().uuidString)", isDirectory: true)
       try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
