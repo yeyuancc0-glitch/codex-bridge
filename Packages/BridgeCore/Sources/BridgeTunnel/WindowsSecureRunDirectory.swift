@@ -398,10 +398,10 @@
       }
       defer { LocalFree(descriptor) }
 
-      var daclPresent = WindowsBool(0)
-      var daclDefaulted = WindowsBool(0)
+      var daclPresent = WindowsBool(false)
+      var daclDefaulted = WindowsBool(false)
       guard GetSecurityDescriptorDacl(descriptor, &daclPresent, &dacl, &daclDefaulted),
-        daclPresent != 0,
+        daclPresent,
         let dacl
       else {
         throw WindowsSecureRunDirectoryError.insecureDirectory

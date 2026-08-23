@@ -183,14 +183,14 @@
       guard let owner, let ownerSID = stringSIDBox(ofSID: owner),
         ownerSID.value.caseInsensitiveCompare(currentUser.value) == .orderedSame
       else { return false }
-      var daclPresent = WindowsBool(0)
-      var daclDefaulted = WindowsBool(0)
+      var daclPresent = WindowsBool(false)
+      var daclDefaulted = WindowsBool(false)
       guard GetSecurityDescriptorDacl(descriptorPointer, &daclPresent, &dacl, &daclDefaulted)
       else { return false }
       var control = SECURITY_DESCRIPTOR_CONTROL()
       var revision = DWORD(0)
       _ = GetSecurityDescriptorControl(descriptorPointer, &control, &revision)
-      guard daclPresent != 0, let dacl,
+      guard daclPresent, let dacl,
         (control & UInt16(Constants.seDaclProtected)) != 0
       else { return false }
 

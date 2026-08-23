@@ -52,11 +52,11 @@
       guard let descriptor = securityDescriptor() else {
         throw ProtectionError.systemFailure(Int32(GetLastError()))
       }
-      var present = WindowsBool(0)
-      var defaulted = WindowsBool(0)
+      var present = WindowsBool(false)
+      var defaulted = WindowsBool(false)
       var dacl: PACL?
       guard GetSecurityDescriptorDacl(descriptor.pointer, &present, &dacl, &defaulted),
-        present != 0,
+        present,
         let dacl
       else {
         throw ProtectionError.systemFailure(Int32(GetLastError()))
