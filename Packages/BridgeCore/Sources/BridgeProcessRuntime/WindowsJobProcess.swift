@@ -307,11 +307,13 @@
     ) throws {
       let application = WideBuffer(executablePath)
       let mutableCommandLine = WideBuffer(commandLine)
-      let directory = workingDirectory.map(WideBuffer.init)
+      let directory = workingDirectory.map { WideBuffer($0) }
       let environment = WideBuffer(environmentBlock, appendNull: false)
       var startupInfo = STARTUPINFOEXW()
       startupInfo.StartupInfo.cb = DWORD(MemoryLayout<STARTUPINFOEXW>.size)
-      startupInfo.StartupInfo.dwFlags = DWORD(STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW)
+      startupInfo.StartupInfo.dwFlags = DWORD(
+        DWORD(STARTF_USESTDHANDLES) | DWORD(STARTF_USESHOWWINDOW)
+      )
       startupInfo.StartupInfo.wShowWindow = WORD(SW_HIDE)
       startupInfo.StartupInfo.hStdInput = childHandles[0]
       startupInfo.StartupInfo.hStdOutput = childHandles[1]

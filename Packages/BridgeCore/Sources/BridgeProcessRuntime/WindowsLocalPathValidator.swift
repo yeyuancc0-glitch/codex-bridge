@@ -38,12 +38,12 @@
       }
 
       var current = root
-      var attributes = try attributes(at: current)
-      try rejectReparse(attributes)
+      var currentAttributes = try attributes(at: current)
+      try rejectReparse(currentAttributes)
       for component in components where !component.isEmpty {
         current = current.hasSuffix("\\") ? current + component : current + "\\" + component
-        attributes = try attributes(at: current)
-        try rejectReparse(attributes)
+        currentAttributes = try attributes(at: current)
+        try rejectReparse(currentAttributes)
       }
 
       switch kind {
