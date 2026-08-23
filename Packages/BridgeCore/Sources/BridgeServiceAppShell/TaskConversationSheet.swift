@@ -169,48 +169,19 @@ struct TextBubbleView: View {
       if isUser {
         Spacer(minLength: 40)
       }
-      VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
-        HStack(spacing: 4) {
+      Text(displayContent)
+        .font(.system(size: 13))
+        .textSelection(.enabled)
+        .lineSpacing(2)
+        .padding(isUser ? 10 : 0)
+        .background {
           if isUser {
-            Text("我")
-              .font(.caption2.weight(.bold))
-              .foregroundStyle(Color.blue)
-            Image(systemName: "person.crop.circle.fill")
-              .font(.caption2)
-              .foregroundStyle(Color.blue)
-          } else {
-            Image(systemName: "cpu.fill")
-              .font(.caption2)
-              .foregroundStyle(Color.purple)
-            Text("Codex")
-              .font(.caption2.weight(.bold))
-              .foregroundStyle(Color.purple)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+              .fill(Color(nsColor: .controlBackgroundColor))
           }
         }
-        .padding(.horizontal, 2)
-
-        Text(displayContent)
-          .font(.system(size: 13))
-          .textSelection(.enabled)
-          .padding(10)
-          .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .fill(
-                isUser
-                  ? Color.blue.opacity(0.08)
-                  : Color(nsColor: .textBackgroundColor).opacity(0.6)
-              )
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .strokeBorder(
-                isUser ? Color.blue.opacity(0.25) : Color(nsColor: .separatorColor).opacity(0.35),
-                lineWidth: 0.8
-              )
-          )
-      }
       if !isUser {
-        Spacer(minLength: 40)
+        Spacer(minLength: 24)
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -224,7 +195,7 @@ struct TextBubbleView: View {
 struct ReasoningBubbleView: View {
   let entry: TaskConversationModel.Entry
   let streaming: Bool
-  @State private var isExpanded = true
+  @State private var isExpanded = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -238,7 +209,7 @@ struct ReasoningBubbleView: View {
             .font(.caption2.weight(.semibold))
           Image(systemName: "brain.head.profile")
             .font(.caption2.weight(.semibold))
-          Text("Codex 的思考")
+          Text(streaming ? "正在思考" : "思考过程")
             .font(.caption.weight(.semibold))
           if streaming {
             ThinkingOrbView(size: 10)
@@ -257,11 +228,7 @@ struct ReasoningBubbleView: View {
           .textSelection(.enabled)
           .lineSpacing(2)
           .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(10)
-          .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .fill(Color(nsColor: .textBackgroundColor).opacity(0.35))
-          )
+          .padding(.leading, 18)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -274,50 +241,41 @@ struct ReasoningBubbleView: View {
 
 struct ToolCallBubbleView: View {
   let entry: TaskConversationModel.Entry
+  @State private var isExpanded = false
 
   var body: some View {
-    HStack {
-      VStack(alignment: .leading, spacing: 6) {
-        HStack(spacing: 6) {
+    VStack(alignment: .leading, spacing: 6) {
+      Button {
+        withAnimation(.easeInOut(duration: 0.15)) {
+          isExpanded.toggle()
+        }
+      } label: {
+        HStack(spacing: 7) {
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.tertiary)
           statusIcon
             .font(.caption)
-          Text(entry.toolName ?? "工具调用")
-            .font(.caption.weight(.semibold))
-            .lineLimit(1)
-          Spacer()
+          Text(presentation.title)
+            .font(.callout.weight(.medium))
           Text(statusLabel)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-        if let arguments = entry.toolArguments, !arguments.isEmpty {
-          Text(arguments)
-            .font(.caption.monospaced())
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-            .lineLimit(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(
-              RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
-            )
-        }
-        if !entry.content.isEmpty, let arguments = entry.toolArguments,
-          entry.content != arguments
-        {
-          Text(entry.content)
             .font(.caption)
-            .foregroundStyle(.tertiary)
-            .textSelection(.enabled)
-            .lineLimit(6)
+            .foregroundStyle(.secondary)
+          Spacer()
         }
+        .contentShape(Rectangle())
       }
-      .padding(10)
-      .background(
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
-      )
-      Spacer(minLength: 64)
+      .buttonStyle(.plain)
+
+      if isExpanded, let details, !details.isEmpty {
+        Text(details)
+          .font(.caption.monospaced())
+          .foregroundStyle(.secondary)
+          .textSelection(.enabled)
+          .lineLimit(12)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.leading, 36)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
@@ -326,11 +284,14 @@ struct ToolCallBubbleView: View {
   private var statusIcon: some View {
     switch entry.toolStatus {
     case "completed":
-      Image(systemName: "checkmark.circle.fill")
-        .foregroundStyle(.green)
+      Image(systemName: presentation.systemImage)
+        .foregroundStyle(.secondary)
     case "failed":
       Image(systemName: "xmark.circle.fill")
         .foregroundStyle(.red)
+    case "declined":
+      Image(systemName: "minus.circle.fill")
+        .foregroundStyle(.orange)
     default:
       ThinkingOrbView(size: 11)
     }
@@ -338,9 +299,58 @@ struct ToolCallBubbleView: View {
 
   private var statusLabel: String {
     switch entry.toolStatus {
-    case "completed": "已完成"
+    case "completed": ""
     case "failed": "失败"
+    case "declined": "已拒绝"
     default: "进行中"
     }
+  }
+
+  private var presentation: CodexTranscriptToolPresentation {
+    CodexTranscriptPresentation.tool(
+      name: entry.toolName,
+      status: entry.toolStatus
+    )
+  }
+
+  private var details: String? {
+    if let arguments = entry.toolArguments, !arguments.isEmpty { return arguments }
+    return entry.content.isEmpty ? nil : entry.content
+  }
+}
+
+package struct CodexTranscriptToolPresentation: Equatable, Sendable {
+  package let title: String
+  package let systemImage: String
+}
+
+package enum CodexTranscriptPresentation {
+  package static func tool(
+    name: String?,
+    status: String?
+  ) -> CodexTranscriptToolPresentation {
+    let normalized = (name ?? "").lowercased()
+    let isActive = status != "completed" && status != "failed" && status != "declined"
+    if normalized.contains("search") || normalized.contains("grep") {
+      return .init(title: isActive ? "正在搜索文件" : "已搜索文件", systemImage: "magnifyingglass")
+    }
+    if normalized.contains("read") {
+      return .init(title: isActive ? "正在读取文件" : "已读取文件", systemImage: "book")
+    }
+    if normalized.contains("list") {
+      return .init(title: isActive ? "正在列出文件" : "已列出文件", systemImage: "list.bullet")
+    }
+    if normalized.contains("file_change") || normalized.contains("patch")
+      || normalized.contains("edit") || normalized.contains("write")
+    {
+      return .init(title: isActive ? "正在编辑文件" : "已编辑文件", systemImage: "pencil")
+    }
+    if normalized.contains("command") || normalized.contains("exec") {
+      return .init(title: isActive ? "正在运行命令" : "已运行命令", systemImage: "terminal")
+    }
+    return .init(
+      title: isActive ? "正在使用 \(name ?? "工具")" : "已使用 \(name ?? "工具")",
+      systemImage: "wrench.and.screwdriver"
+    )
   }
 }

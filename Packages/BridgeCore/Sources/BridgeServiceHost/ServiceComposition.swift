@@ -38,6 +38,7 @@ public struct ServiceCompositionConfiguration: Sendable {
   public let supervisorAppServer: AppServerConfiguration
   public let catalogAppServer: AppServerConfiguration
   public let clientInfo: CodexClientInfo
+  public let synchronizeCodexProjects: Bool
   public let mcpPort: Int
   public let appBundleURL: URL?
   public let legacyDataRootURL: URL?
@@ -49,6 +50,7 @@ public struct ServiceCompositionConfiguration: Sendable {
     supervisorAppServer: AppServerConfiguration = .codex(),
     catalogAppServer: AppServerConfiguration = .codex(),
     clientInfo: CodexClientInfo,
+    synchronizeCodexProjects: Bool = true,
     mcpPort: Int = 0,
     appBundleURL: URL? = ServiceBundleLocator.currentAppBundleURL(),
     legacyDataRootURL: URL? = nil
@@ -61,6 +63,7 @@ public struct ServiceCompositionConfiguration: Sendable {
     self.supervisorAppServer = supervisorAppServer
     self.catalogAppServer = catalogAppServer
     self.clientInfo = clientInfo
+    self.synchronizeCodexProjects = synchronizeCodexProjects
     self.mcpPort = mcpPort
     self.appBundleURL = appBundleURL?.standardizedFileURL
     self.legacyDataRootURL = legacyDataRootURL?.standardizedFileURL
@@ -114,7 +117,8 @@ public actor ServiceComposition {
     let execution = ExecutionManager(
       configuration: ExecutionManagerConfiguration(
         appServer: configuration.executionAppServer,
-        clientInfo: configuration.clientInfo
+        clientInfo: configuration.clientInfo,
+        synchronizeCodexProjects: configuration.synchronizeCodexProjects
       )
     )
     let supervisor = SupervisorManager(

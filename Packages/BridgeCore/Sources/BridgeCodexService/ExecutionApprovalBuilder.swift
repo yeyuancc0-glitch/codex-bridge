@@ -5,21 +5,62 @@ import BridgeServiceCore
 import Foundation
 
 package enum ExecutionApprovalResponse: Sendable {
-  case command
+  case command(execPolicyAmendment: [String]?)
   case fileChange
   case permissions(JSONValue)
 
-  func value(for decision: LocalApprovalDecision) -> JSONValue {
-    let allowed = decision == .allow
+  var availableDecisions: [LocalApprovalDecision] {
     switch self {
-    case .command, .fileChange:
-      return .object(["decision": .string(allowed ? "accept" : "decline")])
-    case .permissions(let permissions):
+    case .command(let amendment):
+      var decisions: [LocalApprovalDecision] = [.allow, .allowForSession]
+      if amendment?.isEmpty == false { decisions.append(.allowSimilarCommands) }
+      decisions.append(.deny)
+      return decisions
+    case .fileChange, .permissions:
+      return [.allow, .allowForSession, .deny]
+    }
+  }
+
+  func value(for decision: LocalApprovalDecision) throws -> JSONValue {
+    guard availableDecisions.contains(decision) else {
+      throw ExecutionServiceError.invalidRequest("approval.decision")
+    }
+    switch (self, decision) {
+    case (_, .deny):
+      if case .permissions = self {
+        return .object([
+          "permissions": .object([:]),
+          "scope": .string("turn"),
+          "strictAutoReview": .bool(false),
+        ])
+      }
+      return .object(["decision": .string("decline")])
+    case (.command, .allow):
+      return .object(["decision": .string("accept")])
+    case (.command, .allowForSession), (.fileChange, .allowForSession):
+      return .object(["decision": .string("acceptForSession")])
+    case (.command(let amendment), .allowSimilarCommands):
+      guard let amendment, !amendment.isEmpty else {
+        throw ExecutionServiceError.invalidRequest("approval.decision")
+      }
       return .object([
-        "permissions": allowed ? permissions : .object([:]),
-        "scope": .string("turn"),
+        "decision": .object([
+          "acceptWithExecpolicyAmendment": .object([
+            "execpolicy_amendment": .array(amendment.map(JSONValue.string))
+          ])
+        ])
+      ])
+    case (.fileChange, .allow):
+      return .object(["decision": .string("accept")])
+    case (.permissions(let permissions), .allow),
+      (.permissions(let permissions), .allowForSession):
+      return .object([
+        "permissions": permissions,
+        "scope": .string(decision == .allow ? "turn" : "session"),
         "strictAutoReview": .bool(false),
       ])
+    case (.fileChange, .allowSimilarCommands), (.permissions, .allowSimilarCommands):
+      throw ExecutionServiceError.invalidRequest("approval.decision")
     }
   }
 }
@@ -76,6 +117,9 @@ package enum ExecutionApprovalBuilder {
           maximumBytes: 8 * 1_024
         ) ?? "Command details unavailable"
       let reason = ExecutionValidation.redacted(command.reason, maximumBytes: 4 * 1_024)
+      let response = ExecutionApprovalResponse.command(
+        execPolicyAmendment: command.proposedExecPolicyAmendment
+      )
       let approval = try ExecutionApprovalRequest(
         id: approvalID,
         taskID: taskID,
@@ -85,9 +129,10 @@ package enum ExecutionApprovalBuilder {
         title: "Run command",
         summary: "Codex requests permission to run a command.",
         displayCommand: displayCommand,
-        reason: reason
+        reason: reason,
+        availableDecisions: response.availableDecisions
       )
-      return PreparedExecutionApproval(request: approval, response: .command)
+      return PreparedExecutionApproval(request: approval, response: response)
 
     case .fileChange(let fileChange):
       guard case .fileChange(let evidence) = itemEvidence else {
@@ -103,6 +148,7 @@ package enum ExecutionApprovalBuilder {
       }
       paths = Array(Set(paths)).sorted()
       let reason = ExecutionValidation.redacted(fileChange.reason, maximumBytes: 4 * 1_024)
+      let response = ExecutionApprovalResponse.fileChange
       let approval = try ExecutionApprovalRequest(
         id: approvalID,
         taskID: taskID,
@@ -114,9 +160,10 @@ package enum ExecutionApprovalBuilder {
           ? "Codex requests permission to apply project file changes."
           : "Codex requests permission to change \(paths.count) project file(s).",
         relativePaths: paths,
-        reason: reason
+        reason: reason,
+        availableDecisions: response.availableDecisions
       )
-      return PreparedExecutionApproval(request: approval, response: .fileChange)
+      return PreparedExecutionApproval(request: approval, response: response)
 
     case .permissions(let permissions):
       guard case .commandExecution = itemEvidence else {
@@ -129,6 +176,7 @@ package enum ExecutionApprovalBuilder {
         limits: limits
       )
       let rawPermissions = rawParameters?.objectValue?["permissions"] ?? .object([:])
+      let response = ExecutionApprovalResponse.permissions(rawPermissions)
       let approval = try ExecutionApprovalRequest(
         id: approvalID,
         taskID: taskID,
@@ -139,11 +187,12 @@ package enum ExecutionApprovalBuilder {
         summary: scope.summary,
         displayCommand: scope.details.joined(separator: "\n"),
         relativePaths: scope.relativePaths,
-        reason: reason
+        reason: reason,
+        availableDecisions: response.availableDecisions
       )
       return PreparedExecutionApproval(
         request: approval,
-        response: .permissions(rawPermissions)
+        response: response
       )
     }
   }

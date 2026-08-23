@@ -220,21 +220,21 @@ extension BridgeServiceAppModel {
     }
   }
 
-  public func resolveApproval(_ approval: IPCApprovalSummary, allow: Bool) {
+  public func resolveApproval(_ approval: IPCApprovalSummary, decision: String) {
     runMutation { [weak self] client in
       guard let self else { return }
       try await client.resolveApproval(
         IPCApprovalResolutionRequest(
           taskID: approval.taskID,
           approvalID: approval.approvalID,
-          decision: allow ? "allow" : "deny"
+          decision: decision
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
       self.postToast(
-        allow ? "已批准 Codex 操作" : "已拒绝 Codex 操作",
-        symbol: allow ? "checkmark.shield.fill" : "xmark.shield.fill",
-        tone: allow ? .success : .warning
+        decision == "deny" ? "已拒绝 Codex 操作" : "已批准 Codex 操作",
+        symbol: decision == "deny" ? "xmark.shield.fill" : "checkmark.shield.fill",
+        tone: decision == "deny" ? .warning : .success
       )
     }
   }

@@ -54,17 +54,34 @@ extension MCPServiceToolCatalog {
       + "Codex is the default execution path. Prefer this tool unless the user explicitly asked "
       + "the MCP client to modify files or run commands directly. Omit project_id to use the "
       + "project currently selected in the Codex Bridge workbench; an explicit project_id overrides "
-      + "that default.",
+      + "that default. Omit all model and effort fields unless the user explicitly requests a "
+      + "different model for this task; omitted values use the defaults configured in Codex Bridge.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
         "prompt": boundedStringSchema(maximum: 32 * 1_024),
         "skill_name": nullableStringSchema(maximum: 128),
         "thread_id": nullableStringSchema(maximum: 1_024),
-        "execution_model": nullableStringSchema(maximum: 256),
-        "execution_effort": nullableStringSchema(maximum: 64),
-        "supervisor_model": nullableStringSchema(maximum: 256),
-        "supervisor_effort": nullableStringSchema(maximum: 64),
+        "execution_model": nullableStringSchema(
+          maximum: 256,
+          description:
+            "Omit to use the Codex Bridge default. Set only when the user explicitly requests a per-task model override."
+        ),
+        "execution_effort": nullableStringSchema(
+          maximum: 64,
+          description:
+            "Omit to use the Codex Bridge default effort. Set only with an explicit user-requested per-task override."
+        ),
+        "supervisor_model": nullableStringSchema(
+          maximum: 256,
+          description:
+            "Omit to use the Codex Bridge Supervisor default. Set only when the user explicitly requests an override."
+        ),
+        "supervisor_effort": nullableStringSchema(
+          maximum: 64,
+          description:
+            "Omit to use the Codex Bridge Supervisor default effort. Set only with an explicit user-requested override."
+        ),
         "permission_mode": [
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],

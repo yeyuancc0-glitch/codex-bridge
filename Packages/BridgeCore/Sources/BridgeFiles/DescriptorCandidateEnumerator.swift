@@ -22,7 +22,7 @@ struct DescriptorCandidateEnumerator {
   private var aggregatePathBytes = 0
   private var candidates: [String] = []
 
-  mutating func candidates(scope: SecureRelativePath?) throws -> ProjectFileCandidates {
+  mutating func candidates(scope: SecureRelativePath?) async throws -> ProjectFileCandidates {
     let rootDescriptor = Darwin.open(
       root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
@@ -31,10 +31,12 @@ struct DescriptorCandidateEnumerator {
     defer { Darwin.close(rootDescriptor) }
     try validateRootDescriptor(rootDescriptor)
 
-    let trackedPaths = GitIndexPathReader(limits: limits).read(rootDescriptor: rootDescriptor)
+    let trackedPaths = try await GitIndexPathReader(limits: limits).read(
+      rootDescriptor: rootDescriptor
+    )
     let scopeDescriptor = try openScope(scope, rootDescriptor: rootDescriptor)
     defer { Darwin.close(scopeDescriptor) }
-    try scanDirectory(
+    try await scanDirectory(
       descriptor: scopeDescriptor,
       relativeDirectory: scope?.value ?? "",
       depth: 0
@@ -47,12 +49,14 @@ struct DescriptorCandidateEnumerator {
     descriptor: Int32,
     relativeDirectory: String,
     depth: Int
-  ) throws {
+  ) async throws {
     guard depth <= limits.maximumDirectoryDepth else {
       throw ProjectFileError.directoryDepthExceeded
     }
     for name in try directoryEntries(descriptor) {
-      try inspect(
+      try Task.checkCancellation()
+      if enumeratedEntries.isMultiple(of: 64) { await Task.yield() }
+      try await inspect(
         name: name,
         descriptor: descriptor,
         relativeDirectory: relativeDirectory,
@@ -66,7 +70,7 @@ struct DescriptorCandidateEnumerator {
     descriptor: Int32,
     relativeDirectory: String,
     depth: Int
-  ) throws {
+  ) async throws {
     enumeratedEntries += 1
     guard enumeratedEntries <= limits.maximumEnumeratedEntries else {
       throw ProjectFileError.enumerationLimitExceeded
@@ -84,7 +88,7 @@ struct DescriptorCandidateEnumerator {
     guard UInt64(metadata.st_dev) == root.identity.device else { return }
     let type = metadata.st_mode & S_IFMT
     if type == S_IFDIR {
-      try inspectDirectory(
+      try await inspectDirectory(
         name: name,
         relativePath: relativePath,
         descriptor: descriptor,
@@ -112,7 +116,7 @@ struct DescriptorCandidateEnumerator {
     relativePath: String,
     descriptor: Int32,
     depth: Int
-  ) throws {
+  ) async throws {
     guard !Self.ignoredDirectories.contains(name.lowercased()) else { return }
     guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
       return
@@ -123,7 +127,7 @@ struct DescriptorCandidateEnumerator {
     guard child >= 0 else { throw ProjectFileError.unsafeFilesystemState }
     defer { Darwin.close(child) }
     try validateDirectoryDescriptor(child)
-    try scanDirectory(descriptor: child, relativeDirectory: relativePath, depth: depth + 1)
+    try await scanDirectory(descriptor: child, relativeDirectory: relativePath, depth: depth + 1)
   }
 
   private mutating func directoryEntries(_ descriptor: Int32) throws -> [String] {
@@ -137,6 +141,7 @@ struct DescriptorCandidateEnumerator {
     var names: [String] = []
     errno = 0
     while let entry = readdir(directory) {
+      try Task.checkCancellation()
       let name = Self.entryName(entry)
       if name != "." && name != ".." { names.append(name) }
       guard names.count <= limits.maximumEnumeratedEntries - enumeratedEntries else {
@@ -234,7 +239,7 @@ private struct GitIndexPathReader {
   private static let maximumPathBytes = 4_096
   let limits: ProjectFileLimits
 
-  func read(rootDescriptor: Int32) -> [String]? {
+  func read(rootDescriptor: Int32) async throws -> [String]? {
     guard let rootDevice = device(of: rootDescriptor) else { return nil }
     let gitDescriptor = ".git".withCString {
       openat(rootDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
@@ -252,8 +257,8 @@ private struct GitIndexPathReader {
       return nil
     }
     defer { Darwin.close(indexDescriptor) }
-    guard let data = boundedData(indexDescriptor) else { return nil }
-    return parse(data)
+    guard let data = try await boundedData(indexDescriptor) else { return nil }
+    return try await parse(data)
   }
 
   private func device(of descriptor: Int32) -> UInt64? {
@@ -262,7 +267,7 @@ private struct GitIndexPathReader {
     return UInt64(metadata.st_dev)
   }
 
-  private func boundedData(_ descriptor: Int32) -> Data? {
+  private func boundedData(_ descriptor: Int32) async throws -> Data? {
     var metadata = stat()
     guard
       fstat(descriptor, &metadata) == 0,
@@ -273,6 +278,8 @@ private struct GitIndexPathReader {
     var data = Data()
     var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
     while data.count <= Self.maximumIndexBytes {
+      try Task.checkCancellation()
+      await Task.yield()
       let count = Darwin.read(descriptor, &buffer, buffer.count)
       if count == 0 { return data }
       if count > 0 {
@@ -284,7 +291,7 @@ private struct GitIndexPathReader {
     return nil
   }
 
-  private func parse(_ data: Data) -> [String]? {
+  private func parse(_ data: Data) async throws -> [String]? {
     guard
       data.count >= 12,
       data.prefix(4) == Data("DIRC".utf8),
@@ -297,7 +304,9 @@ private struct GitIndexPathReader {
 
     var offset = 12
     var paths: [String] = []
-    for _ in 0..<entryCount {
+    for index in 0..<entryCount {
+      try Task.checkCancellation()
+      if index.isMultiple(of: 256) { await Task.yield() }
       guard let entry = parseEntry(data, offset: offset, version: version) else { return nil }
       offset = entry.nextOffset
       if let path = entry.path { paths.append(path) }

@@ -197,6 +197,14 @@ extension MCPServiceToolCatalog {
     ["type": ["string", "null"], "maxLength": .int(maximum)]
   }
 
+  static func nullableStringSchema(maximum: Int, description: String) -> Value {
+    [
+      "type": ["string", "null"],
+      "maxLength": .int(maximum),
+      "description": .string(description),
+    ]
+  }
+
   static func integerSchema(minimum: Int, maximum: Int? = nil) -> Value {
     var result: [String: Value] = ["type": "integer", "minimum": .int(minimum)]
     if let maximum { result["maximum"] = .int(maximum) }

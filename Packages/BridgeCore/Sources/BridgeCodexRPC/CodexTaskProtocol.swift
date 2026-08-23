@@ -157,6 +157,7 @@ public struct ThreadStartParams: Codable, Equatable, Sendable {
   public let serviceTier: String?
   public let ephemeral: Bool
   public let model: String?
+  public let projectId: String?
   public let baseInstructions: String?
   public let developerInstructions: String?
 
@@ -168,6 +169,7 @@ public struct ThreadStartParams: Codable, Equatable, Sendable {
     serviceTier: String? = nil,
     ephemeral: Bool = true,
     model: String? = nil,
+    projectId: String? = nil,
     baseInstructions: String? = nil,
     developerInstructions: String? = nil
   ) {
@@ -178,6 +180,7 @@ public struct ThreadStartParams: Codable, Equatable, Sendable {
     self.serviceTier = serviceTier
     self.ephemeral = ephemeral
     self.model = model
+    self.projectId = projectId
     self.baseInstructions = baseInstructions
     self.developerInstructions = developerInstructions
   }
@@ -369,6 +372,39 @@ public struct CodexThread: Codable, Equatable, Sendable {
   public let sessionId: String
   public let status: JSONValue
   public let source: JSONValue
+  public let projectId: String?
+
+  public init(
+    id: String,
+    cwd: String,
+    ephemeral: Bool,
+    modelProvider: String,
+    preview: String,
+    turns: [CodexTurn],
+    name: String?,
+    cliVersion: String,
+    createdAt: Int64,
+    updatedAt: Int64,
+    sessionId: String,
+    status: JSONValue,
+    source: JSONValue,
+    projectId: String? = nil
+  ) {
+    self.id = id
+    self.cwd = cwd
+    self.ephemeral = ephemeral
+    self.modelProvider = modelProvider
+    self.preview = preview
+    self.turns = turns
+    self.name = name
+    self.cliVersion = cliVersion
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    self.sessionId = sessionId
+    self.status = status
+    self.source = source
+    self.projectId = projectId
+  }
 }
 
 public struct ThreadStartResponse: Codable, Equatable, Sendable {
