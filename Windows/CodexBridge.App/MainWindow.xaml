@@ -124,11 +124,13 @@
                                         <ColumnDefinition Width="220" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Name}" Style="{ThemeResource BodyStrongTextBlockStyle}" />
                                     <TextBlock Grid.Column="1" Text="{Binding ProjectId}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="2" Text="{Binding Capabilities.Summary}" />
-                                    <Button Grid.Column="3" Content="移除" DataContext="{Binding}" Click="RemoveProjectClick" />
+                                    <Button Grid.Column="3" Content="权限" DataContext="{Binding}" Click="EditProjectPolicyClick" />
+                                    <Button Grid.Column="4" Content="移除" DataContext="{Binding}" Click="RemoveProjectClick" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>

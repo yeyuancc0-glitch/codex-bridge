@@ -93,6 +93,29 @@ public sealed class GoldenContractTests
         Assert.Equal("runtime-key-fixture", payload.GetProperty("runtime_key").GetString());
     }
 
+    [Fact]
+    public void ProjectPolicyUsesSwiftPermissionFieldNames()
+    {
+        var request = BridgeServiceCodec.Request(
+            "update_project_policy",
+            new
+            {
+                ProjectId = "project-fixture",
+                ReadPermission = "allowed",
+                WritePermission = "requiresLocalApproval",
+                NetworkPermission = "denied",
+            },
+            "request-project-policy");
+        var base64 = request.GetProperty("payload").GetString();
+        var payload = JsonDocument.Parse(Convert.FromBase64String(base64!)).RootElement;
+        Assert.Equal("project-fixture", payload.GetProperty("project_id").GetString());
+        Assert.Equal("allowed", payload.GetProperty("read_permission").GetString());
+        Assert.Equal(
+            "requiresLocalApproval",
+            payload.GetProperty("write_permission").GetString());
+        Assert.Equal("denied", payload.GetProperty("network_permission").GetString());
+    }
+
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
 
     private static void AssertJsonEqual(JsonElement expected, JsonElement actual)
