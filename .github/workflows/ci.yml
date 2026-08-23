@@ -217,7 +217,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $triplet = 'x64-windows'
           $vcpkg = (Get-Command vcpkg.exe -ErrorAction Stop).Source
-          & $vcpkg install "sqlite3:$triplet" --clean-after-build
+          & $vcpkg install "sqlite3[snapshot]:$triplet" --clean-after-build
           if ($LASTEXITCODE -ne 0) { throw "vcpkg sqlite3 install failed with exit code $LASTEXITCODE" }
           $installed = Join-Path (Split-Path $vcpkg) "installed\$triplet"
           $include = Join-Path $installed 'include'
@@ -340,7 +340,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $triplet = 'arm64-windows'
           $vcpkg = (Get-Command vcpkg.exe -ErrorAction Stop).Source
-          & $vcpkg install "sqlite3:$triplet" --clean-after-build
+          & $vcpkg install "sqlite3[snapshot]:$triplet" --clean-after-build
           if ($LASTEXITCODE -ne 0) { throw "vcpkg sqlite3 install failed with exit code $LASTEXITCODE" }
           $installed = Join-Path (Split-Path $vcpkg) "installed\$triplet"
           $include = Join-Path $installed 'include'
