@@ -46,6 +46,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
   /// list requires proving the target builds on native Windows runners.
   private static let windowsClosureTargets = [
     "BridgeCodexRPC",
+    "BridgeCodexService",
     "BridgeDirectCommand",
     "BridgeDomain",
     "BridgeFiles",
@@ -57,6 +58,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeProcessRuntime",
     "BridgeProjects",
     "BridgeSecurity",
+    "BridgeServiceApplication",
     "BridgeServiceCore",
     "BridgeSkills",
     "BridgeSupervisor",
@@ -88,10 +90,12 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
   /// canImport gate.
   private static let splitHostTargets: Set<String> = [
     "BridgeCodexRPC",
+    "BridgeCodexService",
     "BridgeDirectCommand",
     "BridgeFiles",
     "BridgeProcessRuntime",
     "BridgeSecurity",
+    "BridgeServiceApplication",
     "BridgeServiceCore",
     "BridgeSupervisor",
     "BridgeTunnel",

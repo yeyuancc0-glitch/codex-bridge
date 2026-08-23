@@ -286,20 +286,25 @@ let sharedTestTargets: [Target] = [
       dependencies: ["BridgeCodexRPC", "BridgeSecurity"]
     ),
     .target(
+      name: "BridgeCodexService",
+      dependencies: [
+        "BridgeCodexRPC",
+        "BridgeDomain",
+        "BridgeProjects",
+        "BridgeSecurity",
+        "BridgeServiceCore",
+        "BridgeSupervisor",
+      ] + cryptoDependencies
+    ),
+    .target(
       name: "BridgeDirectCommand",
-      dependencies: ["BridgeProcessRuntime"],
-      path: "Sources/BridgeDirectCommand",
-      exclude: [
-        "DirectCommandPolicy.swift",
-        "DirectCommandSessionManager.swift",
-        "DirectSearchArgumentValidator.swift",
-      ],
-      sources: [
-        "DirectCommandOutputBuffer.swift",
-        "DirectCommandRunner.swift",
-        "DirectGitRunner.swift",
-        "DirectProcessLifetime.swift",
-        "DirectProcessLifetime+Windows.swift",
+      dependencies: [
+        "BridgeDomain",
+        "BridgeProcessRuntime",
+        "BridgeProjects",
+        "BridgeSecurity",
+        "BridgeServiceCore",
+        .product(name: "Logging", package: "swift-log"),
       ]
     ),
     .executableTarget(
@@ -347,6 +352,23 @@ let sharedTestTargets: [Target] = [
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
       ]
+    ),
+    .target(
+      name: "BridgeServiceApplication",
+      dependencies: [
+        "BridgeCodexRPC",
+        "BridgeCodexService",
+        "BridgeDirectCommand",
+        "BridgeDomain",
+        "BridgeFiles",
+        "BridgeMCP",
+        "BridgeProjects",
+        "BridgeSecurity",
+        "BridgeServiceCore",
+        "BridgeSkills",
+      ] + cryptoDependencies,
+      path: "Sources/BridgeServiceApplication",
+      exclude: ["DirectGitIndexTransaction.swift"]
     ),
     .target(
       name: "BridgeIPC",
@@ -422,6 +444,7 @@ let sharedTestTargets: [Target] = [
 
   let windowsProducts: [Product] = [
     .library(name: "BridgeCodexRPC", targets: ["BridgeCodexRPC"]),
+    .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
     .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
     .library(name: "BridgeIPCWindows", targets: ["BridgeIPCWindows"]),
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
@@ -433,6 +456,7 @@ let sharedTestTargets: [Target] = [
     .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
     .library(name: "BridgeSkills", targets: ["BridgeSkills"]),
     .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
+    .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
     .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
     .executable(
       name: "windows-process-tree-fixture",

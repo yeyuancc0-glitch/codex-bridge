@@ -1,8 +1,11 @@
 import BridgeCodexRPC
 import BridgeDomain
 import BridgeSupervisor
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 package actor SupervisorSession {
   nonisolated let events: AsyncStream<SupervisorEvent>
@@ -378,44 +381,58 @@ package actor SupervisorSession {
   }
 
   private static func makeScratch(in root: URL) throws -> URL {
-    guard privateDirectory(root) else { throw SupervisorServiceError.scratchUnavailable }
-    let child = root.appending(
-      path: "session-" + UUID().uuidString.lowercased(),
-      directoryHint: .isDirectory
-    )
-    do {
-      try FileManager.default.createDirectory(
-        at: child,
-        withIntermediateDirectories: false,
-        attributes: [.posixPermissions: NSNumber(value: 0o700)]
+    #if canImport(Darwin)
+      guard privateDirectory(root) else { throw SupervisorServiceError.scratchUnavailable }
+      let child = root.appending(
+        path: "session-" + UUID().uuidString.lowercased(),
+        directoryHint: .isDirectory
       )
-    } catch {
+      do {
+        try FileManager.default.createDirectory(
+          at: child,
+          withIntermediateDirectories: false,
+          attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+      } catch {
+        throw SupervisorServiceError.scratchUnavailable
+      }
+      guard privateDirectory(child) else {
+        try? FileManager.default.removeItem(at: child)
+        throw SupervisorServiceError.scratchUnavailable
+      }
+      return child
+    #else
+      _ = root
       throw SupervisorServiceError.scratchUnavailable
-    }
-    guard privateDirectory(child) else {
-      try? FileManager.default.removeItem(at: child)
-      throw SupervisorServiceError.scratchUnavailable
-    }
-    return child
+    #endif
   }
 
   private static func removeScratch(_ child: URL, root: URL) {
-    let rootPath = root.standardizedFileURL.path
-    let childPath = child.standardizedFileURL.path
-    guard childPath.hasPrefix(rootPath + "/"),
-      child.lastPathComponent.hasPrefix("session-"),
-      privateDirectory(root),
-      privateDirectory(child)
-    else { return }
-    try? FileManager.default.removeItem(at: child)
+    #if canImport(Darwin)
+      let rootPath = root.standardizedFileURL.path
+      let childPath = child.standardizedFileURL.path
+      guard childPath.hasPrefix(rootPath + "/"),
+        child.lastPathComponent.hasPrefix("session-"),
+        privateDirectory(root),
+        privateDirectory(child)
+      else { return }
+      try? FileManager.default.removeItem(at: child)
+    #else
+      _ = (child, root)
+    #endif
   }
 
   private static func privateDirectory(_ url: URL) -> Bool {
-    var metadata = stat()
-    return lstat(url.path, &metadata) == 0
-      && metadata.st_uid == getuid()
-      && metadata.st_mode & S_IFMT == S_IFDIR
-      && metadata.st_mode & 0o777 == 0o700
+    #if canImport(Darwin)
+      var metadata = stat()
+      return lstat(url.path, &metadata) == 0
+        && metadata.st_uid == getuid()
+        && metadata.st_mode & S_IFMT == S_IFDIR
+        && metadata.st_mode & 0o777 == 0o700
+    #else
+      _ = url
+      return false
+    #endif
   }
 
   private static func code(_ error: SupervisorServiceError) -> String {
