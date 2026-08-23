@@ -7,10 +7,17 @@ import XCTest
   import WinSDK
 
   final class WindowsNamedPipeTransportTests: XCTestCase {
-    func testEchoTransactOverRealPipe() throws {
-      try withEchoServer { path in
-        let response = try Self.transactWithRetry(path: path, request: Data("ping".utf8))
-        XCTAssertEqual(response, Data("ping".utf8))
+    func testEchoTransactOverRealPipe() {
+      let requests = RequestProbe()
+      do {
+        try withEchoServer(
+          onRequest: { requests.record($0) },
+          body: { path in
+            let response = try Self.transactWithRetry(path: path, request: Data("ping".utf8))
+            XCTAssertEqual(response, Data("ping".utf8))
+          })
+      } catch {
+        XCTFail("echo failed after handler requests \(requests.values): \(error)")
       }
     }
 
@@ -71,14 +78,35 @@ import XCTest
       throw PipeTransportError.connectionFailed(-1)
     }
 
-    private func withEchoServer(_ body: (String) throws -> Void) rethrows {
+    private func withEchoServer(
+      onRequest: @escaping @Sendable (Data) -> Void = { _ in },
+      body: (String) throws -> Void
+    ) rethrows {
       let path = "\\\\.\\pipe\\org.codexbridge.test.\(Foundation.UUID().uuidString.lowercased())"
       let server = WindowsNamedPipeServer(path: path) { _, request in
+        onRequest(request)
         request
       }
       server.start()
       defer { server.stop() }
       try body(path)
+    }
+
+    private final class RequestProbe: @unchecked Sendable {
+      private let lock = NSLock()
+      private var requests: [Data] = []
+
+      var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests.map { String(decoding: $0, as: UTF8.self) }
+      }
+
+      func record(_ request: Data) {
+        lock.lock()
+        requests.append(request)
+        lock.unlock()
+      }
     }
 
   }
