@@ -24,6 +24,9 @@ package actor SupervisorSession {
   var completions: [String: TurnNotification] = [:]
   var pending: [SupervisorObservation] = []
   var failure: SupervisorServiceError?
+  // Sticky: an approval request invalidates every later final verdict even if
+  // it races past the transient `failure` check inside an in-flight review.
+  var approvalRequested = false
   var seenIssueIDs: Set<String> = []
   var automaticSteerCount = 0
   var terminal = false
@@ -251,6 +254,21 @@ package actor SupervisorSession {
     _ decision: SupervisorDecision,
     observation: SupervisorObservation
   ) {
+    // A final verdict is only trustworthy when the session stayed clean for
+    // its whole lifetime; any recorded failure or approval request degrades it.
+    if observation.kind == .final {
+      if let failure {
+        degrade(code: Self.code(failure), summary: failure.localizedDescription)
+        return
+      }
+      if approvalRequested {
+        degrade(
+          code: Self.code(.approvalRequested),
+          summary: "Supervisor requested user approval; Codex execution continues."
+        )
+        return
+      }
+    }
     switch decision.decision {
     case .continue:
       if observation.kind == .final {

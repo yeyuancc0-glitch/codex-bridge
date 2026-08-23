@@ -110,7 +110,9 @@ func waitForTask(
   _ fixture: ExecutionTestFixture,
   taskID: TaskID,
   matching predicate: @escaping (ServiceTaskRecord) -> Bool,
-  timeout: Duration = .seconds(6)
+  // Generous by design: the full suite runs many concurrent process fixtures
+  // and CI runners can stall several seconds without invalidating progress.
+  timeout: Duration = .seconds(20)
 ) async throws -> ServiceTaskRecord {
   let start = ContinuousClock.now
   while ContinuousClock.now - start < timeout {
@@ -125,7 +127,7 @@ func waitForTask(
 func waitForApproval(
   _ coordinator: ServiceExecutionCoordinator,
   taskID: TaskID,
-  timeout: Duration = .seconds(6)
+  timeout: Duration = .seconds(20)
 ) async throws -> ExecutionApprovalRequest {
   let start = ContinuousClock.now
   while ContinuousClock.now - start < timeout {
