@@ -200,6 +200,7 @@ jobs:
             Select-Object -First 1
           if (-not $runtimeBin) { throw "Swift runtime dlls not found under $swiftRoot\Runtimes" }
           Add-Content $env:GITHUB_PATH $runtimeBin.DirectoryName
+          Add-Content $env:GITHUB_ENV "SWIFT_RUNTIME_BIN=$($runtimeBin.DirectoryName)"
           $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Depth 4 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $platformSdk) { throw "Windows.sdk not found under $swiftRoot\Platforms" }
@@ -230,6 +231,7 @@ jobs:
           if (-not (Test-Path (Join-Path $library 'sqlite3.lib'))) { throw "sqlite3.lib not found under $library" }
           Add-Content $env:GITHUB_ENV "SQLITE_INCLUDE_DIR=$include"
           Add-Content $env:GITHUB_ENV "SQLITE_LIBRARY_DIR=$library"
+          Add-Content $env:GITHUB_ENV "SQLITE_RUNTIME_DIR=$runtime"
           Add-Content $env:GITHUB_PATH $runtime
 
       - name: Record toolchain
@@ -271,6 +273,17 @@ jobs:
       - name: Probe real Service dispatcher from C#
         shell: pwsh
         run: .github/scripts/run-windows-service-probe.ps1
+
+      - name: Build unsigned x64 MSIX
+        shell: pwsh
+        run: .github/scripts/package-windows-msix.ps1 -Architecture x64
+
+      - name: Upload unsigned x64 MSIX
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-x64-unsigned
+          path: Windows/CodexBridge.App/**/AppPackages/**/*.msix
+          if-no-files-found: error
 
       - name: Save Windows Swift build cache
         if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'
@@ -332,6 +345,7 @@ jobs:
             Select-Object -First 1
           if (-not $runtimeBin) { throw "Swift runtime dlls not found under $swiftRoot\Runtimes" }
           Add-Content $env:GITHUB_PATH $runtimeBin.DirectoryName
+          Add-Content $env:GITHUB_ENV "SWIFT_RUNTIME_BIN=$($runtimeBin.DirectoryName)"
           $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Depth 4 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $platformSdk) { throw "Windows.sdk not found under $swiftRoot\Platforms" }
@@ -362,6 +376,7 @@ jobs:
           if (-not (Test-Path (Join-Path $library 'sqlite3.lib'))) { throw "sqlite3.lib not found under $library" }
           Add-Content $env:GITHUB_ENV "SQLITE_INCLUDE_DIR=$include"
           Add-Content $env:GITHUB_ENV "SQLITE_LIBRARY_DIR=$library"
+          Add-Content $env:GITHUB_ENV "SQLITE_RUNTIME_DIR=$runtime"
           Add-Content $env:GITHUB_PATH $runtime
 
       - name: Record toolchain
@@ -403,6 +418,17 @@ jobs:
       - name: Probe real Service dispatcher from C#
         shell: pwsh
         run: .github/scripts/run-windows-service-probe.ps1
+
+      - name: Build unsigned ARM64 MSIX
+        shell: pwsh
+        run: .github/scripts/package-windows-msix.ps1 -Architecture ARM64
+
+      - name: Upload unsigned ARM64 MSIX
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-ARM64-unsigned
+          path: Windows/CodexBridge.App/**/AppPackages/**/*.msix
+          if-no-files-found: error
 
       - name: Save Windows Swift build cache
         if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'

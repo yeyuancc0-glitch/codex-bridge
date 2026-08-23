@@ -8,11 +8,25 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
-    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsPackageType Condition="'$(BuildMsix)' != 'true'">None</WindowsPackageType>
+    <WindowsPackageType Condition="'$(BuildMsix)' == 'true'">MSIX</WindowsPackageType>
+    <EnableMsixTooling Condition="'$(BuildMsix)' == 'true'">true</EnableMsixTooling>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppxPackageOnBuild Condition="'$(BuildMsix)' == 'true'">true</GenerateAppxPackageOnBuild>
+    <AppxBundle>Never</AppxBundle>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Web.WebView2" />
     <ProjectReference Include="..\BridgeIPC.Client\BridgeIPC.Client.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(BuildMsix)' == 'true'">
+    <Content Include="..\..\App\Resources\Assets.xcassets\AppIcon.appiconset\AppIcon-512@2x.png"
+             Link="Assets\AppIcon.png" />
+    <Content Include="$(BridgeServicePayload)\**\*"
+             Condition="Exists('$(BridgeServicePayload)')">
+      <Link>%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>
