@@ -50,7 +50,6 @@
     private var started = false
     private var stopped = false
     private var acceptLoopRunning = false
-    private var acceptingConnection = false
 
     public init(
       path: String = BridgeServiceIPC.windowsPipeName,
@@ -83,9 +82,6 @@
       stopped = true
       active = Array(connections.values)
       connections.removeAll(keepingCapacity: false)
-      while acceptLoopRunning, !acceptingConnection {
-        state.wait()
-      }
       shouldWakeAcceptLoop = acceptLoopRunning
       state.unlock()
       for connection in active {
@@ -96,7 +92,7 @@
       // local client. A shutdown wakeup never enters the framed protocol or
       // waits for a response, so stop cannot deadlock behind its own server.
       if shouldWakeAcceptLoop {
-        Self.wakeAcceptLoop(path: path)
+        wakeAcceptLoop()
         waitForAcceptLoopExit()
       }
     }
@@ -145,7 +141,6 @@
       defer {
         state.lock()
         acceptLoopRunning = false
-        acceptingConnection = false
         state.broadcast()
         state.unlock()
       }
@@ -172,15 +167,9 @@
           CloseHandle(instance)
           return
         }
-        acceptingConnection = true
-        state.broadcast()
         state.unlock()
         var connected = ConnectNamedPipe(instance, nil)
         let connectError = connected ? DWORD(0) : GetLastError()
-        state.lock()
-        acceptingConnection = false
-        state.broadcast()
-        state.unlock()
         if !connected, connectError == Constants.errorPipeConnected {
           connected = true
         }
@@ -204,9 +193,13 @@
       }
     }
 
-    private static func wakeAcceptLoop(path: String) {
+    private func wakeAcceptLoop() {
       let name = WideBuffer(path)
       for attempt in 0..<100 {
+        state.lock()
+        let isRunning = acceptLoopRunning
+        state.unlock()
+        if !isRunning { return }
         let handle = CreateFileW(
           name.pointer,
           DWORD(0xC000_0000),
@@ -312,6 +305,7 @@
         handle = nil
         ioLock.unlock()
         guard let current else { return }
+        CancelIoEx(current, nil)
         DisconnectNamedPipe(current)
         CloseHandle(current)
       }
