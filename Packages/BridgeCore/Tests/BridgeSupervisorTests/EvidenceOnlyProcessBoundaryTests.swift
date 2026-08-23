@@ -56,7 +56,7 @@ final class EvidenceOnlyProcessBoundaryTests: XCTestCase {
       withIntermediateDirectories: true,
       attributes: [.posixPermissions: NSNumber(value: 0o700)]
     )
-    try Data("user-secret".utf8).write(to: sentinel, options: .completeFileProtection)
+    try Data("user-secret".utf8).write(to: sentinel, options: .atomic)
     addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
 
     let script = "test ! -r \"\(sentinel.path)\" && test ! -w \"\(sentinel.path)\""
