@@ -261,6 +261,64 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private async void StopTaskClick(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button { DataContext: TaskSummary task })
+        {
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            Title = "停止正在运行的任务？",
+            Content = task.TaskId,
+            PrimaryButtonText = "停止",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+        await ResolveWithStatusAsync(async () =>
+        {
+            await _connection.SendAsync<JsonElement>(
+                "stop_task",
+                new { task.TaskId },
+                _lifetime.Token);
+            await LoadSectionAsync("tasks");
+        });
+    }
+
+    private async void DeleteTaskClick(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button { DataContext: TaskSummary task })
+        {
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            Title = "删除任务记录？",
+            Content = task.TaskId,
+            PrimaryButtonText = "删除",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+        await ResolveWithStatusAsync(async () =>
+        {
+            await _connection.SendAsync<JsonElement>(
+                "delete_task",
+                new { task.TaskId },
+                _lifetime.Token);
+            await LoadSectionAsync("tasks");
+        });
+    }
+
     private async void ApproveCodexApprovalClick(object sender, RoutedEventArgs args)
     {
         await ResolveWithStatusAsync(() => ResolveCodexApprovalAsync(sender, "allow"));
