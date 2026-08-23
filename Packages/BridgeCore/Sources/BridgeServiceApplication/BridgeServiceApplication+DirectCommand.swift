@@ -54,10 +54,26 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.contractRejected
     }
     let project = try await writableProject(request.projectID)
-    let resolvedExecutable = Self.resolvedExecutableForPolicy(
-      request: request,
-      project: project
+    let unresolvedPolicyRequest = DirectCommandRequest(
+      projectID: project.id,
+      commandID: request.commandID,
+      argv: request.argv,
+      workingDirectory: request.workingDirectory,
+      requiresNetwork: requiresNetwork,
+      isValidatedSkillScript: isValidatedSkillScript
     )
+    let resolvedExecutable: String?
+    if let builtInExecutable = commandPolicy.preferredSystemBuiltInExecutable(
+      project: project,
+      request: unresolvedPolicyRequest
+    ) {
+      resolvedExecutable = builtInExecutable
+    } else {
+      resolvedExecutable = try Self.resolvedExecutableForPolicy(
+        request: request,
+        project: project
+      )
+    }
     let resolution = commandPolicy.resolve(
       project: project,
       request: DirectCommandRequest(
@@ -149,14 +165,19 @@ extension BridgeServiceApplication {
   private static func resolvedExecutableForPolicy(
     request: MCPDirectExecRequest,
     project: ServiceProjectRecord
-  ) -> String? {
+  ) throws -> String? {
     let requestedExecutable =
       request.argv.first
       ?? request.commandID.flatMap { commandID in
         project.workspaceCommands.first(where: { $0.id == commandID })?.executable
       }
     guard let requestedExecutable, !requestedExecutable.isEmpty else { return nil }
-    guard let resolved = try? resolvedLaunchArgv([requestedExecutable], project: project).first,
+    guard
+      let resolved = try resolvedLaunchArgv(
+        [requestedExecutable],
+        project: project,
+        allowUnresolvedBareExecutable: true
+      ).first,
       resolved.hasPrefix("/")
     else { return nil }
     return resolved
@@ -286,7 +307,8 @@ extension BridgeServiceApplication {
   /// (e.g. `git`) against a fixed trusted PATH. Absolute paths pass through unchanged.
   static func resolvedLaunchArgv(
     _ argv: [String],
-    project: ServiceProjectRecord
+    project: ServiceProjectRecord,
+    allowUnresolvedBareExecutable: Bool = false
   ) throws -> [String] {
     guard let executable = argv.first, !executable.isEmpty else { return argv }
     if executable.hasPrefix("/") {
@@ -315,6 +337,7 @@ extension BridgeServiceApplication {
     if let resolved = Self.executableInTrustedPath(executable) {
       return [resolved] + argv.dropFirst()
     }
+    guard allowUnresolvedBareExecutable else { throw BridgeMCPQueryError.processLaunchFailed }
     return argv
   }
 

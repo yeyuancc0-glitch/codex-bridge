@@ -173,6 +173,87 @@ final class DirectCommandPolicyTests: XCTestCase {
     XCTAssertEqual(result.argv, ["/usr/bin/git", "status"])
   }
 
+  func testSafeModePrefersSystemExecutableForBareBuiltIn() throws {
+    let policy = DirectCommandPolicy()
+    let project = try project(mode: .safe, write: .allowed)
+    let request = DirectCommandRequest(
+      projectID: project.id,
+      commandID: nil,
+      argv: ["git", "status"]
+    )
+
+    let executable = policy.preferredSystemBuiltInExecutable(
+      project: project,
+      request: request
+    )
+
+    XCTAssertEqual(executable, "/usr/bin/git")
+    let result = policy.resolve(
+      project: project,
+      request: DirectCommandRequest(
+        projectID: project.id,
+        commandID: nil,
+        argv: request.argv,
+        resolvedExecutable: executable
+      )
+    )
+    XCTAssertTrue(result.allowed)
+    XCTAssertEqual(result.argv, ["/usr/bin/git", "status"])
+  }
+
+  func testRegisteredCommandKeepsNormalExecutableResolution() throws {
+    let policy = DirectCommandPolicy()
+    let command = try ServiceWorkspaceCommand(
+      id: "wcmd-git",
+      name: "Registered Git",
+      executable: "git",
+      arguments: ["status"]
+    )
+    let project = try project(mode: .safe, write: .allowed, commands: [command])
+
+    let executable = policy.preferredSystemBuiltInExecutable(
+      project: project,
+      request: DirectCommandRequest(
+        projectID: project.id,
+        commandID: nil,
+        argv: ["git", "status"]
+      )
+    )
+
+    XCTAssertNil(executable)
+  }
+
+  func testEffectiveSafeRulesExcludeUnavailableBareCommands() {
+    let policy = DirectCommandPolicy(
+      builtInSafeRules: [
+        .init(executable: "codex-bridge-command-that-does-not-exist")
+      ]
+    )
+
+    XCTAssertTrue(policy.effectiveSafeCommandRules.isEmpty)
+  }
+
+  func testBuiltInPreferenceNeverTrustsDeclaredHomebrewExecutable() throws {
+    let policy = DirectCommandPolicy(
+      builtInSafeRules: [
+        .init(executable: "git", argumentsPrefix: ["status"]),
+        .init(executable: "/opt/homebrew/bin/git", argumentsPrefix: ["status"]),
+      ]
+    )
+    let project = try project(mode: .safe, write: .allowed)
+
+    let executable = policy.preferredSystemBuiltInExecutable(
+      project: project,
+      request: DirectCommandRequest(
+        projectID: project.id,
+        commandID: nil,
+        argv: ["git", "status"]
+      )
+    )
+
+    XCTAssertEqual(executable, "/usr/bin/git")
+  }
+
   func testSafeModeAllowsResolvedExecutableWhenExplicitlyRegistered() throws {
     let policy = DirectCommandPolicy()
     let command = try ServiceWorkspaceCommand(

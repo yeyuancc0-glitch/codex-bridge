@@ -814,6 +814,110 @@ final class DirectApprovalFlowTests: XCTestCase {
     await application.directCommands.cancelAll()
   }
 
+  func testSafeModeRunsBareGitStatusThroughSystemBuiltIn() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let initialize = Process()
+    initialize.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    initialize.arguments = ["init", "--quiet", fixture.root.path]
+    try initialize.run()
+    initialize.waitUntilExit()
+    XCTAssertEqual(initialize.terminationStatus, 0)
+
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(30)))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    let receipt = try await application.serviceDirectExecCommand(
+      MCPDirectExecRequest(
+        projectID: fixture.project.id.rawValue,
+        commandID: nil,
+        argv: ["git", "status", "--short"],
+        workingDirectory: nil,
+        tty: false,
+        yieldTimeMS: 50,
+        timeoutMS: 5_000,
+        clientRequestID: "req-bare-git-status"
+      ),
+      deadline: deadline
+    )
+    var output = try XCTUnwrap(receipt.output)
+    while output.status == "running" && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+      output = try await application.serviceDirectReadCommand(
+        sessionID: receipt.sessionID,
+        deadline: deadline
+      )
+    }
+
+    XCTAssertEqual(output.status, "ended")
+    XCTAssertEqual(output.exitCode, 0)
+    await application.directCommands.cancelAll()
+  }
+
+  func testDirectExecutablePathEscapeReturnsPathDenied() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+
+    do {
+      _ = try await application.serviceDirectExecCommand(
+        MCPDirectExecRequest(
+          projectID: fixture.project.id.rawValue,
+          commandID: nil,
+          argv: ["../outside.sh"],
+          workingDirectory: nil,
+          tty: false,
+          yieldTimeMS: 0,
+          timeoutMS: 5_000,
+          clientRequestID: "req-escaped-executable"
+        ),
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected path denial")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .pathDenied)
+    }
+  }
+
+  func testMissingBareExecutableReturnsProcessLaunchFailedInFullMode() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .full,
+      workspaceCommands: [],
+      projectID: fixture.project.id
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
+
+    do {
+      _ = try await application.serviceDirectExecCommand(
+        MCPDirectExecRequest(
+          projectID: fixture.project.id.rawValue,
+          commandID: nil,
+          argv: ["codex-bridge-command-that-does-not-exist"],
+          workingDirectory: nil,
+          tty: false,
+          yieldTimeMS: 0,
+          timeoutMS: 5_000,
+          clientRequestID: "req-missing-executable"
+        ),
+        deadline: ContinuousClock.now.advanced(by: .seconds(3))
+      )
+      XCTFail("Expected process launch failure")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .processLaunchFailed)
+    }
+  }
+
   func testRegisteredCommandBindsWorkingDirectoryAndRejectsSymlinkCwd() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let scripts = fixture.root.appending(path: "scripts", directoryHint: .isDirectory)

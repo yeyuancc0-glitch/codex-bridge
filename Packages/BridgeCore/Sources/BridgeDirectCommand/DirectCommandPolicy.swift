@@ -91,10 +91,12 @@ private struct SafeRule: Equatable {
 
 public struct DirectCommandPolicy: Sendable {
   private let builtInSafeRules: [SafeRule]
+  private let builtInResolver: DirectBuiltInCommandResolver
   public let safeCommandRules: [DirectSafeCommandRule]
 
   public init(builtInSafeRules: [DirectSafeCommandRule] = DirectCommandPolicy.defaultSafeRules) {
     safeCommandRules = builtInSafeRules
+    builtInResolver = DirectBuiltInCommandResolver(rules: builtInSafeRules)
     self.builtInSafeRules = builtInSafeRules.map {
       SafeRule(
         executable: $0.executable,
@@ -120,6 +122,20 @@ public struct DirectCommandPolicy: Sendable {
       self.argumentsPrefix = argumentsPrefix
       self.requiresNetwork = requiresNetwork
     }
+  }
+
+  public var effectiveSafeCommandRules: [DirectSafeCommandRule] {
+    builtInResolver.effectiveRules
+  }
+
+  public func preferredSystemBuiltInExecutable(
+    project: ServiceProjectRecord,
+    request: DirectCommandRequest
+  ) -> String? {
+    guard project.directCommandMode == .safe, request.commandID == nil else { return nil }
+    guard !project.workspaceCommands.contains(where: { matchesRegistered($0, request: request) })
+    else { return nil }
+    return builtInResolver.systemExecutable(for: request.argv)
   }
 
   public static let defaultSafeRules: [DirectSafeCommandRule] = [

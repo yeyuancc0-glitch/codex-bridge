@@ -693,7 +693,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
       initial.builtInCommands.contains {
         $0.executable == "git" && $0.argumentsPrefix == ["status"]
       })
-    XCTAssertTrue(
+    XCTAssertFalse(
       initial.builtInCommands.contains {
         $0.executable == "npm" && $0.argumentsPrefix == ["run", "build"]
       })
