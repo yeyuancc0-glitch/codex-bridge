@@ -59,7 +59,8 @@
           throw XCTSkip("Current user SID unavailable")
         }
         let objectGUID = "00000000-0000-0000-0000-000000000001"
-        let sddl = "O:\(currentUser)D:P(OA;;GA;\(objectGUID);;\(currentUser))"
+        let sddl =
+          "O:\(currentUser)D:P(A;;RC;;;\(currentUser))(OA;;GA;\(objectGUID);;\(currentUser))"
         let directory = root.appending(path: "object-allow", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Self.applySDDL(sddl, to: directory.path)
@@ -143,14 +144,19 @@
       else {
         throw XCTSkip("GetSecurityDescriptorDacl failed: \(GetLastError())")
       }
+      var owner: PSID?
+      guard GetSecurityDescriptorOwner(descriptor, &owner, &defaulted), let owner else {
+        throw XCTSkip("GetSecurityDescriptorOwner failed: \(GetLastError())")
+      }
       let pathWide = WideBuffer(path)
       guard
         SetNamedSecurityInfoW(
           pathWide.pointer,
           SE_OBJECT_TYPE(rawValue: 1),
-          // DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
-          DWORD(0x8000_0004),
-          nil,
+          // OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION |
+          // PROTECTED_DACL_SECURITY_INFORMATION.
+          DWORD(0x8000_0005),
+          owner,
           nil,
           dacl,
           nil
