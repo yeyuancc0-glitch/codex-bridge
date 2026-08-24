@@ -11,6 +11,10 @@ This document defines the process boundary used by `BridgeTunnel`. The current s
 - Runtime verification opens the helper through `O_NOFOLLOW`, hashes that exact file descriptor against the externally trusted post-sign digest, starts it suspended, and resumes it only after the running `SecCode` matches the host Team requirement and the static CDHash read from the same descriptor.
 - The App never downloads an unverified “latest” helper at runtime.
 
+### Windows package supply
+
+Windows x64 and ARM64 MSIX builds pin the official v0.0.12 architecture archives. Packaging validates the external archive, `tunnel-client.exe`, and `cloudflared.exe` SHA-256 values recorded in `docs/DEPENDENCIES.md`, rejects any unexpected ZIP entry, verifies both PE machine types, and preserves LICENSE, NOTICE, third-party license and SPDX SBOM files. Runtime opens the packaged executables without following reparse points and binds the verified digest and file identity to the Job Object-managed process. No helper is selected from `PATH` or downloaded after installation.
+
 ## Secret-safe launch contract
 
 Bridge passes bounded non-secret configuration through argv and sends both secrets through anonymous file descriptors:
