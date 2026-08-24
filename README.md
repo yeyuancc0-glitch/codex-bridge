@@ -5,13 +5,13 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-macOS%2014.0%2B-blue?style=flat-square&logo=apple" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-macOS%2014%2B%20%7C%20Windows%2010%2B-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/Swift-6.0%20Strict-orange?style=flat-square&logo=swift" alt="Swift 6">
   <img src="https://img.shields.io/badge/Protocol-MCP%20Gateway-green?style=flat-square" alt="MCP">
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License">
 </p>
 
-**Codex Bridge** 是一个**零开发者云端服务器、个人自托管、纯本地优先**的 macOS 桥接工具。它通过标准的 Model Context Protocol (MCP)，将 **ChatGPT 网页版**、**通义千问桌面版 (Qwen Studio)** 等 AI 客户端直接连接到你本地的 **Codex** 执行引擎，让云端顶尖大模型安全驱动本地代码开发与环境交互。
+**Codex Bridge** 是一个**零开发者云端服务器、个人自托管、纯本地优先**的 macOS 与 Windows 桥接工具。它通过标准的 Model Context Protocol (MCP)，将 **ChatGPT 网页版**、**通义千问桌面版 (Qwen Studio)** 等 AI 客户端直接连接到你本地的 **Codex** 执行引擎，让云端顶尖大模型安全驱动本地代码开发与环境交互。
 
 ---
 
@@ -23,9 +23,9 @@
   - **Qwen Studio (通义千问桌面版)**：通过本地回环 Streamable HTTP `/mcp` 端点极速连接，一键复制配置即用。
 - 🤖 **双重执行模式**：
   - **Codex 深度模式（推荐）**：任务委托给本机 Codex 引擎（支持多轮对话、工具链、独立 Supervisor 监督与打字机式实时流）。
-  - **Direct 直接操作模式**：MCP 客户端直接进行文件读写、Patch 补丁应用、受控 Git 提交与安全命令执行（受 Mac 桌面弹窗审批保护）。
-- 🛡️ **本地唯一授权（Local-Only Approval）**：无论 AI 多么强大，任何高危文件写入、命令执行与 Git 提交，**必须由 Mac 本地用户在桌面弹窗中手动点击允许**。
-- 🖥️ **原生 macOS 体验（SwiftUI + AppKit）**：独立后台常驻守护服务（LaunchAgent），关闭 App 界面不中断正在运行的任务；内置工作台支持打字机实时流式对话、思考链折叠与工具进度卡片。
+  - **Direct 直接操作模式**：MCP 客户端直接进行文件读写、Patch 补丁应用、受控 Git 提交与安全命令执行（受本机桌面审批保护）。
+- 🛡️ **本地唯一授权（Local-Only Approval）**：无论 AI 多么强大，任何高危文件写入、命令执行与 Git 提交，**必须由本机用户在桌面 UI 中手动点击允许**。
+- 🖥️ **原生桌面体验**：macOS 使用 SwiftUI + AppKit，Windows 使用 WinUI 3 + WebView2；独立后台 Service 不把任务生命周期交给 UI。
 
 ---
 
@@ -46,11 +46,11 @@
             │  ├─ 单 SQLite 存储 (任务、项目、设置)          │
             │  └─ 本机安全与审批中心 (Local Approval Center)│
             └──────┬────────────────────────┬──────────────┘
-                   │ Mach XPC 通信          │ stdio JSON-RPC
+                   │ XPC / 每用户 Named Pipe│ stdio JSON-RPC
                    ▼                        ▼
       ┌────────────────────────┐  ┌────────────────────────┐
-      │    CodexBridge.app     │  │   本机 Codex 执行引擎    │
-      │  (原生 macOS 桌面控制台) │  │  (app-server + 独立监督)│
+      │ CodexBridge 桌面 App   │  │   本机 Codex 执行引擎    │
+      │ (macOS / Windows 原生) │  │  (app-server + 独立监督)│
       └────────────────────────┘  └────────────────────────┘
 ```
 
@@ -70,7 +70,7 @@ ChatGPT / Qwen  ──[submit_task]──►  CodexBridgeService  ──►  本
 
 ### 2. Direct 敏捷直接操作工作流（即时修改）
 ```text
-ChatGPT / Qwen  ──[direct_write_file]──►  Mac 桌面审批弹窗 (Payload Digest 签名校验)
+ChatGPT / Qwen  ──[direct_write_file]──►  本机桌面审批弹窗 (Payload Digest 签名校验)
                                                     │
                                            [用户点击 允许 / 拒绝]
                                                     │
@@ -84,12 +84,25 @@ ChatGPT / Qwen  ──[direct_write_file]──►  Mac 桌面审批弹窗 (Payl
 
 ## 🛠️ 快速开始
 
-### 1. 环境准备
+### Windows：下载安装
+
+1. 打开 [GitHub Releases](https://github.com/yeyuancc0-glitch/codex-bridge/releases)，普通 Intel/AMD 电脑下载名称含 `Windows-x64` 的 `Setup.exe`；Windows on ARM 设备下载名称含 `Windows-arm64` 的 `Setup.exe`。
+2. 双击安装。安装器按当前用户安装到 `%LOCALAPPDATA%\Programs\CodexBridge`，不需要管理员权限，也不要求导入 MSIX 证书。
+3. 当前 GitHub 开源构件未做商业代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。确认下载来源与 Release 中的 `SHA256SUMS.txt` 后，可选择“更多信息”→“仍要运行”。
+4. 从开始菜单启动 **Codex Bridge**。卸载可使用 Windows“已安装的应用”；升级直接运行新版安装器，Service 数据会保留。
+
+可在 PowerShell 中运行 `Get-FileHash .\下载的文件 -Algorithm SHA256`，将结果与 Release 的 `SHA256SUMS.txt` 对照。
+
+不想安装时可下载同架构的 `Portable.zip`，完整解压到本机普通目录后运行 `CodexBridge.App.exe`。不要只从 ZIP 中单独拖出 EXE，也不要从网络共享目录运行。Portable 默认不注册登录启动，可在设置页按需启用；删除解压目录不会删除 `%LOCALAPPDATA%\CodexBridge\Service` 中的用户数据。MSIX 仍保留为可选的企业/签名分发路径，不是 GitHub 用户安装的前置条件。
+
+Windows 10 版本 1809 或更高版本受支持，32 位 x86 Windows 不受支持；固定 WebView2 Runtime 已包含在发行包内。本机还需自行安装并登录 Codex，或让 `codex` 命令可被 Bridge 发现，发行包不包含 Codex。
+
+### macOS：从源码构建
+
 - **操作系统**：macOS 14.0 (Sonoma) 或更高版本（支持 Apple Silicon 与 Intel）。
 - **Codex 环境**：本地已安装并登录 **Codex 桌面端**（或系统 PATH 具备可执行的 `codex` 命令）。
 - **编译工具**：Xcode 16+ / Swift 6.0 工具链。
 
-### 2. 构建与启动
 ```bash
 # 克隆仓库
 git clone https://github.com/yeyuancc0-glitch/codex-bridge.git
@@ -107,13 +120,13 @@ Scripts/with-xcode.sh xcodebuild \
 
 启动 `CodexBridge.app` 后，应用会自动注册并启动内置的后台常驻服务 `CodexBridgeService`。
 
-### 3. 添加本地项目
+### 添加本地项目
 在 App 中点击 **添加项目**，选择你允许 AI 访问的本地工程目录。Bridge 将严格锁定该目录的绝对路径、设备 ID 与 Inode，防止符号链接逃逸。
 
-### 4. 连接你的 AI 客户端
+### 连接你的 AI 客户端
 
 #### 方式 A：连接 ChatGPT 网页版
-1. 在 Bridge App 的“连接”页面选择 **Secure MCP Tunnel**，填入你的 OpenAI `Tunnel ID` 与 `Runtime Key`（密钥安全存入系统 Keychain）。
+1. 在 Bridge App 的“连接”页面选择 **Secure MCP Tunnel**，填入你的 OpenAI `Tunnel ID` 与 `Runtime Key`（密钥安全存入系统凭据存储）。
 2. 打开 ChatGPT 网页端 → **Settings** → **Connected apps / Developer Mode** → **Add New Server**。
 3. 选择 **OpenAI Secure Tunnel**，填入相同的 `Tunnel ID`，路径填写 `/mcp`。
 4. 详细接入指南与 Prompt 示范请查阅：[👉 ChatGPT Developer Mode 详细接入手册](./docs/CHATGPT_DEVELOPER_MODE.md)。
@@ -129,7 +142,7 @@ Scripts/with-xcode.sh xcodebuild \
 
 | 安全防线 | 实现机制 |
 | :--- | :--- |
-| **本地唯一审批** | 外部 AI、Supervisor 均无权代替用户授权，高危操作必须在 Mac 桌面弹窗中人工确认。 |
+| **本地唯一审批** | 外部 AI、Supervisor 均无权代替用户授权，高危操作必须由本机桌面 UI 中的用户人工确认。 |
 | **工作区严格封闭** | 仅允许访问用户显式注册的项目目录，严禁访问系统敏感目录（如 `~/.ssh`、`.env*`、`/etc`）。 |
 | **并发写锁互斥** | 同一项目同一时间仅允许一个活跃写任务（`project_busy` 互斥保护），彻底消除并发写冲突。 |
 | **受控 Git 提交** | `direct_git_commit` 使用独立临时 index 隔离提交，自动拦截私钥敏感文件，严禁破坏性 `push` 或历史改写。 |
@@ -143,6 +156,8 @@ Scripts/with-xcode.sh xcodebuild \
 ```text
 App/                              macOS 原生客户端 (SwiftUI + AppKit)
 CodexBridge.xcodeproj/            Xcode 组合工程 (App + 后台 LaunchAgent Target)
+Windows/CodexBridge.App/          Windows 原生客户端 (WinUI 3 + WebView2)
+Windows/Installer/                Windows 每用户 EXE 安装器定义
 Packages/BridgeCore/
   Sources/BridgeServiceCore/      单 SQLite 数据层 (项目、任务、设置、事件)
   Sources/BridgeCodexRPC/         Codex app-server 协议适配器与 stdio 通信
