@@ -51,11 +51,15 @@ try {
     }
   }
 
-  $appUserModelId = "$($package.PackageFamilyName)!App"
-  Write-Host "Activating installed App $appUserModelId."
-  Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$appUserModelId"
+  Write-Host 'Starting Service inside the registered package context.'
+  Invoke-CommandInDesktopPackage `
+    -PackageFamilyName $package.PackageFamilyName `
+    -AppId 'App' `
+    -Command 'codex-bridge-service.exe' `
+    -Args '--foreground' `
+    -PreventBreakaway
   Start-Sleep -Seconds 2
-  Write-Host 'Probing the App-started Service over the production Named Pipe.'
+  Write-Host 'Probing the installed Service over the production Named Pipe.'
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
     --configuration Release
