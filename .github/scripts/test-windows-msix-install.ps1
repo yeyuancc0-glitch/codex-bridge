@@ -28,9 +28,6 @@ $certificatePath = Join-Path $env:RUNNER_TEMP 'CodexBridge-CI.cer'
 Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
 $trustedPeople = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople'
 $package = $null
-$serviceProcess = $null
-$stdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stdout.log'
-$stderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stderr.log'
 try {
   Write-Host 'Signing CI MSIX bundle.'
   & $signToolPath sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $BundlePath
@@ -41,7 +38,6 @@ try {
   $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   if (-not $package) { throw 'Codex Bridge was not registered after Add-AppxPackage.' }
   Write-Host "Registered $($package.PackageFullName)."
-  $service = Join-Path $package.InstallLocation 'codex-bridge-service.exe'
   foreach ($relative in @(
     'codex-bridge-service.exe',
     'CodexBridge.App.exe',
@@ -55,37 +51,20 @@ try {
     }
   }
 
-  $dataRoot = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-ServiceData'
-  Write-Host 'Starting Service from the registered package.'
-  $serviceProcess = Start-Process `
-    -FilePath $service `
-    -ArgumentList '--foreground', '--data-root', $dataRoot `
-    -RedirectStandardOutput $stdout `
-    -RedirectStandardError $stderr `
-    -PassThru
-  $deadline = [DateTime]::UtcNow.AddSeconds(30)
-  while ([DateTime]::UtcNow -lt $deadline) {
-    if ($serviceProcess.HasExited) { throw 'Installed Service exited before becoming ready.' }
-    if ((Test-Path $stdout) -and (Select-String -Path $stdout -Quiet -SimpleMatch 'service ready')) {
-      break
-    }
-    Start-Sleep -Milliseconds 100
-  }
-  if (-not ((Test-Path $stdout) -and (Select-String -Path $stdout -Quiet -SimpleMatch 'service ready'))) {
-    throw 'Installed Service did not become ready within 30 seconds.'
-  }
-  Write-Host 'Probing the installed Service over the production Named Pipe.'
+  $appUserModelId = "$($package.PackageFamilyName)!App"
+  Write-Host "Activating installed App $appUserModelId."
+  Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$appUserModelId"
+  Start-Sleep -Seconds 2
+  Write-Host 'Probing the App-started Service over the production Named Pipe.'
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
     --configuration Release
   if ($LASTEXITCODE -ne 0) { throw "Installed Service probe failed with exit code $LASTEXITCODE" }
 } finally {
-  if ($serviceProcess -and -not $serviceProcess.HasExited) {
-    Stop-Process -Id $serviceProcess.Id -Force
-    $serviceProcess.WaitForExit()
+  foreach ($name in @('CodexBridge.App', 'codex-bridge-service')) {
+    Get-Process -Name $name -ErrorAction SilentlyContinue |
+      Stop-Process -Force -ErrorAction SilentlyContinue
   }
-  if ($stdout -and (Test-Path $stdout)) { Get-Content $stdout }
-  if ($stderr -and (Test-Path $stderr)) { Get-Content $stderr }
   if (-not $package) {
     $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   }
