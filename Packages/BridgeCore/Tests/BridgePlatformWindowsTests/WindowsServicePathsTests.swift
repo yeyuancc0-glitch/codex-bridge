@@ -67,6 +67,21 @@
       }
     }
 
+    func testTrustedProtectionAcceptsRegularFile() throws {
+      try withTempRoot { root in
+        guard let currentUser = WindowsSecurity.currentUserSIDString()?.value else {
+          throw XCTSkip("Current user SID unavailable")
+        }
+        let file = root.appending(path: "runtime.key")
+        try Data("fixture".utf8).write(to: file)
+        try Self.applySDDL(
+          "O:\(currentUser)D:P(A;;GA;;;\(currentUser))(A;;GA;;;SY)",
+          to: file.path
+        )
+        XCTAssertTrue(try WindowsServicePaths.hasTrustedProtection(file.path))
+      }
+    }
+
     func testInvalidDriveRootIsRejectedBeforePreparation() {
       XCTAssertFalse(WindowsServicePaths.isFixedDrive("not-a-drive"))
       let invalidRoot = URL(string: "file:///?:/CodexBridge/Service")!

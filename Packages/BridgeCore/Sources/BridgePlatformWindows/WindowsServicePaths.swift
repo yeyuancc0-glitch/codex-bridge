@@ -89,7 +89,7 @@
 
     // MARK: - Directory protection
 
-    private final class DirectoryHandleLease: @unchecked Sendable {
+    private final class ObjectHandleLease: @unchecked Sendable {
       let value: HANDLE
 
       init(_ value: HANDLE) {
@@ -103,7 +103,7 @@
 
     private static func prepareOwnerOnlyDirectoryTree(
       _ path: String
-    ) throws -> [DirectoryHandleLease] {
+    ) throws -> [ObjectHandleLease] {
       guard let segments = localDriveSegments(path) else { throw PathsError.invalidRoot }
       var current = String(path.prefix(3))
       var leases = [try openDirectoryLease(current)]
@@ -134,22 +134,22 @@
 
     private static func prepareOwnerOnlyDirectory(
       _ path: String,
-      preserving parentLeases: [DirectoryHandleLease]
-    ) throws -> [DirectoryHandleLease] {
+      preserving parentLeases: [ObjectHandleLease]
+    ) throws -> [ObjectHandleLease] {
       guard let parent = parentLeases.last else { throw PathsError.invalidRoot }
       let (lease, _) = try openOrCreateDirectory(path, preserving: parent)
       try validateOwnerOnlyDirectory(lease)
       return parentLeases + [lease]
     }
 
-    private static func validateOwnerOnlyDirectory(_ lease: DirectoryHandleLease) throws {
+    private static func validateOwnerOnlyDirectory(_ lease: ObjectHandleLease) throws {
       try validateDirectoryNode(lease)
       guard try hasTrustedProtection(lease) else {
         throw PathsError.insecureDirectory
       }
     }
 
-    private static func validateDirectoryNode(_ lease: DirectoryHandleLease) throws {
+    private static func validateDirectoryNode(_ lease: ObjectHandleLease) throws {
       var info = FILE_ATTRIBUTE_TAG_INFO()
       guard
         GetFileInformationByHandleEx(
@@ -169,8 +169,8 @@
 
     private static func openOrCreateDirectory(
       _ path: String,
-      preserving parent: DirectoryHandleLease
-    ) throws -> (DirectoryHandleLease, Bool) {
+      preserving parent: ObjectHandleLease
+    ) throws -> (ObjectHandleLease, Bool) {
       var created = false
       try withExtendedLifetime(parent) {
         created = try createOwnerOnlyDirectory(path)
@@ -178,7 +178,13 @@
       return (try openDirectoryLease(path), created)
     }
 
-    private static func openDirectoryLease(_ path: String) throws -> DirectoryHandleLease {
+    private static func openDirectoryLease(_ path: String) throws -> ObjectHandleLease {
+      let lease = try openObjectLease(path)
+      try validateDirectoryNode(lease)
+      return lease
+    }
+
+    private static func openObjectLease(_ path: String) throws -> ObjectHandleLease {
       let wide = WideBuffer(path)
       let handle = CreateFileW(
         wide.pointer,
@@ -192,9 +198,7 @@
       guard let handle, handle != INVALID_HANDLE_VALUE else {
         throw PathsError.unavailable(Int32(GetLastError()))
       }
-      let lease = DirectoryHandleLease(handle)
-      try validateDirectoryNode(lease)
-      return lease
+      return ObjectHandleLease(handle)
     }
 
     static func createOwnerOnlyDirectory(_ path: String) throws -> Bool {
@@ -243,10 +247,10 @@
       guard let path = normalizedDrivePath(path), isFixedDrive(path) else {
         throw PathsError.invalidRoot
       }
-      return try hasTrustedProtection(openDirectoryLease(path))
+      return try hasTrustedProtection(openObjectLease(path))
     }
 
-    private static func hasTrustedProtection(_ lease: DirectoryHandleLease) throws -> Bool {
+    private static func hasTrustedProtection(_ lease: ObjectHandleLease) throws -> Bool {
       var descriptorPointer: UnsafeMutableRawPointer?
       var owner: PSID?
       var dacl: PACL?
