@@ -21,15 +21,21 @@
       static let fileAttributeDirectory = DWORD(0x0000_0010)
       static let fileAttributeReparsePoint = DWORD(0x0000_0400)
       static let errorAlreadyExists = DWORD(183)
-      static let errorFileNotFound = DWORD(2)
-      static let errorPathNotFound = DWORD(3)
       static let errorSuccess = DWORD(0)
-      static let tokenQuery = DWORD(0x0008)
+      static let fileReadAttributes = DWORD(0x0000_0080)
+      static let readControl = DWORD(0x0002_0000)
+      static let directoryShare = DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE)
+      static let directoryFlags = DWORD(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+      static let driveFixed: UInt32 = 3
       static let seFileObject: UInt32 = 1
       static let ownerSecurityInformation = 0x0000_0001
       static let daclSecurityInformation = 0x0000_0004
       static let seDaclProtected: UInt32 = 0x1000
       static let accessAllowedAceType: UInt8 = 0x00
+      static let accessAllowedCompoundAceType: UInt8 = 0x04
+      static let accessAllowedObjectAceType: UInt8 = 0x05
+      static let accessAllowedCallbackAceType: UInt8 = 0x09
+      static let accessAllowedCallbackObjectAceType: UInt8 = 0x0B
       static let systemSIDString = "S-1-5-18"
     }
 
@@ -61,34 +67,58 @@
       guard let rootPath = localDrivePath(requestedRoot) else {
         throw PathsError.invalidRoot
       }
-      try prepareOwnerOnlyDirectoryTree(rootPath)
+      let rootLeases = try prepareOwnerOnlyDirectoryTree(rootPath)
       let scratchPath = join(rootPath, "SupervisorScratch")
-      try prepareOwnerOnlyDirectory(scratchPath)
-      let tunnelRuntimePath = join(rootPath, "TunnelRuntime")
-      try prepareOwnerOnlyDirectory(tunnelRuntimePath)
-      return WindowsServicePaths(
-        rootURL: URL(fileURLWithPath: rootPath, isDirectory: true),
-        databaseURL: URL(fileURLWithPath: join(rootPath, "service.sqlite")),
-        supervisorScratchURL: URL(fileURLWithPath: scratchPath, isDirectory: true),
-        tunnelRuntimeURL: URL(fileURLWithPath: tunnelRuntimePath, isDirectory: true)
+      let scratchLeases = try prepareOwnerOnlyDirectory(
+        scratchPath, preserving: rootLeases
       )
+      let tunnelRuntimePath = join(rootPath, "TunnelRuntime")
+      let tunnelLeases = try prepareOwnerOnlyDirectory(
+        tunnelRuntimePath, preserving: rootLeases
+      )
+      let leases = rootLeases + scratchLeases + tunnelLeases
+      return withExtendedLifetime(leases) {
+        WindowsServicePaths(
+          rootURL: URL(fileURLWithPath: rootPath, isDirectory: true),
+          databaseURL: URL(fileURLWithPath: join(rootPath, "service.sqlite")),
+          supervisorScratchURL: URL(fileURLWithPath: scratchPath, isDirectory: true),
+          tunnelRuntimeURL: URL(fileURLWithPath: tunnelRuntimePath, isDirectory: true)
+        )
+      }
     }
 
     // MARK: - Directory protection
 
-    private static func prepareOwnerOnlyDirectoryTree(_ path: String) throws {
+    private final class DirectoryHandleLease: @unchecked Sendable {
+      let value: HANDLE
+
+      init(_ value: HANDLE) {
+        self.value = value
+      }
+
+      deinit {
+        CloseHandle(value)
+      }
+    }
+
+    private static func prepareOwnerOnlyDirectoryTree(
+      _ path: String
+    ) throws -> [DirectoryHandleLease] {
       guard let segments = localDriveSegments(path) else { throw PathsError.invalidRoot }
       var current = String(path.prefix(3))
+      var leases = [try openDirectoryLease(current)]
       for segment in segments {
         current = join(current, segment)
-        if exists(current) {
-          try validateDirectoryNode(current)
-        } else {
-          _ = try createOwnerOnlyDirectory(current)
-          try prepareOwnerOnlyDirectory(current)
+        let parent = leases[leases.count - 1]
+        let (lease, created) = try openOrCreateDirectory(current, preserving: parent)
+        if created {
+          try validateOwnerOnlyDirectory(lease)
         }
+        leases.append(lease)
       }
-      try prepareOwnerOnlyDirectory(path)
+      guard let leaf = leases.last else { throw PathsError.invalidRoot }
+      try validateOwnerOnlyDirectory(leaf)
+      return leases
     }
 
     /// Creates or validates a directory only the current user (and SYSTEM)
@@ -96,20 +126,81 @@
     /// widened: any allow-ACE outside the trusted pair fails closed, matching
     /// the macOS refusal to repair insecure data directories.
     static func prepareOwnerOnlyDirectory(_ path: String) throws {
-      if !exists(path) {
-        _ = try createOwnerOnlyDirectory(path)
-      }
-      try validateDirectoryNode(path)
-      guard try hasTrustedProtection(path) else {
+      _ = try prepareOwnerOnlyDirectoryTree(path)
+    }
+
+    private static func prepareOwnerOnlyDirectory(
+      _ path: String,
+      preserving parentLeases: [DirectoryHandleLease]
+    ) throws -> [DirectoryHandleLease] {
+      guard let parent = parentLeases.last else { throw PathsError.invalidRoot }
+      let (lease, _) = try openOrCreateDirectory(path, preserving: parent)
+      try validateOwnerOnlyDirectory(lease)
+      return parentLeases + [lease]
+    }
+
+    private static func validateOwnerOnlyDirectory(_ lease: DirectoryHandleLease) throws {
+      try validateDirectoryNode(lease)
+      guard try hasTrustedProtection(lease) else {
         throw PathsError.insecureDirectory
       }
     }
 
-    private static func validateDirectoryNode(_ path: String) throws {
-      let attributes = try fileAttributes(path)
-      try rejectReparse(attributes)
-      guard attributes & Constants.fileAttributeDirectory != 0 else {
+    private static func validateDirectoryNode(_ lease: DirectoryHandleLease) throws {
+      var info = FILE_ATTRIBUTE_TAG_INFO()
+      guard
+        GetFileInformationByHandleEx(
+          lease.value,
+          FileAttributeTagInfo,
+          &info,
+          DWORD(MemoryLayout<FILE_ATTRIBUTE_TAG_INFO>.size)
+        )
+      else {
+        throw PathsError.unavailable(Int32(GetLastError()))
+      }
+      try rejectReparse(info.FileAttributes)
+      guard info.FileAttributes & Constants.fileAttributeDirectory != 0 else {
         throw PathsError.insecureDirectory
+      }
+    }
+
+    private static func openOrCreateDirectory(
+      _ path: String,
+      preserving parent: DirectoryHandleLease
+    ) throws -> (DirectoryHandleLease, Bool) {
+      var created = false
+      try withExtendedLifetime(parent) {
+        created = try createOwnerOnlyDirectory(path)
+      }
+      return (try openDirectoryLease(path), created)
+    }
+
+    private static func openDirectoryLease(_ path: String) throws -> DirectoryHandleLease {
+      let wide = WideBuffer(path)
+      let handle = CreateFileW(
+        wide.pointer,
+        Constants.fileReadAttributes | Constants.readControl,
+        Constants.directoryShare,
+        nil,
+        DWORD(OPEN_EXISTING),
+        Constants.directoryFlags,
+        nil
+      )
+      guard let handle, handle != INVALID_HANDLE_VALUE else {
+        throw PathsError.unavailable(Int32(GetLastError()))
+      }
+      let lease = DirectoryHandleLease(handle)
+      try validateDirectoryNode(lease)
+      return lease
+    }
+
+    static func withDirectoryHandleLeaseForTesting<Result>(
+      _ path: String,
+      _ body: () throws -> Result
+    ) throws -> Result {
+      let lease = try openDirectoryLease(path)
+      return try withExtendedLifetime(lease) {
+        try body()
       }
     }
 
@@ -147,25 +238,6 @@
       return true
     }
 
-    private static func exists(_ path: String) -> Bool {
-      let wide = WideBuffer(path)
-      let value = GetFileAttributesW(wide.pointer)
-      if value != INVALID_FILE_ATTRIBUTES {
-        return true
-      }
-      let code = GetLastError()
-      return code != Constants.errorFileNotFound && code != Constants.errorPathNotFound
-    }
-
-    private static func fileAttributes(_ path: String) throws -> DWORD {
-      let wide = WideBuffer(path)
-      let value = GetFileAttributesW(wide.pointer)
-      guard value != INVALID_FILE_ATTRIBUTES else {
-        throw PathsError.unavailable(Int32(GetLastError()))
-      }
-      return value
-    }
-
     private static func rejectReparse(_ attributes: DWORD) throws {
       guard attributes & Constants.fileAttributeReparsePoint == 0 else {
         throw PathsError.insecureDirectory
@@ -175,11 +247,15 @@
     /// True when the DACL is protected and every allow-ACE names the current
     /// user or LOCAL SYSTEM.
     public static func hasTrustedProtection(_ path: String) throws -> Bool {
+      try hasTrustedProtection(openDirectoryLease(path))
+    }
+
+    private static func hasTrustedProtection(_ lease: DirectoryHandleLease) throws -> Bool {
       var descriptorPointer: UnsafeMutableRawPointer?
       var owner: PSID?
       var dacl: PACL?
-      let result = GetNamedSecurityInfoW(
-        WideBuffer(path).pointer,
+      let result = GetSecurityInfo(
+        lease.value,
         SE_OBJECT_TYPE(rawValue: Int32(Constants.seFileObject)),
         DWORD(Constants.ownerSecurityInformation | Constants.daclSecurityInformation),
         &owner,
@@ -189,7 +265,7 @@
         &descriptorPointer
       )
       guard result == Constants.errorSuccess, let descriptorPointer else {
-        throw PathsError.unavailable(Int32(GetLastError()))
+        throw PathsError.unavailable(Int32(result))
       }
       defer { LocalFree(descriptorPointer) }
 
@@ -226,7 +302,10 @@
         var acePointer: UnsafeMutableRawPointer?
         guard GetAce(dacl, DWORD(index), &acePointer), let acePointer else { return false }
         let header = acePointer.load(as: ACE_HEADER.self)
-        guard header.AceType == Constants.accessAllowedAceType else { continue }
+        guard header.AceType == Constants.accessAllowedAceType else {
+          if isNonBasicAllowACEType(header.AceType) { return false }
+          continue
+        }
         // ACCESS_ALLOWED_ACE layout: ACE_HEADER (4 bytes) + DWORD mask,
         // so the SID starts at byte 8 regardless of pointer width.
         let sid = acePointer.advanced(by: 8)
@@ -239,6 +318,18 @@
         }
       }
       return true
+    }
+
+    static func isNonBasicAllowACEType(_ type: UInt8) -> Bool {
+      switch type {
+      case Constants.accessAllowedCompoundAceType,
+        Constants.accessAllowedObjectAceType,
+        Constants.accessAllowedCallbackAceType,
+        Constants.accessAllowedCallbackObjectAceType:
+        true
+      default:
+        false
+      }
     }
 
     private static func stringSIDBox(ofSID sid: PSID) -> WideStringBox? {
@@ -254,6 +345,12 @@
         && ((65...90).contains(Int(units[0])) || (97...122).contains(Int(units[0])))
     }
 
+    static func isFixedDrive(_ path: String) -> Bool {
+      guard isDriveAbsolute(path) else { return false }
+      let wide = WideBuffer(String(path.prefix(3)))
+      return GetDriveTypeW(wide.pointer) == Constants.driveFixed
+    }
+
     /// Swift Foundation represents a native `C:\...` file URL as `/C:/...`
     /// on some Windows toolchains. Normalize that URL spelling before passing
     /// the path to Win32, without accepting network or non-file URLs.
@@ -265,7 +362,7 @@
         path.removeFirst()
       }
       while path.count > 3, path.hasSuffix("\\") { path.removeLast() }
-      guard isDriveAbsolute(path), !path.contains("\0"),
+      guard isDriveAbsolute(path), isFixedDrive(path), !path.contains("\0"),
         path.rangeOfCharacter(from: .controlCharacters) == nil,
         localDriveSegments(path) != nil
       else { return nil }

@@ -45,6 +45,81 @@
       }
     }
 
+    func testNonBasicAllowACETypesAreRejected() {
+      for type: UInt8 in [0x04, 0x05, 0x09, 0x0B] {
+        XCTAssertTrue(WindowsServicePaths.isNonBasicAllowACEType(type))
+      }
+      XCTAssertFalse(WindowsServicePaths.isNonBasicAllowACEType(0x00))
+      XCTAssertFalse(WindowsServicePaths.isNonBasicAllowACEType(0x01))
+    }
+
+    func testObjectAllowACEIsRejected() throws {
+      try withTempRoot { root in
+        guard let currentUser = WindowsSecurity.currentUserSIDString()?.value else {
+          throw XCTSkip("Current user SID unavailable")
+        }
+        let objectGUID = "00000000-0000-0000-0000-000000000001"
+        let sddl = "O:\(currentUser)D:P(OA;;GA;\(objectGUID);;\(currentUser))"
+        let directory = root.appending(path: "object-allow", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Self.applySDDL(sddl, to: directory.path)
+        XCTAssertFalse(try WindowsServicePaths.hasTrustedProtection(directory.path))
+      }
+    }
+
+    func testInvalidDriveRootIsRejectedBeforePreparation() {
+      XCTAssertFalse(WindowsServicePaths.isFixedDrive("not-a-drive"))
+      XCTAssertThrowsError(
+        try WindowsServicePaths.prepare(
+          at: URL(fileURLWithPath: "?:\\CodexBridge\\Service", isDirectory: true)
+        )
+      ) { error in
+        XCTAssertEqual(error as? WindowsServicePaths.PathsError, .invalidRoot)
+      }
+    }
+
+    func testDirectoryHandleLeaseBlocksRenameAndDeleteUntilReleased() throws {
+      try withTempRoot { root in
+        let locked = root.appending(path: "locked", directoryHint: .isDirectory)
+        let moved = root.appending(path: "moved", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+
+        try WindowsServicePaths.withDirectoryHandleLeaseForTesting(locked.path) {
+          let renameResult = Self.moveDirectory(source: locked.path, destination: moved.path)
+          XCTAssertFalse(renameResult.succeeded)
+          XCTAssertEqual(renameResult.error, DWORD(32))  // ERROR_SHARING_VIOLATION
+
+          let deleteWide = WideBuffer(locked.path)
+          let deleteSucceeded = RemoveDirectoryW(deleteWide.pointer)
+          let deleteError = GetLastError()
+          XCTAssertFalse(deleteSucceeded)
+          XCTAssertEqual(deleteError, DWORD(32))  // ERROR_SHARING_VIOLATION
+        }
+
+        XCTAssertTrue(Self.moveDirectory(source: locked.path, destination: moved.path).succeeded)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: moved.path))
+      }
+    }
+
+    func testPrepareRejectsReparsePointAncestorWhenSymlinksAreAvailable() throws {
+      try withTempRoot { root in
+        let target = root.appending(path: "target", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let link = root.appending(path: "ancestor-link", directoryHint: .isDirectory)
+        guard Self.createSymlink(link: link.path, target: target.path) else {
+          throw XCTSkip("Symbolic links require Developer Mode or privilege")
+        }
+
+        let requestedRoot =
+          link
+          .appending(path: "CodexBridge", directoryHint: .isDirectory)
+          .appending(path: "Service", directoryHint: .isDirectory)
+        XCTAssertThrowsError(try WindowsServicePaths.prepare(at: requestedRoot)) { error in
+          XCTAssertEqual(error as? WindowsServicePaths.PathsError, .insecureDirectory)
+        }
+      }
+    }
+
     func testReparsePointRootIsRejectedWhenSymlinksAreAvailable() throws {
       try withTempRoot { root in
         let target = root.appending(path: "target", directoryHint: .isDirectory)
@@ -58,6 +133,20 @@
           XCTAssertEqual(error as? WindowsServicePaths.PathsError, .insecureDirectory)
         }
       }
+    }
+
+    private static func moveDirectory(
+      source: String,
+      destination: String
+    ) -> (succeeded: Bool, error: DWORD) {
+      let sourceWide = WideBuffer(source)
+      let destinationWide = WideBuffer(destination)
+      let succeeded = MoveFileExW(
+        sourceWide.pointer,
+        destinationWide.pointer,
+        DWORD(0x0000_0008)  // MOVEFILE_WRITE_THROUGH
+      )
+      return (succeeded, GetLastError())
     }
 
     private static func applySDDL(_ sddl: String, to path: String) throws {
