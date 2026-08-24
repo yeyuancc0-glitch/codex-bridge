@@ -151,12 +151,16 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
-                    <StackPanel Grid.Column="1" Grid.RowSpan="2" Spacing="8">
-                        <TextBlock x:Name="SkillDocumentTitle" Text="选择一个 Skill 预览" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Grid.Column="1" Grid.RowSpan="2" RowSpacing="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="SkillDocumentTitle" Text="选择一个 Skill 预览" Style="{ThemeResource BodyStrongTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                             <TextBlock x:Name="SkillDocumentContent" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontFamily="Consolas" AutomationProperties.Name="Skill 文档预览" />
                         </ScrollViewer>
-                    </StackPanel>
+                    </Grid>
                 </Grid>
             </TabViewItem>
         </TabView>
