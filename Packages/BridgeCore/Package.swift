@@ -10,14 +10,13 @@ let cryptoDependencies: [Target.Dependency] = [
 ]
 
 let bridgeDependencies: [Package.Dependency] = [
-  // Temporary pinned fork: upstream 0.12.1 (a0ae212) plus exactly one commit
-  // (5d58f77, upstream PR #271) that gates EventSource/FoundationNetworking on
-  // canImport so the MCP target compiles for Windows (upstream issue #261).
-  // No selection change on Apple/Linux. Drop this fork for an official
-  // release as soon as one contains the fix.
+  // Temporary pinned fork: upstream 0.12.1 (a0ae212) plus the canImport gates
+  // from upstream PR #271 and the packaged-Windows swift-nio pin below. No
+  // source selection changes on Apple/Linux. Drop this fork after official
+  // releases contain both fixes.
   .package(
-    url: "https://github.com/LionheartTechnology/swift-sdk.git",
-    revision: "5d58f7763e9de3fff5e7785350dfe04c7a315290"
+    url: "https://github.com/yeyuancc0-glitch/swift-sdk.git",
+    revision: "5dbb09ec1e1e1d20652bf9f929d227c877add310"
   ),
   .package(
     url: "https://github.com/groue/GRDB.swift.git",
@@ -27,9 +26,14 @@ let bridgeDependencies: [Package.Dependency] = [
     url: "https://github.com/apple/swift-log.git",
     exact: "1.15.0"
   ),
+  // Temporary pinned fork: upstream 2.101.3 plus a Windows-only wakeup socket
+  // change. Packaged full-trust processes reject the upstream AF_UNIX bind
+  // with WSAEINVAL; the fork uses a connected TCP loopback pair whose listener
+  // is closed before the event loop starts. Drop the fork after upstream ships
+  // an equivalent packaged-Windows fix.
   .package(
-    url: "https://github.com/apple/swift-nio.git",
-    exact: "2.101.3"
+    url: "https://github.com/yeyuancc0-glitch/swift-nio.git",
+    revision: "1a69138cb7f2e63de709c9716e0348ffd6522ac7"
   ),
   .package(
     url: "https://github.com/apple/swift-crypto.git",

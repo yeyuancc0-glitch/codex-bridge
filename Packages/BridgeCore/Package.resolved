@@ -1,5 +1,5 @@
 {
-  "originHash" : "66a24ef945355d8b887aac1e1d0f0c885a87d4ede0d2aabd1a9f4454235e34c5",
+  "originHash" : "522576eb5e78016f36757cef03c72bc3aeffa0a366119a4f7c43992a80f7b68a",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -67,18 +67,17 @@
     {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-nio.git",
+      "location" : "https://github.com/yeyuancc0-glitch/swift-nio.git",
       "state" : {
-        "revision" : "0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b",
-        "version" : "2.101.3"
+        "revision" : "1a69138cb7f2e63de709c9716e0348ffd6522ac7"
       }
     },
     {
       "identity" : "swift-sdk",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/LionheartTechnology/swift-sdk.git",
+      "location" : "https://github.com/yeyuancc0-glitch/swift-sdk.git",
       "state" : {
-        "revision" : "5d58f7763e9de3fff5e7785350dfe04c7a315290"
+        "revision" : "5dbb09ec1e1e1d20652bf9f929d227c877add310"
       }
     },
     {
