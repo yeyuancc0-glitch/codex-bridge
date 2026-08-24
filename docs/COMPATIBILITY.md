@@ -24,4 +24,3 @@
 - Codex approvals can be allowed or denied only through the local App/XPC path; neither ChatGPT nor Supervisor receives an approval tool.
 - Tunnel readiness requires exact helper-process ownership of the loopback health port, strict `/readyz`, and a fresh successful control-plane poll metric.
 - tunnel-client v0.0.10 `doctor` has a documented false failure for an intentionally no-OAuth MCP endpoint returning PRMD 404. Bridge accepts only that exact structured single-failure result; any additional failed check remains fatal.
-- Windows Direct operations that require network denial or a transactional Git sandbox remain unavailable until a process-level Windows sandbox can enforce those boundaries; they fail closed rather than running unsandboxed.
