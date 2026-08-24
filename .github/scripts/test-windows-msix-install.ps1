@@ -41,6 +41,7 @@ try {
   $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   if (-not $package) { throw 'Codex Bridge was not registered after Add-AppxPackage.' }
   Write-Host "Registered $($package.PackageFullName)."
+  $service = Join-Path $package.InstallLocation 'codex-bridge-service.exe'
   foreach ($relative in @(
     'codex-bridge-service.exe',
     'CodexBridge.App.exe',
@@ -58,7 +59,8 @@ try {
   if ($package.PackageFamilyName -cnotmatch '\A[A-Za-z0-9._-]+\z') {
     throw 'Installed package family name is invalid.'
   }
-  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command 'codex-bridge-service.exe' -Args '--foreground' -PreventBreakaway"
+  if ($service -cmatch "'") { throw 'Installed Service path is invalid.' }
+  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command '$service' -Args '--foreground' -PreventBreakaway"
   $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launchCommand))
   $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $serviceLauncher = Start-Process `
@@ -67,11 +69,18 @@ try {
     -RedirectStandardOutput $serviceStdout `
     -RedirectStandardError $serviceStderr `
     -PassThru
-  Start-Sleep -Seconds 2
-  if ($serviceLauncher.HasExited -and $serviceLauncher.ExitCode -ne 0) {
+  $serviceDeadline = [DateTime]::UtcNow.AddSeconds(10)
+  $installedService = $null
+  while ([DateTime]::UtcNow -lt $serviceDeadline -and -not $installedService) {
+    $installedService = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if (-not $installedService) { Start-Sleep -Milliseconds 100 }
+  }
+  if (-not $installedService) {
     if (Test-Path $serviceStdout) { Get-Content $serviceStdout }
     if (Test-Path $serviceStderr) { Get-Content $serviceStderr }
-    throw "Installed Service package-context launch failed with exit code $($serviceLauncher.ExitCode)."
+    $exit = if ($serviceLauncher.HasExited) { $serviceLauncher.ExitCode } else { 'running' }
+    throw "Installed Service package-context launch failed; launcher state: $exit."
   }
   Write-Host 'Probing the installed Service over the production Named Pipe.'
   dotnet run `
