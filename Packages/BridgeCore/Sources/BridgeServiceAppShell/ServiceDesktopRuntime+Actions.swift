@@ -13,7 +13,7 @@ extension BridgeServiceAppModel {
       do {
         try await self.currentClient().setCustomInstructions(instructions)
         self.customInstructions = instructions
-        self.postToast("全局自定义指令已保存，MCP 客户端将重新连接后应用")
+        self.postToast("全局自定义指令已保存；Qwen 重连后应用，ChatGPT 请刷新插件并在新对话中重新添加")
       } catch {
         self.errorMessage = Self.message(error)
       }

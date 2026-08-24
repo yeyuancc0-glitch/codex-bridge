@@ -77,8 +77,8 @@ public struct MCPServiceServerFactory: Sendable {
       + "the user explicitly requested a per-task override; Codex Bridge owns those defaults. "
       + "Set model_override to true only for such an explicit request."
     guard !customInstructions.isEmpty else { return base }
-    return base + "\n\nThe user's global custom instructions follow. Read and follow them before "
-      + "calling any Codex Bridge tool, subject to the "
-      + "service's security and approval boundaries:\n\n" + customInstructions
+    return "The user's global custom instructions follow. Read and follow them before "
+      + "calling any Codex Bridge tool, subject to the service's security and approval "
+      + "boundaries:\n\n" + customInstructions + "\n\n" + base
   }
 }

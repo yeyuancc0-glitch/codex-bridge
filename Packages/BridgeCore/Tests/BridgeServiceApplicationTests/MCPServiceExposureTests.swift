@@ -3,8 +3,9 @@ import MCP
 import XCTest
 
 final class MCPServiceExposureTests: XCTestCase {
-  func testServerInstructionsExposeGlobalInstructionsToChatGPTAndQwenBeforeToolUse() {
-    let custom = "Explain the intended plugin action before calling it."
+  func testServerInstructionsExposeGlobalInstructionsToChatGPTAndQwenBeforeToolUse() throws {
+    let custom = String(repeating: "先说明操作再调用。", count: 20)
+    XCTAssertGreaterThanOrEqual(custom.utf8.count, 440)
     for clientID in [MCPClientID.chatGPT, .qwenStudio] {
       let instructions = MCPServiceServerFactory.instructions(
         customInstructions: custom,
@@ -13,6 +14,14 @@ final class MCPServiceExposureTests: XCTestCase {
       XCTAssertTrue(instructions.contains(custom))
       XCTAssertTrue(instructions.contains("before calling any Codex Bridge tool"))
       XCTAssertFalse(instructions.contains("Project custom instructions"))
+      let customRange = try XCTUnwrap(instructions.range(of: custom))
+      XCTAssertLessThan(
+        instructions.distance(from: instructions.startIndex, to: customRange.lowerBound), 512)
+      XCTAssertLessThan(
+        instructions.distance(from: instructions.startIndex, to: customRange.upperBound), 512)
+      XCTAssertLessThan(
+        customRange.lowerBound,
+        try XCTUnwrap(instructions.range(of: "This service exposes")).lowerBound)
     }
   }
 
