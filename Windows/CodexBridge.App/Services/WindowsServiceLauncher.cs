@@ -14,10 +14,8 @@ public static class WindowsServiceLauncher
             return false;
         }
 
-        var executable = Path.Combine(AppContext.BaseDirectory, "codex-bridge-service.exe");
-        var file = new FileInfo(executable);
-        if (!file.Exists || file.LinkTarget is not null ||
-            !file.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase))
+        var file = WindowsServiceExecutable.Resolve();
+        if (file is null)
         {
             return false;
         }
