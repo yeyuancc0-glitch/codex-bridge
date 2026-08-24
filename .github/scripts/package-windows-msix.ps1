@@ -27,6 +27,11 @@ $tunnelPayload = Join-Path $payload 'TunnelClient'
   -Architecture $Architecture `
   -Destination $tunnelPayload
 if ($LASTEXITCODE -ne 0) { throw "Tunnel client staging failed with exit code $LASTEXITCODE" }
+$webViewPayload = Join-Path $payload 'FixedRuntime\151.0.4129.101'
+& "$PSScriptRoot/stage-windows-webview2-runtime.ps1" `
+  -Architecture $Architecture `
+  -Destination $webViewPayload
+if ($LASTEXITCODE -ne 0) { throw "WebView2 staging failed with exit code $LASTEXITCODE" }
 $sqlite = Join-Path $env:SQLITE_RUNTIME_DIR 'sqlite3.dll'
 if (-not (Test-Path $sqlite)) { throw "SQLite runtime is missing at $sqlite" }
 Copy-Item -LiteralPath $sqlite -Destination (Join-Path $payload 'sqlite3.dll')

@@ -19,7 +19,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
                     <Ellipse x:Name="ConnectionIndicator" Width="10" Height="10" Fill="{ThemeResource SystemFillColorCautionBrush}" />
-                    <TextBlock x:Name="ConnectionLabel" Text="正在连接 Service" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <TextBlock x:Name="ConnectionLabel" Text="正在连接 Service" Style="{ThemeResource BodyStrongTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
                 <TextBlock x:Name="PathSummary" Grid.Column="1" Text="Named Pipe → Bridge Core → Codex" FontFamily="Consolas" Opacity="0.72" />
                 <Button x:Name="RefreshButton" Grid.Column="2" Content="刷新" Click="RefreshButtonClick" AutomationProperties.Name="刷新服务状态" />
@@ -50,17 +50,17 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="4">
                                 <TextBlock Text="MCP" Style="{ThemeResource CaptionTextBlockStyle}" />
-                                <TextBlock x:Name="McpState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="McpState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="McpEndpoint" Text="—" FontFamily="Consolas" TextWrapping="Wrap" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Spacing="4">
                                 <TextBlock Text="CODEX" Style="{ThemeResource CaptionTextBlockStyle}" />
-                                <TextBlock x:Name="CodexState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="CodexState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="CodexVersion" Text="—" FontFamily="Consolas" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Spacing="4">
                                 <TextBlock Text="SECURE TUNNEL" Style="{ThemeResource CaptionTextBlockStyle}" />
-                                <TextBlock x:Name="TunnelState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                                <TextBlock x:Name="TunnelState" Text="未知" Style="{ThemeResource SubtitleTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="TunnelDetail" Text="—" FontFamily="Consolas" />
                             </StackPanel>
                         </Grid>
@@ -96,9 +96,9 @@
                                     <TextBlock Grid.Column="1" Text="{Binding Status}" />
                                     <TextBlock Grid.Column="2" Text="{Binding CurrentStep}" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="3" Text="{Binding UpdatedAt}" FontFamily="Consolas" Opacity="0.72" />
-                                    <Button Grid.Column="4" Content="详情" DataContext="{Binding}" Click="TaskDetailsClick" />
-                                    <Button Grid.Column="5" Content="停止" DataContext="{Binding}" Click="StopTaskClick" />
-                                    <Button Grid.Column="6" Content="删除" DataContext="{Binding}" Click="DeleteTaskClick" />
+                                    <Button Grid.Column="4" Content="详情" DataContext="{Binding}" Click="TaskDetailsClick" AutomationProperties.Name="{Binding DetailsAutomationName}" />
+                                    <Button Grid.Column="5" Content="停止" DataContext="{Binding}" Click="StopTaskClick" AutomationProperties.Name="{Binding StopAutomationName}" />
+                                    <Button Grid.Column="6" Content="删除" DataContext="{Binding}" Click="DeleteTaskClick" AutomationProperties.Name="{Binding DeleteAutomationName}" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -132,9 +132,9 @@
                                     <TextBlock Text="{Binding Name}" Style="{ThemeResource BodyStrongTextBlockStyle}" />
                                     <TextBlock Grid.Column="1" Text="{Binding ProjectId}" FontFamily="Consolas" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Grid.Column="2" Text="{Binding Capabilities.Summary}" />
-                                    <Button Grid.Column="3" Content="权限" DataContext="{Binding}" Click="EditProjectPolicyClick" />
-                                    <Button Grid.Column="4" Content="管理" DataContext="{Binding}" Click="ManageProjectClick" />
-                                    <Button Grid.Column="5" Content="移除" DataContext="{Binding}" Click="RemoveProjectClick" />
+                                    <Button Grid.Column="3" Content="权限" DataContext="{Binding}" Click="EditProjectPolicyClick" AutomationProperties.Name="{Binding PolicyAutomationName}" />
+                                    <Button Grid.Column="4" Content="管理" DataContext="{Binding}" Click="ManageProjectClick" AutomationProperties.Name="{Binding ManageAutomationName}" />
+                                    <Button Grid.Column="5" Content="移除" DataContext="{Binding}" Click="RemoveProjectClick" AutomationProperties.Name="{Binding RemoveAutomationName}" />
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -160,8 +160,8 @@
                                             <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
                                             <TextBlock Text="{Binding DisplayCommand}" FontFamily="Consolas" Opacity="0.72" TextWrapping="Wrap" />
                                         </StackPanel>
-                                        <Button Grid.Column="1" Content="拒绝" DataContext="{Binding}" Click="DenyCodexApprovalClick" />
-                                        <Button Grid.Column="2" Content="批准" DataContext="{Binding}" Click="ApproveCodexApprovalClick" />
+                                        <Button Grid.Column="1" Content="拒绝" DataContext="{Binding}" Click="DenyCodexApprovalClick" AutomationProperties.Name="{Binding DenyAutomationName}" />
+                                        <Button Grid.Column="2" Content="批准" DataContext="{Binding}" Click="ApproveCodexApprovalClick" AutomationProperties.Name="{Binding ApproveAutomationName}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -181,8 +181,8 @@
                                             <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
                                             <TextBlock Text="{Binding ProjectId}" FontFamily="Consolas" Opacity="0.72" />
                                         </StackPanel>
-                                        <Button Grid.Column="1" Content="拒绝" DataContext="{Binding}" Click="DenyDirectApprovalClick" />
-                                        <Button Grid.Column="2" Content="批准" DataContext="{Binding}" Click="ApproveDirectApprovalClick" />
+                                        <Button Grid.Column="1" Content="拒绝" DataContext="{Binding}" Click="DenyDirectApprovalClick" AutomationProperties.Name="{Binding DenyAutomationName}" />
+                                        <Button Grid.Column="2" Content="批准" DataContext="{Binding}" Click="ApproveDirectApprovalClick" AutomationProperties.Name="{Binding ApproveAutomationName}" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -254,19 +254,19 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
                                     <TextBlock Text="执行模型" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="ExecutionModelBox" Grid.Column="1" DisplayMemberPath="DisplayLabel" SelectionChanged="ExecutionModelSelectionChanged" />
+                                    <ComboBox x:Name="ExecutionModelBox" Grid.Column="1" DisplayMemberPath="DisplayLabel" SelectionChanged="ExecutionModelSelectionChanged" AutomationProperties.Name="执行模型" />
                                     <TextBlock Grid.Row="1" Text="执行推理强度" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="ExecutionEffortBox" Grid.Row="1" Grid.Column="1" />
+                                    <ComboBox x:Name="ExecutionEffortBox" Grid.Row="1" Grid.Column="1" AutomationProperties.Name="执行推理强度" />
                                     <TextBlock Grid.Row="2" Text="访问模式" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="AccessModeBox" Grid.Row="2" Grid.Column="1" DisplayMemberPath="Label" />
+                                    <ComboBox x:Name="AccessModeBox" Grid.Row="2" Grid.Column="1" DisplayMemberPath="Label" AutomationProperties.Name="访问模式" />
                                     <TextBlock Grid.Row="3" Text="Fast 模式" VerticalAlignment="Center" />
-                                    <ToggleSwitch x:Name="FastModeSwitch" Grid.Row="3" Grid.Column="1" OffContent="关闭" OnContent="启用" />
+                                    <ToggleSwitch x:Name="FastModeSwitch" Grid.Row="3" Grid.Column="1" OffContent="关闭" OnContent="启用" AutomationProperties.Name="Fast 模式" />
                                     <TextBlock Grid.Row="4" Text="Supervisor" VerticalAlignment="Center" />
-                                    <ToggleSwitch x:Name="SupervisorEnabledSwitch" Grid.Row="4" Grid.Column="1" OffContent="关闭" OnContent="只读监督" />
+                                    <ToggleSwitch x:Name="SupervisorEnabledSwitch" Grid.Row="4" Grid.Column="1" OffContent="关闭" OnContent="只读监督" AutomationProperties.Name="Supervisor" />
                                     <TextBlock Grid.Row="5" Text="Supervisor 模型" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="SupervisorModelBox" Grid.Row="5" Grid.Column="1" DisplayMemberPath="DisplayLabel" SelectionChanged="SupervisorModelSelectionChanged" />
+                                    <ComboBox x:Name="SupervisorModelBox" Grid.Row="5" Grid.Column="1" DisplayMemberPath="DisplayLabel" SelectionChanged="SupervisorModelSelectionChanged" AutomationProperties.Name="Supervisor 模型" />
                                     <TextBlock Grid.Row="6" Text="Supervisor 推理强度" VerticalAlignment="Center" />
-                                    <ComboBox x:Name="SupervisorEffortBox" Grid.Row="6" Grid.Column="1" />
+                                    <ComboBox x:Name="SupervisorEffortBox" Grid.Row="6" Grid.Column="1" AutomationProperties.Name="Supervisor 推理强度" />
                                 </Grid>
                                 <StackPanel Orientation="Horizontal" Spacing="12">
                                     <Button Content="保存模型偏好" Click="SaveModelPreferencesClick" />
@@ -290,9 +290,9 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
                                     <TextBlock Text="Tunnel ID" VerticalAlignment="Center" />
-                                    <TextBox x:Name="TunnelIdBox" Grid.Column="1" PlaceholderText="tunnel_..." />
+                                    <TextBox x:Name="TunnelIdBox" Grid.Column="1" PlaceholderText="tunnel_..." AutomationProperties.Name="Tunnel ID" />
                                     <TextBlock Grid.Row="1" Text="Runtime Key" VerticalAlignment="Center" />
-                                    <PasswordBox x:Name="TunnelRuntimeKeyBox" Grid.Row="1" Grid.Column="1" PasswordChar="●" />
+                                    <PasswordBox x:Name="TunnelRuntimeKeyBox" Grid.Row="1" Grid.Column="1" PasswordChar="●" AutomationProperties.Name="Tunnel Runtime Key" />
                                 </Grid>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <Button x:Name="ConfigureTunnelButton" Content="保存并连接" Click="ConfigureTunnelClick" />

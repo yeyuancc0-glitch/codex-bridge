@@ -1,6 +1,7 @@
 using CodexBridge.App.Models;
 using CodexBridge.Ipc;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using System.Text.Json;
 
@@ -87,6 +88,7 @@ public sealed partial class MainWindow
         {
             Style = Application.Current.Resources["BodyStrongTextBlockStyle"] as Style,
         };
+        AutomationProperties.SetLiveSetting(conversationHeading, AutomationLiveSetting.Polite);
         content.Children.Add(conversationHeading);
         var conversationContent = new StackPanel { Spacing = 8 };
         content.Children.Add(conversationContent);

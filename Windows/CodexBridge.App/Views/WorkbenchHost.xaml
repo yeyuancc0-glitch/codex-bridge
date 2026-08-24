@@ -1,7 +1,41 @@
 <UserControl
     x:Class="CodexBridge.App.Views.WorkbenchHost"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:controls="using:Microsoft.UI.Xaml.Controls">
-    <Grid x:Name="BrowserRoot" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" />
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="12,8">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton" Content="←" Click="BackClick" IsEnabled="False" AutomationProperties.Name="后退" />
+                <Button x:Name="ForwardButton" Grid.Column="1" Content="→" Click="ForwardClick" IsEnabled="False" AutomationProperties.Name="前进" />
+                <Button x:Name="ReloadButton" Grid.Column="2" Content="刷新" Click="ReloadClick" IsEnabled="False" />
+                <TextBlock x:Name="AddressLabel" Grid.Column="3" Text="https://chatgpt.com/" FontFamily="Consolas" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" AutomationProperties.Name="当前工作台地址" />
+                <Button x:Name="ExternalBrowserButton" Grid.Column="4" Content="在浏览器中打开" Click="OpenExternalClick" IsEnabled="False" />
+            </Grid>
+        </Border>
+        <InfoBar x:Name="WorkbenchStatus" Grid.Row="1" IsOpen="False" IsClosable="True" Severity="Informational" AutomationProperties.LiveSetting="Polite" />
+        <Grid Grid.Row="2">
+            <Grid x:Name="BrowserSurface" />
+            <StackPanel x:Name="FailurePanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" MaxWidth="520">
+                <TextBlock Text="工作台暂时不可用" Style="{ThemeResource TitleTextBlockStyle}" HorizontalAlignment="Center" />
+                <TextBlock x:Name="FailureMessage" TextWrapping="Wrap" TextAlignment="Center" AutomationProperties.LiveSetting="Assertive" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                    <Button Content="重试" Click="RetryClick" />
+                    <Button Content="获取 WebView2 Runtime" Click="InstallRuntimeClick" />
+                </StackPanel>
+            </StackPanel>
+            <ProgressRing x:Name="LoadingIndicator" Width="32" Height="32" HorizontalAlignment="Center" VerticalAlignment="Center" IsActive="False" />
+        </Grid>
+    </Grid>
 </UserControl>

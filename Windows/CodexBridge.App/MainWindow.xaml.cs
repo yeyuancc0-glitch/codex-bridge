@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Workbench.SetOwnerWindow(this);
         SetWindowSize(1180, 760);
         Navigation.SelectedItem = Navigation.MenuItems[0];
         Closed += WindowClosed;

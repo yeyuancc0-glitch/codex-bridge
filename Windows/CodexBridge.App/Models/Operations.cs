@@ -6,7 +6,12 @@ public sealed record ProjectSummary(
     string ProjectId,
     string Name,
     ProjectCapabilities Capabilities,
-    string? GitState);
+    string? GitState)
+{
+    public string PolicyAutomationName => $"编辑 {Name} 的权限";
+    public string ManageAutomationName => $"管理 {Name} 的 Direct 命令、Threads 和 Skills";
+    public string RemoveAutomationName => $"移除项目 {Name}";
+}
 
 public sealed record ProjectDetail(
     string ProjectId,
@@ -60,7 +65,12 @@ public sealed record TaskSummary(
     bool LocalApprovalRequired,
     string? ResultSummary,
     string? FailureCode,
-    string UpdatedAt);
+    string UpdatedAt)
+{
+    public string DetailsAutomationName => $"查看任务 {TaskId} 的详情";
+    public string StopAutomationName => $"停止任务 {TaskId}";
+    public string DeleteAutomationName => $"删除任务 {TaskId}";
+}
 
 public sealed record TaskEvent(long Seq, string Kind, string Summary, string OccurredAt);
 
@@ -77,7 +87,11 @@ public sealed record ApprovalSummary(
     string Summary,
     string? DisplayCommand,
     IReadOnlyList<string> RelativePaths,
-    string? Reason);
+    string? Reason)
+{
+    public string ApproveAutomationName => $"批准 {Title}";
+    public string DenyAutomationName => $"拒绝 {Title}";
+}
 
 public sealed record DirectApprovalListResponse(IReadOnlyList<DirectApprovalSummary> Approvals);
 
@@ -86,7 +100,11 @@ public sealed record DirectApprovalSummary(
     string ProjectId,
     string Kind,
     string Summary,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    public string ApproveAutomationName => $"批准 Direct 操作 {Summary}";
+    public string DenyAutomationName => $"拒绝 Direct 操作 {Summary}";
+}
 
 public sealed record McpClientListResponse(IReadOnlyList<McpClientStatus> Clients);
 
