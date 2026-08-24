@@ -55,6 +55,12 @@ try {
     }
   }
 
+  Write-Host 'Building the installed Service IPC probe.'
+  dotnet build `
+    Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
+    --configuration Release
+  if ($LASTEXITCODE -ne 0) { throw "Installed Service probe build failed with exit code $LASTEXITCODE" }
+
   Write-Host 'Starting Service inside the registered package context.'
   if ($package.PackageFamilyName -cnotmatch '\A[A-Za-z0-9._-]+\z') {
     throw 'Installed package family name is invalid.'
@@ -82,11 +88,21 @@ try {
     $exit = if ($serviceLauncher.HasExited) { $serviceLauncher.ExitCode } else { 'running' }
     throw "Installed Service package-context launch failed; launcher state: $exit."
   }
+  Write-Host "Installed Service process started: PID $($installedService.Id), session $($installedService.SessionId)."
   Write-Host 'Probing the installed Service over the production Named Pipe.'
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
-    --configuration Release
-  if ($LASTEXITCODE -ne 0) { throw "Installed Service probe failed with exit code $LASTEXITCODE" }
+    --configuration Release `
+    --no-build
+  $probeExit = $LASTEXITCODE
+  if ($probeExit -ne 0) {
+    $state = if ($installedService.HasExited) {
+      "exited with code $($installedService.ExitCode)"
+    } else {
+      'still running'
+    }
+    throw "Installed Service probe failed with exit code $probeExit; Service is $state."
+  }
 } finally {
   foreach ($name in @('CodexBridge.App', 'codex-bridge-service')) {
     Get-Process -Name $name -ErrorAction SilentlyContinue |
