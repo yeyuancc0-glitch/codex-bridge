@@ -82,7 +82,7 @@ try {
     -RedirectStandardOutput $serviceStdout `
     -RedirectStandardError $serviceStderr `
     -PassThru
-  $serviceDeadline = [DateTime]::UtcNow.AddSeconds(10)
+  $serviceDeadline = [DateTime]::UtcNow.AddSeconds(30)
   $installedService = $null
   while ([DateTime]::UtcNow -lt $serviceDeadline -and -not $installedService) {
     $installedService = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
