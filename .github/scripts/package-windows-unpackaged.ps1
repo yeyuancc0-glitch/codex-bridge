@@ -55,13 +55,17 @@ if ($LASTEXITCODE -ne 0) { throw "Unpackaged publish failed with exit code $LAST
 
 $required = @(
   'CodexBridge.App.exe',
+  'CodexBridge.App.dll',
   'CodexBridge.App.deps.json',
   'CodexBridge.App.runtimeconfig.json',
   'codex-bridge-service.exe',
   'sqlite3.dll',
   'coreclr.dll',
   'hostfxr.dll',
+  'Microsoft.WindowsAppRuntime.dll',
+  'Microsoft.UI.pri',
   'Microsoft.UI.Xaml.dll',
+  'Microsoft.UI.Xaml.Controls.pri',
   'WebView2Loader.dll',
   'TunnelClient\tunnel-client.exe',
   'TunnelClient\cloudflared.exe',

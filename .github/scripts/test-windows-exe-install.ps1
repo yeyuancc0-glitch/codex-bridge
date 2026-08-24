@@ -20,6 +20,14 @@ $appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
 $service = $null
 $app = $null
 
+function Test-InteractiveDesktop {
+  if (-not [Environment]::UserInteractive) { return $false }
+  $sessionId = (Get-Process -Id $PID).SessionId
+  return $null -ne (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue |
+    Where-Object { $_.SessionId -eq $sessionId } |
+    Select-Object -First 1)
+}
+
 try {
   $install = Start-Process `
     -FilePath $InstallerPath `
@@ -30,8 +38,12 @@ try {
 
   foreach ($relative in @(
     'CodexBridge.App.exe',
+    'CodexBridge.App.dll',
     'codex-bridge-service.exe',
     'sqlite3.dll',
+    'Microsoft.WindowsAppRuntime.dll',
+    'Microsoft.UI.pri',
+    'Microsoft.UI.Xaml.Controls.pri',
     'payload-manifest.json',
     'TunnelClient\tunnel-client.exe',
     'TunnelClient\cloudflared.exe',
@@ -49,20 +61,34 @@ try {
   dotnet build Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj --configuration Release
   if ($LASTEXITCODE -ne 0) { throw "Service probe build failed with exit code $LASTEXITCODE" }
 
-  $app = Start-Process `
-    -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
-    -WorkingDirectory $installRoot `
-    -RedirectStandardOutput $appStdout `
-    -RedirectStandardError $appStderr `
-    -PassThru
+  $hasInteractiveDesktop = Test-InteractiveDesktop
+  if ($hasInteractiveDesktop) {
+    $app = Start-Process `
+      -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
+      -WorkingDirectory $installRoot `
+      -RedirectStandardOutput $appStdout `
+      -RedirectStandardError $appStderr `
+      -PassThru
+  } else {
+    Write-Host 'No interactive Windows shell is available; probing the installed Service directly.'
+    $service = Start-Process `
+      -FilePath (Join-Path $installRoot 'codex-bridge-service.exe') `
+      -WorkingDirectory $installRoot `
+      -PassThru
+  }
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
   do {
     Start-Sleep -Milliseconds 100
-    if ($app.HasExited) { throw "Installed App exited with code $($app.ExitCode)" }
-    $service = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
-      Select-Object -First 1
+    if ($app -and $app.HasExited) { throw "Installed App exited with code $($app.ExitCode)" }
+    if (-not $service) {
+      $service = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    }
   } while (-not $service -and [DateTime]::UtcNow -lt $deadline)
-  if (-not $service) { throw 'Installed App did not start the background Service.' }
+  if (-not $service) {
+    $source = if ($hasInteractiveDesktop) { 'App' } else { 'Service executable' }
+    throw "Installed $source did not start the background Service."
+  }
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
     --configuration Release `
@@ -78,9 +104,11 @@ try {
   Stop-Process -Id $service.Id -Force
   $service.WaitForExit()
   $service = $null
-  Stop-Process -Id $app.Id -Force
-  $app.WaitForExit()
-  $app = $null
+  if ($app) {
+    Stop-Process -Id $app.Id -Force
+    $app.WaitForExit()
+    $app = $null
+  }
 
   $upgrade = Start-Process `
     -FilePath $InstallerPath `
@@ -114,7 +142,8 @@ try {
   if (-not (Test-Path -LiteralPath $sentinel)) {
     throw 'Uninstall removed the Service data root.'
   }
-  Write-Host 'Codex Bridge EXE install, Service probe, and uninstall passed.'
+  $launchMode = if ($hasInteractiveDesktop) { 'App-to-Service' } else { 'headless Service' }
+  Write-Host "Codex Bridge EXE install, $launchMode probe, upgrade, and uninstall passed."
 } finally {
   if ($service -and -not $service.HasExited) {
     Stop-Process -Id $service.Id -Force -ErrorAction SilentlyContinue
