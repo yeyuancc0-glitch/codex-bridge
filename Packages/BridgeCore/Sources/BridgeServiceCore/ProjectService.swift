@@ -40,7 +40,8 @@ public actor ServiceProjectService {
   }
 
   public func project(id: ProjectID) async throws -> ServiceProjectRecord? {
-    try await store.project(id: id)
+    guard let project = try await store.project(id: id) else { return nil }
+    return try await refreshLegacyRootIfPossible(project)
   }
 
   public func projects() async throws -> [ServiceProjectRecord] {
@@ -119,5 +120,29 @@ public actor ServiceProjectService {
 
   public func remove(projectID: ProjectID) async throws {
     try await store.removeProject(id: projectID)
+  }
+
+  private func refreshLegacyRootIfPossible(
+    _ project: ServiceProjectRecord
+  ) async throws -> ServiceProjectRecord {
+    guard project.root.volumeUUID == nil,
+      let current = try? ServiceRootIdentity(
+        capturing: URL(fileURLWithPath: project.root.canonicalPath, isDirectory: true)
+      ),
+      current.canonicalPath == project.root.canonicalPath,
+      current.inode == project.root.inode,
+      current.volumeUUID != nil
+    else {
+      return project
+    }
+    try await store.refreshLegacyProjectRoot(
+      projectID: project.id,
+      expected: project.root,
+      replacement: current
+    )
+    guard let refreshed = try await store.project(id: project.id) else {
+      throw ServiceStoreError.unknownProject(project.id)
+    }
+    return refreshed
   }
 }

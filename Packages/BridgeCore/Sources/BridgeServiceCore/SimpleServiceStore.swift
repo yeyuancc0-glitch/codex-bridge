@@ -105,6 +105,47 @@ public actor SimpleServiceStore {
     }
   }
 
+  public func refreshLegacyProjectRoot(
+    projectID: ProjectID,
+    expected: ServiceRootIdentity,
+    replacement: ServiceRootIdentity
+  ) throws {
+    guard expected.volumeUUID == nil,
+      replacement.volumeUUID != nil,
+      expected.canonicalPath == replacement.canonicalPath,
+      expected.inode == replacement.inode
+    else {
+      throw ServiceStoreError.invalidArgument("project.rootRefresh")
+    }
+    do {
+      try database.write { db in
+        try db.execute(
+          sql: """
+            UPDATE bridge_service_projects
+            SET root_device = ?, root_volume_uuid = ?
+            WHERE project_id = ? AND canonical_path = ?
+              AND root_device = ? AND root_inode = ? AND root_volume_uuid IS NULL
+            """,
+          arguments: [
+            String(replacement.device),
+            replacement.volumeUUID,
+            projectID.rawValue,
+            expected.canonicalPath,
+            String(expected.device),
+            String(expected.inode),
+          ]
+        )
+        guard db.changesCount == 1 else {
+          throw ServiceStoreError.invalidArgument("project.rootRefresh")
+        }
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
   public func updateWorkspaceConfiguration(
     projectID: ProjectID,
     directCommandMode: ServiceDirectCommandMode?,

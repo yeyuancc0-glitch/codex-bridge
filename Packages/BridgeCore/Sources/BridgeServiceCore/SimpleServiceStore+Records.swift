@@ -114,11 +114,11 @@ extension SimpleServiceStore {
     try db.execute(
       sql: """
         INSERT INTO bridge_service_projects (
-          project_id, name, canonical_path, root_device, root_inode,
+          project_id, name, canonical_path, root_device, root_inode, root_volume_uuid,
           read_permission, write_permission, network_permission, created_at, updated_at,
           direct_command_mode, workspace_commands_json,
           direct_blacklist_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
       arguments: [
         project.id.rawValue,
@@ -126,6 +126,7 @@ extension SimpleServiceStore {
         project.root.canonicalPath,
         String(project.root.device),
         String(project.root.inode),
+        project.root.volumeUUID,
         project.accessPolicy.read.rawValue,
         project.accessPolicy.write.rawValue,
         project.accessPolicy.network.rawValue,
@@ -251,10 +252,22 @@ extension SimpleServiceStore {
       db,
       sql: """
         SELECT * FROM bridge_service_projects
-        WHERE canonical_path = ? OR (root_device = ? AND root_inode = ?)
+        WHERE canonical_path = ?
+           OR (
+             root_inode = ?
+             AND (
+               (root_volume_uuid IS NOT NULL AND root_volume_uuid = ?)
+               OR (root_volume_uuid IS NULL AND root_device = ?)
+             )
+           )
         LIMIT 1
         """,
-      arguments: [root.canonicalPath, String(root.device), String(root.inode)]
+      arguments: [
+        root.canonicalPath,
+        String(root.inode),
+        root.volumeUUID,
+        String(root.device),
+      ]
     )
   }
 
@@ -330,7 +343,8 @@ extension SimpleServiceStore {
       root: ServiceRootIdentity(
         canonicalPath: row["canonical_path"],
         device: device,
-        inode: inode
+        inode: inode,
+        volumeUUID: row["root_volume_uuid"]
       ),
       accessPolicy: ProjectAccessPolicy(
         read: ProjectPermission(rawValue: row["read_permission"]),

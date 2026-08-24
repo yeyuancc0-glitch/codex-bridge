@@ -27,6 +27,10 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.connectionState, .connected)
     XCTAssertEqual(model.serviceStatus?.status.mcpState, "ready")
     XCTAssertEqual(model.projects.map(\.projectID), ["project-1"])
+    XCTAssertEqual(
+      model.projectDetails["project-1"]?.directWorkspace?.commands.map(\.name),
+      ["Tests"]
+    )
     XCTAssertEqual(model.tasks.map(\.taskID), ["task-1"])
     XCTAssertEqual(model.models.map(\.modelID), ["fixture-model"])
     XCTAssertEqual(model.modelPreferences?.executionEffort, "medium")
@@ -458,6 +462,45 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
     XCTAssertEqual(model.toast?.symbol, "checkmark.circle.fill")
     XCTAssertEqual(model.toast?.tone, .success)
+  }
+
+  func testWorkspaceDraftStateTracksModeCommandsAndBlacklistWithoutWhitespaceNoise() {
+    let workspace = MCPDirectWorkspace(
+      fileWritePermission: "allowed",
+      commandMode: "full",
+      commands: [
+        MCPProjectCommand(
+          commandID: "stored-id",
+          name: "Tests",
+          executable: "Scripts/with-xcode.sh",
+          arguments: ["swift", "test"]
+        )
+      ],
+      commandBlacklist: [
+        MCPCommandBlacklistRule(ruleID: "stored-rule", executable: "rm", pattern: "-rf")
+      ]
+    )
+    let loaded = ProjectWorkspaceDraftState(workspace: workspace)
+    let equivalent = ProjectWorkspaceDraftState(
+      commandMode: "full",
+      commands: [
+        BridgeWorkspaceCommandDraft(
+          name: " Tests ",
+          executable: " Scripts/with-xcode.sh ",
+          arguments: " swift \n test ",
+          workingDirectory: " "
+        )
+      ],
+      commandBlacklist: [BridgeBlacklistDraft(executable: " rm ", pattern: " -rf ")]
+    )
+    let changedBlacklist = ProjectWorkspaceDraftState(
+      commandMode: "full",
+      commands: loaded.commands,
+      commandBlacklist: [BridgeBlacklistDraft(executable: "git", pattern: "push")]
+    )
+
+    XCTAssertEqual(equivalent, loaded)
+    XCTAssertNotEqual(changedBlacklist, loaded)
   }
 
   private func waitUntil(

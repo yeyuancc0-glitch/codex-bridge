@@ -7,6 +7,39 @@ import MCP
 import XCTest
 
 final class BridgeServiceApplicationTests: XCTestCase {
+  func testProjectRepositoryAdapterAcceptsStableVolumeAfterDeviceDrift() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let rootURL = fixture.root.appending(path: "adapter-project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: false)
+    let current = try ServiceRootIdentity(capturing: rootURL)
+    let volumeUUID = try XCTUnwrap(current.volumeUUID)
+    let storedRoot = try ServiceRootIdentity(
+      canonicalPath: current.canonicalPath,
+      device: current.device == UInt64.max ? 0 : current.device + 1,
+      inode: current.inode,
+      volumeUUID: volumeUUID
+    )
+    let projectID = ProjectID(rawValue: "prj-adapter-device-drift")
+    let date = Date()
+    try await fixture.store.insertProject(
+      ServiceProjectRecord(
+        id: projectID,
+        name: "Adapter Project",
+        root: storedRoot,
+        accessPolicy: .init(read: .allowed, write: .allowed, network: .denied),
+        createdAt: date,
+        updatedAt: date
+      )
+    )
+    let adapter = ServiceProjectRepositoryAdapter(projects: fixture.projects)
+
+    let project = try await adapter.project(id: projectID)
+
+    XCTAssertEqual(project?.primaryRoot.canonicalPath, current.canonicalPath)
+    XCTAssertEqual(project?.primaryRoot.identity.device, current.device)
+    XCTAssertEqual(project?.primaryRoot.identity.inode, current.inode)
+  }
+
   func testToolCatalogSeparatesReadOnlyAndFullExposure() {
     let readOnly = MCPServiceToolCatalog(exposureMode: .readOnly).definitions.map(\.name)
     let full = MCPServiceToolCatalog(exposureMode: .full).definitions.map(\.name)
