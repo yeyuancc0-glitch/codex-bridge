@@ -7,9 +7,13 @@
   final class WindowsServicePathsTests: XCTestCase {
     func testPrepareCreatesOwnerOnlyLayoutIdempotently() throws {
       try withTempRoot { root in
-        let serviceRoot = root.appending(path: "Service", directoryHint: .isDirectory)
+        let serviceRoot =
+          root
+          .appending(path: "CodexBridge", directoryHint: .isDirectory)
+          .appending(path: "Service", directoryHint: .isDirectory)
         let first = try WindowsServicePaths.prepare(at: serviceRoot)
         XCTAssertEqual(first.databaseURL.lastPathComponent, "service.sqlite")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: serviceRoot.path))
         XCTAssertTrue(
           FileManager.default.fileExists(atPath: first.supervisorScratchURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.tunnelRuntimeURL.path))

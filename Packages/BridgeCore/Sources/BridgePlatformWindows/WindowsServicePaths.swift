@@ -61,7 +61,7 @@
       guard let rootPath = localDrivePath(requestedRoot) else {
         throw PathsError.invalidRoot
       }
-      try prepareOwnerOnlyDirectory(rootPath)
+      try prepareOwnerOnlyDirectoryTree(rootPath)
       let scratchPath = join(rootPath, "SupervisorScratch")
       try prepareOwnerOnlyDirectory(scratchPath)
       let tunnelRuntimePath = join(rootPath, "TunnelRuntime")
@@ -76,6 +76,21 @@
 
     // MARK: - Directory protection
 
+    private static func prepareOwnerOnlyDirectoryTree(_ path: String) throws {
+      guard let segments = localDriveSegments(path) else { throw PathsError.invalidRoot }
+      var current = String(path.prefix(3))
+      for segment in segments {
+        current = join(current, segment)
+        if exists(current) {
+          try validateDirectoryNode(current)
+        } else {
+          _ = try createOwnerOnlyDirectory(current)
+          try prepareOwnerOnlyDirectory(current)
+        }
+      }
+      try prepareOwnerOnlyDirectory(path)
+    }
+
     /// Creates or validates a directory only the current user (and SYSTEM)
     /// can reach. Pre-existing directories are audited, never silently
     /// widened: any allow-ACE outside the trusted pair fails closed, matching
@@ -84,12 +99,16 @@
       if !exists(path) {
         _ = try createOwnerOnlyDirectory(path)
       }
+      try validateDirectoryNode(path)
+      guard try hasTrustedProtection(path) else {
+        throw PathsError.insecureDirectory
+      }
+    }
+
+    private static func validateDirectoryNode(_ path: String) throws {
       let attributes = try fileAttributes(path)
       try rejectReparse(attributes)
       guard attributes & Constants.fileAttributeDirectory != 0 else {
-        throw PathsError.insecureDirectory
-      }
-      guard try hasTrustedProtection(path) else {
         throw PathsError.insecureDirectory
       }
     }
@@ -245,11 +264,23 @@
       if units.count >= 4, units[0] == 92, units[2] == 58, units[3] == 92 {
         path.removeFirst()
       }
-      guard isDriveAbsolute(path), !path.contains("\0"),
-        path.rangeOfCharacter(from: .controlCharacters) == nil
-      else { return nil }
       while path.count > 3, path.hasSuffix("\\") { path.removeLast() }
+      guard isDriveAbsolute(path), !path.contains("\0"),
+        path.rangeOfCharacter(from: .controlCharacters) == nil,
+        localDriveSegments(path) != nil
+      else { return nil }
       return path
+    }
+
+    private static func localDriveSegments(_ path: String) -> [String]? {
+      guard isDriveAbsolute(path) else { return nil }
+      let tail = path.dropFirst(3)
+      if tail.isEmpty { return [] }
+      let segments = tail.split(separator: "\\", omittingEmptySubsequences: false).map(String.init)
+      guard segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+        return nil
+      }
+      return segments
     }
 
     private static func join(_ root: String, _ component: String) -> String {
