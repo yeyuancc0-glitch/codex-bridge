@@ -9,23 +9,23 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$release = 'v0.0.11'
-$commonFiles = @('cloudflared-manifest.json', 'LICENSE')
+$release = 'v0.0.12'
+$commonFiles = @('cloudflared-manifest.json', 'LICENSE', 'NOTICE')
 $platform = if ($Architecture -eq 'ARM64') {
   @{
     Name = 'arm64'
     Machine = 0xAA64
-    ArchiveSHA256 = '38f015a720404c8ccd5976a0d6aed18d931899697eaf208548b5eb3d0f6e8592'
-    TunnelClientSHA256 = 'ced04bcbc68d54cba5353e94ede8eb5c7d7621ba4809653af37d51f990b0e751'
-    CloudflaredSHA256 = 'b6f2d34d9413a9ec42a790f95045f6607e4b12c0c786c1b8d084c8067ac989f0'
+    ArchiveSHA256 = '65ab54221554481bb1c23b6015b99abe0b7f79b08593f4fb17a9e2e25532281d'
+    TunnelClientSHA256 = '480684ec1031fc2985c7e87f9d669e7dfda4012a8ecdab21eabe1b5deafdd656'
+    CloudflaredSHA256 = '31f83304590ba0d4c2e015a8a499c31a45ab4c073e6351705c89e9e01878c536'
   }
 } else {
   @{
     Name = 'amd64'
     Machine = 0x8664
-    ArchiveSHA256 = 'eb912c86c6ccde90cda805cb17009507176a656725cf86c36fabe1901a12e29b'
-    TunnelClientSHA256 = '7d3c7d492ce84b52835e11865a835a8a5bcd4a669dee84e169aa11b314dc952a'
-    CloudflaredSHA256 = '88024cf82cec72d10604c13aa4670016dca375c602e200b551ec9d53b31e874d'
+    ArchiveSHA256 = '2a2804933924e38a502d62b61f0266cb80d56d65744f4c29876b2bf9c1544356'
+    TunnelClientSHA256 = '6649169733686805ca16cccd91774594d0c017fd729c37ad4ce1cd18323d9ae8'
+    CloudflaredSHA256 = 'c8405b5b4b92d2529202aeca634a3aa6ecdaa231f42238293e4a8a755bd6c1ff'
   }
 }
 
@@ -78,6 +78,9 @@ try {
       'cloudflared-manifest.json',
       'cloudflared.exe',
       'LICENSE',
+      'NOTICE',
+      "tunnel-client-$release-windows-$($platform.Name)-licenses.txt",
+      "tunnel-client-$release-windows-$($platform.Name).spdx.json",
       'tunnel-client.exe'
     ) | Sort-Object
     $actualEntries = @($zip.Entries | ForEach-Object { $_.FullName } | Sort-Object)
@@ -107,6 +110,12 @@ try {
   foreach ($name in $commonFiles) {
     Copy-Item -LiteralPath (Join-Path $extract $name) -Destination (Join-Path $Destination $name)
   }
+  Copy-Item `
+    -LiteralPath (Join-Path $extract "tunnel-client-$release-windows-$($platform.Name)-licenses.txt") `
+    -Destination (Join-Path $Destination 'ThirdPartyLicenses.txt')
+  Copy-Item `
+    -LiteralPath (Join-Path $extract "tunnel-client-$release-windows-$($platform.Name).spdx.json") `
+    -Destination (Join-Path $Destination 'SBOM.spdx.json')
   [System.IO.File]::WriteAllText(
     (Join-Path $Destination 'tunnel-client.sha256'),
     $platform.TunnelClientSHA256 + "`n",
