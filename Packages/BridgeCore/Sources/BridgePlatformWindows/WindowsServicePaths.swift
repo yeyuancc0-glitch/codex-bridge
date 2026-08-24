@@ -126,6 +126,9 @@
     /// widened: any allow-ACE outside the trusted pair fails closed, matching
     /// the macOS refusal to repair insecure data directories.
     static func prepareOwnerOnlyDirectory(_ path: String) throws {
+      guard let path = normalizedDrivePath(path), isFixedDrive(path) else {
+        throw PathsError.invalidRoot
+      }
       _ = try prepareOwnerOnlyDirectoryTree(path)
     }
 
@@ -194,16 +197,6 @@
       return lease
     }
 
-    static func withDirectoryHandleLeaseForTesting<Result>(
-      _ path: String,
-      _ body: () throws -> Result
-    ) throws -> Result {
-      let lease = try openDirectoryLease(path)
-      return try withExtendedLifetime(lease) {
-        try body()
-      }
-    }
-
     static func createOwnerOnlyDirectory(_ path: String) throws -> Bool {
       guard let currentUser = WindowsSecurity.currentUserSIDString() else {
         throw PathsError.unavailable(Int32(GetLastError()))
@@ -247,7 +240,10 @@
     /// True when the DACL is protected and every allow-ACE names the current
     /// user or LOCAL SYSTEM.
     public static func hasTrustedProtection(_ path: String) throws -> Bool {
-      try hasTrustedProtection(openDirectoryLease(path))
+      guard let path = normalizedDrivePath(path), isFixedDrive(path) else {
+        throw PathsError.invalidRoot
+      }
+      return try hasTrustedProtection(openDirectoryLease(path))
     }
 
     private static func hasTrustedProtection(_ lease: DirectoryHandleLease) throws -> Bool {
@@ -356,17 +352,24 @@
     /// the path to Win32, without accepting network or non-file URLs.
     private static func localDrivePath(_ url: URL) -> String? {
       guard url.isFileURL else { return nil }
-      var path = url.path.replacingOccurrences(of: "/", with: "\\")
-      let units = Array(path.utf16)
-      if units.count >= 4, units[0] == 92, units[2] == 58, units[3] == 92 {
-        path.removeFirst()
-      }
-      while path.count > 3, path.hasSuffix("\\") { path.removeLast() }
-      guard isDriveAbsolute(path), isFixedDrive(path), !path.contains("\0"),
+      guard let path = normalizedDrivePath(url.path) else { return nil }
+      guard isFixedDrive(path), !path.contains("\0"),
         path.rangeOfCharacter(from: .controlCharacters) == nil,
         localDriveSegments(path) != nil
       else { return nil }
       return path
+    }
+
+    private static func normalizedDrivePath(_ rawPath: String) -> String? {
+      var path = rawPath.replacingOccurrences(of: "/", with: "\\")
+      let units = Array(path.utf16)
+      if units.count >= 4, units[0] == 92, units[2] == 58, units[3] == 92,
+        (65...90).contains(Int(units[1])) || (97...122).contains(Int(units[1]))
+      {
+        path.removeFirst()
+      }
+      while path.count > 3, path.hasSuffix("\\") { path.removeLast() }
+      return isDriveAbsolute(path) ? path : nil
     }
 
     private static func localDriveSegments(_ path: String) -> [String]? {

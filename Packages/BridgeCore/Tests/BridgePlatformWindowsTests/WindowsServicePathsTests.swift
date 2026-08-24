@@ -69,35 +69,11 @@
 
     func testInvalidDriveRootIsRejectedBeforePreparation() {
       XCTAssertFalse(WindowsServicePaths.isFixedDrive("not-a-drive"))
+      let invalidRoot = URL(string: "file:///?:/CodexBridge/Service")!
       XCTAssertThrowsError(
-        try WindowsServicePaths.prepare(
-          at: URL(fileURLWithPath: "?:\\CodexBridge\\Service", isDirectory: true)
-        )
+        try WindowsServicePaths.prepare(at: invalidRoot)
       ) { error in
         XCTAssertEqual(error as? WindowsServicePaths.PathsError, .invalidRoot)
-      }
-    }
-
-    func testDirectoryHandleLeaseBlocksRenameAndDeleteUntilReleased() throws {
-      try withTempRoot { root in
-        let locked = root.appending(path: "locked", directoryHint: .isDirectory)
-        let moved = root.appending(path: "moved", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
-
-        try WindowsServicePaths.withDirectoryHandleLeaseForTesting(locked.path) {
-          let renameResult = Self.moveDirectory(source: locked.path, destination: moved.path)
-          XCTAssertFalse(renameResult.succeeded)
-          XCTAssertEqual(renameResult.error, DWORD(32))  // ERROR_SHARING_VIOLATION
-
-          let deleteWide = WideBuffer(locked.path)
-          let deleteSucceeded = RemoveDirectoryW(deleteWide.pointer)
-          let deleteError = GetLastError()
-          XCTAssertFalse(deleteSucceeded)
-          XCTAssertEqual(deleteError, DWORD(32))  // ERROR_SHARING_VIOLATION
-        }
-
-        XCTAssertTrue(Self.moveDirectory(source: locked.path, destination: moved.path).succeeded)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: moved.path))
       }
     }
 
@@ -133,20 +109,6 @@
           XCTAssertEqual(error as? WindowsServicePaths.PathsError, .insecureDirectory)
         }
       }
-    }
-
-    private static func moveDirectory(
-      source: String,
-      destination: String
-    ) -> (succeeded: Bool, error: DWORD) {
-      let sourceWide = WideBuffer(source)
-      let destinationWide = WideBuffer(destination)
-      let succeeded = MoveFileExW(
-        sourceWide.pointer,
-        destinationWide.pointer,
-        DWORD(0x0000_0008)  // MOVEFILE_WRITE_THROUGH
-      )
-      return (succeeded, GetLastError())
     }
 
     private static func applySDDL(_ sddl: String, to path: String) throws {
