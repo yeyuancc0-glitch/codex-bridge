@@ -5,6 +5,26 @@ import BridgeTunnel
 import Foundation
 
 extension BridgeServiceXPCController {
+  func handleGetCustomInstructions(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let instructions = try await composition.application.serviceCustomInstructions(
+      deadline: Self.deadline()
+    )
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: IPCCustomInstructions(instructions: instructions)
+    )
+  }
+
+  func handleSetCustomInstructions(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(IPCCustomInstructions.self, from: request)
+    try await composition.application.setServiceCustomInstructions(
+      payload.instructions,
+      deadline: Self.deadline()
+    )
+    await composition.refreshMCPInstructions()
+    return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+  }
+
   func handleStatus(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let status = try await composition.application.serviceStatus(
       deadline: Self.deadline()

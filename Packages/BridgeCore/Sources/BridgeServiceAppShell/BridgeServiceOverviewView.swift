@@ -72,7 +72,7 @@ struct BridgeServiceOverviewView: View {
     if !model.approvals.isEmpty {
       CalloutBanner(
         title: "待处理 Codex 审批",
-        message: "当前有 \(model.approvals.count) 个高风险 Codex 操作等待你本机确认或拒绝。",
+        message: "当前有 \(model.approvals.count) 个远程任务或 Codex 操作等待你本机确认或拒绝。",
         symbol: "exclamationmark.shield.fill",
         tone: .warning,
         actionTitle: "立即处理"

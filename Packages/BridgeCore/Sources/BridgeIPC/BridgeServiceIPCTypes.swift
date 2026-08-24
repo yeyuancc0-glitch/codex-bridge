@@ -11,6 +11,8 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case updateProjectCommands = "update_project_commands"
   case setProjectCommandMode = "set_project_command_mode"
   case setWorkbenchProject = "set_workbench_project"
+  case getCustomInstructions = "get_custom_instructions"
+  case setCustomInstructions = "set_custom_instructions"
   case listModels = "list_models"
   case getModelCatalog = "get_model_catalog"
   case getModelPreferences = "get_model_preferences"
@@ -141,5 +143,13 @@ public struct IPCMutationResponse: Codable, Equatable, Sendable {
 
   public init(accepted: Bool = true) {
     self.accepted = accepted
+  }
+}
+
+public struct IPCCustomInstructions: Codable, Equatable, Sendable {
+  public let instructions: String
+
+  public init(instructions: String) {
+    self.instructions = instructions
   }
 }

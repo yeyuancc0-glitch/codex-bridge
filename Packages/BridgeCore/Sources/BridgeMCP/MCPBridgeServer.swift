@@ -33,6 +33,7 @@ public actor MCPBridgeServer {
   }
 
   private let makeServer: @Sendable (MCPClientID) async -> Server
+  private let discoveryInstructions: MCPSessionRegistry.DiscoveryInstructionsProvider?
   private let httpConfiguration: MCPHTTPConfiguration
   private let sessionLimits: MCPSessionRegistry.Limits
   private let clientAdmission: MCPClientAdmissionGate?
@@ -57,6 +58,7 @@ public actor MCPBridgeServer {
       projectOperations: projectOperations
     )
     makeServer = { _ in await factory.makeServer() }
+    discoveryInstructions = nil
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
     self.clientAdmission = clientAdmission
@@ -77,6 +79,14 @@ public actor MCPBridgeServer {
       exposureMode: exposureMode
     )
     makeServer = { _ in await factory.makeServer() }
+    discoveryInstructions = { clientID in
+      let deadline = ContinuousClock().now.advanced(by: .seconds(5))
+      let custom = try? await service.serviceCustomInstructions(deadline: deadline)
+      return MCPServiceServerFactory.instructions(
+        customInstructions: custom ?? "",
+        clientID: clientID
+      )
+    }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
     self.clientAdmission = clientAdmission
@@ -99,6 +109,14 @@ public actor MCPBridgeServer {
         exposureMode: mode,
         clientID: clientID
       ).makeServer()
+    }
+    discoveryInstructions = { clientID in
+      let deadline = ContinuousClock().now.advanced(by: .seconds(5))
+      let custom = try? await service.serviceCustomInstructions(deadline: deadline)
+      return MCPServiceServerFactory.instructions(
+        customInstructions: custom ?? "",
+        clientID: clientID
+      )
     }
     self.httpConfiguration = httpConfiguration
     self.sessionLimits = sessionLimits
@@ -144,7 +162,8 @@ public actor MCPBridgeServer {
         authenticatedStatelessServerFactory: { clientID in
           await makeServer(clientID)
         },
-        clientAdmission: clientAdmission
+        clientAdmission: clientAdmission,
+        discoveryInstructionsProvider: discoveryInstructions
       )
       await router.install(registry)
 

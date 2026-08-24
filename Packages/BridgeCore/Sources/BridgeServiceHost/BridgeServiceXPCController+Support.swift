@@ -3,6 +3,7 @@ import BridgeDomain
 import BridgeIPC
 import BridgeMCP
 import BridgeProjects
+import BridgeServiceApplication
 import BridgeServiceCore
 import BridgeTunnel
 import Foundation
@@ -164,6 +165,33 @@ extension BridgeServiceXPCController {
       relativePaths: approval.relativePaths,
       reason: approval.reason,
       decisionOptions: approval.availableDecisions.map(\.rawValue)
+    )
+  }
+
+  static func taskStartApprovalSummary(
+    _ approval: BridgeServiceApplication.PendingTaskStartApproval
+  ) -> IPCApprovalSummary {
+    let prompt = String(decoding: approval.prompt.utf8.prefix(4 * 1_024), as: UTF8.self)
+    let title: String
+    switch approval.clientID {
+    case MCPClientID.chatGPT.rawValue:
+      title = "ChatGPT 请求调用 Codex"
+    case MCPClientID.qwenStudio.rawValue:
+      title = "Qwen 请求调用 Codex"
+    default:
+      title = "远程客户端请求调用 Codex"
+    }
+    return IPCApprovalSummary(
+      approvalID: approval.approvalID,
+      taskID: approval.taskID,
+      threadID: "",
+      turnID: "",
+      itemID: approval.taskID,
+      kind: "task_start",
+      title: title,
+      summary: prompt,
+      reason: "项目：\(approval.projectID)",
+      decisionOptions: ["allow", "deny"]
     )
   }
 

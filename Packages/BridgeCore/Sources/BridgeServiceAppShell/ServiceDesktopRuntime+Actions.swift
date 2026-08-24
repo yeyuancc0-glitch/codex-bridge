@@ -3,6 +3,23 @@ import BridgeMCP
 import Foundation
 
 extension BridgeServiceAppModel {
+  func saveCustomInstructions(_ instructions: String) {
+    guard !isSavingCustomInstructions else { return }
+    isSavingCustomInstructions = true
+    errorMessage = nil
+    Task { [weak self] in
+      guard let self else { return }
+      defer { self.isSavingCustomInstructions = false }
+      do {
+        try await self.currentClient().setCustomInstructions(instructions)
+        self.customInstructions = instructions
+        self.postToast("全局自定义指令已保存，MCP 客户端将重新连接后应用")
+      } catch {
+        self.errorMessage = Self.message(error)
+      }
+    }
+  }
+
   public func registerProject(at url: URL) {
     runMutation { [weak self] client in
       guard let self else { return }
@@ -484,7 +501,6 @@ extension BridgeServiceAppModel {
     } catch {
       guard selectedProjectID == projectID else { return }
       threads = []
-      errorMessage = Self.message(error)
     }
   }
 }

@@ -5,6 +5,10 @@ public enum MCPServiceExposureMode: String, Codable, Equatable, Sendable {
   case full
 }
 public protocol BridgeMCPServiceAPI: Sendable {
+  func serviceCustomInstructions(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String
+
   func serviceStatus(deadline: ContinuousClock.Instant) async throws -> BridgeStatusSnapshot
 
   func serviceProjects(
@@ -162,6 +166,12 @@ public protocol BridgeMCPServiceAPI: Sendable {
 }
 
 extension BridgeMCPServiceAPI {
+  public func serviceCustomInstructions(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String {
+    ""
+  }
+
   public func serviceDirectWriteStdin(
     sessionID: String,
     data: String,

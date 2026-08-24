@@ -2,6 +2,7 @@ import BridgeCodexService
 import BridgeDomain
 import BridgeIPC
 import BridgeMCP
+import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
 
@@ -130,13 +131,17 @@ extension BridgeServiceXPCController {
         IPCApprovalListRequest.self,
         from: request
       ) ?? IPCApprovalListRequest()
+    let taskApprovals = try await composition.application.pendingTaskStartApprovals(
+      taskID: payload.taskID.map(TaskID.init(rawValue:))
+    )
     let approvals = await composition.application.pendingCodexApprovals(
       taskID: payload.taskID.map(TaskID.init(rawValue:))
     )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCApprovalListResponse(
-        approvals: approvals.map(Self.approvalSummary)
+        approvals: taskApprovals.map(Self.taskStartApprovalSummary)
+          + approvals.map(Self.approvalSummary)
       )
     )
   }
@@ -149,11 +154,24 @@ extension BridgeServiceXPCController {
     guard let decision = LocalApprovalDecision(rawValue: payload.decision) else {
       throw ServiceStoreError.invalidArgument("approval.decision")
     }
-    try await composition.application.resolveCodexApproval(
-      taskID: TaskID(rawValue: payload.taskID),
-      approvalID: payload.approvalID,
-      decision: decision
-    )
+    let taskID = TaskID(rawValue: payload.taskID)
+    if payload.approvalID.hasPrefix("bridge-task-start:") {
+      guard decision == .allow || decision == .deny else {
+        throw ServiceStoreError.invalidArgument("approval.decision")
+      }
+      try await composition.application.resolveTaskStartApproval(
+        taskID: taskID,
+        approvalID: payload.approvalID,
+        approved: decision == .allow,
+        deadline: Self.deadline()
+      )
+    } else {
+      try await composition.application.resolveCodexApproval(
+        taskID: taskID,
+        approvalID: payload.approvalID,
+        decision: decision
+      )
+    }
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }
 

@@ -306,6 +306,11 @@ public actor ServiceComposition {
     return try await startLocalMCP()
   }
 
+  public func refreshMCPInstructions() async {
+    await mcpServer?.terminateSessions(for: .chatGPT)
+    await mcpServer?.terminateSessions(for: .qwenStudio)
+  }
+
   public func mcpClientStatuses() async throws -> [ServiceMCPClientStatus] {
     let profiles = try await mcpClients.profiles()
     var statuses: [ServiceMCPClientStatus] = []

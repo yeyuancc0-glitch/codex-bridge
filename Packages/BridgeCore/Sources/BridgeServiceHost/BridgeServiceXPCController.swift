@@ -117,6 +117,10 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleSetProjectCommandMode(request)
     case .setWorkbenchProject:
       return try await handleSetWorkbenchProject(request)
+    case .getCustomInstructions:
+      return try await handleGetCustomInstructions(request)
+    case .setCustomInstructions:
+      return try await handleSetCustomInstructions(request)
     case .listModels:
       return try await handleListModels(request)
     case .getModelCatalog:
