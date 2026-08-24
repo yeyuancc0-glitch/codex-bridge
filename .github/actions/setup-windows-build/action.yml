@@ -1,0 +1,81 @@
+name: Set up Windows native build
+description: Install the pinned Swift toolchain, activate MSVC, and provide SQLite.
+
+inputs:
+  architecture:
+    description: Windows target architecture.
+    required: true
+  swift-version:
+    description: Swift release version.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Swift
+      shell: pwsh
+      env:
+        SWIFT_VERSION: ${{ inputs.swift-version }}
+        TARGET_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $version = $env:SWIFT_VERSION
+        if ($env:TARGET_ARCHITECTURE -eq 'ARM64') {
+          $url = "https://download.swift.org/swift-$version-release/windows10-arm64/swift-$version-RELEASE/swift-$version-RELEASE-windows10-arm64.exe"
+        } else {
+          $url = "https://download.swift.org/swift-$version-release/windows10/swift-$version-RELEASE/swift-$version-RELEASE-windows10.exe"
+        }
+        $installer = "$env:RUNNER_TEMP\swift-install.exe"
+        Invoke-WebRequest -Uri $url -OutFile $installer
+        $log = "$env:RUNNER_TEMP\swift-install.log"
+        $process = Start-Process -FilePath $installer -ArgumentList "/quiet", "/norestart", "/log", $log -Wait -PassThru
+        if ($process.ExitCode -ne 0) {
+          if (Test-Path $log) { Get-Content $log -Tail 40 }
+          throw "Swift installer failed with exit code $($process.ExitCode)"
+        }
+        $candidates = @(
+          "$env:LOCALAPPDATA\Programs\Swift\bin",
+          "$env:ProgramFiles\Swift\bin",
+          "C:\Swift\bin"
+        )
+        $bin = $candidates | Where-Object { Test-Path (Join-Path $_ 'swift.exe') } | Select-Object -First 1
+        if (-not $bin) {
+          $found = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs", "$env:ProgramFiles", "$env:SystemDrive\Library" -Recurse -Filter 'swift.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($found) { $bin = $found.DirectoryName }
+        }
+        if (-not $bin) { throw 'swift.exe not found after installation' }
+        Add-Content $env:GITHUB_PATH $bin
+        $swiftRoot = Split-Path (Split-Path (Split-Path (Split-Path $bin)))
+        $runtimeBin = Get-ChildItem -Path "$swiftRoot\Runtimes" -Recurse -Filter 'swiftCore.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $runtimeBin) { throw "Swift runtime dlls not found under $swiftRoot\Runtimes" }
+        Add-Content $env:GITHUB_PATH $runtimeBin.DirectoryName
+        Add-Content $env:GITHUB_ENV "SWIFT_RUNTIME_BIN=$($runtimeBin.DirectoryName)"
+        $platformSdk = Get-ChildItem -Path "$swiftRoot\Platforms" -Depth 4 -Directory -Filter 'Windows.sdk' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $platformSdk) { throw "Windows.sdk not found under $swiftRoot\Platforms" }
+        Add-Content $env:GITHUB_ENV "SDKROOT=$($platformSdk.FullName)"
+
+    - name: Activate MSVC developer environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ inputs.architecture == 'ARM64' && 'arm64' || 'x64' }}
+
+    - name: Install SQLite development package
+      shell: pwsh
+      env:
+        TARGET_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $triplet = if ($env:TARGET_ARCHITECTURE -eq 'ARM64') { 'arm64-windows' } else { 'x64-windows' }
+        $vcpkg = (Get-Command vcpkg.exe -ErrorAction Stop).Source
+        & $vcpkg install "sqlite3[snapshot]:$triplet" --clean-after-build
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg sqlite3 install failed with exit code $LASTEXITCODE" }
+        $installed = Join-Path (Split-Path $vcpkg) "installed\$triplet"
+        $include = Join-Path $installed 'include'
+        $library = Join-Path $installed 'lib'
+        $runtime = Join-Path $installed 'bin'
+        if (-not (Test-Path (Join-Path $include 'sqlite3.h'))) { throw "sqlite3.h not found under $include" }
+        if (-not (Test-Path (Join-Path $library 'sqlite3.lib'))) { throw "sqlite3.lib not found under $library" }
+        Add-Content $env:GITHUB_ENV "SQLITE_INCLUDE_DIR=$include"
+        Add-Content $env:GITHUB_ENV "SQLITE_LIBRARY_DIR=$library"
+        Add-Content $env:GITHUB_ENV "SQLITE_RUNTIME_DIR=$runtime"
+        Add-Content $env:GITHUB_PATH $runtime

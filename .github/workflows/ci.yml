@@ -436,3 +436,43 @@ jobs:
         with:
           path: Packages/BridgeCore/.build
           key: bridge-core-windows-${{ runner.arch }}-${{ hashFiles('Packages/BridgeCore/Package.resolved') }}
+
+  windows-package-bundle:
+    name: Windows installer bundle smoke test
+    needs: [windows-x64, windows-arm64]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download architecture packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: CodexBridge-Windows-*-unsigned
+          path: ${{ runner.temp }}/bundle-input
+          merge-multiple: true
+
+      - name: Build installable bundle and update feed
+        id: bundle
+        shell: pwsh
+        run: >-
+          .github/scripts/bundle-windows-release.ps1
+          -InputDirectory '${{ runner.temp }}/bundle-input'
+          -OutputDirectory '${{ runner.temp }}/bundle-output'
+          -PackageVersion '0.2.0.0'
+          -Publisher 'CN=CodexBridge'
+          -IdentityName 'org.codexbridge.windows'
+          -ReleaseBaseUri 'https://example.invalid/codex-bridge'
+
+      - name: Verify installer artifacts
+        shell: pwsh
+        run: |
+          $bundle = '${{ steps.bundle.outputs.bundle }}'
+          $appInstaller = '${{ steps.bundle.outputs.appinstaller }}'
+          if (-not (Test-Path -LiteralPath $bundle)) { throw 'MSIX bundle was not created.' }
+          if (-not (Test-Path -LiteralPath $appInstaller)) { throw 'App Installer feed was not created.' }
+          [xml]$feed = [IO.File]::ReadAllText($appInstaller)
+          if ($feed.AppInstaller.MainBundle.Version -ne '0.2.0.0') { throw 'App Installer version mismatch.' }

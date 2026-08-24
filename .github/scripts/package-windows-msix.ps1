@@ -1,7 +1,13 @@
 param(
   [Parameter(Mandatory = $true)]
   [ValidateSet('x64', 'ARM64')]
-  [string]$Architecture
+  [string]$Architecture,
+
+  [string]$PackageVersion = '0.2.0.0',
+
+  [string]$Publisher = 'CN=CodexBridge',
+
+  [string]$IdentityName = 'org.codexbridge.windows'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +18,34 @@ if (-not $env:SWIFT_RUNTIME_BIN -or -not (Test-Path $env:SWIFT_RUNTIME_BIN)) {
 if (-not $env:SQLITE_RUNTIME_DIR -or -not (Test-Path $env:SQLITE_RUNTIME_DIR)) {
   throw 'SQLITE_RUNTIME_DIR is unavailable.'
 }
+if ($PackageVersion -notmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$') {
+  throw 'PackageVersion must contain four numeric components.'
+}
+foreach ($component in $PackageVersion.Split('.')) {
+  if ([int]$component -gt 65535) { throw 'PackageVersion components must not exceed 65535.' }
+}
+$publisherHasControl = @($Publisher.ToCharArray() | Where-Object { [char]::IsControl($_) }).Count -gt 0
+if ([string]::IsNullOrWhiteSpace($Publisher) -or $Publisher.Length -gt 1024 -or
+    $publisherHasControl) {
+  throw 'Publisher is invalid.'
+}
+if ($IdentityName -notmatch '^[A-Za-z0-9.-]{3,50}$') {
+  throw 'IdentityName is invalid.'
+}
+
+$manifestPath = (Resolve-Path 'Windows/CodexBridge.App/Package.appxmanifest').Path
+$originalManifest = [System.IO.File]::ReadAllBytes($manifestPath)
+try {
+  [xml]$manifest = [System.IO.File]::ReadAllText($manifestPath)
+  $identity = $manifest.Package.Identity
+  $identity.SetAttribute('Name', $IdentityName)
+  $identity.SetAttribute('Publisher', $Publisher)
+  $identity.SetAttribute('Version', $PackageVersion)
+  $settings = [System.Xml.XmlWriterSettings]::new()
+  $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+  $settings.Indent = $true
+  $writer = [System.Xml.XmlWriter]::Create($manifestPath, $settings)
+  try { $manifest.Save($writer) } finally { $writer.Dispose() }
 
 $bin = swift build --show-bin-path --package-path Packages/BridgeCore
 if ($LASTEXITCODE -ne 0) { throw 'Unable to locate Swift build products.' }
@@ -89,4 +123,29 @@ $packages = @(Get-ChildItem -Path 'Windows/CodexBridge.App' -Recurse -Filter '*.
 if ($packages.Count -ne 1) {
   throw "Expected one unsigned Codex Bridge $Architecture MSIX, found $($packages.Count)."
 }
-Write-Host "Unsigned MSIX: $($packages[0].FullName)"
+$package = $packages[0]
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
+try {
+  $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+  $requiredEntries = @(
+    'TunnelClient/tunnel-client.exe',
+    'TunnelClient/cloudflared.exe',
+    'FixedRuntime/151.0.4129.101/msedgewebview2.exe',
+    'coreclr.dll',
+    'hostfxr.dll',
+    'Microsoft.UI.Xaml.dll'
+  )
+  foreach ($entry in $requiredEntries) {
+    if ($entries -inotcontains $entry) { throw "MSIX is missing required self-contained payload: $entry" }
+  }
+} finally {
+  $archive.Dispose()
+}
+if ($env:GITHUB_OUTPUT) {
+  Add-Content $env:GITHUB_OUTPUT "msix=$($package.FullName)"
+}
+Write-Host "Unsigned MSIX: $($package.FullName)"
+} finally {
+  [System.IO.File]::WriteAllBytes($manifestPath, $originalManifest)
+}
