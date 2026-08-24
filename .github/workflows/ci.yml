@@ -441,12 +441,17 @@ jobs:
     name: Windows installer bundle smoke test
     needs: [windows-x64, windows-arm64]
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Check out source
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Install .NET SDK for installed Service probe
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: Windows/global.json
 
       - name: Download architecture packages
         uses: actions/download-artifact@v7
@@ -476,3 +481,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $appInstaller)) { throw 'App Installer feed was not created.' }
           [xml]$feed = [IO.File]::ReadAllText($appInstaller)
           if ($feed.AppInstaller.MainBundle.Version -ne '0.2.0.0') { throw 'App Installer version mismatch.' }
+
+      - name: Install, probe, and uninstall bundle
+        shell: pwsh
+        run: .github/scripts/test-windows-msix-install.ps1 -BundlePath '${{ steps.bundle.outputs.bundle }}'
