@@ -85,6 +85,7 @@ final class WindowsJobProcessTests: XCTestCase {
     }
     let isolatedFixture = root.appendingPathComponent("sandbox-fixture.exe")
     try FileManager.default.copyItem(at: fixture, to: isolatedFixture)
+    try copySwiftRuntime(to: root)
     let insideFile = root.appendingPathComponent("inside.txt")
     let outsideFile = outside.appendingPathComponent("outside.txt")
     let collector = DirectCommandOutputCollector()
@@ -120,6 +121,7 @@ final class WindowsJobProcessTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: directory) }
     let isolatedFixture = directory.appendingPathComponent("sandbox-fixture.exe")
     try FileManager.default.copyItem(at: fixture, to: isolatedFixture)
+    try copySwiftRuntime(to: directory)
     let collector = DirectCommandOutputCollector()
     let arguments =
       loopbackPort.map { ["--sandbox-network", String($0)] }
@@ -165,6 +167,22 @@ final class WindowsJobProcessTests: XCTestCase {
     )
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+  }
+
+  private func copySwiftRuntime(to directory: URL) throws {
+    guard let runtimePath = ProcessInfo.processInfo.environment["SWIFT_RUNTIME_BIN"] else {
+      throw XCTSkip("SWIFT_RUNTIME_BIN is unavailable")
+    }
+    let runtime = URL(fileURLWithPath: runtimePath, isDirectory: true)
+    for source in try FileManager.default.contentsOfDirectory(
+      at: runtime,
+      includingPropertiesForKeys: [.isRegularFileKey]
+    ) where source.pathExtension.caseInsensitiveCompare("dll") == .orderedSame {
+      try FileManager.default.copyItem(
+        at: source,
+        to: directory.appendingPathComponent(source.lastPathComponent)
+      )
+    }
   }
 
   private func waitUntil(
