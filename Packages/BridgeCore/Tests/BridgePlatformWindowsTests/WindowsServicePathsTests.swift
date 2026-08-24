@@ -148,8 +148,8 @@
         SetNamedSecurityInfoW(
           pathWide.pointer,
           SE_OBJECT_TYPE(rawValue: 1),
-          // DACL_SECURITY_INFORMATION.
-          DWORD(0x0000_0004),
+          // DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
+          DWORD(0x8000_0004),
           nil,
           nil,
           dacl,
