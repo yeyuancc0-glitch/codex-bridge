@@ -31,6 +31,8 @@ $package = $null
 $serviceLauncher = $null
 $serviceStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-Package-Service.stdout.log'
 $serviceStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-Package-Service.stderr.log'
+$serviceChildStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stdout.log'
+$serviceChildStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stderr.log'
 try {
   Write-Host 'Signing CI MSIX bundle.'
   & $signToolPath sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $BundlePath
@@ -65,8 +67,13 @@ try {
   if ($package.PackageFamilyName -cnotmatch '\A[A-Za-z0-9._-]+\z') {
     throw 'Installed package family name is invalid.'
   }
-  if ($service -cmatch "'") { throw 'Installed Service path is invalid.' }
-  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command '$service' -Args '--foreground' -PreventBreakaway"
+  $launchPaths = @($service, $serviceChildStdout, $serviceChildStderr, $env:ComSpec)
+  if ($launchPaths.Where({ $_ -cmatch "'" }).Count -ne 0) {
+    throw 'Installed Service launch path is invalid.'
+  }
+  $commandArgs = '/d /s /c ""' + $service + '" --foreground 1>"' +
+    $serviceChildStdout + '" 2>"' + $serviceChildStderr + '""'
+  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command '$env:ComSpec' -Args '$commandArgs' -PreventBreakaway"
   $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launchCommand))
   $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $serviceLauncher = Start-Process `
@@ -113,6 +120,8 @@ try {
   }
   if (Test-Path $serviceStdout) { Get-Content $serviceStdout }
   if (Test-Path $serviceStderr) { Get-Content $serviceStderr }
+  if (Test-Path $serviceChildStdout) { Get-Content $serviceChildStdout }
+  if (Test-Path $serviceChildStderr) { Get-Content $serviceChildStderr }
   if (-not $package) {
     $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   }
