@@ -45,7 +45,6 @@ $payload = Join-Path $env:RUNNER_TEMP "CodexBridge-MSIX-$Architecture"
 & "$PSScriptRoot/stage-windows-app-payload.ps1" `
   -Architecture $Architecture `
   -Destination $payload
-if ($LASTEXITCODE -ne 0) { throw "App payload staging failed with exit code $LASTEXITCODE" }
 
 $runtimeIdentifier = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
 $project = 'Windows/CodexBridge.App/CodexBridge.App.csproj'

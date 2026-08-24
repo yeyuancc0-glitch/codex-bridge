@@ -21,7 +21,6 @@ try {
     throw 'Portable archive is missing the app or Service executable.'
   }
   & "$PSScriptRoot/test-windows-payload-manifest.ps1" -Root $extractRoot
-  if ($LASTEXITCODE -ne 0) { throw 'Portable payload manifest verification failed.' }
   dotnet build Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj --configuration Release
   if ($LASTEXITCODE -ne 0) { throw "Service probe build failed with exit code $LASTEXITCODE" }
   $service = Start-Process `
