@@ -28,7 +28,9 @@ $certificatePath = Join-Path $env:RUNNER_TEMP 'CodexBridge-CI.cer'
 Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
 $trustedPeople = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople'
 $package = $null
-$serviceJob = $null
+$serviceLauncher = $null
+$serviceStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-Package-Service.stdout.log'
+$serviceStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-Package-Service.stderr.log'
 try {
   Write-Host 'Signing CI MSIX bundle.'
   & $signToolPath sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $BundlePath
@@ -53,19 +55,23 @@ try {
   }
 
   Write-Host 'Starting Service inside the registered package context.'
-  $serviceJob = Start-Job -ArgumentList $package.PackageFamilyName -ScriptBlock {
-    param($packageFamilyName)
-    Invoke-CommandInDesktopPackage `
-      -PackageFamilyName $packageFamilyName `
-      -AppId 'App' `
-      -Command 'codex-bridge-service.exe' `
-      -Args '--foreground' `
-      -PreventBreakaway
+  if ($package.PackageFamilyName -cnotmatch '\A[A-Za-z0-9._-]+\z') {
+    throw 'Installed package family name is invalid.'
   }
+  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command 'codex-bridge-service.exe' -Args '--foreground' -PreventBreakaway"
+  $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launchCommand))
+  $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $serviceLauncher = Start-Process `
+    -FilePath $windowsPowerShell `
+    -ArgumentList '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedCommand `
+    -RedirectStandardOutput $serviceStdout `
+    -RedirectStandardError $serviceStderr `
+    -PassThru
   Start-Sleep -Seconds 2
-  if ($serviceJob.State -eq 'Failed') {
-    Receive-Job $serviceJob
-    throw 'Installed Service package-context launch failed.'
+  if ($serviceLauncher.HasExited -and $serviceLauncher.ExitCode -ne 0) {
+    if (Test-Path $serviceStdout) { Get-Content $serviceStdout }
+    if (Test-Path $serviceStderr) { Get-Content $serviceStderr }
+    throw "Installed Service package-context launch failed with exit code $($serviceLauncher.ExitCode)."
   }
   Write-Host 'Probing the installed Service over the production Named Pipe.'
   dotnet run `
@@ -77,11 +83,11 @@ try {
     Get-Process -Name $name -ErrorAction SilentlyContinue |
       Stop-Process -Force -ErrorAction SilentlyContinue
   }
-  if ($serviceJob) {
-    Stop-Job $serviceJob -ErrorAction SilentlyContinue
-    Receive-Job $serviceJob -ErrorAction SilentlyContinue
-    Remove-Job $serviceJob -Force -ErrorAction SilentlyContinue
+  if ($serviceLauncher -and -not $serviceLauncher.HasExited) {
+    Stop-Process -Id $serviceLauncher.Id -Force -ErrorAction SilentlyContinue
   }
+  if (Test-Path $serviceStdout) { Get-Content $serviceStdout }
+  if (Test-Path $serviceStderr) { Get-Content $serviceStderr }
   if (-not $package) {
     $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   }
