@@ -1,6 +1,7 @@
 #ifndef BRIDGE_WINDOWS_SANDBOX_SUPPORT_H
 #define BRIDGE_WINDOWS_SANDBOX_SUPPORT_H
 
+#include <WinSock2.h>
 #include <Windows.h>
 
 #ifdef __cplusplus
@@ -25,6 +26,9 @@ BOOL bridge_create_app_container_process(
 
 BOOL bridge_current_process_is_app_container(void);
 BOOL bridge_current_process_has_internet_client_capability(void);
+UINT_PTR bridge_create_loopback_listener(USHORT *port);
+void bridge_close_socket(UINT_PTR socket_value);
+BOOL bridge_loopback_connect(USHORT port);
 
 #ifdef __cplusplus
 }

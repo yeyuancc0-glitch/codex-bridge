@@ -8,6 +8,7 @@
 
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Userenv.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
 static HRESULT bridge_app_container_sid(PCWSTR profile_name, PSID *sid) {
   HRESULT result = CreateAppContainerProfile(
@@ -271,4 +272,68 @@ BOOL bridge_current_process_has_internet_client_capability(void) {
   HeapFree(GetProcessHeap(), 0, groups);
   CloseHandle(token);
   return found;
+}
+
+UINT_PTR bridge_create_loopback_listener(USHORT *port) {
+  if (port == NULL) {
+    return 0;
+  }
+  WSADATA data = {0};
+  if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+    return 0;
+  }
+  SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (listener == INVALID_SOCKET) {
+    WSACleanup();
+    return 0;
+  }
+  struct sockaddr_in address = {0};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = 0;
+  if (bind(listener, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+      listen(listener, SOMAXCONN) != 0) {
+    closesocket(listener);
+    WSACleanup();
+    return 0;
+  }
+  int address_size = sizeof(address);
+  if (getsockname(listener, (struct sockaddr *)&address, &address_size) != 0) {
+    closesocket(listener);
+    WSACleanup();
+    return 0;
+  }
+  *port = ntohs(address.sin_port);
+  return (UINT_PTR)listener;
+}
+
+void bridge_close_socket(UINT_PTR socket_value) {
+  if (socket_value != 0) {
+    closesocket((SOCKET)socket_value);
+    WSACleanup();
+  }
+}
+
+BOOL bridge_loopback_connect(USHORT port) {
+  WSADATA data = {0};
+  if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+    return FALSE;
+  }
+  SOCKET client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (client == INVALID_SOCKET) {
+    WSACleanup();
+    return FALSE;
+  }
+  struct sockaddr_in address = {0};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = htons(port);
+  BOOL connected = connect(
+    client,
+    (const struct sockaddr *)&address,
+    sizeof(address)
+  ) == 0;
+  closesocket(client);
+  WSACleanup();
+  return connected;
 }

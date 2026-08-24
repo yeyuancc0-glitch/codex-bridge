@@ -24,11 +24,10 @@ final class WindowsDirectGitCommitTests: XCTestCase {
 
     XCTAssertTrue(receipt.indexSynchronized)
     XCTAssertEqual(receipt.changedFiles, ["Windows.txt"])
-    XCTAssertEqual(try await git(["diff", "--cached", "--name-only"], fixture: fixture), "")
-    XCTAssertEqual(
-      try await git(["show", "HEAD:Windows.txt"], fixture: fixture),
-      "committed on Windows"
-    )
+    let staged = try await git(["diff", "--cached", "--name-only"], fixture: fixture)
+    let content = try await git(["show", "HEAD:Windows.txt"], fixture: fixture)
+    XCTAssertEqual(staged, "")
+    XCTAssertEqual(content, "committed on Windows")
   }
 
   func testExistingIndexLockPreventsCommit() async throws {
@@ -49,7 +48,8 @@ final class WindowsDirectGitCommitTests: XCTestCase {
     } catch DirectGitCommitError.gitFailed(let summary) {
       XCTAssertTrue(summary.contains("busy"))
     }
-    XCTAssertEqual(try await git(["rev-list", "--count", "HEAD"], fixture: fixture), "1")
+    let commitCount = try await git(["rev-list", "--count", "HEAD"], fixture: fixture)
+    XCTAssertEqual(commitCount, "1")
   }
 
   private struct Fixture {

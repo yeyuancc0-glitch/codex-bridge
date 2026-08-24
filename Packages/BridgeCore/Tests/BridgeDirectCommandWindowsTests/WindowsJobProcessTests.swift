@@ -1,5 +1,6 @@
 import BridgeDirectCommand
 import BridgeProcessRuntime
+import BridgeWindowsSandboxSupport
 import Foundation
 import XCTest
 
@@ -61,7 +62,55 @@ final class WindowsJobProcessTests: XCTestCase {
     XCTAssertEqual(output, "appcontainer=1;internet=1")
   }
 
-  private func sandboxTokenOutput(allowsNetwork: Bool) throws -> String {
+  func testNetworkDeniedAppContainerCannotReachListeningLoopbackSocket() throws {
+    var port = UInt16(0)
+    let listener = bridge_create_loopback_listener(&port)
+    XCTAssertNotEqual(listener, 0)
+    XCTAssertNotEqual(port, 0)
+    defer { bridge_close_socket(listener) }
+    XCTAssertTrue(bridge_loopback_connect(port))
+
+    let output = try sandboxTokenOutput(allowsNetwork: false, loopbackPort: port)
+    XCTAssertEqual(output, "appcontainer=1;internet=0;connect=0")
+  }
+
+  func testAppContainerWritesOnlyInsideGrantedProjectRoot() throws {
+    let fixture = try fixtureURL()
+    let root = try makeTemporaryDirectory(label: "sandbox-project")
+    let outside = try makeTemporaryDirectory(label: "sandbox-outside")
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      try? FileManager.default.removeItem(at: outside)
+    }
+    let isolatedFixture = root.appendingPathComponent("sandbox-fixture.exe")
+    try FileManager.default.copyItem(at: fixture, to: isolatedFixture)
+    let insideFile = root.appendingPathComponent("inside.txt")
+    let outsideFile = outside.appendingPathComponent("outside.txt")
+    let collector = DirectCommandOutputCollector()
+    let process = try DirectProcessLifetime(
+      argv: [isolatedFixture.path, "--sandbox-files", insideFile.path, outsideFile.path],
+      workingDirectory: root.path,
+      environment: nil,
+      usePTY: false,
+      output: collector,
+      sandboxRoot: root.path,
+      denyNetwork: true
+    )
+    defer { process.close() }
+    XCTAssertEqual(process.waitForExit(timeout: .seconds(10)), .exited(0))
+    process.drainRemainingOutput()
+    XCTAssertEqual(
+      collector.snapshot().tail.trimmingCharacters(in: .whitespacesAndNewlines),
+      "inside=1;outside=0"
+    )
+    XCTAssertTrue(FileManager.default.fileExists(atPath: insideFile.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: outsideFile.path))
+  }
+
+  private func sandboxTokenOutput(
+    allowsNetwork: Bool,
+    loopbackPort: UInt16? = nil
+  ) throws -> String {
     let fixture = try fixtureURL()
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("codex bridge appcontainer \(UUID().uuidString)", isDirectory: true)
@@ -70,8 +119,11 @@ final class WindowsJobProcessTests: XCTestCase {
     let isolatedFixture = directory.appendingPathComponent("sandbox-fixture.exe")
     try FileManager.default.copyItem(at: fixture, to: isolatedFixture)
     let collector = DirectCommandOutputCollector()
+    let arguments =
+      loopbackPort.map { ["--sandbox-network", String($0)] }
+      ?? ["--sandbox-token"]
     let process = try DirectProcessLifetime(
-      argv: [isolatedFixture.path, "--sandbox-token"],
+      argv: [isolatedFixture.path] + arguments,
       workingDirectory: directory.path,
       environment: nil,
       usePTY: false,
@@ -102,6 +154,15 @@ final class WindowsJobProcessTests: XCTestCase {
       if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
     }
     throw XCTSkip("Windows process-tree fixture was not built beside the test executable")
+  }
+
+  private func makeTemporaryDirectory(label: String) throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "codex bridge \(label) \(UUID().uuidString)",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
   }
 
   private func waitUntil(

@@ -187,6 +187,18 @@ do {
   let arguments = CommandLine.arguments
   guard arguments.count >= 2 else { throw FixtureError.invalidArguments }
   switch arguments[1] {
+  case "--sandbox-files" where arguments.count == 4:
+    let inside = (try? write("inside", to: arguments[2])) != nil ? "1" : "0"
+    let outside = (try? write("outside", to: arguments[3])) != nil ? "1" : "0"
+    print("inside=\(inside);outside=\(outside)")
+    ExitProcess(0)
+  case "--sandbox-network" where arguments.count == 3:
+    guard let port = UInt16(arguments[2]) else { throw FixtureError.invalidArguments }
+    let appContainer = bridge_current_process_is_app_container() ? "1" : "0"
+    let internet = bridge_current_process_has_internet_client_capability() ? "1" : "0"
+    let connected = bridge_loopback_connect(port) ? "1" : "0"
+    print("appcontainer=\(appContainer);internet=\(internet);connect=\(connected)")
+    ExitProcess(0)
   case "--sandbox-token" where arguments.count == 2:
     let appContainer = bridge_current_process_is_app_container() ? "1" : "0"
     let internet = bridge_current_process_has_internet_client_capability() ? "1" : "0"

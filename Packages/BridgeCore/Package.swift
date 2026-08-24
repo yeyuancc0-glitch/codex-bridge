@@ -445,7 +445,9 @@ let sharedTestTargets: [Target] = [
     ),
     .testTarget(
       name: "BridgeDirectCommandWindowsTests",
-      dependencies: ["BridgeDirectCommand", "BridgeProcessRuntime"]
+      dependencies: [
+        "BridgeDirectCommand", "BridgeProcessRuntime", "BridgeWindowsSandboxSupport",
+      ]
     ),
     .testTarget(
       name: "BridgeServiceApplicationWindowsTests",
