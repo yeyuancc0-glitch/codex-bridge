@@ -73,7 +73,7 @@ try {
   }
   $commandArgs = '/d /s /c ""' + $service + '" --foreground 1>"' +
     $serviceChildStdout + '" 2>"' + $serviceChildStderr + '""'
-  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command '$env:ComSpec' -Args '$commandArgs' -PreventBreakaway"
+  $launchCommand = "Invoke-CommandInDesktopPackage -PackageFamilyName '$($package.PackageFamilyName)' -AppId 'App' -Command '$env:ComSpec' -Args '$commandArgs'"
   $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launchCommand))
   $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $serviceLauncher = Start-Process `
