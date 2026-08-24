@@ -151,6 +151,8 @@ public final class BridgeServiceXPCController: @unchecked Sendable {
       return try await handleListThreads(request)
     case .listSkills:
       return try await handleListSkills(request)
+    case .readSkill:
+      return try await handleReadSkill(request)
     case .readThread:
       return try await handleReadThread(request)
     case .listTasks:

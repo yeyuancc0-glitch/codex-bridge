@@ -145,6 +145,20 @@ public sealed class GoldenContractTests
         Assert.Equal(200, payload.GetProperty("limit").GetInt32());
     }
 
+    [Fact]
+    public void SkillPreviewRequestUsesSwiftFieldNames()
+    {
+        var request = BridgeServiceCodec.Request(
+            "read_skill",
+            new { ProjectId = "project-fixture", SkillName = "release", Subpath = "SKILL.md" },
+            "request-skill-preview");
+        var base64 = request.GetProperty("payload").GetString();
+        var payload = JsonDocument.Parse(Convert.FromBase64String(base64!)).RootElement;
+        Assert.Equal("project-fixture", payload.GetProperty("project_id").GetString());
+        Assert.Equal("release", payload.GetProperty("skill_name").GetString());
+        Assert.Equal("SKILL.md", payload.GetProperty("subpath").GetString());
+    }
+
     private static JsonElement Parse(byte[] data) => JsonDocument.Parse(data).RootElement.Clone();
 
     private static void AssertJsonEqual(JsonElement expected, JsonElement actual)

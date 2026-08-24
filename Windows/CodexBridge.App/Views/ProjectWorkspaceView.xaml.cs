@@ -238,4 +238,30 @@ public sealed partial class ProjectWorkspaceView : UserControl
         try { await LoadSkillsAsync(); }
         catch (Exception error) { DirectStatus.Text = error.Message; }
     }
+
+    private async void SkillSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (SkillList.SelectedItem is not ServiceSkill skill)
+        {
+            return;
+        }
+        SkillDocumentTitle.Text = $"正在读取 {skill.Name}…";
+        SkillDocumentContent.Text = string.Empty;
+        try
+        {
+            var document = await _connection.SendAsync<ServiceSkillDocument>(
+                "read_skill",
+                new { _project.ProjectId, SkillName = skill.Name, Subpath = "SKILL.md" },
+                _cancellationToken);
+            SkillDocumentTitle.Text = document.Truncated
+                ? $"{document.Name} · {document.Subpath} · 已截断"
+                : $"{document.Name} · {document.Subpath}";
+            SkillDocumentContent.Text = document.Content;
+        }
+        catch (Exception error)
+        {
+            SkillDocumentTitle.Text = $"{skill.Name} 读取失败";
+            SkillDocumentContent.Text = error.Message;
+        }
+    }
 }

@@ -127,13 +127,17 @@
             </TabViewItem>
 
             <TabViewItem Header="Skills" IsClosable="False">
-                <Grid Padding="4,12,4,4">
+                <Grid Padding="4,12,4,4" ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="380" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <Button Content="刷新 Skills" Click="RefreshSkillsClick" HorizontalAlignment="Left" Margin="0,0,0,10" />
-                    <ListView x:Name="SkillList" Grid.Row="1" AutomationProperties.Name="项目与全局 Skills">
+                    <ListView x:Name="SkillList" Grid.Row="1" SelectionChanged="SkillSelectionChanged" AutomationProperties.Name="项目与全局 Skills">
                         <ListView.ItemTemplate>
                             <DataTemplate>
                                 <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,10">
@@ -147,6 +151,12 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <StackPanel Grid.Column="1" Grid.RowSpan="2" Spacing="8">
+                        <TextBlock x:Name="SkillDocumentTitle" Text="选择一个 Skill 预览" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <TextBlock x:Name="SkillDocumentContent" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontFamily="Consolas" AutomationProperties.Name="Skill 文档预览" />
+                        </ScrollViewer>
+                    </StackPanel>
                 </Grid>
             </TabViewItem>
         </TabView>

@@ -231,6 +231,13 @@ public sealed record ServiceSkillAction(
     string NetworkRequirement,
     string Description);
 
+public sealed record ServiceSkillDocument(
+    string Name,
+    string Subpath,
+    string Content,
+    int ByteCount,
+    bool Truncated);
+
 public sealed class ProjectCommandEditor
 {
     public string CommandId { get; set; } = Guid.NewGuid().ToString("N");

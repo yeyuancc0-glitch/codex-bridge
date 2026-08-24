@@ -75,6 +75,24 @@ public struct IPCProjectSkillsRequest: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey { case projectID = "project_id" }
 }
 
+public struct IPCSkillReadRequest: Codable, Equatable, Sendable {
+  public let projectID: String
+  public let skillName: String
+  public let subpath: String
+
+  public init(projectID: String, skillName: String, subpath: String = "SKILL.md") {
+    self.projectID = projectID
+    self.skillName = skillName
+    self.subpath = subpath
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+    case skillName = "skill_name"
+    case subpath
+  }
+}
+
 public struct IPCWorkspaceCommand: Codable, Equatable, Sendable {
   public let commandID: String
   public let name: String

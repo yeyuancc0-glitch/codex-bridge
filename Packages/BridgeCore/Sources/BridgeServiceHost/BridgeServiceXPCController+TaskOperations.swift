@@ -38,6 +38,20 @@ extension BridgeServiceXPCController {
     )
   }
 
+  func handleReadSkill(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(IPCSkillReadRequest.self, from: request)
+    let document = try await composition.application.serviceReadSkill(
+      skillName: payload.skillName,
+      projectID: payload.projectID,
+      subpath: payload.subpath,
+      deadline: Self.deadline()
+    )
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: document
+    )
+  }
+
   func handleReadThread(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(
       IPCThreadReadRequest.self,
