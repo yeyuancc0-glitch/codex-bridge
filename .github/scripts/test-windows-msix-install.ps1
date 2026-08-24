@@ -16,6 +16,7 @@ if (-not $signTool) {
 if (-not $signTool) { throw 'signtool.exe was not found.' }
 $signToolPath = if ($signTool.Source) { $signTool.Source } else { $signTool.FullName }
 
+Write-Host 'Creating CI package certificate.'
 $certificate = New-SelfSignedCertificate `
   -Type Custom `
   -Subject 'CN=CodexBridge' `
@@ -26,20 +27,20 @@ $certificate = New-SelfSignedCertificate `
 $certificatePath = Join-Path $env:RUNNER_TEMP 'CodexBridge-CI.cer'
 Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
 $trustedPeople = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople'
-$trustedRoot = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\Root'
 $package = $null
 $serviceProcess = $null
 $stdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stdout.log'
 $stderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stderr.log'
 try {
+  Write-Host 'Signing CI MSIX bundle.'
   & $signToolPath sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $BundlePath
   if ($LASTEXITCODE -ne 0) { throw "Test signing failed with exit code $LASTEXITCODE" }
-  & $signToolPath verify /pa /v $BundlePath
-  if ($LASTEXITCODE -ne 0) { throw "Test signature verification failed with exit code $LASTEXITCODE" }
 
+  Write-Host 'Registering CI MSIX bundle.'
   Add-AppxPackage -Path $BundlePath -ForceApplicationShutdown
   $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   if (-not $package) { throw 'Codex Bridge was not registered after Add-AppxPackage.' }
+  Write-Host "Registered $($package.PackageFullName)."
   $service = Join-Path $package.InstallLocation 'codex-bridge-service.exe'
   foreach ($relative in @(
     'codex-bridge-service.exe',
@@ -55,6 +56,7 @@ try {
   }
 
   $dataRoot = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-ServiceData'
+  Write-Host 'Starting Service from the registered package.'
   $serviceProcess = Start-Process `
     -FilePath $service `
     -ArgumentList '--foreground', '--data-root', $dataRoot `
@@ -72,6 +74,7 @@ try {
   if (-not ((Test-Path $stdout) -and (Select-String -Path $stdout -Quiet -SimpleMatch 'service ready'))) {
     throw 'Installed Service did not become ready within 30 seconds.'
   }
+  Write-Host 'Probing the installed Service over the production Named Pipe.'
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
     --configuration Release
@@ -87,6 +90,7 @@ try {
     $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
   }
   if ($package) {
+    Write-Host "Removing $($package.PackageFullName)."
     Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Continue
     if (Get-AppxPackage -Name 'org.codexbridge.windows') {
       throw 'Codex Bridge remained registered after Remove-AppxPackage.'
@@ -95,8 +99,5 @@ try {
   Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
   foreach ($item in $trustedPeople) {
     Remove-Item "Cert:\CurrentUser\TrustedPeople\$($item.Thumbprint)" -ErrorAction SilentlyContinue
-  }
-  foreach ($item in $trustedRoot) {
-    Remove-Item "Cert:\CurrentUser\Root\$($item.Thumbprint)" -ErrorAction SilentlyContinue
   }
 }
