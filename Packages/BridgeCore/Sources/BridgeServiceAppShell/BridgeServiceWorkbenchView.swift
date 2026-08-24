@@ -36,8 +36,7 @@ struct BridgeServiceWorkbenchView: View {
       }
     }
     .task {
-      if model.threads.isEmpty, let pID = model.selectedProjectID ?? model.projects.first?.projectID
-      {
+      if model.selectedProjectID == nil, let pID = model.projects.first?.projectID {
         model.selectProject(pID)
       }
     }

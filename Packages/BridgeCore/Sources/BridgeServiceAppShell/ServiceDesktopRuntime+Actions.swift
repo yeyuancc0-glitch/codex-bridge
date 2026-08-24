@@ -501,7 +501,6 @@ extension BridgeServiceAppModel {
     } catch {
       guard selectedProjectID == projectID else { return }
       threads = []
-      errorMessage = Self.message(error)
     }
   }
 }

@@ -255,6 +255,33 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.serviceStatus?.workbenchProjectID, "project-1")
   }
 
+  func testSelectingWorkbenchProjectDoesNotPromoteThreadCatalogFailureToGlobalError()
+    async throws
+  {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient(failThreadList: true)
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.selectProject("project-1")
+
+    try await waitUntil {
+      let calls = await client.threadCallCounts()
+      let selections = await client.workbenchProjectSelectionsValue()
+      return calls.list == 2 && selections == ["project-1"]
+    }
+    XCTAssertEqual(model.selectedProjectID, "project-1")
+    XCTAssertEqual(model.connectionState, .connected)
+    XCTAssertTrue(model.threads.isEmpty)
+    XCTAssertNil(model.errorMessage)
+  }
+
   func testTunnelActionsRouteWithoutRetainingRuntimeKeyInViewState() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

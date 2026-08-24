@@ -30,6 +30,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   )
   private var customInstructionsValue = "Fixture global instructions"
   private let failModelCatalog: Bool
+  private let failThreadList: Bool
   private var failSubscription = false
   private var threadListCalls = 0
   private var threadReadCalls = 0
@@ -62,8 +63,9 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     }
   }
 
-  init(failModelCatalog: Bool = false) {
+  init(failModelCatalog: Bool = false, failThreadList: Bool = false) {
     self.failModelCatalog = failModelCatalog
+    self.failThreadList = failThreadList
   }
 
   func setFailSubscription(_ fail: Bool) {
@@ -295,6 +297,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage {
     threadListCalls += 1
+    if failThreadList { throw BridgeServiceClientError.unavailable }
     return MCPThreadPage(
       threads: [
         MCPThreadSummary(
