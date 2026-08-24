@@ -10,6 +10,7 @@ $targets = @(
   'BridgeIPCContractTests',
   'BridgeCodexRPCWindowsTests',
   'BridgeDirectCommandWindowsTests',
+  'BridgeServiceApplicationWindowsTests',
   'BridgeSecurityWindowsTests',
   'BridgeIPCWindowsTests',
   'BridgePlatformWindowsTests',

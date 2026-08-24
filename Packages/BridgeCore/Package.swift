@@ -264,6 +264,11 @@ let sharedTestTargets: [Target] = [
   // Named Pipe transport unlocked by the pinned MCP SDK fork. Each later
   // porting stage extends this list after its Mac regression passes.
   let windowsTargets: [Target] = [
+    .target(
+      name: "BridgeWindowsSandboxSupport",
+      path: "Sources/BridgeWindowsSandboxSupport",
+      publicHeadersPath: "include"
+    ),
     .target(name: "BridgeDomain"),
     .target(
       name: "BridgeIPCWindows",
@@ -275,7 +280,7 @@ let sharedTestTargets: [Target] = [
     ),
     .target(
       name: "BridgeProcessRuntime",
-      dependencies: ["BridgePlatform"]
+      dependencies: ["BridgePlatform", "BridgeWindowsSandboxSupport"]
     ),
     .target(
       name: "BridgeCodexRPC",
@@ -309,7 +314,7 @@ let sharedTestTargets: [Target] = [
     ),
     .executableTarget(
       name: "WindowsProcessTreeFixture",
-      dependencies: ["BridgeProcessRuntime"],
+      dependencies: ["BridgeProcessRuntime", "BridgeWindowsSandboxSupport"],
       path: "Tests/WindowsProcessTreeFixture"
     ),
     .target(
@@ -441,6 +446,16 @@ let sharedTestTargets: [Target] = [
     .testTarget(
       name: "BridgeDirectCommandWindowsTests",
       dependencies: ["BridgeDirectCommand", "BridgeProcessRuntime"]
+    ),
+    .testTarget(
+      name: "BridgeServiceApplicationWindowsTests",
+      dependencies: [
+        "BridgeDirectCommand",
+        "BridgeDomain",
+        "BridgeProjects",
+        "BridgeServiceApplication",
+        "BridgeServiceCore",
+      ]
     ),
     .testTarget(
       name: "BridgeSecurityWindowsTests",

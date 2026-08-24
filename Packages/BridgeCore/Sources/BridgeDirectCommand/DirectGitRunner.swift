@@ -67,7 +67,8 @@ public struct DirectGitRunner: Sendable {
           workingDirectory: workingDirectory,
           environment: environment,
           usePTY: false,
-          output: collector
+          output: collector,
+          requiresSandbox: false
         )
       } catch {
         throw DirectGitError.launchFailed

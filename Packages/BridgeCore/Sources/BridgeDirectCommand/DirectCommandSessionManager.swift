@@ -114,6 +114,7 @@ public actor DirectCommandSessionManager {
     requiresNetwork: Bool,
     usePTY: Bool,
     timeout: Duration? = nil,
+    sandboxRoot: String? = nil,
     denyNetwork: Bool = false,
     onExit: (@Sendable () async -> Void)? = nil
   ) async throws -> DirectCommandSession {
@@ -129,6 +130,7 @@ public actor DirectCommandSessionManager {
       environment: nil,
       usePTY: usePTY,
       output: output,
+      sandboxRoot: sandboxRoot,
       denyNetwork: denyNetwork
     )
     let startedAt = Date()

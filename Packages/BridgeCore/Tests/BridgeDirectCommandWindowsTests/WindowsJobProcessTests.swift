@@ -51,22 +51,38 @@ final class WindowsJobProcessTests: XCTestCase {
       })
   }
 
-  func testNetworkDeniedDirectProcessFailsClosed() throws {
-    let fixture = try fixtureURL()
-    let collector = DirectCommandOutputCollector()
+  func testNetworkDeniedDirectProcessUsesOfflineAppContainer() throws {
+    let output = try sandboxTokenOutput(allowsNetwork: false)
+    XCTAssertEqual(output, "appcontainer=1;internet=0")
+  }
 
-    XCTAssertThrowsError(
-      try DirectProcessLifetime(
-        argv: [fixture.path, "--child", "unused"],
-        workingDirectory: nil,
-        environment: nil,
-        usePTY: false,
-        output: collector,
-        denyNetwork: true
-      )
-    ) { error in
-      XCTAssertEqual(error as? DirectProcessError, .sandboxUnavailable)
-    }
+  func testNetworkEnabledDirectProcessUsesInternetClientAppContainer() throws {
+    let output = try sandboxTokenOutput(allowsNetwork: true)
+    XCTAssertEqual(output, "appcontainer=1;internet=1")
+  }
+
+  private func sandboxTokenOutput(allowsNetwork: Bool) throws -> String {
+    let fixture = try fixtureURL()
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("codex bridge appcontainer \(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let isolatedFixture = directory.appendingPathComponent("sandbox-fixture.exe")
+    try FileManager.default.copyItem(at: fixture, to: isolatedFixture)
+    let collector = DirectCommandOutputCollector()
+    let process = try DirectProcessLifetime(
+      argv: [isolatedFixture.path, "--sandbox-token"],
+      workingDirectory: directory.path,
+      environment: nil,
+      usePTY: false,
+      output: collector,
+      sandboxRoot: directory.path,
+      denyNetwork: !allowsNetwork
+    )
+    defer { process.close() }
+    XCTAssertEqual(process.waitForExit(timeout: .seconds(10)), .exited(0))
+    process.drainRemainingOutput()
+    return collector.snapshot().tail.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private func fixtureURL() throws -> URL {

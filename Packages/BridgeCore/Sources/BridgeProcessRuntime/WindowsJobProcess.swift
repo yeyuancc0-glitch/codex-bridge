@@ -1,5 +1,6 @@
 #if canImport(WinSDK)
   import BridgePlatform
+  import BridgeWindowsSandboxSupport
   import CRT
   import Foundation
   import WinSDK
@@ -10,6 +11,7 @@
     case invalidEnvironment
     case commandLineTooLong
     case executableIdentityChanged
+    case appContainer(UInt32)
     case win32(operation: String, code: Int32)
     case executable(WindowsExecutableValidationError)
   }
@@ -27,11 +29,29 @@
         return "Windows command line exceeds 32767 UTF-16 code units"
       case .executableIdentityChanged:
         return "executable identity changed after verification"
+      case .appContainer(let code):
+        return "AppContainer process launch failed with error \(code)"
       case .win32(let operation, let code):
         return "\(operation) failed with Win32 error \(code)"
       case .executable(let error):
         return "executable validation failed: \(error)"
       }
+    }
+  }
+
+  public struct WindowsAppContainerConfiguration: Sendable {
+    public let profileName: String
+    public let projectRootURL: URL
+    public let allowsNetwork: Bool
+
+    public init(
+      profileName: String,
+      projectRootURL: URL,
+      allowsNetwork: Bool
+    ) {
+      self.profileName = profileName
+      self.projectRootURL = projectRootURL
+      self.allowsNetwork = allowsNetwork
     }
   }
 
@@ -42,6 +62,7 @@
     public let environment: [String: String]?
     public let createNewProcessGroup: Bool
     public let expectedExecutableIdentity: WindowsExecutableIdentity?
+    public let appContainer: WindowsAppContainerConfiguration?
 
     public init(
       executableURL: URL,
@@ -49,7 +70,8 @@
       currentDirectoryURL: URL? = nil,
       environment: [String: String]? = nil,
       createNewProcessGroup: Bool = true,
-      expectedExecutableIdentity: WindowsExecutableIdentity? = nil
+      expectedExecutableIdentity: WindowsExecutableIdentity? = nil,
+      appContainer: WindowsAppContainerConfiguration? = nil
     ) {
       self.executableURL = executableURL
       self.arguments = arguments
@@ -57,6 +79,7 @@
       self.environment = environment
       self.createNewProcessGroup = createNewProcessGroup
       self.expectedExecutableIdentity = expectedExecutableIdentity
+      self.appContainer = appContainer
     }
   }
 
@@ -137,6 +160,7 @@
         environmentBlock: environmentBlock,
         childHandles: [stdinPipe.child, stdoutPipe.child, stderrPipe.child],
         createNewProcessGroup: configuration.createNewProcessGroup,
+        appContainer: configuration.appContainer,
         processInfo: &processInfo
       )
       guard AssignProcessToJobObject(job, processInfo.hProcess) else {
@@ -314,6 +338,7 @@
       environmentBlock: String,
       childHandles: [HANDLE],
       createNewProcessGroup: Bool,
+      appContainer: WindowsAppContainerConfiguration?,
       processInfo: inout PROCESS_INFORMATION
     ) throws {
       let application = WideBuffer(executablePath)
@@ -337,6 +362,41 @@
           | CREATE_NO_WINDOW
       )
       if createNewProcessGroup { flags |= DWORD(CREATE_NEW_PROCESS_GROUP) }
+
+      if let appContainer {
+        let profile = WideBuffer(appContainer.profileName)
+        let projectRoot: WideBuffer
+        do {
+          projectRoot = WideBuffer(
+            try WindowsLocalPathValidator.validate(
+              appContainer.projectRootURL.path,
+              kind: .directory
+            )
+          )
+        } catch {
+          throw WindowsJobProcessError.invalidWorkingDirectory
+        }
+        var errorCode = DWORD(0)
+        let created = bridge_create_app_container_process(
+          profile.pointer,
+          application.pointer,
+          mutableCommandLine.pointer,
+          directory?.pointer,
+          UnsafeMutableRawPointer(environment.pointer),
+          childHandles[0],
+          childHandles[1],
+          childHandles[2],
+          projectRoot.pointer,
+          appContainer.allowsNetwork,
+          flags,
+          &processInfo,
+          &errorCode
+        )
+        guard created else {
+          throw WindowsJobProcessError.appContainer(UInt32(errorCode))
+        }
+        return
+      }
 
       let created = CreateProcessW(
         application.pointer,

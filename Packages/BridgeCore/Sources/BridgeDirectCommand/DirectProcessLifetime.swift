@@ -53,8 +53,12 @@ public enum DirectProcessError: Error, Equatable, Sendable {
       environment: [String: String]?,
       usePTY: Bool,
       output: DirectCommandOutputCollector,
+      sandboxRoot: String? = nil,
+      requiresSandbox: Bool = true,
       denyNetwork: Bool = false
     ) throws {
+      _ = sandboxRoot
+      _ = requiresSandbox
       guard let executable = argv.first, !executable.isEmpty else {
         throw DirectProcessError.invalidArgument
       }

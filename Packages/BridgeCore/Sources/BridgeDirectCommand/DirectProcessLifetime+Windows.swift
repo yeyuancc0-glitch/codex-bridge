@@ -27,6 +27,8 @@
       environment: [String: String]?,
       usePTY: Bool,
       output: DirectCommandOutputCollector,
+      sandboxRoot: String? = nil,
+      requiresSandbox: Bool = true,
       denyNetwork: Bool = false
     ) throws {
       guard let executable = argv.first,
@@ -36,7 +38,10 @@
       else {
         throw DirectProcessError.invalidArgument
       }
-      guard !denyNetwork else { throw DirectProcessError.sandboxUnavailable }
+      guard !requiresSandbox || sandboxRoot != nil || workingDirectory != nil else {
+        throw DirectProcessError.sandboxUnavailable
+      }
+      guard requiresSandbox || !denyNetwork else { throw DirectProcessError.sandboxUnavailable }
 
       let process: WindowsJobProcess
       do {
@@ -47,7 +52,16 @@
             currentDirectoryURL: workingDirectory.map {
               URL(fileURLWithPath: $0, isDirectory: true)
             },
-            environment: Self.windowsEnvironment(environment)
+            environment: Self.windowsEnvironment(environment),
+            appContainer: requiresSandbox
+              ? WindowsAppContainerConfiguration(
+                profileName: "org.codexbridge.direct",
+                projectRootURL: URL(
+                  fileURLWithPath: sandboxRoot ?? workingDirectory!,
+                  isDirectory: true
+                ),
+                allowsNetwork: !denyNetwork
+              ) : nil
           )
         )
       } catch let error as WindowsJobProcessError {
@@ -57,6 +71,8 @@
           throw DirectProcessError.invalidArgument
         case .win32(_, let code):
           throw DirectProcessError.processLaunchFailed(code)
+        case .appContainer:
+          throw DirectProcessError.sandboxUnavailable
         case .executable, .executableIdentityChanged:
           throw DirectProcessError.processLaunchFailed(193)
         }

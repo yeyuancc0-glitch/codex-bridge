@@ -1,4 +1,5 @@
 import BridgeProcessRuntime
+import BridgeWindowsSandboxSupport
 import Foundation
 import WinSDK
 
@@ -186,6 +187,11 @@ do {
   let arguments = CommandLine.arguments
   guard arguments.count >= 2 else { throw FixtureError.invalidArguments }
   switch arguments[1] {
+  case "--sandbox-token" where arguments.count == 2:
+    let appContainer = bridge_current_process_is_app_container() ? "1" : "0"
+    let internet = bridge_current_process_has_internet_client_capability() ? "1" : "0"
+    print("appcontainer=\(appContainer);internet=\(internet)")
+    ExitProcess(0)
   case "--app-server" where arguments.count == 2:
     try runAppServer()
   case "--child" where arguments.count == 3:

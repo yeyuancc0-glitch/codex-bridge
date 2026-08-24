@@ -112,6 +112,7 @@ extension BridgeServiceApplication {
         requiresNetwork: resolution.requiresNetwork,
         usePTY: request.tty,
         timeout: .milliseconds(request.timeoutMS),
+        sandboxRoot: project.root.canonicalPath,
         denyNetwork: denyNetwork || !resolution.requiresNetwork
           || project.accessPolicy.network == .denied,
         onExit: { await lease.release() }
@@ -157,7 +158,7 @@ extension BridgeServiceApplication {
       }
     guard let requestedExecutable, !requestedExecutable.isEmpty else { return nil }
     guard let resolved = try? resolvedLaunchArgv([requestedExecutable], project: project).first,
-      resolved.hasPrefix("/")
+      Self.isAbsoluteExecutablePath(resolved)
     else { return nil }
     return resolved
   }
@@ -289,7 +290,12 @@ extension BridgeServiceApplication {
     project: ServiceProjectRecord
   ) throws -> [String] {
     guard let executable = argv.first, !executable.isEmpty else { return argv }
-    if executable.hasPrefix("/") {
+    if Self.isAbsoluteExecutablePath(executable) {
+      #if canImport(WinSDK)
+        guard !executable.hasPrefix("\\\\") else {
+          throw BridgeMCPQueryError.pathDenied
+        }
+      #endif
       let rootURL = URL(fileURLWithPath: project.root.canonicalPath, isDirectory: true)
         .standardizedFileURL.resolvingSymlinksInPath()
       let candidate = URL(fileURLWithPath: executable).standardizedFileURL
@@ -298,16 +304,16 @@ extension BridgeServiceApplication {
       // Trusted system binaries and full-mode absolute executables remain
       // valid.  An absolute path lexically inside the project is different:
       // resolve it before launch so a project-local symlink cannot escape.
-      guard lexical == rootPath || lexical.hasPrefix(rootPath + "/") else { return argv }
+      guard Self.path(lexical, isContainedBy: rootPath) else { return argv }
       let resolved = try containedResolvedPath(candidate, root: rootPath)
       return [resolved] + argv.dropFirst()
     }
-    if executable.contains("/") {
+    if executable.contains("/") || executable.contains("\\") {
       let root = project.root.canonicalPath
       let candidate =
         ((root as NSString).appendingPathComponent(executable) as NSString).standardizingPath
       let resolved = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
-      guard resolved == root || resolved.hasPrefix(root + "/") else {
+      guard Self.path(resolved, isContainedBy: root) else {
         throw BridgeMCPQueryError.pathDenied
       }
       return [resolved] + argv.dropFirst()
@@ -320,18 +326,61 @@ extension BridgeServiceApplication {
 
   /// Fixed trusted PATH used to resolve bare binary names without invoking a shell.
   static var trustedPathDirectories: [String] {
-    [
-      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
-      "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-    ]
+    #if canImport(WinSDK)
+      let environment = ProcessInfo.processInfo.environment
+      let systemRoot =
+        environment.first { $0.key.caseInsensitiveCompare("SystemRoot") == .orderedSame }?.value
+        ?? #"C:\Windows"#
+      let programFiles =
+        environment.first {
+          $0.key.caseInsensitiveCompare("ProgramFiles") == .orderedSame
+        }?.value ?? #"C:\Program Files"#
+      let localAppData = environment.first {
+        $0.key.caseInsensitiveCompare("LOCALAPPDATA") == .orderedSame
+      }?.value
+      return [
+        URL(fileURLWithPath: systemRoot).appendingPathComponent("System32").path,
+        systemRoot,
+        URL(fileURLWithPath: programFiles).appendingPathComponent("Git/cmd").path,
+        URL(fileURLWithPath: programFiles).appendingPathComponent("Git/bin").path,
+        URL(fileURLWithPath: programFiles).appendingPathComponent("PowerShell/7").path,
+        URL(fileURLWithPath: programFiles).appendingPathComponent("nodejs").path,
+        localAppData.map {
+          URL(fileURLWithPath: $0).appendingPathComponent("Programs/Git/cmd").path
+        },
+      ].compactMap { $0 }
+    #else
+      return [
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
+        "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+      ]
+    #endif
   }
 
   static func executableInTrustedPath(_ name: String) -> String? {
-    guard !name.isEmpty, !name.contains("/"), name.utf8.count <= 4_096 else { return nil }
+    guard !name.isEmpty, !name.contains("/"), !name.contains("\\"), name.utf8.count <= 4_096
+    else { return nil }
+    #if canImport(WinSDK)
+      let candidates =
+        URL(fileURLWithPath: name).pathExtension.isEmpty ? [name, name + ".exe"] : [name]
+    #else
+      let candidates = [name]
+    #endif
     for directory in trustedPathDirectories {
-      let candidate = URL(fileURLWithPath: directory).appendingPathComponent(name).path
-      if FileManager.default.isExecutableFile(atPath: candidate) {
-        return candidate
+      for name in candidates {
+        let candidate = URL(fileURLWithPath: directory).appendingPathComponent(name).path
+        #if canImport(WinSDK)
+          var isDirectory: ObjCBool = false
+          if FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory),
+            !isDirectory.boolValue
+          {
+            return candidate
+          }
+        #else
+          if FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+          }
+        #endif
       }
     }
     return nil
@@ -341,10 +390,33 @@ extension BridgeServiceApplication {
     let rootPath = URL(fileURLWithPath: root, isDirectory: true)
       .standardizedFileURL.resolvingSymlinksInPath().path
     let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath().path
-    guard resolved == rootPath || resolved.hasPrefix(rootPath + "/") else {
+    guard Self.path(resolved, isContainedBy: rootPath) else {
       throw BridgeMCPQueryError.pathDenied
     }
     return resolved
+  }
+
+  private static func isAbsoluteExecutablePath(_ path: String) -> Bool {
+    #if canImport(WinSDK)
+      let units = Array(path.utf16)
+      return path.hasPrefix("\\\\")
+        || (units.count >= 3 && units[1] == 0x3A && (units[2] == 0x5C || units[2] == 0x2F))
+    #else
+      return path.hasPrefix("/")
+    #endif
+  }
+
+  private static func path(_ candidate: String, isContainedBy root: String) -> Bool {
+    #if canImport(WinSDK)
+      let normalizedCandidate = candidate.replacingOccurrences(of: "/", with: "\\")
+        .trimmingCharacters(in: CharacterSet(charactersIn: "\\"))
+      let normalizedRoot = root.replacingOccurrences(of: "/", with: "\\")
+        .trimmingCharacters(in: CharacterSet(charactersIn: "\\"))
+      return normalizedCandidate.caseInsensitiveCompare(normalizedRoot) == .orderedSame
+        || normalizedCandidate.lowercased().hasPrefix(normalizedRoot.lowercased() + "\\")
+    #else
+      return candidate == root || candidate.hasPrefix(root + "/")
+    #endif
   }
 
   static func denialMessage(_ reason: DirectCommandDenialReason?) -> String {
