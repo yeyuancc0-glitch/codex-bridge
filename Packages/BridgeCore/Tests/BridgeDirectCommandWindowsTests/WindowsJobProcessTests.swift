@@ -76,8 +76,9 @@ final class WindowsJobProcessTests: XCTestCase {
 
   func testAppContainerWritesOnlyInsideGrantedProjectRoot() throws {
     let fixture = try fixtureURL()
-    let root = try makeTemporaryDirectory(label: "sandbox-project")
-    let outside = try makeTemporaryDirectory(label: "sandbox-outside")
+    let base = fixture.deletingLastPathComponent()
+    let root = try makeTemporaryDirectory(label: "sandbox-project", base: base)
+    let outside = try makeTemporaryDirectory(label: "sandbox-outside", base: base)
     defer {
       try? FileManager.default.removeItem(at: root)
       try? FileManager.default.removeItem(at: outside)
@@ -112,9 +113,10 @@ final class WindowsJobProcessTests: XCTestCase {
     loopbackPort: UInt16? = nil
   ) throws -> String {
     let fixture = try fixtureURL()
-    let directory = FileManager.default.temporaryDirectory
-      .appendingPathComponent("codex bridge appcontainer \(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let directory = try makeTemporaryDirectory(
+      label: "appcontainer",
+      base: fixture.deletingLastPathComponent()
+    )
     defer { try? FileManager.default.removeItem(at: directory) }
     let isolatedFixture = directory.appendingPathComponent("sandbox-fixture.exe")
     try FileManager.default.copyItem(at: fixture, to: isolatedFixture)
@@ -156,8 +158,8 @@ final class WindowsJobProcessTests: XCTestCase {
     throw XCTSkip("Windows process-tree fixture was not built beside the test executable")
   }
 
-  private func makeTemporaryDirectory(label: String) throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+  private func makeTemporaryDirectory(label: String, base: URL) throws -> URL {
+    let url = base.appendingPathComponent(
       "codex bridge \(label) \(UUID().uuidString)",
       isDirectory: true
     )
