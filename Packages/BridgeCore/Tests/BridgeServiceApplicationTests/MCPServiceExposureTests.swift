@@ -3,18 +3,17 @@ import MCP
 import XCTest
 
 final class MCPServiceExposureTests: XCTestCase {
-  func testServerInstructionsExposeGlobalGPTInstructionsBeforeToolUse() {
+  func testServerInstructionsExposeGlobalInstructionsToChatGPTAndQwenBeforeToolUse() {
     let custom = "Explain the intended plugin action before calling it."
-    let instructions = MCPServiceServerFactory.instructions(customInstructions: custom)
-
-    XCTAssertTrue(instructions.contains(custom))
-    XCTAssertTrue(instructions.contains("before calling any Codex Bridge tool"))
-    XCTAssertFalse(instructions.contains("Project custom instructions"))
-    let qwenInstructions = MCPServiceServerFactory.instructions(
-      customInstructions: custom,
-      clientID: .qwenStudio
-    )
-    XCTAssertFalse(qwenInstructions.contains(custom))
+    for clientID in [MCPClientID.chatGPT, .qwenStudio] {
+      let instructions = MCPServiceServerFactory.instructions(
+        customInstructions: custom,
+        clientID: clientID
+      )
+      XCTAssertTrue(instructions.contains(custom))
+      XCTAssertTrue(instructions.contains("before calling any Codex Bridge tool"))
+      XCTAssertFalse(instructions.contains("Project custom instructions"))
+    }
   }
 
   private let directToolNames = Set([

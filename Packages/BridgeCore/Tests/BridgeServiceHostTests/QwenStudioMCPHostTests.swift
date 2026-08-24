@@ -180,6 +180,90 @@ final class QwenStudioMCPHostTests: XCTestCase {
     XCTAssertEqual(chatToolsAfterQwenDisable.tools.count, 13)
   }
 
+  func testCustomInstructionsInitializeAndRefreshChatGPTAndQwenSessions() async throws {
+    let root = temporaryRoot()
+    let secrets = ServiceHostTestSecretStore()
+    let chatSecret = String(repeating: "C", count: 43)
+    let qwenSecret = String(repeating: "Q", count: 43)
+    try secrets.store(Data(chatSecret.utf8), for: ServiceMCPSecretProvider.reference)
+    try secrets.store(Data(qwenSecret.utf8), for: ServiceMCPSecretProvider.qwenStudioReference)
+    let composition = try await makeComposition(root: root, secrets: secrets)
+    defer {
+      Task { await composition.shutdown() }
+      try? FileManager.default.removeItem(at: root)
+    }
+    let pair = xpcClient(composition: composition)
+    let xpc = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await xpc.invalidate() }
+    }
+
+    try await xpc.setMCPClientEnabled(
+      clientID: MCPClientID.qwenStudio.rawValue,
+      enabled: true
+    )
+    let initialInstructions = "State the intended tool action first."
+    try await xpc.setCustomInstructions(initialInstructions)
+    let endpoint = try await startLocalMCPOrSkip(composition)
+    let (chatClient, chatInitialization) = try await connectMCPWithInitialization(
+      endpoint: endpoint.localURL,
+      secret: chatSecret
+    )
+    let (qwenClient, qwenInitialization) = try await connectMCPWithInitialization(
+      endpoint: endpoint.localURL,
+      secret: qwenSecret
+    )
+    defer {
+      Task {
+        await chatClient.disconnect()
+        await qwenClient.disconnect()
+      }
+    }
+    XCTAssertTrue(chatInitialization.instructions?.contains(initialInstructions) == true)
+    XCTAssertTrue(qwenInitialization.instructions?.contains(initialInstructions) == true)
+
+    let connected = try await xpc.mcpClients()
+    XCTAssertEqual(
+      connected.first { $0.clientID == MCPClientID.chatGPT.rawValue }?.activeSessionCount,
+      1
+    )
+    XCTAssertEqual(
+      connected.first { $0.clientID == MCPClientID.qwenStudio.rawValue }?.activeSessionCount,
+      1
+    )
+
+    let updatedInstructions = "Summarize the outcome after each tool call."
+    try await xpc.setCustomInstructions(updatedInstructions)
+    let refreshed = try await xpc.mcpClients()
+    XCTAssertEqual(
+      refreshed.first { $0.clientID == MCPClientID.chatGPT.rawValue }?.activeSessionCount,
+      0
+    )
+    XCTAssertEqual(
+      refreshed.first { $0.clientID == MCPClientID.qwenStudio.rawValue }?.activeSessionCount,
+      0
+    )
+
+    let (newChatClient, newChatInitialization) = try await connectMCPWithInitialization(
+      endpoint: endpoint.localURL,
+      secret: chatSecret
+    )
+    let (newQwenClient, newQwenInitialization) = try await connectMCPWithInitialization(
+      endpoint: endpoint.localURL,
+      secret: qwenSecret
+    )
+    defer {
+      Task {
+        await newChatClient.disconnect()
+        await newQwenClient.disconnect()
+      }
+    }
+    XCTAssertTrue(newChatInitialization.instructions?.contains(updatedInstructions) == true)
+    XCTAssertTrue(newQwenInitialization.instructions?.contains(updatedInstructions) == true)
+  }
+
   func testRandomLocalPortPersistsAcrossServiceRestart() async throws {
     let root = temporaryRoot()
     let secrets = ServiceHostTestSecretStore()
@@ -275,6 +359,17 @@ final class QwenStudioMCPHostTests: XCTestCase {
   }
 
   private func connectMCP(endpoint: URL, secret: String) async throws -> Client {
+    let (client, _) = try await connectMCPWithInitialization(
+      endpoint: endpoint,
+      secret: secret
+    )
+    return client
+  }
+
+  private func connectMCPWithInitialization(
+    endpoint: URL,
+    secret: String
+  ) async throws -> (Client, Initialize.Result) {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 5
     configuration.timeoutIntervalForResource = 5
@@ -293,8 +388,8 @@ final class QwenStudioMCPHostTests: XCTestCase {
       }
     )
     let client = Client(name: "qwen-host-tests", version: "1", configuration: .strict)
-    _ = try await client.connect(transport: transport)
-    return client
+    let initialization = try await client.connect(transport: transport)
+    return (client, initialization)
   }
 }
 

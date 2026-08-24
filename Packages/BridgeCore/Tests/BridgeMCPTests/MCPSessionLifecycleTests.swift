@@ -351,7 +351,12 @@ final class MCPSessionLifecycleTests: XCTestCase {
   }
 
   func testModernDiscoveryIsAvailableToQwenWithItsOwnAuthenticatedContext() async throws {
-    let registry = authenticatedRegistry(port: 19_330)
+    let customInstructions = "Qwen follows the shared global instructions."
+    let registry = MCPSessionRegistry(
+      boundPort: 19_330,
+      authenticatedServerFactory: { _, _ in Self.makeServer() },
+      discoveryInstructionsProvider: { _ in customInstructions }
+    )
     addTeardownBlock { await registry.stop() }
     let body = Data(
       """
@@ -381,6 +386,8 @@ final class MCPSessionLifecycleTests: XCTestCase {
       try JSONSerialization.jsonObject(with: data) as? [String: Any]
     )
     XCTAssertEqual(object["id"] as? Int, 1)
+    let result = try XCTUnwrap(object["result"] as? [String: Any])
+    XCTAssertEqual(result["instructions"] as? String, customInstructions)
     let qwenCount = await registry.activeSessionCount(for: .qwenStudio)
     XCTAssertEqual(qwenCount, 0)
   }

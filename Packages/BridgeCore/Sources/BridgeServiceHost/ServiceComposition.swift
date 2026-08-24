@@ -308,6 +308,7 @@ public actor ServiceComposition {
 
   public func refreshMCPInstructions() async {
     await mcpServer?.terminateSessions(for: .chatGPT)
+    await mcpServer?.terminateSessions(for: .qwenStudio)
   }
 
   public func mcpClientStatuses() async throws -> [ServiceMCPClientStatus] {

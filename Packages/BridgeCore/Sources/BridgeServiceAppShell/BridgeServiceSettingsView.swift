@@ -332,7 +332,7 @@ private struct CustomInstructionsEditor: View {
           .accessibilityLabel("全局自定义指令")
 
         HStack {
-          Text("网页 GPT 会在调用 Codex Bridge 插件前收到这段指令；不会传给 Codex。安全策略与本机审批始终优先。")
+          Text("ChatGPT 网页版和 Qwen 会在调用 Codex Bridge 插件前收到这段指令；不会传给 Codex。安全策略与本机审批始终优先。")
             .font(.caption)
             .foregroundStyle(.secondary)
           Spacer()

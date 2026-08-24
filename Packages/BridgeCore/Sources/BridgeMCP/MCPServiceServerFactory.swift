@@ -63,9 +63,9 @@ public struct MCPServiceServerFactory: Sendable {
 
   package static func instructions(
     customInstructions: String,
-    clientID: MCPClientID
+    clientID _: MCPClientID
   ) -> String {
-    instructions(customInstructions: clientID == .chatGPT ? customInstructions : "")
+    instructions(customInstructions: customInstructions)
   }
 
   package static func instructions(customInstructions: String) -> String {
