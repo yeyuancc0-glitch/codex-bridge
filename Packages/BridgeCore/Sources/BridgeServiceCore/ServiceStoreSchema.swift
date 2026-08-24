@@ -48,20 +48,25 @@ enum ServiceStoreSchema {
     }
   }
 
-  static func createPreVersionEightBackupIfNeeded(
+  static func createPreMigrationBackupIfNeeded(
     _ database: DatabaseQueue,
     sourcePath: String
   ) throws {
     guard sourcePath != ":memory:" else { return }
-    let requiresBackup = try database.read { db -> Bool in
-      guard try db.tableExists("bridge_service_meta") else { return false }
+    let sourceVersion = try database.read { db -> Int64? in
+      guard try db.tableExists("bridge_service_meta") else { return nil }
       return try Int64.fetchOne(
         db,
         sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
-      ) == 7
+      )
     }
-    guard requiresBackup else { return }
-    let backupPath = sourcePath + ".pre-v8"
+    let backupSuffix: String
+    switch sourceVersion {
+    case 7: backupSuffix = ".pre-v8"
+    case 8: backupSuffix = ".pre-v9"
+    default: return
+    }
+    let backupPath = sourcePath + backupSuffix
     if FileManager.default.fileExists(atPath: backupPath) {
       try validatePrivateBackup(at: backupPath)
       return

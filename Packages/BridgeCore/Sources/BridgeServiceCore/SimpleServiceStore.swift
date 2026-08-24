@@ -13,7 +13,7 @@ public actor SimpleServiceStore {
     configuration.foreignKeysEnabled = true
     do {
       let openedDatabase = try DatabaseQueue(path: path, configuration: configuration)
-      try ServiceStoreSchema.createPreVersionEightBackupIfNeeded(
+      try ServiceStoreSchema.createPreMigrationBackupIfNeeded(
         openedDatabase,
         sourcePath: path
       )

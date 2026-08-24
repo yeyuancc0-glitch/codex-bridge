@@ -164,6 +164,19 @@ final class ServiceRootIdentityTests: XCTestCase {
     XCTAssertEqual(schema.1, String(current.device))
     XCTAssertEqual(schema.2, String(current.inode))
     XCTAssertEqual(schema.3, volumeUUID)
+
+    let backupPath = path + ".pre-v9"
+    var metadata = stat()
+    XCTAssertEqual(lstat(backupPath, &metadata), 0)
+    XCTAssertEqual(metadata.st_mode & 0o777, 0o600)
+    let backup = try DatabaseQueue(path: backupPath)
+    let backupVersion = try await backup.read { db in
+      try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+    }
+    XCTAssertEqual(backupVersion, 8)
   }
 
   func testProjectServiceLazilyRepairsLegacyIdentityAfterOfflineMigration() async throws {
