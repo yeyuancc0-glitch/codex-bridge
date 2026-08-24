@@ -36,7 +36,7 @@ public sealed partial class MainWindow
         content.Children.Add(network);
         content.Children.Add(new TextBlock
         {
-            Text = "本机审批不能由 MCP 客户端或 Supervisor 代替；Windows Direct 网络隔离未完成时会保持 fail-closed。",
+            Text = "本机审批不能由 MCP 客户端或 Supervisor 代替；Windows Direct 会按网络权限使用离线或联网 AppContainer。",
             TextWrapping = TextWrapping.Wrap,
             Opacity = 0.72,
         });

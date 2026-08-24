@@ -117,7 +117,7 @@ public sealed partial class MainWindow
     {
         if (!tunnel.HelperAvailable)
         {
-            return "Windows Tunnel helper 尚未打包；本机 MCP 可用，但远程 Tunnel 保持 fail-closed。";
+            return "Windows Tunnel helper 不可用或完整性校验失败；本机 MCP 可用，但远程 Tunnel 保持 fail-closed。";
         }
         if (!tunnel.Configured)
         {
