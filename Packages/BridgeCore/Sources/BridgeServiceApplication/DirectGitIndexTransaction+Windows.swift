@@ -104,7 +104,7 @@
 
       SetLastError(DWORD(ERROR_SUCCESS))
       let position = SetFilePointer(destination, 0, nil, DWORD(FILE_BEGIN))
-      guard position != DWORD(INVALID_SET_FILE_POINTER) || GetLastError() == DWORD(ERROR_SUCCESS),
+      guard position != DWORD.max || GetLastError() == DWORD(ERROR_SUCCESS),
         SetEndOfFile(destination),
         Self.copyBytes(from: source, to: destination),
         FlushFileBuffers(destination)
