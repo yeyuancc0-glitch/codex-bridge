@@ -12,14 +12,26 @@
         try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: false)
         let helper = payload.appendingPathComponent("tunnel-client.exe")
         try FileManager.default.copyItem(at: fixture, to: helper)
+        let cloudflared = payload.appendingPathComponent("cloudflared.exe")
+        try FileManager.default.copyItem(at: fixture, to: cloudflared)
         let digest = String(repeating: "a", count: 64)
         try Data((digest + "\n").utf8).write(
           to: payload.appendingPathComponent("tunnel-client.sha256")
         )
+        try Data((digest + "\n").utf8).write(
+          to: payload.appendingPathComponent("cloudflared.sha256")
+        )
+        try Data("{}".utf8).write(
+          to: payload.appendingPathComponent("cloudflared-manifest.json")
+        )
+        try Data("license".utf8).write(to: payload.appendingPathComponent("LICENSE"))
 
         let bundle = try WindowsTunnelBundle(installDirectory: root)
         XCTAssertEqual(bundle.helperExecutable.path.lowercased(), helper.path.lowercased())
         XCTAssertEqual(bundle.expectedSHA256, digest)
+        XCTAssertEqual(
+          bundle.cloudflaredExecutable.path.lowercased(), cloudflared.path.lowercased())
+        XCTAssertEqual(bundle.expectedCloudflaredSHA256, digest)
       }
     }
 
@@ -35,6 +47,17 @@
           at: fixture,
           to: payload.appendingPathComponent("tunnel-client.exe")
         )
+        try FileManager.default.copyItem(
+          at: fixture,
+          to: payload.appendingPathComponent("cloudflared.exe")
+        )
+        try Data(String(repeating: "a", count: 64).utf8).write(
+          to: payload.appendingPathComponent("cloudflared.sha256")
+        )
+        try Data("{}".utf8).write(
+          to: payload.appendingPathComponent("cloudflared-manifest.json")
+        )
+        try Data("license".utf8).write(to: payload.appendingPathComponent("LICENSE"))
         try Data(String(repeating: "A", count: 64).utf8).write(
           to: payload.appendingPathComponent("tunnel-client.sha256")
         )

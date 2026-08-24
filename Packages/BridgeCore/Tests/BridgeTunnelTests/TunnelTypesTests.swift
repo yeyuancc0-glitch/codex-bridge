@@ -55,4 +55,43 @@ final class TunnelTypesTests: XCTestCase {
       )
     }
   }
+
+  func testCompanionRequiresCompleteValidPathAndDigest() throws {
+    let reference = try SecretReference(validating: "runtime-key.test")
+    let helper = URL(fileURLWithPath: "/tmp/helper")
+    let runtime = URL(fileURLWithPath: "/tmp/runtime")
+    let cloudflared = URL(fileURLWithPath: "/tmp/cloudflared")
+    let digest = String(repeating: "a", count: 64)
+    let tunnelID = TunnelID(rawValue: "tunnel_abcdefghijklmnopqrstuvwxyz012345")
+    let localURL = URL(
+      string: "http://127.0.0.1:4321/mcp/\(String(repeating: "A", count: 43))"
+    )!
+
+    let configuration = try TunnelConfiguration(
+      helperExecutable: helper,
+      tunnelID: tunnelID,
+      runtimeKeyReference: reference,
+      localMCPURL: localURL,
+      runtimeDirectory: runtime,
+      expectedHelperSHA256: digest,
+      cloudflaredExecutable: cloudflared,
+      expectedCloudflaredSHA256: digest
+    )
+    XCTAssertEqual(configuration.cloudflaredExecutable, cloudflared)
+    XCTAssertEqual(configuration.expectedCloudflaredSHA256, digest)
+
+    XCTAssertThrowsError(
+      try TunnelConfiguration(
+        helperExecutable: helper,
+        tunnelID: tunnelID,
+        runtimeKeyReference: reference,
+        localMCPURL: localURL,
+        runtimeDirectory: runtime,
+        expectedHelperSHA256: digest,
+        cloudflaredExecutable: cloudflared
+      )
+    ) {
+      XCTAssertEqual($0 as? TunnelConfigurationError, .incompleteCompanion)
+    }
+  }
 }

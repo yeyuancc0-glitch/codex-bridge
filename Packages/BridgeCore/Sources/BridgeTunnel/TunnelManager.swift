@@ -75,6 +75,7 @@ public actor TunnelManager {
       executable: configuration.helperExecutable,
       expectedSHA256: configuration.expectedHelperSHA256
     )
+    try verifyCompanion()
     let key = try loadRuntimeKey()
     let context = try prepareRunContext()
     var cleanupFinished = false
@@ -132,6 +133,7 @@ public actor TunnelManager {
         executable: configuration.helperExecutable,
         expectedSHA256: configuration.expectedHelperSHA256
       )
+      try verifyCompanion()
       let key = try loadRuntimeKey()
       let context = try prepareRunContext()
       runContext = context
@@ -369,7 +371,7 @@ public actor TunnelManager {
     let directory = context.directory
     let urlFile = context.healthURLFile.path
     let pidFile = directory.appendingPathComponent("tunnel.pid").path
-    return [
+    var arguments = [
       command,
       "--control-plane.tunnel-id", configuration.tunnelID.rawValue,
       "--control-plane.api-key=file:/dev/fd/3",
@@ -384,6 +386,19 @@ public actor TunnelManager {
       "--log.level", "warn",
       "--log.format", "json",
     ]
+    if let cloudflared = configuration.cloudflaredExecutable {
+      arguments += ["--cloudflared.path", cloudflared.path]
+    }
+    return arguments
+  }
+
+  private func verifyCompanion() throws {
+    guard let executable = configuration.cloudflaredExecutable,
+      let digest = configuration.expectedCloudflaredSHA256
+    else {
+      return
+    }
+    _ = try helperVerifier.verify(executable: executable, expectedSHA256: digest)
   }
 
   private func waitForExit(

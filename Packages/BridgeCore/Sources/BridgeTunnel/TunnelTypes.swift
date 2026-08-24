@@ -50,6 +50,8 @@ public struct TunnelConfiguration: Sendable {
   public let processTimeout: Duration
   public let metricsFreshness: Duration
   public let expectedHelperSHA256: String
+  public let cloudflaredExecutable: URL?
+  public let expectedCloudflaredSHA256: String?
   package let helperMCPURL: URL
   package let localMCPHeaderSecret: String
 
@@ -63,7 +65,9 @@ public struct TunnelConfiguration: Sendable {
     healthInterval: Duration = .seconds(5),
     processTimeout: Duration = .seconds(20),
     metricsFreshness: Duration = .seconds(70),
-    expectedHelperSHA256: String
+    expectedHelperSHA256: String,
+    cloudflaredExecutable: URL? = nil,
+    expectedCloudflaredSHA256: String? = nil
   ) throws {
     guard Self.isValidPlatformFileURL(helperExecutable) else {
       throw TunnelConfigurationError.invalidHelperExecutable
@@ -82,6 +86,10 @@ public struct TunnelConfiguration: Sendable {
     guard Self.isValidSHA256(expectedHelperSHA256) else {
       throw TunnelConfigurationError.invalidHelperDigest
     }
+    try Self.validateCompanion(
+      executable: cloudflaredExecutable,
+      expectedSHA256: expectedCloudflaredSHA256
+    )
     self.helperExecutable = helperExecutable.standardizedFileURL
     self.tunnelID = tunnelID
     self.runtimeKeyReference = runtimeKeyReference
@@ -97,6 +105,8 @@ public struct TunnelConfiguration: Sendable {
     self.processTimeout = processTimeout
     self.metricsFreshness = metricsFreshness
     self.expectedHelperSHA256 = expectedHelperSHA256
+    self.cloudflaredExecutable = cloudflaredExecutable?.standardizedFileURL
+    self.expectedCloudflaredSHA256 = expectedCloudflaredSHA256
   }
 
   public init(
@@ -110,7 +120,9 @@ public struct TunnelConfiguration: Sendable {
     healthInterval: Duration = .seconds(5),
     processTimeout: Duration = .seconds(20),
     metricsFreshness: Duration = .seconds(70),
-    expectedHelperSHA256: String
+    expectedHelperSHA256: String,
+    cloudflaredExecutable: URL? = nil,
+    expectedCloudflaredSHA256: String? = nil
   ) throws {
     guard Self.isValidPlatformFileURL(helperExecutable) else {
       throw TunnelConfigurationError.invalidHelperExecutable
@@ -132,6 +144,10 @@ public struct TunnelConfiguration: Sendable {
     guard Self.isValidSHA256(expectedHelperSHA256) else {
       throw TunnelConfigurationError.invalidHelperDigest
     }
+    try Self.validateCompanion(
+      executable: cloudflaredExecutable,
+      expectedSHA256: expectedCloudflaredSHA256
+    )
     self.helperExecutable = helperExecutable.standardizedFileURL
     self.tunnelID = tunnelID
     self.runtimeKeyReference = runtimeKeyReference
@@ -143,7 +159,28 @@ public struct TunnelConfiguration: Sendable {
     self.processTimeout = processTimeout
     self.metricsFreshness = metricsFreshness
     self.expectedHelperSHA256 = expectedHelperSHA256
+    self.cloudflaredExecutable = cloudflaredExecutable?.standardizedFileURL
+    self.expectedCloudflaredSHA256 = expectedCloudflaredSHA256
     helperMCPURL = localMCPURL
+  }
+
+  private static func validateCompanion(
+    executable: URL?,
+    expectedSHA256: String?
+  ) throws {
+    switch (executable, expectedSHA256) {
+    case (nil, nil):
+      return
+    case (.some(let executable), .some(let digest)):
+      guard isValidPlatformFileURL(executable) else {
+        throw TunnelConfigurationError.invalidCompanionExecutable
+      }
+      guard isValidSHA256(digest) else {
+        throw TunnelConfigurationError.invalidCompanionDigest
+      }
+    default:
+      throw TunnelConfigurationError.incompleteCompanion
+    }
   }
 
   private static func isValidLocalMCPURL(_ url: URL) -> Bool {
@@ -221,6 +258,9 @@ public enum TunnelConfigurationError: Error, Equatable, Sendable {
   case invalidRuntimeDirectory
   case invalidTimeout
   case invalidHelperDigest
+  case invalidCompanionExecutable
+  case invalidCompanionDigest
+  case incompleteCompanion
 }
 
 public struct TunnelDoctorReport: Equatable, Sendable {

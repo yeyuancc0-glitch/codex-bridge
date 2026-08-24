@@ -14,6 +14,8 @@
   public struct WindowsTunnelBundle: Equatable, Sendable {
     public let helperExecutable: URL
     public let expectedSHA256: String
+    public let cloudflaredExecutable: URL
+    public let expectedCloudflaredSHA256: String
 
     public init(installDirectory: URL) throws {
       guard installDirectory.isFileURL else {
@@ -25,11 +27,21 @@
       }
       let payload = Self.join(root, "TunnelClient")
       let helper = Self.join(payload, "tunnel-client.exe")
-      let digest = Self.join(payload, "tunnel-client.sha256")
+      let helperDigest = Self.join(payload, "tunnel-client.sha256")
+      let cloudflared = Self.join(payload, "cloudflared.exe")
+      let cloudflaredDigest = Self.join(payload, "cloudflared.sha256")
+      let manifest = Self.join(payload, "cloudflared-manifest.json")
+      let license = Self.join(payload, "LICENSE")
       try Self.validateComponents(path: helper)
-      try Self.validateComponents(path: digest)
-      expectedSHA256 = try Self.readDigest(path: digest)
+      try Self.validateComponents(path: helperDigest)
+      try Self.validateComponents(path: cloudflared)
+      try Self.validateComponents(path: cloudflaredDigest)
+      try Self.validateComponents(path: manifest)
+      try Self.validateComponents(path: license)
+      expectedSHA256 = try Self.readDigest(path: helperDigest)
+      expectedCloudflaredSHA256 = try Self.readDigest(path: cloudflaredDigest)
       helperExecutable = URL(fileURLWithPath: helper)
+      cloudflaredExecutable = URL(fileURLWithPath: cloudflared)
     }
 
     private static func validateComponents(path: String) throws {

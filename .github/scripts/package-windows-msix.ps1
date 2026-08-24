@@ -22,6 +22,11 @@ $payload = Join-Path $env:RUNNER_TEMP "CodexBridge-MSIX-$Architecture"
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
 Copy-Item -LiteralPath $service -Destination (Join-Path $payload 'codex-bridge-service.exe')
 Copy-Item -Path (Join-Path $env:SWIFT_RUNTIME_BIN '*.dll') -Destination $payload
+$tunnelPayload = Join-Path $payload 'TunnelClient'
+& "$PSScriptRoot/stage-windows-tunnel-client.ps1" `
+  -Architecture $Architecture `
+  -Destination $tunnelPayload
+if ($LASTEXITCODE -ne 0) { throw "Tunnel client staging failed with exit code $LASTEXITCODE" }
 $sqlite = Join-Path $env:SQLITE_RUNTIME_DIR 'sqlite3.dll'
 if (-not (Test-Path $sqlite)) { throw "SQLite runtime is missing at $sqlite" }
 Copy-Item -LiteralPath $sqlite -Destination (Join-Path $payload 'sqlite3.dll')

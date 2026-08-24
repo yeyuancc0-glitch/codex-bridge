@@ -38,7 +38,9 @@
         localMCPURL: localMCPURL,
         localMCPHeaderSecret: localMCPHeaderSecret,
         runtimeDirectory: runtimeDirectory,
-        expectedHelperSHA256: bundle.expectedSHA256
+        expectedHelperSHA256: bundle.expectedSHA256,
+        cloudflaredExecutable: bundle.cloudflaredExecutable,
+        expectedCloudflaredSHA256: bundle.expectedCloudflaredSHA256
       )
       return TunnelManager(configuration: configuration, secretStore: secretStore)
     }
