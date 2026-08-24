@@ -16,6 +16,8 @@
     <AppxBundle>Never</AppxBundle>
     <SelfContained Condition="'$(BuildMsix)' == 'true' Or '$(BuildSelfContained)' == 'true'">true</SelfContained>
     <WindowsAppSDKSelfContained Condition="'$(BuildMsix)' == 'true' Or '$(BuildSelfContained)' == 'true'">true</WindowsAppSDKSelfContained>
+    <WindowsAppSdkBootstrapInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkUndockedRegFreeWinRTInitialize Condition="'$(BuildSelfContained)' == 'true'">true</WindowsAppSdkUndockedRegFreeWinRTInitialize>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />

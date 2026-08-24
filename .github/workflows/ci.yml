@@ -303,6 +303,7 @@ jobs:
         run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
 
       - name: Upload x64 EXE and portable artifacts
+        if: always() && steps.unpackaged.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: CodexBridge-Windows-x64-unpackaged
@@ -472,6 +473,7 @@ jobs:
         run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
 
       - name: Upload ARM64 EXE and portable artifacts
+        if: always() && steps.unpackaged.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: CodexBridge-Windows-ARM64-unpackaged

@@ -15,6 +15,8 @@ if (Test-Path -LiteralPath $installRoot) {
 $installLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-install.log'
 $upgradeLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-upgrade.log'
 $uninstallLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-uninstall.log'
+$appStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stdout.log'
+$appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
 $service = $null
 $app = $null
 
@@ -50,6 +52,8 @@ try {
   $app = Start-Process `
     -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
     -WorkingDirectory $installRoot `
+    -RedirectStandardOutput $appStdout `
+    -RedirectStandardError $appStderr `
     -PassThru
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
   do {
@@ -126,7 +130,17 @@ try {
       -Wait `
       -ErrorAction SilentlyContinue | Out-Null
   }
-  foreach ($log in @($installLog, $upgradeLog, $uninstallLog)) {
+  foreach ($log in @($installLog, $upgradeLog, $uninstallLog, $appStdout, $appStderr)) {
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
   }
+  Get-WinEvent -FilterHashtable @{
+    LogName = 'Application'
+    StartTime = [DateTime]::Now.AddMinutes(-10)
+  } -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.ProviderName -in @('Application Error', '.NET Runtime', 'Windows Error Reporting') -and
+      $_.Message -like '*CodexBridge.App*'
+    } |
+    Select-Object -First 10 |
+    Format-List TimeCreated, ProviderName, Id, LevelDisplayName, Message
 }
