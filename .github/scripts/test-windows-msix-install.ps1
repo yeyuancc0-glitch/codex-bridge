@@ -28,6 +28,7 @@ $certificatePath = Join-Path $env:RUNNER_TEMP 'CodexBridge-CI.cer'
 Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
 $trustedPeople = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople'
 $package = $null
+$serviceJob = $null
 try {
   Write-Host 'Signing CI MSIX bundle.'
   & $signToolPath sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $BundlePath
@@ -52,13 +53,20 @@ try {
   }
 
   Write-Host 'Starting Service inside the registered package context.'
-  Invoke-CommandInDesktopPackage `
-    -PackageFamilyName $package.PackageFamilyName `
-    -AppId 'App' `
-    -Command 'codex-bridge-service.exe' `
-    -Args '--foreground' `
-    -PreventBreakaway
+  $serviceJob = Start-Job -ArgumentList $package.PackageFamilyName -ScriptBlock {
+    param($packageFamilyName)
+    Invoke-CommandInDesktopPackage `
+      -PackageFamilyName $packageFamilyName `
+      -AppId 'App' `
+      -Command 'codex-bridge-service.exe' `
+      -Args '--foreground' `
+      -PreventBreakaway
+  }
   Start-Sleep -Seconds 2
+  if ($serviceJob.State -eq 'Failed') {
+    Receive-Job $serviceJob
+    throw 'Installed Service package-context launch failed.'
+  }
   Write-Host 'Probing the installed Service over the production Named Pipe.'
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
@@ -68,6 +76,11 @@ try {
   foreach ($name in @('CodexBridge.App', 'codex-bridge-service')) {
     Get-Process -Name $name -ErrorAction SilentlyContinue |
       Stop-Process -Force -ErrorAction SilentlyContinue
+  }
+  if ($serviceJob) {
+    Stop-Job $serviceJob -ErrorAction SilentlyContinue
+    Receive-Job $serviceJob -ErrorAction SilentlyContinue
+    Remove-Job $serviceJob -Force -ErrorAction SilentlyContinue
   }
   if (-not $package) {
     $package = Get-AppxPackage -Name 'org.codexbridge.windows' | Select-Object -First 1
