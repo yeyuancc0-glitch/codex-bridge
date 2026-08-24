@@ -21,6 +21,7 @@ $service = $null
 $app = $null
 
 function Test-InteractiveDesktop {
+  if ($env:RUNNER_ENVIRONMENT -eq 'github-hosted') { return $false }
   if (-not [Environment]::UserInteractive) { return $false }
   $sessionId = (Get-Process -Id $PID).SessionId
   return $null -ne (Get-Process -Name 'explorer' -ErrorAction SilentlyContinue |
