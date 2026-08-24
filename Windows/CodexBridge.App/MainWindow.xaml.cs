@@ -412,6 +412,21 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             PresentError(error.Message);
+            EnableStartupTaskButton.IsEnabled = true;
+        }
+    }
+
+    private async void DisableStartupTaskClick(object sender, RoutedEventArgs args)
+    {
+        DisableStartupTaskButton.IsEnabled = false;
+        try
+        {
+            PresentStartupTask(await StartupTaskController.RequestDisableAsync());
+        }
+        catch (Exception error)
+        {
+            PresentError(error.Message);
+            DisableStartupTaskButton.IsEnabled = true;
         }
     }
 
@@ -427,6 +442,10 @@ public sealed partial class MainWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         EnableStartupTaskButton.IsEnabled = presentation.CanRequestEnable;
+        DisableStartupTaskButton.Visibility = presentation.CanRequestDisable
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DisableStartupTaskButton.IsEnabled = presentation.CanRequestDisable;
     }
 
     private async void WindowClosed(object sender, WindowEventArgs args)

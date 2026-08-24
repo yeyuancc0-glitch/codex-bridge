@@ -1,0 +1,179 @@
+name: Windows EXE and Portable Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing Git tag to receive the Windows release assets.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  WINDOWS_SWIFT_VERSION: '6.3.3'
+
+jobs:
+  prepare:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      app-version: ${{ steps.release.outputs.app-version }}
+    steps:
+      - name: Resolve release identity
+        id: release
+        shell: pwsh
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+          REF_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = if ($env:REF_TAG) { $env:REF_TAG } else { $env:REQUESTED_TAG }
+          if ($tag -notmatch '^v(\d{1,5})\.(\d{1,5})\.(\d{1,5})(?:[-+].*)?$') {
+            throw 'Release tag must start with vMAJOR.MINOR.PATCH.'
+          }
+          $revision = [int]$env:RUN_NUMBER
+          if ($revision -gt 65535) { throw 'GitHub run number exceeds the Windows revision range.' }
+          Add-Content $env:GITHUB_OUTPUT "tag=$tag"
+          Add-Content $env:GITHUB_OUTPUT "app-version=$($Matches[1]).$($Matches[2]).$($Matches[3]).$revision"
+
+  build:
+    name: Build Windows ${{ matrix.arch }} EXE and Portable
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: ARM64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 70
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: Windows/global.json
+
+      - name: Set up native toolchain
+        uses: ./.github/actions/setup-windows-build
+        with:
+          architecture: ${{ matrix.arch }}
+          swift-version: ${{ env.WINDOWS_SWIFT_VERSION }}
+
+      - name: Build Swift Service
+        shell: pwsh
+        run: >-
+          swift build --product codex-bridge-service --package-path Packages/BridgeCore
+          -Xcc "-I$env:SQLITE_INCLUDE_DIR"
+          -Xlinker "/LIBPATH:$env:SQLITE_LIBRARY_DIR"
+
+      - name: Build EXE installer and portable archive
+        id: unpackaged
+        shell: pwsh
+        run: >-
+          .github/scripts/package-windows-unpackaged.ps1
+          -Architecture ${{ matrix.arch }}
+          -OutputDirectory '${{ runner.temp }}/release-output'
+          -AppVersion '${{ needs.prepare.outputs.app-version }}'
+
+      - name: Test portable archive
+        shell: pwsh
+        run: .github/scripts/test-windows-portable.ps1 -ArchivePath '${{ steps.unpackaged.outputs.portable }}'
+
+      - name: Test EXE installer
+        shell: pwsh
+        run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
+
+      - name: Upload architecture assets
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-${{ matrix.arch }}-release
+          path: ${{ runner.temp }}/release-output/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish Windows EXE and Portable release
+    needs: [prepare, build]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download architecture assets
+        uses: actions/download-artifact@v7
+        with:
+          pattern: CodexBridge-Windows-*-release
+          path: ${{ runner.temp }}/release-output
+          merge-multiple: true
+
+      - name: Generate Microsoft SPDX SBOM and checksums
+        shell: pwsh
+        env:
+          RELEASE_OUTPUT: ${{ runner.temp }}/release-output
+          APP_VERSION: ${{ needs.prepare.outputs.app-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tool = Join-Path $env:RUNNER_TEMP 'sbom-tool.exe'
+          Invoke-WebRequest -Uri 'https://github.com/microsoft/sbom-tool/releases/download/v4.1.5/sbom-tool-win-x64.exe' -OutFile $tool
+          $hash = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -cne '625767b371b7fdd58f40f618b8a86da0247a33c89e419039c86b4edba1dad4b5') {
+            throw "SBOM tool digest mismatch: $hash"
+          }
+          & $tool generate -b $env:RELEASE_OUTPUT -bc $pwd -pn CodexBridge-Windows -pv $env:APP_VERSION -ps CodexBridge -nsb "https://github.com/${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { throw "SBOM generation failed with exit code $LASTEXITCODE" }
+          $manifest = Join-Path $env:RELEASE_OUTPUT '_manifest/spdx_2.2/manifest.spdx.json'
+          Move-Item -LiteralPath $manifest -Destination (Join-Path $env:RELEASE_OUTPUT 'CodexBridge-Windows.spdx.json')
+          Remove-Item -LiteralPath (Join-Path $env:RELEASE_OUTPUT '_manifest') -Recurse -Force
+          $assets = Get-ChildItem -Path $env:RELEASE_OUTPUT -File | Sort-Object Name
+          $lines = foreach ($asset in $assets) {
+            $digest = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest  $($asset.Name)"
+          }
+          [IO.File]::WriteAllLines(
+            (Join-Path $env:RELEASE_OUTPUT 'SHA256SUMS.txt'),
+            $lines,
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-EXE-and-Portable
+          path: ${{ runner.temp }}/release-output/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_OUTPUT: ${{ runner.temp }}/release-output
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & gh release view $env:RELEASE_TAG --repo '${{ github.repository }}' *> $null
+          if ($LASTEXITCODE -ne 0) {
+            & gh release create $env:RELEASE_TAG --repo '${{ github.repository }}' --verify-tag --draft --title "Codex Bridge $env:RELEASE_TAG" --notes 'Unsigned Windows EXE installers and portable archives. Windows may show an Unknown publisher or SmartScreen warning.'
+            if ($LASTEXITCODE -ne 0) { throw "Unable to create release $env:RELEASE_TAG" }
+          }
+          $assets = @(Get-ChildItem -Path $env:RELEASE_OUTPUT -File | ForEach-Object { $_.FullName })
+          & gh release upload $env:RELEASE_TAG @assets --repo '${{ github.repository }}' --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to upload Windows release assets.' }

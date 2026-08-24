@@ -150,7 +150,7 @@ jobs:
   windows-x64:
     name: Windows x64 shared closure
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -285,6 +285,30 @@ jobs:
           path: Windows/CodexBridge.App/**/AppPackages/**/*.msix
           if-no-files-found: error
 
+      - name: Build x64 EXE installer and portable archive
+        id: unpackaged
+        shell: pwsh
+        run: >-
+          .github/scripts/package-windows-unpackaged.ps1
+          -Architecture x64
+          -OutputDirectory '${{ runner.temp }}/unpackaged-output'
+          -AppVersion '0.2.0.0'
+
+      - name: Test x64 portable archive
+        shell: pwsh
+        run: .github/scripts/test-windows-portable.ps1 -ArchivePath '${{ steps.unpackaged.outputs.portable }}'
+
+      - name: Test x64 EXE installer
+        shell: pwsh
+        run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
+
+      - name: Upload x64 EXE and portable artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-x64-unpackaged
+          path: ${{ runner.temp }}/unpackaged-output/*
+          if-no-files-found: error
+
       - name: Save Windows Swift build cache
         if: always() && steps.windows-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -295,7 +319,7 @@ jobs:
   windows-arm64:
     name: Windows ARM64 shared closure
     runs-on: windows-11-arm
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -428,6 +452,30 @@ jobs:
         with:
           name: CodexBridge-Windows-ARM64-unsigned
           path: Windows/CodexBridge.App/**/AppPackages/**/*.msix
+          if-no-files-found: error
+
+      - name: Build ARM64 EXE installer and portable archive
+        id: unpackaged
+        shell: pwsh
+        run: >-
+          .github/scripts/package-windows-unpackaged.ps1
+          -Architecture ARM64
+          -OutputDirectory '${{ runner.temp }}/unpackaged-output'
+          -AppVersion '0.2.0.0'
+
+      - name: Test ARM64 portable archive
+        shell: pwsh
+        run: .github/scripts/test-windows-portable.ps1 -ArchivePath '${{ steps.unpackaged.outputs.portable }}'
+
+      - name: Test ARM64 EXE installer
+        shell: pwsh
+        run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
+
+      - name: Upload ARM64 EXE and portable artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-ARM64-unpackaged
+          path: ${{ runner.temp }}/unpackaged-output/*
           if-no-files-found: error
 
       - name: Save Windows Swift build cache

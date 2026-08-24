@@ -12,12 +12,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $env:SWIFT_RUNTIME_BIN -or -not (Test-Path $env:SWIFT_RUNTIME_BIN)) {
-  throw 'SWIFT_RUNTIME_BIN is unavailable.'
-}
-if (-not $env:SQLITE_RUNTIME_DIR -or -not (Test-Path $env:SQLITE_RUNTIME_DIR)) {
-  throw 'SQLITE_RUNTIME_DIR is unavailable.'
-}
 if ($PackageVersion -notmatch '^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$') {
   throw 'PackageVersion must contain four numeric components.'
 }
@@ -47,28 +41,11 @@ try {
   $writer = [System.Xml.XmlWriter]::Create($manifestPath, $settings)
   try { $manifest.Save($writer) } finally { $writer.Dispose() }
 
-$bin = swift build --show-bin-path --package-path Packages/BridgeCore
-if ($LASTEXITCODE -ne 0) { throw 'Unable to locate Swift build products.' }
-$service = Join-Path $bin 'codex-bridge-service.exe'
-if (-not (Test-Path $service)) { throw "Service executable is missing at $service" }
-
 $payload = Join-Path $env:RUNNER_TEMP "CodexBridge-MSIX-$Architecture"
-New-Item -ItemType Directory -Path $payload -Force | Out-Null
-Copy-Item -LiteralPath $service -Destination (Join-Path $payload 'codex-bridge-service.exe')
-Copy-Item -Path (Join-Path $env:SWIFT_RUNTIME_BIN '*.dll') -Destination $payload
-$tunnelPayload = Join-Path $payload 'TunnelClient'
-& "$PSScriptRoot/stage-windows-tunnel-client.ps1" `
+& "$PSScriptRoot/stage-windows-app-payload.ps1" `
   -Architecture $Architecture `
-  -Destination $tunnelPayload
-if ($LASTEXITCODE -ne 0) { throw "Tunnel client staging failed with exit code $LASTEXITCODE" }
-$webViewPayload = Join-Path $payload 'FixedRuntime\151.0.4129.101'
-& "$PSScriptRoot/stage-windows-webview2-runtime.ps1" `
-  -Architecture $Architecture `
-  -Destination $webViewPayload
-if ($LASTEXITCODE -ne 0) { throw "WebView2 staging failed with exit code $LASTEXITCODE" }
-$sqlite = Join-Path $env:SQLITE_RUNTIME_DIR 'sqlite3.dll'
-if (-not (Test-Path $sqlite)) { throw "SQLite runtime is missing at $sqlite" }
-Copy-Item -LiteralPath $sqlite -Destination (Join-Path $payload 'sqlite3.dll')
+  -Destination $payload
+if ($LASTEXITCODE -ne 0) { throw "App payload staging failed with exit code $LASTEXITCODE" }
 
 $runtimeIdentifier = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
 $project = 'Windows/CodexBridge.App/CodexBridge.App.csproj'

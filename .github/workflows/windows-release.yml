@@ -1,9 +1,6 @@
-name: Windows Release
+name: Windows MSIX Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
