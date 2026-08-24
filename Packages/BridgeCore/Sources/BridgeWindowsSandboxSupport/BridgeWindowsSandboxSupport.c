@@ -328,11 +328,35 @@ BOOL bridge_loopback_connect(USHORT port) {
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   address.sin_port = htons(port);
-  BOOL connected = connect(
+  u_long nonblocking = 1;
+  if (ioctlsocket(client, FIONBIO, &nonblocking) != 0) {
+    closesocket(client);
+    WSACleanup();
+    return FALSE;
+  }
+  int connect_result = connect(
     client,
     (const struct sockaddr *)&address,
     sizeof(address)
-  ) == 0;
+  );
+  BOOL connected = connect_result == 0;
+  if (!connected && WSAGetLastError() == WSAEWOULDBLOCK) {
+    fd_set writable;
+    FD_ZERO(&writable);
+    FD_SET(client, &writable);
+    struct timeval timeout = {1, 0};
+    if (select(0, NULL, &writable, NULL, &timeout) > 0) {
+      int socket_error = 0;
+      int error_size = sizeof(socket_error);
+      connected = getsockopt(
+        client,
+        SOL_SOCKET,
+        SO_ERROR,
+        (char *)&socket_error,
+        &error_size
+      ) == 0 && socket_error == 0;
+    }
+  }
   closesocket(client);
   WSACleanup();
   return connected;
