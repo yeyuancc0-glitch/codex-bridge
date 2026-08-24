@@ -25,7 +25,8 @@ $certificate = New-SelfSignedCertificate `
   -TextExtension @('2.5.29.19={text}', '2.5.29.37={text}1.3.6.1.5.5.7.3.3')
 $certificatePath = Join-Path $env:RUNNER_TEMP 'CodexBridge-CI.cer'
 Export-Certificate -Cert $certificate -FilePath $certificatePath | Out-Null
-$trusted = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople'
+$trustedPeople = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\TrustedPeople'
+$trustedRoot = Import-Certificate -FilePath $certificatePath -CertStoreLocation 'Cert:\CurrentUser\Root'
 $package = $null
 $serviceProcess = $null
 $stdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-Installed-Service.stdout.log'
@@ -92,7 +93,10 @@ try {
     }
   }
   Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -ErrorAction SilentlyContinue
-  foreach ($item in $trusted) {
+  foreach ($item in $trustedPeople) {
     Remove-Item "Cert:\CurrentUser\TrustedPeople\$($item.Thumbprint)" -ErrorAction SilentlyContinue
+  }
+  foreach ($item in $trustedRoot) {
+    Remove-Item "Cert:\CurrentUser\Root\$($item.Thumbprint)" -ErrorAction SilentlyContinue
   }
 }
