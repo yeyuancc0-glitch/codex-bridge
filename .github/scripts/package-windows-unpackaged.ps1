@@ -93,15 +93,14 @@ $assetBase = "CodexBridge-Windows-$architectureName-$AppVersion"
 $portable = Join-Path $output.FullName "$assetBase-Portable.zip"
 Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $portable -CompressionLevel Optimal
 
-$iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
-if (-not $iscc) {
-  $iscc = @(
-    Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-    Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'
-  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$isccPath = @(
+  Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+  Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $isccPath) {
+  $isccPath = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
 }
-if (-not $iscc) { throw 'Inno Setup Compiler 6.7.1 was not found.' }
-$isccPath = if ($iscc.Source) { $iscc.Source } else { [string]$iscc }
+if (-not $isccPath) { throw 'Inno Setup Compiler 6.7.1 was not found.' }
 $isccVersion = (Get-Item -LiteralPath $isccPath).VersionInfo.ProductVersion
 if (-not $isccVersion.StartsWith('6.7.1', [StringComparison]::Ordinal)) {
   throw "Inno Setup Compiler 6.7.1 is required, found $isccVersion"
