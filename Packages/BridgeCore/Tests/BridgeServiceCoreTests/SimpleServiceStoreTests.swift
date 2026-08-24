@@ -361,7 +361,7 @@ final class SimpleServiceStoreTests: XCTestCase {
     XCTAssertEqual(replacementResult.task.id, replacement.id)
   }
 
-  func testRestartInterruptsTaskThatCrashedBeforeExecutionBeganAndReleasesWriteGate()
+  func testRestartPreservesTaskAwaitingLocalApprovalAndWriteGate()
     async throws
   {
     let fixture = try ServiceCoreFixture()
@@ -381,22 +381,50 @@ final class SimpleServiceStoreTests: XCTestCase {
 
     let recovered = try await store.markIncompleteTasksUnknown(at: recoveryDate)
 
-    XCTAssertEqual(recovered.map(\.state.status), [.interrupted])
+    XCTAssertTrue(recovered.isEmpty)
+    let preserved = try await store.task(id: awaiting.id)
+    XCTAssertEqual(preserved?.state.status, .awaitingLocalApproval)
     let recoveryEvents = try await store.events(taskID: awaiting.id)
-    XCTAssertEqual(
-      recoveryEvents.map(\.kind),
-      [.taskCreated, .taskInterrupted]
-    )
+    XCTAssertEqual(recoveryEvents.map(\.kind), [.taskCreated])
     let replacement = try makeServiceTask(
       id: "tsk-after-awaiting-recovery",
       projectID: project.id,
       date: recoveryDate.addingTimeInterval(1)
     )
-    let created = try await store.createTask(
-      replacement,
-      event: creationEvent(at: replacement.createdAt)
+    do {
+      _ = try await store.createTask(
+        replacement,
+        event: creationEvent(at: replacement.createdAt)
+      )
+      XCTFail("Expected the pending approval to retain the project write slot")
+    } catch {
+      XCTAssertEqual(error as? ServiceStoreError, .activeWriteTaskExists(project.id))
+    }
+  }
+
+  func testRestartInterruptsNonChatGPTTaskThatNeverBegan() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let project = try makeServiceProject(
+      id: "prj-local-awaiting-recovery",
+      rootURL: fixture.firstProjectURL
     )
-    XCTAssertEqual(created.task.id, replacement.id)
+    try await store.insertProject(project)
+    let awaiting = try makeServiceTask(
+      id: "tsk-local-awaiting-before-restart",
+      projectID: project.id,
+      source: .macOSApp
+    )
+    _ = try await store.createTask(awaiting, event: creationEvent(at: awaiting.createdAt))
+
+    let recovered = try await store.markIncompleteTasksUnknown(
+      at: awaiting.updatedAt.addingTimeInterval(10)
+    )
+
+    XCTAssertEqual(recovered.map(\.state.status), [.interrupted])
+    let events = try await store.events(taskID: awaiting.id)
+    XCTAssertEqual(events.map(\.kind), [.taskCreated, .taskInterrupted])
   }
 
   func testProjectPolicyAndSettingsPersistWithoutASecondStore() async throws {

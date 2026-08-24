@@ -31,7 +31,10 @@ extension MCPServiceToolCatalog {
   static let getTask = Tool(
     name: MCPServiceToolName.getTask.rawValue,
     title: "Get task",
-    description: "Read direct task state, recent events, result and Supervisor state.",
+    description:
+      "Read task state, recent events, result and Supervisor state. After submit_task returns "
+      + "awaiting_local_approval, poll this tool until the local user approves or denies the "
+      + "Codex invocation. A denial returns failed with failure_code local_approval_denied.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
@@ -50,7 +53,11 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.submitTask.rawValue,
     title: "Submit task",
     description:
-      "Create and start a Codex task. Risky Codex operations still require local approval. "
+      "Create a Codex task. ChatGPT and Qwen submissions wait for the local user to approve the "
+      + "Codex invocation in Codex Bridge before execution starts. Return immediately with "
+      + "awaiting_local_approval and local_approval_required=true, then use get_task to observe "
+      + "approval, execution, or an explicit local_approval_denied result. Risky Codex operations "
+      + "can still require additional local approval after execution starts. "
       + "Codex is the default execution path. Prefer this tool unless the user explicitly asked "
       + "the MCP client to modify files or run commands directly. Omit project_id to use the "
       + "project currently selected in the Codex Bridge workbench; an explicit project_id overrides "

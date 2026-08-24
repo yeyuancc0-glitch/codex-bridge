@@ -540,6 +540,12 @@ private struct ApprovalCard: View {
       Text(approval.summary)
         .font(.caption)
 
+      if let reason = approval.reason {
+        Text(reason)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+
       if let displayCommand = approval.displayCommand {
         CodeSnippetBlock(
           text: displayCommand,
@@ -575,17 +581,25 @@ private struct ApprovalCard: View {
 
         Spacer()
 
-        Menu {
-          ForEach(allowDecisions, id: \.self) { decision in
-            Button(decisionLabel(decision)) {
-              model.resolveApproval(approval, decision: decision)
-            }
+        if approval.kind == "task_start" {
+          Button("批准并调用 Codex") {
+            model.resolveApproval(approval, decision: "allow")
           }
-        } label: {
-          Label("选择允许范围", systemImage: "chevron.down")
+          .buttonStyle(.borderedProminent)
+          .controlSize(.small)
+        } else {
+          Menu {
+            ForEach(allowDecisions, id: \.self) { decision in
+              Button(decisionLabel(decision)) {
+                model.resolveApproval(approval, decision: decision)
+              }
+            }
+          } label: {
+            Label("选择允许范围", systemImage: "chevron.down")
+          }
+          .menuStyle(.borderlessButton)
+          .fixedSize()
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
       }
     }
     .padding(10)

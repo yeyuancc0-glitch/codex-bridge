@@ -24,7 +24,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertFalse(full.contains("resolve_approval"))
   }
 
-  func testMinimalSubmissionUsesCatalogDefaultsAndAutoStartsCodexExecution() async throws {
+  func testChatGPTSubmissionWaitsForLocalApprovalBeforeStartingCodex() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(
       fixture: fixture,
@@ -50,8 +50,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
 
     XCTAssertEqual(receipt.taskID, "tsk-service-app")
-    XCTAssertEqual(receipt.status, ServiceTaskStatus.running.rawValue)
-    XCTAssertFalse(receipt.localApprovalRequired)
+    XCTAssertEqual(receipt.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
+    XCTAssertTrue(receipt.localApprovalRequired)
     let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
     let task = try XCTUnwrap(storedTask)
     XCTAssertEqual(task.executionModel, "execution-model")
@@ -64,32 +64,162 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertTrue(task.prompt.contains("Acceptance criteria:"))
     XCTAssertTrue(task.prompt.contains("The relevant tests pass."))
     XCTAssertFalse(task.prompt.contains(gptOnlyInstructions))
-    XCTAssertEqual(task.state.codexThreadID, "thread-execution")
-    XCTAssertEqual(task.state.codexTurnID, "turn-execution")
+    XCTAssertNil(task.state.codexThreadID)
+    XCTAssertNil(task.state.codexTurnID)
 
     let snapshot = try await application.serviceTask(
       taskID: receipt.taskID,
       recentEventLimit: 20,
       deadline: deadline
     )
-    XCTAssertEqual(snapshot.status, ServiceTaskStatus.running.rawValue)
+    XCTAssertEqual(snapshot.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
     XCTAssertEqual(snapshot.source, ServiceTaskSource.mcpClient.rawValue)
     XCTAssertEqual(snapshot.sourceClientID, MCPClientID.chatGPT.rawValue)
     XCTAssertEqual(snapshot.executionModel, "execution-model")
     XCTAssertEqual(snapshot.executionEffort, "high")
     XCTAssertEqual(
       snapshot.recentEvents.map(\.kind),
-      [
-        ServiceTaskEventKind.taskCreated.rawValue,
-        ServiceTaskEventKind.executionStarting.rawValue,
-        ServiceTaskEventKind.executionStarted.rawValue,
-      ]
+      [ServiceTaskEventKind.taskCreated.rawValue]
     )
-    XCTAssertFalse(snapshot.localApprovalRequired)
+    XCTAssertTrue(snapshot.localApprovalRequired)
 
-    let status = try await application.serviceStatus(deadline: deadline)
-    XCTAssertEqual(status.executionState, "active")
-    XCTAssertEqual(status.pendingApprovalCount, 0)
+    let pending = try await application.pendingTaskStartApprovals()
+    let approval = try XCTUnwrap(pending.first)
+    XCTAssertEqual(approval.taskID, receipt.taskID)
+    XCTAssertEqual(approval.projectID, fixture.project.id.rawValue)
+    XCTAssertEqual(approval.prompt, task.prompt)
+    let waitingStatus = try await application.serviceStatus(deadline: deadline)
+    XCTAssertEqual(waitingStatus.executionState, "pending")
+    XCTAssertEqual(waitingStatus.pendingApprovalCount, 1)
+
+    try await application.resolveTaskStartApproval(
+      taskID: task.id,
+      approvalID: approval.approvalID,
+      approved: true,
+      deadline: deadline
+    )
+
+    let startedValue = try await fixture.tasks.task(id: task.id)
+    let started = try XCTUnwrap(startedValue)
+    XCTAssertEqual(started.state.status, .running)
+    XCTAssertEqual(started.state.codexThreadID, "thread-execution")
+    XCTAssertEqual(started.state.codexTurnID, "turn-execution")
+    let approvalsAfterStart = try await application.pendingTaskStartApprovals()
+    XCTAssertTrue(approvalsAfterStart.isEmpty)
+    let eventsAfterStart = try await fixture.tasks.events(taskID: task.id, limit: 20)
+    XCTAssertEqual(
+      eventsAfterStart.map(\.kind),
+      [.taskCreated, .taskApproved, .executionStarted]
+    )
+    do {
+      try await application.resolveTaskStartApproval(
+        taskID: task.id,
+        approvalID: approval.approvalID,
+        approved: true,
+        deadline: deadline
+      )
+      XCTFail("Expected an already consumed task approval to expire")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .approvalExpired)
+    }
+    let runningStatus = try await application.serviceStatus(deadline: deadline)
+    XCTAssertEqual(runningStatus.executionState, "active")
+    XCTAssertEqual(runningStatus.pendingApprovalCount, 0)
+  }
+
+  func testDenyingChatGPTTaskStartApprovalDoesNotStartCodex() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Do not start this task."
+      ),
+      deadline: deadline
+    )
+    let approvals = try await application.pendingTaskStartApprovals()
+    let approval = try XCTUnwrap(approvals.first)
+
+    try await application.resolveTaskStartApproval(
+      taskID: TaskID(rawValue: receipt.taskID),
+      approvalID: approval.approvalID,
+      approved: false,
+      deadline: deadline
+    )
+
+    let taskValue = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(taskValue)
+    XCTAssertEqual(task.state.status, .failed)
+    XCTAssertEqual(task.state.failureCode, "local_approval_denied")
+    XCTAssertEqual(task.state.resultSummary, "The local user denied this Codex invocation.")
+    XCTAssertNil(task.state.codexThreadID)
+    XCTAssertNil(task.state.codexTurnID)
+    let approvalsAfterDenial = try await application.pendingTaskStartApprovals()
+    XCTAssertTrue(approvalsAfterDenial.isEmpty)
+    let snapshot = try await application.serviceTask(
+      taskID: receipt.taskID,
+      recentEventLimit: 20,
+      deadline: deadline
+    )
+    XCTAssertEqual(snapshot.status, ServiceTaskStatus.failed.rawValue)
+    XCTAssertEqual(snapshot.failureCode, "local_approval_denied")
+    XCTAssertEqual(snapshot.resultSummary, "The local user denied this Codex invocation.")
+  }
+
+  func testConcurrentTaskStartApprovalIsConsumedOnce() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Start this task exactly once."
+      ),
+      deadline: deadline
+    )
+    let approvals = try await application.pendingTaskStartApprovals()
+    let approval = try XCTUnwrap(approvals.first)
+
+    let outcomes = await withTaskGroup(
+      of: BridgeMCPQueryError?.self,
+      returning: [BridgeMCPQueryError?].self
+    ) { group in
+      for _ in 0..<2 {
+        group.addTask {
+          do {
+            try await application.resolveTaskStartApproval(
+              taskID: TaskID(rawValue: receipt.taskID),
+              approvalID: approval.approvalID,
+              approved: true,
+              deadline: deadline
+            )
+            return nil
+          } catch {
+            return error as? BridgeMCPQueryError
+          }
+        }
+      }
+      var values: [BridgeMCPQueryError?] = []
+      for await value in group {
+        values.append(value)
+      }
+      return values
+    }
+
+    XCTAssertEqual(outcomes.compactMap { $0 }, [.approvalExpired])
+    let taskValue = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(taskValue)
+    XCTAssertEqual(task.state.status, .running)
+    let events = try await fixture.tasks.events(taskID: task.id, limit: 20)
+    XCTAssertEqual(events.filter { $0.kind == .taskApproved }.count, 1)
+    XCTAssertEqual(events.filter { $0.kind == .executionStarted }.count, 1)
   }
 
   func testSubmissionWithoutProjectUsesWorkbenchSelection() async throws {
@@ -154,7 +284,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(stored?.projectID, fixture.project.id)
   }
 
-  func testQwenInvocationPersistsGenericMCPSourceAndStableClientIdentity() async throws {
+  func testQwenInvocationWaitsForLocalApprovalWithStableClientIdentity() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(
       fixture: fixture,
@@ -178,6 +308,30 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let task = try XCTUnwrap(storedTask)
     XCTAssertEqual(task.source, .mcpClient)
     XCTAssertEqual(task.sourceClientID, MCPClientID.qwenStudio.rawValue)
+    XCTAssertEqual(task.state.status, .awaitingLocalApproval)
+    XCTAssertNil(task.state.codexThreadID)
+    XCTAssertNil(task.state.codexTurnID)
+    XCTAssertTrue(receipt.localApprovalRequired)
+    let approvals = try await application.pendingTaskStartApprovals()
+    let approval = try XCTUnwrap(approvals.first)
+    XCTAssertEqual(approval.taskID, task.id.rawValue)
+    XCTAssertEqual(approval.clientID, MCPClientID.qwenStudio.rawValue)
+
+    try await application.resolveTaskStartApproval(
+      taskID: task.id,
+      approvalID: approval.approvalID,
+      approved: false,
+      deadline: deadline
+    )
+    let denied = try await application.serviceTask(
+      taskID: task.id.rawValue,
+      recentEventLimit: 20,
+      deadline: deadline
+    )
+    XCTAssertEqual(denied.status, ServiceTaskStatus.failed.rawValue)
+    XCTAssertEqual(denied.sourceClientID, MCPClientID.qwenStudio.rawValue)
+    XCTAssertEqual(denied.failureCode, "local_approval_denied")
+    XCTAssertEqual(denied.resultSummary, "The local user denied this Codex invocation.")
   }
 
   func testModelPreferencesArePersistedAndUsedForNewTasks() async throws {
@@ -1054,11 +1208,11 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(result.isError, false)
     XCTAssertEqual(
       result.structuredContent?.objectValue?["status"],
-      .string(ServiceTaskStatus.running.rawValue)
+      .string(ServiceTaskStatus.awaitingLocalApproval.rawValue)
     )
     XCTAssertEqual(
       result.structuredContent?.objectValue?["local_approval_required"],
-      .bool(false)
+      .bool(true)
     )
   }
 

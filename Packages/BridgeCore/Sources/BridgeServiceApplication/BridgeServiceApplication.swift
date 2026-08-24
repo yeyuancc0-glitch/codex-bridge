@@ -81,6 +81,10 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     let taskList = try await tasks.tasks(limit: 500)
     let runtime = await runtimeStatus.current()
     let codexApprovals = await coordinator.pendingApprovals().count
+    let taskStartApprovals = taskList.filter {
+      $0.state.status == .awaitingLocalApproval
+        && $0.requiresLocalStartApproval
+    }.count
     return BridgeStatusSnapshot(
       appVersion: appVersion,
       mcpState: runtime.mcpState,
@@ -90,7 +94,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       executionState: Self.executionState(taskList),
       supervisorState: Self.supervisorState(taskList),
       degradations: runtime.degradations,
-      pendingApprovalCount: codexApprovals
+      pendingApprovalCount: codexApprovals + taskStartApprovals
     )
   }
 

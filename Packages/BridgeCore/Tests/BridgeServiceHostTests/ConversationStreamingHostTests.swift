@@ -2,13 +2,75 @@ import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDomain
 import BridgeIPC
+import BridgeMCP
 import BridgeProjects
 import BridgeServiceCore
 import Foundation
 import XCTest
+
 @testable import BridgeServiceHost
 
 final class ConversationStreamingHostTests: XCTestCase {
+  func testXPCListsAndDeniesChatGPTTaskStartApproval() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let projectRoot = fixture.root.appending(path: "Approval Project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let project = try await fixture.composition.projects.register(
+      name: "Approval Project",
+      rootURL: projectRoot
+    )
+    let creation = try await fixture.composition.tasks.submit(
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .mcpClient,
+        sourceClientID: MCPClientID.chatGPT.rawValue,
+        prompt: "Request Codex through ChatGPT.",
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .workspaceWrite
+      )
+    )
+    let controller = BridgeServiceXPCController(composition: fixture.composition)
+    let listRequestID = "list-task-start-approval"
+    let listRequest = try BridgeServiceIPCCodec.request(
+      operation: .listApprovals,
+      payload: IPCApprovalListRequest(),
+      requestID: listRequestID
+    )
+    let listResponse = await performXPC(controller, request: listRequest)
+    let list = try BridgeServiceIPCCodec.decodeResponse(
+      IPCApprovalListResponse.self,
+      data: listResponse,
+      requestID: listRequestID
+    )
+    let approval = try XCTUnwrap(list.approvals.first)
+    XCTAssertEqual(approval.taskID, creation.task.id.rawValue)
+    XCTAssertEqual(approval.kind, "task_start")
+    XCTAssertEqual(approval.decisionOptions, ["allow", "deny"])
+
+    let resolveRequestID = "deny-task-start-approval"
+    let resolveRequest = try BridgeServiceIPCCodec.request(
+      operation: .resolveApproval,
+      payload: IPCApprovalResolutionRequest(
+        taskID: approval.taskID,
+        approvalID: approval.approvalID,
+        decision: "deny"
+      ),
+      requestID: resolveRequestID
+    )
+    let resolveResponse = await performXPC(controller, request: resolveRequest)
+    _ = try BridgeServiceIPCCodec.decodeResponse(
+      IPCMutationResponse.self,
+      data: resolveResponse,
+      requestID: resolveRequestID
+    )
+    let deniedValue = try await fixture.composition.tasks.task(id: creation.task.id)
+    let denied = try XCTUnwrap(deniedValue)
+    XCTAssertEqual(denied.state.status, .failed)
+    XCTAssertEqual(denied.state.failureCode, "local_approval_denied")
+    XCTAssertEqual(denied.state.resultSummary, "The local user denied this Codex invocation.")
+  }
+
   func testConcurrentConversationSubscriptionsReplaceWithoutExhaustingSlots() async throws {
     let fixture = try await makeServiceHostFixture(self)
     let projectRoot = fixture.root.appending(
