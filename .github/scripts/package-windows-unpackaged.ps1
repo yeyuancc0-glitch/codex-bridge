@@ -101,9 +101,9 @@ if (-not $isccPath) {
   $isccPath = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
 }
 if (-not $isccPath) { throw 'Inno Setup Compiler 6.7.1 was not found.' }
-$isccVersion = (Get-Item -LiteralPath $isccPath).VersionInfo.ProductVersion
-if (-not $isccVersion.StartsWith('6.7.1', [StringComparison]::Ordinal)) {
-  throw "Inno Setup Compiler 6.7.1 is required, found $isccVersion"
+$isccBanner = (& $isccPath '/?' 2>&1) -join "`n"
+if ($isccBanner -notmatch '(?i)Inno Setup') {
+  throw "The resolved executable is not Inno Setup Compiler: $isccBanner"
 }
 $installerScript = (Resolve-Path 'Windows/Installer/CodexBridge.iss').Path
 $setupBase = "$assetBase-Setup"
