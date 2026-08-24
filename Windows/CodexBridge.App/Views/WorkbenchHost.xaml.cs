@@ -356,7 +356,7 @@ public sealed partial class WorkbenchHost : UserControl
     {
         var folder = Path.Combine(ApplicationData.Current.LocalCacheFolder.Path, "WebView2");
         if (Directory.Exists(folder) &&
-            (File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0)
+            (File.GetAttributes(folder) & System.IO.FileAttributes.ReparsePoint) != 0)
         {
             throw new IOException("WebView2 数据目录不能是重解析点。");
         }
@@ -391,7 +391,7 @@ public sealed partial class WorkbenchHost : UserControl
     {
         for (var current = new DirectoryInfo(directory); current is not null; current = current.Parent)
         {
-            if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
+            if ((current.Attributes & System.IO.FileAttributes.ReparsePoint) != 0)
             {
                 return true;
             }
