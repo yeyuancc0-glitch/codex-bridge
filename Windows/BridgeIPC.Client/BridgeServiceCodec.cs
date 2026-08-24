@@ -70,6 +70,23 @@ public static class BridgeServiceCodec
         }
     }
 
+    public static T DecodeEvent<T>(JsonElement message)
+    {
+        if (message.ValueKind != JsonValueKind.Object)
+        {
+            throw new BridgeProtocolException("Event payload must be a JSON object.");
+        }
+        try
+        {
+            return JsonSerializer.Deserialize<T>(message, Options)
+                ?? throw new BridgeProtocolException("Event payload is empty.");
+        }
+        catch (JsonException jsonError)
+        {
+            throw new BridgeProtocolException("Event payload JSON is invalid.", jsonError);
+        }
+    }
+
     private static void EnsureSchema(JsonElement message)
     {
         if (!message.TryGetProperty("schema_version", out var schema) ||

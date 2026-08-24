@@ -263,6 +263,23 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private async void ManageProjectClick(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button { DataContext: ProjectSummary project })
+        {
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            Title = $"管理“{project.Name}”",
+            Content = new Views.ProjectWorkspaceView(_connection, project, _lifetime.Token),
+            CloseButtonText = "关闭",
+            XamlRoot = Content.XamlRoot,
+            MaxWidth = 980,
+        };
+        await dialog.ShowAsync();
+    }
+
     private async void StopTaskClick(object sender, RoutedEventArgs args)
     {
         if (sender is not Button { DataContext: TaskSummary task })

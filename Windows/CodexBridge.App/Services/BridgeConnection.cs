@@ -1,5 +1,6 @@
 using CodexBridge.App.Models;
 using CodexBridge.Ipc;
+using System.Text.Json;
 
 namespace CodexBridge.App.Services;
 
@@ -7,6 +8,8 @@ public sealed class BridgeConnection : IAsyncDisposable
 {
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private NamedPipeBridgeClient? _client;
+
+    public event EventHandler<JsonElement>? EventReceived;
 
     public bool IsConnected => _client?.IsConnected == true;
 
@@ -39,6 +42,7 @@ public sealed class BridgeConnection : IAsyncDisposable
     {
         if (_client is not null)
         {
+            _client.EventReceived -= ForwardEvent;
             await _client.DisposeAsync().ConfigureAwait(false);
             _client = null;
         }
@@ -57,6 +61,7 @@ public sealed class BridgeConnection : IAsyncDisposable
             }
             if (_client is not null)
             {
+                _client.EventReceived -= ForwardEvent;
                 await _client.DisposeAsync().ConfigureAwait(false);
             }
 
@@ -71,6 +76,7 @@ public sealed class BridgeConnection : IAsyncDisposable
                 await client.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
+            client.EventReceived += ForwardEvent;
             _client = client;
             return client;
         }
@@ -90,11 +96,17 @@ public sealed class BridgeConnection : IAsyncDisposable
                 return;
             }
             _client = null;
+            failedClient.EventReceived -= ForwardEvent;
             await failedClient.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
             _connectLock.Release();
         }
+    }
+
+    private void ForwardEvent(object? sender, JsonElement message)
+    {
+        EventReceived?.Invoke(this, message);
     }
 }

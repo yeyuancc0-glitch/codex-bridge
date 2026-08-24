@@ -31,6 +31,21 @@ public sealed class GoldenContractTests
     }
 
     [Fact]
+    public void ConversationEventDecodesWithSwiftFieldNames()
+    {
+        var fixture = File.ReadAllBytes(Path.Combine(
+            AppContext.BaseDirectory,
+            "Fixtures",
+            "event-conversation-push.json"));
+        var wire = BridgeWireCodec.Decode(fixture);
+        var push = BridgeServiceCodec.DecodeEvent<BridgeConversationPush>(wire.Message);
+        Assert.Equal("task-fixture-1", push.TaskId);
+        Assert.Equal("hello", push.Delta);
+        Assert.Equal(0, push.BaseContentLength);
+        Assert.False(push.Final);
+    }
+
+    [Fact]
     public void RequestPayloadUsesSwiftDataBase64Contract()
     {
         var request = BridgeServiceCodec.Request(
