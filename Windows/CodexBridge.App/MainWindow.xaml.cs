@@ -163,7 +163,10 @@ public sealed partial class MainWindow : Window
         {
             return await _connection.GetStatusAsync(_lifetime.Token);
         }
-        catch (IOException) when (WindowsServiceLauncher.TryStartOnce())
+        catch (Exception error) when (
+            (error is IOException or TimeoutException ||
+             error is OperationCanceledException && !_lifetime.IsCancellationRequested) &&
+            WindowsServiceLauncher.TryStartOnce())
         {
             await Task.Delay(TimeSpan.FromMilliseconds(500), _lifetime.Token);
             return await _connection.GetStatusAsync(_lifetime.Token);
