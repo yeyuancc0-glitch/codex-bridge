@@ -85,6 +85,16 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       $0.state.status == .awaitingLocalApproval
         && $0.requiresLocalStartApproval
     }.count
+    var degradations = runtime.degradations
+    let activeTasks = taskList.filter { !$0.state.status.isTerminal }
+    for task in activeTasks where task.state.supervisorStatus == .degraded {
+      let summary =
+        task.state.supervisorSummary
+        ?? "Supervisor degraded for active task \(task.id.rawValue)"
+      if !degradations.contains(summary) {
+        degradations.append(summary)
+      }
+    }
     return BridgeStatusSnapshot(
       appVersion: appVersion,
       mcpState: runtime.mcpState,
@@ -93,7 +103,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       loginMode: runtime.loginMode,
       executionState: Self.executionState(taskList),
       supervisorState: Self.supervisorState(taskList),
-      degradations: runtime.degradations,
+      degradations: degradations,
       pendingApprovalCount: codexApprovals + taskStartApprovals
     )
   }

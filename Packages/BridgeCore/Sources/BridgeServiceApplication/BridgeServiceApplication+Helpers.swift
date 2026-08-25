@@ -257,10 +257,11 @@ extension BridgeServiceApplication {
   }
 
   static func supervisorState(_ tasks: [ServiceTaskRecord]) -> String {
-    if tasks.contains(where: { $0.state.supervisorStatus == .degraded }) {
+    let activeTasks = tasks.filter { !$0.state.status.isTerminal }
+    if activeTasks.contains(where: { $0.state.supervisorStatus == .degraded }) {
       return "degraded"
     }
-    if tasks.contains(where: {
+    if activeTasks.contains(where: {
       [.starting, .running].contains($0.state.supervisorStatus)
     }) {
       return "active"

@@ -27,12 +27,15 @@ extension MCPServiceToolDispatcher {
 
   private func callRunSkillAction(_ arguments: [String: Value]?) async throws -> CallTool.Result {
     let request = try parseRunSkillAction(arguments)
-    let deadline = clock.now.advanced(by: deadlines.mutation)
+    let executionDuration = max(
+      deadlines.mutation,
+      .milliseconds(request.yieldTimeMS) + .seconds(5)
+    )
+    let deadline = clock.now.advanced(by: executionDuration)
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceRunSkillAction(request, deadline: deadline)
     }
     return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
-
   }
 
   private func callGetTask(_ arguments: [String: Value]?) async throws -> CallTool.Result {

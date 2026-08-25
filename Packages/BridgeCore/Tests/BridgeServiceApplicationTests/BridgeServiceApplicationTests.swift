@@ -1435,6 +1435,154 @@ final class BridgeServiceApplicationTests: XCTestCase {
     await application.directCommands.cancelAll()
   }
 
+  func testSupervisorStateIgnoresTerminalDegradedTasksAndMatchesDegradations() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+
+    let initialStatus = try await application.serviceStatus(deadline: deadline)
+    XCTAssertEqual(initialStatus.supervisorState, "idle")
+    XCTAssertEqual(initialStatus.degradations, [])
+
+    let completedDate = Date()
+    try await fixture.store.insertTask(
+      ServiceTaskRecord(
+        id: TaskID(rawValue: "tsk-old-degraded"),
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: MCPClientID.chatGPT.rawValue,
+        clientRequestID: "req-1",
+        executionModel: "gpt-5.6",
+        executionEffort: "high",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium",
+        permissionMode: .workspaceWrite,
+        prompt: "Past task",
+        acceptanceCriteria: [],
+        state: try ServiceTaskState(
+          status: .completed,
+          supervisorStatus: .degraded,
+          supervisorSummary: "Old supervisor degraded"
+        ),
+        requiresLocalStartApproval: false,
+        createdAt: completedDate,
+        updatedAt: completedDate
+      )
+    )
+
+    let afterCompletedStatus = try await application.serviceStatus(deadline: deadline)
+    XCTAssertEqual(afterCompletedStatus.supervisorState, "idle")
+    XCTAssertEqual(afterCompletedStatus.degradations, [])
+
+    let activeDate = Date()
+    try await fixture.store.insertTask(
+      ServiceTaskRecord(
+        id: TaskID(rawValue: "tsk-active-degraded"),
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: MCPClientID.chatGPT.rawValue,
+        clientRequestID: "req-2",
+        executionModel: "gpt-5.6",
+        executionEffort: "high",
+        supervisorModel: "gpt-5.6-luna",
+        supervisorEffort: "medium",
+        permissionMode: .workspaceWrite,
+        prompt: "Active task",
+        acceptanceCriteria: [],
+        state: try ServiceTaskState(
+          status: .running,
+          supervisorStatus: .degraded,
+          supervisorSummary: "Active supervisor connection degraded"
+        ),
+        requiresLocalStartApproval: false,
+        createdAt: activeDate,
+        updatedAt: activeDate
+      )
+    )
+
+    let afterActiveStatus = try await application.serviceStatus(deadline: deadline)
+    XCTAssertEqual(afterActiveStatus.supervisorState, "degraded")
+    XCTAssertEqual(
+      afterActiveStatus.degradations,
+      ["Active supervisor connection degraded"]
+    )
+  }
+
+  func testRunSkillActionThroughMCPToolDispatcherCompletesWithoutTimeout() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    _ = try await fixture.projects.updateAccessPolicy(
+      ProjectAccessPolicy(read: .allowed, write: .allowed, network: .allowed),
+      projectID: fixture.project.id
+    )
+    _ = try await fixture.projects.updateWorkspaceConfiguration(
+      directCommandMode: .full,
+      workspaceCommands: [],
+      projectID: fixture.project.id
+    )
+    let skill = fixture.root.appending(path: "skills/fast-skill", directoryHint: .isDirectory)
+    let scripts = skill.appending(path: "scripts", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+    let frontmatter = """
+      ---
+      name: fast-skill
+      description: Fast test skill.
+      actions:
+        - name: greet
+          script: scripts/greet.sh
+          interpreter: sh
+          requires_network: false
+      ---
+      """
+    try Data(frontmatter.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+    let script = """
+      #!/bin/sh
+      echo "skill-fast-result"
+      """
+    let scriptURL = scripts.appendingPathComponent("greet.sh")
+    try Data(script.utf8).write(to: scriptURL)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    try await application.serviceSetDirectApprovalMode(
+      .auto,
+      deadline: ContinuousClock.now.advanced(by: .seconds(30))
+    )
+
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
+    let result = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.runSkillAction.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "skill_name": .string("fast-skill"),
+          "action_name": .string("greet"),
+        ]
+      )
+    )
+    XCTAssertEqual(result.isError, false)
+    let receipt = result.structuredContent?.objectValue?["receipt"]?.objectValue
+    XCTAssertEqual(receipt?["status"], .string("ended"))
+    XCTAssertEqual(receipt?["exit_code"], .int(0))
+    let output = receipt?["output"]?.objectValue
+    XCTAssertTrue(output?["tail"]?.stringValue?.contains("skill-fast-result") == true)
+
+    await application.directCommands.cancelAll()
+  }
+
+  func testDirectProcessLifetimeDefaultEnvironmentIncludesUserHomeAndLocalBin() {
+    let env = DirectProcessLifetime.defaultEnvironment()
+    XCTAssertFalse(env["HOME"]?.isEmpty ?? true)
+    let path = env["PATH"] ?? ""
+    XCTAssertTrue(path.contains(".local/bin"))
+    XCTAssertTrue(path.contains("/usr/bin"))
+  }
+
   private func waitForCommand(
     _ application: BridgeServiceApplication,
     sessionID: String,

@@ -139,6 +139,11 @@ extension BridgeServiceApplication {
       let yieldDeadline = requestedYieldDeadline < deadline ? requestedYieldDeadline : deadline
       while ContinuousClock.now < yieldDeadline {
         try Task.checkCancellation()
+        if let session = await directCommands.snapshot(sessionID: sessionID),
+          session.status != "running"
+        {
+          break
+        }
         try await Task.sleep(for: .milliseconds(20))
       }
       try Self.checkDeadline(deadline)

@@ -83,12 +83,15 @@ extension MCPServiceToolDispatcher {
   private func callDirectExecCommand(_ arguments: [String: Value]?) async throws -> CallTool.Result
   {
     let request = try parseDirectExec(arguments)
-    let deadline = clock.now.advanced(by: deadlines.mutation)
+    let executionDuration = max(
+      deadlines.mutation,
+      .milliseconds(request.yieldTimeMS) + .seconds(5)
+    )
+    let deadline = clock.now.advanced(by: executionDuration)
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceDirectExecCommand(request, deadline: deadline)
     }
     return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
-
   }
 
   private func callDirectGitCommit(_ arguments: [String: Value]?) async throws -> CallTool.Result {
