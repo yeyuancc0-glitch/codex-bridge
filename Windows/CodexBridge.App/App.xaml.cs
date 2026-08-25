@@ -28,6 +28,7 @@ public partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         StartupDiagnostics.Record("app-launched");
+        StartupDiagnostics.Record("startup-probes:\n" + StartupProbes.Run());
         try
         {
             _window = new MainWindow();
