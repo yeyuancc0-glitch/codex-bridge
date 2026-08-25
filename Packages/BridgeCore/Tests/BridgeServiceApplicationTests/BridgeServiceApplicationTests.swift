@@ -1,3 +1,4 @@
+import BridgeDirectCommand
 import BridgeDomain
 import BridgeMCP
 import BridgeProjects
@@ -1448,28 +1449,33 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(initialStatus.degradations, [])
 
     let completedDate = Date()
-    try await fixture.store.insertTask(
-      ServiceTaskRecord(
-        id: TaskID(rawValue: "tsk-old-degraded"),
-        projectID: fixture.project.id,
-        source: .mcpClient,
-        sourceClientID: MCPClientID.chatGPT.rawValue,
-        clientRequestID: "req-1",
-        executionModel: "gpt-5.6",
-        executionEffort: "high",
-        supervisorModel: "gpt-5.6-luna",
-        supervisorEffort: "medium",
-        permissionMode: .workspaceWrite,
-        prompt: "Past task",
-        acceptanceCriteria: [],
-        state: try ServiceTaskState(
-          status: .completed,
-          supervisorStatus: .degraded,
-          supervisorSummary: "Old supervisor degraded"
-        ),
-        requiresLocalStartApproval: false,
-        createdAt: completedDate,
-        updatedAt: completedDate
+    let oldTask = try ServiceTaskRecord(
+      id: TaskID(rawValue: "tsk-old-degraded"),
+      projectID: fixture.project.id,
+      source: .mcpClient,
+      sourceClientID: MCPClientID.chatGPT.rawValue,
+      clientRequestID: "req-1",
+      prompt: "Past task",
+      executionModel: "gpt-5.6",
+      executionEffort: "high",
+      supervisorModel: "gpt-5.6-luna",
+      supervisorEffort: "medium",
+      permissionMode: .workspaceWrite,
+      networkAllowed: true,
+      state: try ServiceTaskState(
+        status: .completed,
+        supervisorStatus: .degraded,
+        supervisorSummary: "Old supervisor degraded"
+      ),
+      createdAt: completedDate,
+      updatedAt: completedDate
+    )
+    _ = try await fixture.store.createTask(
+      oldTask,
+      event: try ServiceTaskEventDraft(
+        kind: .taskCreated,
+        summary: "Created",
+        createdAt: completedDate
       )
     )
 
@@ -1478,28 +1484,33 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(afterCompletedStatus.degradations, [])
 
     let activeDate = Date()
-    try await fixture.store.insertTask(
-      ServiceTaskRecord(
-        id: TaskID(rawValue: "tsk-active-degraded"),
-        projectID: fixture.project.id,
-        source: .mcpClient,
-        sourceClientID: MCPClientID.chatGPT.rawValue,
-        clientRequestID: "req-2",
-        executionModel: "gpt-5.6",
-        executionEffort: "high",
-        supervisorModel: "gpt-5.6-luna",
-        supervisorEffort: "medium",
-        permissionMode: .workspaceWrite,
-        prompt: "Active task",
-        acceptanceCriteria: [],
-        state: try ServiceTaskState(
-          status: .running,
-          supervisorStatus: .degraded,
-          supervisorSummary: "Active supervisor connection degraded"
-        ),
-        requiresLocalStartApproval: false,
-        createdAt: activeDate,
-        updatedAt: activeDate
+    let activeTask = try ServiceTaskRecord(
+      id: TaskID(rawValue: "tsk-active-degraded"),
+      projectID: fixture.project.id,
+      source: .mcpClient,
+      sourceClientID: MCPClientID.chatGPT.rawValue,
+      clientRequestID: "req-2",
+      prompt: "Active task",
+      executionModel: "gpt-5.6",
+      executionEffort: "high",
+      supervisorModel: "gpt-5.6-luna",
+      supervisorEffort: "medium",
+      permissionMode: .workspaceWrite,
+      networkAllowed: true,
+      state: try ServiceTaskState(
+        status: .running,
+        supervisorStatus: .degraded,
+        supervisorSummary: "Active supervisor connection degraded"
+      ),
+      createdAt: activeDate,
+      updatedAt: activeDate
+    )
+    _ = try await fixture.store.createTask(
+      activeTask,
+      event: try ServiceTaskEventDraft(
+        kind: .taskCreated,
+        summary: "Created",
+        createdAt: activeDate
       )
     )
 
