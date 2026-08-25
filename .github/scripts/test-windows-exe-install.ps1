@@ -19,6 +19,7 @@ $appStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stdout.log'
 $appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
 $coreHostTrace = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-corehost.log'
 $cdbLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-cdb.log'
+$cdbCommands = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-cdb-commands.txt'
 $appCrashDump = Join-Path $env:RUNNER_TEMP 'CodexBridge.App.dmp'
 $werDumpDirectory = Join-Path $env:RUNNER_TEMP 'CodexBridge-App-WER'
 $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\CodexBridge.App.exe'
@@ -87,8 +88,11 @@ try {
   ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
   if (-not $debugger) { throw "Windows debugger for $debuggerArchitecture was not found." }
   $appExecutable = Join-Path $installRoot 'CodexBridge.App.exe'
-  $debugCommands = 'sxe -c "!analyze -v; .ecxr; kb; lm; q" 0xc0000409; g'
-  $debugArguments = "-o -G -logo `"$cdbLog`" -c `"$debugCommands`" `"$appExecutable`""
+  [IO.File]::WriteAllLines(
+    $cdbCommands,
+    @('sxe -c "!analyze -v; .ecxr; kb; lm; q" 0xc0000409', 'g'),
+    [Text.UTF8Encoding]::new($false))
+  $debugArguments = "-o -G -logo `"$cdbLog`" -cf `"$cdbCommands`" `"$appExecutable`""
   $dumpMonitor = Start-Process `
     -FilePath $debugger `
     -ArgumentList $debugArguments `

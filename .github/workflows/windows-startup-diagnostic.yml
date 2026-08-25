@@ -1,0 +1,57 @@
+name: Windows x64 Startup Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: CI run containing the x64 installer artifact.
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: Windows/global.json
+
+      - name: Download x64 installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+        run: >-
+          gh run download $env:SOURCE_RUN
+          --repo '${{ github.repository }}'
+          --name CodexBridge-Windows-x64-unpackaged
+          --dir '${{ runner.temp }}/installer'
+
+      - name: Test installed App startup
+        shell: pwsh
+        run: >-
+          .github/scripts/test-windows-exe-install.ps1
+          -InstallerPath (Get-ChildItem '${{ runner.temp }}/installer' -Filter '*-Setup.exe' | Select-Object -First 1).FullName
+
+      - name: Upload App startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-x64-startup-diagnostics
+          path: |
+            ${{ runner.temp }}/CodexBridge-EXE-*.log
+            ${{ runner.temp }}/CodexBridge.App.dmp
+            ${{ runner.temp }}/CodexBridge-App-WER/*.dmp
+          if-no-files-found: ignore
+          retention-days: 3
