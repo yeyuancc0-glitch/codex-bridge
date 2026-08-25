@@ -92,7 +92,7 @@ try {
     $cdbCommands,
     @('sxe -c "!analyze -v; .ecxr; kb; lm; q" 0xc0000409', 'g'),
     [Text.UTF8Encoding]::new($false))
-  $debugArguments = "-o -G -logo `"$cdbLog`" -cf `"$cdbCommands`" `"$appExecutable`""
+  $debugArguments = @('-o', '-G', '-logo', $cdbLog, '-cf', $cdbCommands, $appExecutable)
   $dumpMonitor = Start-Process `
     -FilePath $debugger `
     -ArgumentList $debugArguments `
