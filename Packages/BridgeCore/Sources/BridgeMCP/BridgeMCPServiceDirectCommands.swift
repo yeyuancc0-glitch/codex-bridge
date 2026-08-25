@@ -2,34 +2,46 @@ import Foundation
 
 public struct MCPExecutionEnvironment: Codable, Equatable, Sendable {
   public let bridgeSandbox: String
+  public let scope: String?
   public let sandboxExec: String
   public let nestedSandbox: String
   public let loopback: String
   public let childNetworkPolicy: String?
+  public let xcodebuildNestedSandbox: String?
+  public let loopbackBind: String?
   public let limitations: [String]
 
   public init(
     bridgeSandbox: String,
+    scope: String? = nil,
     sandboxExec: String,
     nestedSandbox: String,
     loopback: String,
     childNetworkPolicy: String? = nil,
+    xcodebuildNestedSandbox: String? = nil,
+    loopbackBind: String? = nil,
     limitations: [String] = []
   ) {
     self.bridgeSandbox = bridgeSandbox
+    self.scope = scope
     self.sandboxExec = sandboxExec
     self.nestedSandbox = nestedSandbox
     self.loopback = loopback
     self.childNetworkPolicy = childNetworkPolicy
+    self.xcodebuildNestedSandbox = xcodebuildNestedSandbox
+    self.loopbackBind = loopbackBind
     self.limitations = limitations
   }
 
   private enum CodingKeys: String, CodingKey {
     case bridgeSandbox = "bridge_sandbox"
+    case scope
     case sandboxExec = "sandbox_exec"
     case nestedSandbox = "nested_sandbox"
     case loopback
     case childNetworkPolicy = "child_network_policy"
+    case xcodebuildNestedSandbox = "xcodebuild_nested_sandbox"
+    case loopbackBind = "loopback_bind"
     case limitations
   }
 }

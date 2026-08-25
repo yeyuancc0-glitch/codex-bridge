@@ -1,3 +1,4 @@
+import BridgeDirectCommand
 import BridgeMCP
 import CryptoKit
 import Foundation
@@ -7,6 +8,24 @@ import XCTest
 @testable import BridgeServiceApplication
 
 final class DirectSecretScanRegressionTests: XCTestCase {
+  func testBridgeStatusReportsDefaultDirectRestrictionsInsteadOfHostProbeOptimism() {
+    let capabilities = DirectExecutionEnvironmentCapabilities(
+      bridgeSandbox: "unknown",
+      sandboxExec: "available",
+      nestedSandbox: "available",
+      loopback: "available"
+    )
+
+    let report = BridgeServiceApplication.mcpEnvironment(capabilities)
+
+    XCTAssertEqual(report.sandboxExec, "available")
+    XCTAssertEqual(report.nestedSandbox, "restricted")
+    XCTAssertEqual(report.xcodebuildNestedSandbox, "unavailable")
+    XCTAssertEqual(report.loopback, "restricted")
+    XCTAssertEqual(report.loopbackBind, "unavailable")
+    XCTAssertEqual(report.childNetworkPolicy, "denied_by_default")
+  }
+
   func testDirectEditCanRemoveExistingCredentialFixtureWithoutReturningIt() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

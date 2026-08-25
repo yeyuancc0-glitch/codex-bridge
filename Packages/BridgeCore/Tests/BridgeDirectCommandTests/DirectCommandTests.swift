@@ -1346,6 +1346,32 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     XCTAssertEqual(reread.executionEnvironment.childNetworkPolicy, "inherited")
   }
 
+  func testExecutionEnvironmentReflectsTheAppliedChildNetworkPolicy() {
+    let capabilities = DirectExecutionEnvironmentCapabilities(
+      bridgeSandbox: "unknown",
+      sandboxExec: "available",
+      nestedSandbox: "available",
+      loopback: "available"
+    )
+
+    let restricted = capabilities.commandEnvironment(denyNetwork: true)
+    XCTAssertEqual(restricted.nestedSandbox, "restricted")
+    XCTAssertEqual(restricted.xcodebuildNestedSandbox, "unavailable")
+    XCTAssertEqual(restricted.loopback, "restricted")
+    XCTAssertEqual(restricted.loopbackBind, "unavailable")
+    XCTAssertEqual(restricted.childNetworkPolicy, "denied")
+    XCTAssertTrue(
+      restricted.limitations.contains("nested_sandbox_restricted_by_child_network_policy"))
+    XCTAssertTrue(restricted.limitations.contains("loopback_bind_unavailable"))
+
+    let inherited = capabilities.commandEnvironment(denyNetwork: false)
+    XCTAssertEqual(inherited.nestedSandbox, "available")
+    XCTAssertEqual(inherited.xcodebuildNestedSandbox, "unknown")
+    XCTAssertEqual(inherited.loopback, "available")
+    XCTAssertEqual(inherited.loopbackBind, "available")
+    XCTAssertEqual(inherited.childNetworkPolicy, "inherited")
+  }
+
   private func waitForFinishedSession(
     _ manager: DirectCommandSessionManager,
     sessionID: String

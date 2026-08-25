@@ -4,10 +4,13 @@ extension MCPServiceToolCatalog {
   static let executionEnvironmentSchema = objectSchema(
     properties: [
       "bridge_sandbox": stringSchema,
+      "scope": stringSchema,
       "sandbox_exec": stringSchema,
       "nested_sandbox": stringSchema,
       "loopback": stringSchema,
       "child_network_policy": stringSchema,
+      "xcodebuild_nested_sandbox": stringSchema,
+      "loopback_bind": stringSchema,
       "limitations": arraySchema(stringSchema),
     ],
     required: ["bridge_sandbox", "sandbox_exec", "nested_sandbox", "loopback", "limitations"]

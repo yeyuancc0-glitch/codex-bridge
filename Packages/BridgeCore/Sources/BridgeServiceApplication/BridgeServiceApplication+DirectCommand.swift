@@ -299,12 +299,17 @@ extension BridgeServiceApplication {
   static func mcpEnvironment(
     _ environment: DirectExecutionEnvironmentCapabilities
   ) -> MCPExecutionEnvironment {
-    MCPExecutionEnvironment(
-      bridgeSandbox: environment.bridgeSandbox,
-      sandboxExec: environment.sandboxExec,
-      nestedSandbox: environment.nestedSandbox,
-      loopback: environment.loopback,
-      limitations: environment.limitations
+    let directDefault = environment.commandEnvironment(denyNetwork: true)
+    return MCPExecutionEnvironment(
+      bridgeSandbox: directDefault.bridgeSandbox,
+      scope: "direct_default",
+      sandboxExec: directDefault.sandboxExec,
+      nestedSandbox: directDefault.nestedSandbox,
+      loopback: directDefault.loopback,
+      childNetworkPolicy: "denied_by_default",
+      xcodebuildNestedSandbox: directDefault.xcodebuildNestedSandbox,
+      loopbackBind: directDefault.loopbackBind,
+      limitations: directDefault.limitations
     )
   }
 
@@ -313,10 +318,13 @@ extension BridgeServiceApplication {
   ) -> MCPExecutionEnvironment {
     MCPExecutionEnvironment(
       bridgeSandbox: environment.bridgeSandbox,
+      scope: "direct_command",
       sandboxExec: environment.sandboxExec,
       nestedSandbox: environment.nestedSandbox,
       loopback: environment.loopback,
       childNetworkPolicy: environment.childNetworkPolicy,
+      xcodebuildNestedSandbox: environment.xcodebuildNestedSandbox,
+      loopbackBind: environment.loopbackBind,
       limitations: environment.limitations
     )
   }

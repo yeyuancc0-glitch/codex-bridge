@@ -23,16 +23,17 @@ public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
   }
 
   public static func current() -> DirectExecutionEnvironmentCapabilities {
-    let sandboxExec = FileManager.default.isExecutableFile(atPath: sandboxExecPath)
-    let nestedSandbox = probeNestedSandbox(sandboxExecAvailable: sandboxExec)
+    let sandboxExec = probeSandboxExec()
+    let nestedSandbox = probeNestedSandbox(sandboxExec: sandboxExec)
     let loopback = probeLoopbackBind() ? "available" : "unsupported"
     var limitations: [String] = []
-    if nestedSandbox == "unsupported" { limitations.append("nested_sandbox") }
+    if sandboxExec != "available" { limitations.append("sandbox_exec") }
+    if nestedSandbox != "available" { limitations.append("nested_sandbox") }
     if loopback == "unsupported" { limitations.append("loopback") }
     return DirectExecutionEnvironmentCapabilities(
       bridgeSandbox: ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil
         ? "unknown" : "detected",
-      sandboxExec: sandboxExec ? "available" : "unavailable",
+      sandboxExec: sandboxExec,
       nestedSandbox: nestedSandbox,
       loopback: loopback,
       limitations: limitations
@@ -40,24 +41,57 @@ public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
   }
 
   public func commandEnvironment(denyNetwork: Bool) -> DirectCommandExecutionEnvironment {
-    DirectCommandExecutionEnvironment(
+    let nested = denyNetwork ? "restricted" : nestedSandbox
+    let reportedLoopback = denyNetwork ? "restricted" : loopback
+    let xcodebuildNestedSandbox: String
+    if denyNetwork || nestedSandbox == "unsupported" {
+      xcodebuildNestedSandbox = "unavailable"
+    } else {
+      xcodebuildNestedSandbox = "unknown"
+    }
+    let loopbackBind =
+      denyNetwork ? "unavailable" : (loopback == "available" ? "available" : "unavailable")
+    var commandLimitations = limitations
+    if denyNetwork {
+      commandLimitations.append(contentsOf: [
+        "nested_sandbox_restricted_by_child_network_policy",
+        "xcodebuild_nested_sandbox_unavailable",
+        "loopback_bind_unavailable",
+      ])
+    }
+    return DirectCommandExecutionEnvironment(
       bridgeSandbox: bridgeSandbox,
       sandboxExec: sandboxExec,
-      nestedSandbox: nestedSandbox,
-      loopback: loopback,
+      nestedSandbox: nested,
+      loopback: reportedLoopback,
       childNetworkPolicy: denyNetwork ? "denied" : "inherited",
-      limitations: limitations
+      xcodebuildNestedSandbox: xcodebuildNestedSandbox,
+      loopbackBind: loopbackBind,
+      limitations: Array(Set(commandLimitations)).sorted()
     )
   }
 
-  private static func probeNestedSandbox(sandboxExecAvailable: Bool) -> String {
-    guard sandboxExecAvailable else { return "unsupported" }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: sandboxExecPath)
-    process.arguments = [
+  private static func probeSandboxExec() -> String {
+    guard FileManager.default.isExecutableFile(atPath: sandboxExecPath) else {
+      return "unavailable"
+    }
+    return runSandboxProbe([
+      "-p", "(version 1)(allow default)", "--", "/usr/bin/true",
+    ])
+  }
+
+  private static func probeNestedSandbox(sandboxExec: String) -> String {
+    guard sandboxExec == "available" else { return "unavailable" }
+    return runSandboxProbe([
       "-p", "(version 1)(allow default)", "--",
       sandboxExecPath, "-p", "(version 1)(allow default)", "--", "/usr/bin/true",
-    ]
+    ])
+  }
+
+  private static func runSandboxProbe(_ arguments: [String]) -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: sandboxExecPath)
+    process.arguments = arguments
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     process.standardInput = FileHandle.nullDevice
@@ -65,7 +99,7 @@ public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
       try process.run()
       process.waitUntilExit()
       return process.terminationReason == .exit && process.terminationStatus == 0
-        ? "available" : "unsupported"
+        ? "available" : "restricted"
     } catch {
       return "unknown"
     }
@@ -96,6 +130,8 @@ public struct DirectCommandExecutionEnvironment: Equatable, Sendable {
   public let nestedSandbox: String
   public let loopback: String
   public let childNetworkPolicy: String
+  public let xcodebuildNestedSandbox: String
+  public let loopbackBind: String
   public let limitations: [String]
 
   public init(
@@ -104,6 +140,8 @@ public struct DirectCommandExecutionEnvironment: Equatable, Sendable {
     nestedSandbox: String,
     loopback: String,
     childNetworkPolicy: String,
+    xcodebuildNestedSandbox: String = "unknown",
+    loopbackBind: String = "unknown",
     limitations: [String] = []
   ) {
     self.bridgeSandbox = bridgeSandbox
@@ -111,6 +149,8 @@ public struct DirectCommandExecutionEnvironment: Equatable, Sendable {
     self.nestedSandbox = nestedSandbox
     self.loopback = loopback
     self.childNetworkPolicy = childNetworkPolicy
+    self.xcodebuildNestedSandbox = xcodebuildNestedSandbox
+    self.loopbackBind = loopbackBind
     self.limitations = limitations
   }
 }
