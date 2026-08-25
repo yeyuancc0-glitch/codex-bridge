@@ -23,6 +23,18 @@ if (Test-Path -LiteralPath $OutputDirectory) {
   throw "Output directory already exists: $OutputDirectory"
 }
 
+$applicationManifestPath = 'Windows/CodexBridge.App/app.manifest'
+[xml]$applicationManifest = Get-Content -LiteralPath $applicationManifestPath -Raw
+$perMonitorV2 = $applicationManifest.SelectNodes(
+  "//*[local-name()='dpiAwareness' and namespace-uri()='http://schemas.microsoft.com/SMI/2016/WindowsSettings' and normalize-space(text())='PerMonitorV2']"
+)
+$invalidLegacyDpi = $applicationManifest.SelectNodes(
+  "//*[local-name()='dpiAware' and namespace-uri()='http://schemas.microsoft.com/SMI/2005/WindowsSettings' and contains(normalize-space(text()), 'PerMonitorV2')]"
+)
+if ($perMonitorV2.Count -ne 1 -or $invalidLegacyDpi.Count -ne 0) {
+  throw 'The app manifest must declare PerMonitorV2 with the 2016 dpiAwareness schema.'
+}
+
 $output = New-Item -ItemType Directory -Path $OutputDirectory
 $completed = $false
 $stagingRoot = Join-Path $env:RUNNER_TEMP "CodexBridge-Unpackaged-$Architecture-$([guid]::NewGuid())"
