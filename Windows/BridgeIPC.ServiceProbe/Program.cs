@@ -3,7 +3,17 @@ using CodexBridge.Ipc;
 
 await using var client = new NamedPipeBridgeClient();
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-await client.ConnectAsync(TimeSpan.FromSeconds(10), deadline.Token);
+try
+{
+    await client.ConnectAsync(TimeSpan.FromSeconds(10), deadline.Token);
+}
+catch (Exception error)
+{
+    Console.WriteLine(
+        $"Probe connect failed for pipe '{CodexBridge.Ipc.NamedPipeBridgeClient.PipeName}': "
+        + $"{error.GetType().FullName}: {error.Message}");
+    throw;
+}
 var response = await client.SendAsync("status", null, deadline.Token);
 var payload = BridgeServiceCodec.DecodePayload<JsonElement>(response);
 

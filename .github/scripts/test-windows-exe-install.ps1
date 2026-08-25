@@ -119,6 +119,12 @@ try {
   if (-not $service) {
     throw 'Installed App did not start the background Service.'
   }
+  Write-Host "Installed service processes:"
+  Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
+    Select-Object Id, Path, StartTime | Format-List
+  $pipeNames = [IO.Directory]::GetFiles('\\.\pipe\') |
+    Where-Object { $_ -like '*codexbridge*' }
+  Write-Host "Bridge pipes present: $($pipeNames -join ', ')"
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
     --configuration Release `
