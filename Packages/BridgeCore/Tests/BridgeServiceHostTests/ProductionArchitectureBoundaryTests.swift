@@ -3,6 +3,7 @@ import XCTest
 
 final class ProductionArchitectureBoundaryTests: XCTestCase {
   private static let productionTargets = [
+    "BridgeAgentCore",
     "BridgeCodexRPC",
     "BridgeCodexService",
     "BridgeDirectCommand",
@@ -12,6 +13,8 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeIPC",
     "BridgeLegacyImport",
     "BridgeMCP",
+    "BridgeOpenCodeACP",
+    "BridgeProcess",
     "BridgeProjects",
     "BridgeSecurity",
     "BridgeServiceApplication",

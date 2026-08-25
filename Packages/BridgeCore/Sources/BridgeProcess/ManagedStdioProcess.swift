@@ -17,6 +17,7 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   private let standardErrorSink: OutputHandler
   private let lock = NSLock()
   private let inputLock = NSLock()
+  private let outputLock = NSLock()
   private var terminationStorage: ManagedProcessTermination?
   private var identityStorage: ManagedProcessIdentity?
   private var inputClosed = false
@@ -84,13 +85,13 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     standardErrorHandle = errorPipe?.fileHandleForReading
     identityStorage = Self.identity(of: processID)
 
-    standardOutputHandle.readabilityHandler = { handle in
-      let data = handle.availableData
-      if !data.isEmpty { onStandardOutput(data) }
+    standardOutputHandle.readabilityHandler = { [weak self] handle in
+      guard let self else { return }
+      consumeAvailableData(handle, sink: standardOutputSink)
     }
-    standardErrorHandle?.readabilityHandler = { handle in
-      let data = handle.availableData
-      if !data.isEmpty { onStandardError(data) }
+    standardErrorHandle?.readabilityHandler = { [weak self] handle in
+      guard let self else { return }
+      consumeAvailableData(handle, sink: standardErrorSink)
     }
   }
 
@@ -175,6 +176,9 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     lock.unlock()
     guard hasTerminated else { return }
 
+    outputLock.lock()
+    defer { outputLock.unlock() }
+    guard !handlesClosed else { return }
     standardOutputHandle.readabilityHandler = nil
     standardErrorHandle?.readabilityHandler = nil
     drain(standardOutputHandle, sink: standardOutputSink)
@@ -182,19 +186,27 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   }
 
   public func close() {
-    lock.lock()
+    outputLock.lock()
     guard !handlesClosed else {
-      lock.unlock()
+      outputLock.unlock()
+      closeStdin()
       return
     }
     handlesClosed = true
-    lock.unlock()
-
     standardOutputHandle.readabilityHandler = nil
     standardErrorHandle?.readabilityHandler = nil
     standardOutputHandle.closeFile()
     standardErrorHandle?.closeFile()
+    outputLock.unlock()
     closeStdin()
+  }
+
+  private func consumeAvailableData(_ handle: FileHandle, sink: OutputHandler) {
+    outputLock.lock()
+    defer { outputLock.unlock() }
+    guard !handlesClosed else { return }
+    let data = handle.availableData
+    if !data.isEmpty { sink(data) }
   }
 
   private func drain(_ handle: FileHandle, sink: OutputHandler) {
@@ -469,4 +481,3 @@ extension ManagedStdioProcess {
   private let systemWaitPID = Glibc.waitpid
   private let systemGetPGID = Glibc.getpgid
 #endif
-
