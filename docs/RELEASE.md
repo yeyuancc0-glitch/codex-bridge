@@ -21,7 +21,7 @@ The output path must not exist. This command archives both architectures, stages
 
 ```bash
 Scripts/build-release-candidate.sh \
-  /absolute/output/CodexBridge-0.2.0-candidate \
+  /absolute/output/CodexBridge-0.2.1-candidate \
   "$helper_root/tunnel" \
   "$helper_sha"
 ```
@@ -48,12 +48,12 @@ The Xcode helper build phase performs steps 1–2 when a real expanded signing i
 Submit only a signed artifact using a release-owned `notarytool` Keychain profile. After success, staple the App or DMG and verify:
 
 ```bash
-xcrun notarytool submit CodexBridge-0.2.0-macos.dmg \
+xcrun notarytool submit CodexBridge-0.2.1-macos.dmg \
   --keychain-profile PROFILE_NAME --wait
-xcrun stapler staple CodexBridge-0.2.0-macos.dmg
-xcrun stapler validate CodexBridge-0.2.0-macos.dmg
+xcrun stapler staple CodexBridge-0.2.1-macos.dmg
+xcrun stapler validate CodexBridge-0.2.1-macos.dmg
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  CodexBridge-0.2.0-macos.dmg
+  CodexBridge-0.2.1-macos.dmg
 ```
 
 Recompute published checksums after stapling. Save notary output, `codesign` verification, `spctl` results, SBOM and checksums with the release record.

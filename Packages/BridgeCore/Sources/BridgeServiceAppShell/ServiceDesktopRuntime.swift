@@ -216,6 +216,13 @@ extension BridgeServiceAppModel {
       }
     }
 
+    if let projectID = selectedProjectID, projectDetails[projectID] == nil,
+      let detail = await optional({ try await client.projectCommands(projectID: projectID) }),
+      selectedProjectID == projectID
+    {
+      projectDetails[projectID] = detail
+    }
+
     var shouldRefreshThreads = includeThreads || threadCatalogRefreshDue()
     if let value = await taskResult {
       shouldRefreshThreads =

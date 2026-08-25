@@ -315,6 +315,12 @@ public struct MCPToolDispatcher: Sendable {
         message: "The command session is unavailable.",
         retryable: false
       )
+    case .commandSessionNotRunning:
+      description = .init(
+        code: "command_session_not_running",
+        message: "The command session exists but is no longer running.",
+        retryable: false
+      )
     case .commandTimeout:
       description = .init(
         code: "command_timeout",

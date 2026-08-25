@@ -4,7 +4,7 @@ umask 077
 
 readonly script_directory="${0:A:h}"
 readonly repository_root="${script_directory:h}"
-readonly product_version="0.2.0"
+readonly product_version="0.2.1"
 readonly artifact_base="CodexBridge-${product_version}-macos"
 
 if (( $# != 3 )); then

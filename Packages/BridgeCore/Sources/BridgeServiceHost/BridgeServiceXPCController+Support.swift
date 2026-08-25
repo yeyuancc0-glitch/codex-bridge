@@ -363,6 +363,11 @@ extension BridgeServiceXPCController {
           code: "command_session_not_found",
           message: "The command session is unavailable."
         )
+      case .commandSessionNotRunning:
+        return .init(
+          code: "command_session_not_running",
+          message: "The command session exists but is no longer running."
+        )
       case .commandTimeout:
         return .init(
           code: "command_timeout",

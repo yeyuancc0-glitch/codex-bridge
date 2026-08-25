@@ -238,7 +238,7 @@ extension MCPServiceToolDispatcher {
       required: ["project_id"]
     )
     let projectID = try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128)
-    let deadline = clock.now.advanced(by: deadlines.read)
+    let deadline = clock.now.advanced(by: deadlines.projectChanges)
     let changes = try await withToolDeadline(until: deadline) {
       try await service.serviceProjectChanges(projectID: projectID, deadline: deadline)
     }

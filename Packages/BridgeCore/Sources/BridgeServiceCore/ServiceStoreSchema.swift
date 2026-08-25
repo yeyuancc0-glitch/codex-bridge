@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 8
+  static let version: Int64 = 9
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -30,9 +30,10 @@ enum ServiceStoreSchema {
   static let migrationV6 = "BridgeServiceCore.v6"
   static let migrationV7 = "BridgeServiceCore.v7"
   static let migrationV8 = "BridgeServiceCore.v8"
+  static let migrationV9 = "BridgeServiceCore.v9"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
-    migrationV8,
+    migrationV8, migrationV9,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -47,20 +48,25 @@ enum ServiceStoreSchema {
     }
   }
 
-  static func createPreVersionEightBackupIfNeeded(
+  static func createPreMigrationBackupIfNeeded(
     _ database: DatabaseQueue,
     sourcePath: String
   ) throws {
     guard sourcePath != ":memory:" else { return }
-    let requiresBackup = try database.read { db -> Bool in
-      guard try db.tableExists("bridge_service_meta") else { return false }
+    let sourceVersion = try database.read { db -> Int64? in
+      guard try db.tableExists("bridge_service_meta") else { return nil }
       return try Int64.fetchOne(
         db,
         sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
-      ) == 7
+      )
     }
-    guard requiresBackup else { return }
-    let backupPath = sourcePath + ".pre-v8"
+    let backupSuffix: String
+    switch sourceVersion {
+    case 7: backupSuffix = ".pre-v8"
+    case 8: backupSuffix = ".pre-v9"
+    default: return
+    }
+    let backupPath = sourcePath + backupSuffix
     if FileManager.default.fileExists(atPath: backupPath) {
       try validatePrivateBackup(at: backupPath)
       return
@@ -116,6 +122,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV8) { db in
       try createVersionEight(in: db)
+    }
+    migrator.registerMigration(migrationV9) { db in
+      try createVersionNine(in: db)
     }
     return migrator
   }
@@ -568,6 +577,53 @@ enum ServiceStoreSchema {
     }
   }
 
+  static func createVersionNine(in db: Database) throws {
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_projects
+          ADD COLUMN root_volume_uuid TEXT
+            CHECK (
+              root_volume_uuid IS NULL OR
+              length(CAST(root_volume_uuid AS BLOB)) BETWEEN 1 AND 256
+            );
+        """
+    )
+
+    let rows = try Row.fetchAll(
+      db,
+      sql: """
+        SELECT project_id, canonical_path, root_inode
+        FROM bridge_service_projects
+        """
+    )
+    for row in rows {
+      let projectID: String = row["project_id"]
+      let canonicalPath: String = row["canonical_path"]
+      guard let storedInode = UInt64(row["root_inode"] as String),
+        let current = try? ServiceRootIdentity(
+          capturing: URL(fileURLWithPath: canonicalPath, isDirectory: true)
+        ),
+        current.canonicalPath == canonicalPath,
+        current.inode == storedInode,
+        let volumeUUID = current.volumeUUID
+      else {
+        continue
+      }
+      try db.execute(
+        sql: """
+          UPDATE bridge_service_projects
+          SET root_device = ?, root_volume_uuid = ?
+          WHERE project_id = ?
+          """,
+        arguments: [String(current.device), volumeUUID, projectID]
+      )
+    }
+
+    try db.execute(
+      sql: "UPDATE bridge_service_meta SET schema_version = 9 WHERE singleton = 1"
+    )
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -726,7 +782,7 @@ enum ServiceStoreSchema {
       let requiredColumns: [String: Set<String>] = [
         "bridge_service_meta": ["singleton", "schema_version"],
         "bridge_service_projects": [
-          "project_id", "name", "canonical_path", "root_device", "root_inode",
+          "project_id", "name", "canonical_path", "root_device", "root_inode", "root_volume_uuid",
           "read_permission", "write_permission", "network_permission", "created_at", "updated_at",
           "direct_command_mode", "workspace_commands_json",
           "direct_blacklist_json",

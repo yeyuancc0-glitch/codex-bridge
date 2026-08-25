@@ -56,8 +56,14 @@ public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
   public let canonicalPath: String
   public let device: UInt64
   public let inode: UInt64
+  public let volumeUUID: String?
 
-  public init(canonicalPath: String, device: UInt64, inode: UInt64) throws {
+  public init(
+    canonicalPath: String,
+    device: UInt64,
+    inode: UInt64,
+    volumeUUID: String? = nil
+  ) throws {
     guard canonicalPath.hasPrefix("/"),
       canonicalPath.utf8.count <= 16_384,
       !canonicalPath.contains("\0"),
@@ -68,6 +74,16 @@ public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
     self.canonicalPath = canonicalPath
     self.device = device
     self.inode = inode
+    if let volumeUUID {
+      guard !volumeUUID.isEmpty,
+        volumeUUID.utf8.count <= 256,
+        !volumeUUID.contains("\0"),
+        volumeUUID.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw ServiceStoreError.invalidArgument("project.rootVolumeUUID")
+      }
+    }
+    self.volumeUUID = volumeUUID
   }
 
   public init(capturing url: URL) throws {
@@ -75,7 +91,8 @@ public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
     try self.init(
       canonicalPath: root.canonicalPath,
       device: root.identity.device,
-      inode: root.identity.inode
+      inode: root.identity.inode,
+      volumeUUID: try? Self.volumeUUID(atPath: root.canonicalPath)
     )
   }
 
@@ -83,8 +100,26 @@ public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
     let current = try ServiceRootIdentity(
       capturing: URL(fileURLWithPath: canonicalPath, isDirectory: true)
     )
-    guard current == self else {
+    let matchesStableIdentity: Bool
+    if let volumeUUID {
+      matchesStableIdentity =
+        current.canonicalPath == canonicalPath
+        && current.inode == inode
+        && current.volumeUUID == volumeUUID
+    } else {
+      matchesStableIdentity =
+        current.canonicalPath == canonicalPath
+        && current.device == device
+        && current.inode == inode
+    }
+    guard matchesStableIdentity else {
       throw ServiceStoreError.invalidArgument("project.rootIdentity")
     }
+  }
+
+  private static func volumeUUID(atPath path: String) throws -> String? {
+    try URL(fileURLWithPath: path, isDirectory: true)
+      .resourceValues(forKeys: [.volumeUUIDStringKey])
+      .volumeUUIDString
   }
 }

@@ -8,7 +8,7 @@ struct ProjectWorkspaceEditor: View {
   @State private var drafts: [BridgeWorkspaceCommandDraft]
   @State private var blacklistDrafts: [BridgeBlacklistDraft]
   @State private var showSavedFeedback = false
-  @State private var modeChanged = false
+  @State private var loadedState: ProjectWorkspaceDraftState?
 
   init(model: BridgeServiceAppModel, project: MCPProjectSummary) {
     self.model = model
@@ -20,6 +20,9 @@ struct ProjectWorkspaceEditor: View {
     )
     _blacklistDrafts = State(
       initialValue: detail?.directWorkspace?.commandBlacklist.map(BridgeBlacklistDraft.init) ?? []
+    )
+    _loadedState = State(
+      initialValue: detail?.directWorkspace.map(ProjectWorkspaceDraftState.init)
     )
   }
 
@@ -102,7 +105,6 @@ struct ProjectWorkspaceEditor: View {
           if modeChanged {
             Button("保存命令模式") {
               model.setProjectCommandMode(projectID: project.projectID, mode: draftMode)
-              modeChanged = false
               withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                 showSavedFeedback = true
               }
@@ -119,7 +121,6 @@ struct ProjectWorkspaceEditor: View {
           Button {
             if modeChanged {
               model.setProjectCommandMode(projectID: project.projectID, mode: draftMode)
-              modeChanged = false
             }
             model.saveProjectCommands(
               projectID: project.projectID,
@@ -152,9 +153,6 @@ struct ProjectWorkspaceEditor: View {
       }
       .onChange(of: model.projectDetails[project.projectID]) {
         loadDetail()
-      }
-      .onChange(of: draftMode) {
-        modeChanged = true
       }
     }
   }
@@ -246,32 +244,31 @@ struct ProjectWorkspaceEditor: View {
   }
 
   private func loadDetail() {
-    guard let detail = model.projectDetails[project.projectID] else { return }
-    if !modeChanged {
-      draftMode = detail.directWorkspace?.commandMode ?? "safe"
-    }
-    if !hasCommandChanges {
-      let existing = detail.directWorkspace?.commands ?? []
-      drafts = existing.map(BridgeWorkspaceCommandDraft.init)
-      let existingBlacklist = detail.directWorkspace?.commandBlacklist ?? []
-      blacklistDrafts = existingBlacklist.map(BridgeBlacklistDraft.init)
-    }
+    guard let workspace = model.projectDetails[project.projectID]?.directWorkspace else { return }
+    let incoming = ProjectWorkspaceDraftState(workspace: workspace)
+    let current = draftState
+    guard loadedState == nil || current == loadedState || current == incoming else { return }
+    draftMode = workspace.commandMode
+    drafts = workspace.commands.map(BridgeWorkspaceCommandDraft.init)
+    blacklistDrafts = workspace.commandBlacklist.map(BridgeBlacklistDraft.init)
+    loadedState = incoming
   }
 
   private var hasCommandChanges: Bool {
-    guard let detail = model.projectDetails[project.projectID] else { return true }
-    let existing = detail.directWorkspace?.commands ?? []
-    guard existing.count == drafts.count else { return true }
-    return zip(existing, drafts).contains { command, draft in
-      command.name != draft.name
-        || command.executable != draft.executable
-        || command.arguments
-          != draft.arguments.split(separator: "\n")
-          .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        || command.workingDirectory
-          != (draft.workingDirectory.isEmpty ? nil : draft.workingDirectory)
-        || command.requiresNetwork != draft.requiresNetwork
-        || command.risk != draft.risk
-    }
+    guard let loadedState else { return false }
+    return draftState != loadedState
+  }
+
+  private var modeChanged: Bool {
+    guard let loadedState else { return false }
+    return draftMode != loadedState.commandMode
+  }
+
+  private var draftState: ProjectWorkspaceDraftState {
+    ProjectWorkspaceDraftState(
+      commandMode: draftMode,
+      commands: drafts,
+      commandBlacklist: blacklistDrafts
+    )
   }
 }

@@ -332,9 +332,11 @@ private struct CustomInstructionsEditor: View {
           .accessibilityLabel("全局自定义指令")
 
         HStack {
-          Text("ChatGPT 网页版和 Qwen 会在调用 Codex Bridge 插件前收到这段指令；不会传给 Codex。安全策略与本机审批始终优先。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          Text(
+            "ChatGPT 网页版和 Qwen 会在调用 Codex Bridge 插件前收到这段指令；不会传给 Codex。保存后 Qwen 重新连接即可应用；ChatGPT 还需在插件详情中刷新，并在新对话中重新添加插件。安全策略与本机审批始终优先。"
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
           Spacer()
           Text("\(draft.utf8.count) / \(maximumBytes) 字节")
             .font(.caption.monospacedDigit())

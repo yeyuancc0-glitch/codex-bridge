@@ -95,7 +95,7 @@ public struct MCPRunSkillActionRequest: Codable, Equatable, Sendable {
     actionName: String,
     arguments: [String] = [],
     projectID: String,
-    yieldTimeMS: Int = 1_000,
+    yieldTimeMS: Int = 15_000,
     timeoutMS: Int = 300_000,
     clientRequestID: String? = nil
   ) {
