@@ -130,7 +130,41 @@ try {
     --configuration Release `
     --no-build
   $probeExit = $LASTEXITCODE
-  if ($probeExit -ne 0) { throw "Installed Service probe failed with exit code $probeExit" }
+  if ($probeExit -ne 0) {
+    # Temporary contrast diagnostic: relaunch the same installed service binary
+    # directly with --foreground to learn whether the pipe delay is specific to
+    # the App-launched chain or the default data-root environment.
+    $existing = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue
+    if ($existing) {
+      Stop-Process -Id $existing.Id -Force
+      $existing.WaitForExit()
+    }
+    $diagRoot = Join-Path $env:LOCALAPPDATA 'CodexBridge\Service'
+    $diagStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-service-manual.stdout.log'
+    $diagStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-service-manual.stderr.log'
+    $manual = Start-Process `
+      -FilePath (Join-Path $installRoot 'codex-bridge-service.exe') `
+      -ArgumentList '--foreground', '--data-root', $diagRoot `
+      -WorkingDirectory $installRoot `
+      -RedirectStandardOutput $diagStdout `
+      -RedirectStandardError $diagStderr `
+      -PassThru
+    Start-Sleep -Seconds 12
+    Write-Host "Manual relaunch alive=$(-not $manual.HasExited) exit=$($manual.ExitCode)"
+    foreach ($log in @($diagStdout, $diagStderr)) {
+      if (Test-Path -LiteralPath $log) {
+        Write-Host "--- $(Split-Path $log -Leaf) ---"
+        Get-Content -LiteralPath $log
+      }
+    }
+    $pipesAfter = [IO.Directory]::GetFiles('\\.\pipe\') |
+      Where-Object { $_ -like '*codexbridge*' }
+    Write-Host "Bridge pipes after manual relaunch: $($pipesAfter -join ', ')"
+    if (-not $manual.HasExited) {
+      Stop-Process -Id $manual.Id -Force
+    }
+    throw "Installed Service probe failed with exit code $probeExit"
+  }
 
   $dataRoot = Join-Path $env:LOCALAPPDATA 'CodexBridge\Service'
   if (-not (Test-Path -LiteralPath $dataRoot)) { throw 'Service data root was not created.' }
