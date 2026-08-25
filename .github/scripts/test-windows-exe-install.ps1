@@ -17,17 +17,24 @@ $upgradeLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-upgrade.log'
 $uninstallLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-uninstall.log'
 $appStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stdout.log'
 $appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
-$coreHostTrace = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-corehost.log'
-$cdbLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-cdb.log'
-$cdbCommands = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-cdb-commands.txt'
-$appCrashDump = Join-Path $env:RUNNER_TEMP 'CodexBridge.App.dmp'
-$werDumpDirectory = Join-Path $env:RUNNER_TEMP 'CodexBridge-App-WER'
-$werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\CodexBridge.App.exe'
 $appStartupLog = Join-Path $env:LOCALAPPDATA 'CodexBridge\Logs\app-startup.log'
 $service = $null
 $app = $null
-$dumpMonitor = $null
-$werKeyCreated = $false
+
+function Get-BridgePipeNames {
+  [IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -like '*codexbridge*' }
+}
+
+function Wait-BridgePipe {
+  param([int]$Seconds)
+  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $names = @(Get-BridgePipeNames)
+    if ($names.Count -gt 0) { return $names }
+    Start-Sleep -Milliseconds 250
+  }
+  return @(Get-BridgePipeNames)
+}
 
 try {
   $install = Start-Process `
@@ -63,108 +70,45 @@ try {
   dotnet build Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj --configuration Release
   if ($LASTEXITCODE -ne 0) { throw "Service probe build failed with exit code $LASTEXITCODE" }
 
-  $env:COREHOST_TRACE = '1'
-  $env:COREHOST_TRACEFILE = $coreHostTrace
-  $env:DOTNET_DbgEnableMiniDump = '1'
-  $env:DOTNET_DbgMiniDumpType = '4'
-  $env:DOTNET_DbgMiniDumpName = $appCrashDump
-  try {
-    if (-not (Test-Path -LiteralPath $werKey)) {
-      New-Item -ItemType Directory -Path $werDumpDirectory -Force | Out-Null
-      New-Item -Path $werKey -Force | Out-Null
-      $werKeyCreated = $true
-      New-ItemProperty -Path $werKey -Name DumpFolder -PropertyType ExpandString -Value $werDumpDirectory -Force | Out-Null
-      New-ItemProperty -Path $werKey -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
-      New-ItemProperty -Path $werKey -Name DumpCount -PropertyType DWord -Value 2 -Force | Out-Null
-    }
-  }
-  catch {
-    Write-Warning "Unable to enable WER LocalDumps: $($_.Exception.Message)"
-  }
-
-  $debuggerArchitecture = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
-  $debugger = @(
-    "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe",
-    "$env:ProgramFiles\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe"
-  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-  if (-not $debugger) { throw "Windows debugger for $debuggerArchitecture was not found." }
-  $appExecutable = Join-Path $installRoot 'CodexBridge.App.exe'
-  [IO.File]::WriteAllLines(
-    $cdbCommands,
-    @('g', '!analyze -v', '.ecxr', 'kb', 'lm', 'q'),
-    [Text.UTF8Encoding]::new($false))
-  $debugArguments = @('-o', '-G', '-logo', $cdbLog, '-cf', $cdbCommands, $appExecutable)
-  $dumpMonitor = Start-Process `
-    -FilePath $debugger `
-    -ArgumentList $debugArguments `
+  $app = Start-Process `
+    -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
     -WorkingDirectory $installRoot `
+    -RedirectStandardOutput $appStdout `
+    -RedirectStandardError $appStderr `
     -PassThru
   $launchDeadline = [DateTime]::UtcNow.AddSeconds(10)
   do {
     Start-Sleep -Milliseconds 100
-    $app = Get-Process -Name 'CodexBridge.App' -ErrorAction SilentlyContinue | Select-Object -First 1
-  } while (-not $app -and -not $dumpMonitor.HasExited -and [DateTime]::UtcNow -lt $launchDeadline)
-  if (-not $app) {
-    throw "Windows debugger did not start CodexBridge.App (exit code $($dumpMonitor.ExitCode))."
-  }
-  $deadline = [DateTime]::UtcNow.AddSeconds(30)
-  do {
-    Start-Sleep -Milliseconds 100
-    if ($app -and $app.HasExited) { throw "Installed App exited with code $($app.ExitCode)" }
-    if (-not $service) {
-      $service = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
-        Select-Object -First 1
+    if ($app.HasExited) { throw "Installed App exited with code $($app.ExitCode)" }
+  } while (-not $app.HasExited -and [DateTime]::UtcNow -lt $launchDeadline -and -not (Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue))
+  if ($app.HasExited) { throw "Installed App exited with code $($app.ExitCode)" }
+
+  $serviceDeadline = [DateTime]::UtcNow.AddSeconds(30)
+  while (-not $service -and [DateTime]::UtcNow -lt $serviceDeadline) {
+    $service = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if (-not $service -and $app.HasExited) {
+      throw "Installed App exited with code $($app.ExitCode)"
     }
-  } while (-not $service -and [DateTime]::UtcNow -lt $deadline)
+    if (-not $service) { Start-Sleep -Milliseconds 200 }
+  }
   if (-not $service) {
     throw 'Installed App did not start the background Service.'
   }
-  Write-Host "Installed service processes:"
-  Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue |
-    Select-Object Id, Path, StartTime | Format-List
-  $pipeNames = [IO.Directory]::GetFiles('\\.\pipe\') |
-    Where-Object { $_ -like '*codexbridge*' }
+  Write-Host "Installed service process: Id=$($service.Id) Path=$($service.Path)"
+
+  $pipeNames = @(Wait-BridgePipe -Seconds 20)
+  if ($pipeNames.Count -eq 0) {
+    throw 'The background Service did not create a Bridge Named Pipe within 20 seconds.'
+  }
   Write-Host "Bridge pipes present: $($pipeNames -join ', ')"
+
   dotnet run `
     --project Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj `
     --configuration Release `
     --no-build
   $probeExit = $LASTEXITCODE
-  if ($probeExit -ne 0) {
-    # Temporary contrast diagnostic: relaunch the same installed service binary
-    # directly with --foreground to learn whether the pipe delay is specific to
-    # the App-launched chain or the default data-root environment.
-    $existing = Get-Process -Name 'codex-bridge-service' -ErrorAction SilentlyContinue
-    if ($existing) {
-      Stop-Process -Id $existing.Id -Force
-      $existing.WaitForExit()
-    }
-    $diagRoot = Join-Path $env:LOCALAPPDATA 'CodexBridge\Service'
-    $diagStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-service-manual.stdout.log'
-    $diagStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-service-manual.stderr.log'
-    $manual = Start-Process `
-      -FilePath (Join-Path $installRoot 'codex-bridge-service.exe') `
-      -ArgumentList '--foreground', '--data-root', $diagRoot `
-      -WorkingDirectory $installRoot `
-      -RedirectStandardOutput $diagStdout `
-      -RedirectStandardError $diagStderr `
-      -PassThru
-    Start-Sleep -Seconds 12
-    Write-Host "Manual relaunch alive=$(-not $manual.HasExited) exit=$($manual.ExitCode)"
-    foreach ($log in @($diagStdout, $diagStderr)) {
-      if (Test-Path -LiteralPath $log) {
-        Write-Host "--- $(Split-Path $log -Leaf) ---"
-        Get-Content -LiteralPath $log
-      }
-    }
-    $pipesAfter = [IO.Directory]::GetFiles('\\.\pipe\') |
-      Where-Object { $_ -like '*codexbridge*' }
-    Write-Host "Bridge pipes after manual relaunch: $($pipesAfter -join ', ')"
-    if (-not $manual.HasExited) {
-      Stop-Process -Id $manual.Id -Force
-    }
-    throw "Installed Service probe failed with exit code $probeExit"
-  }
+  if ($probeExit -ne 0) { throw "Installed Service probe failed with exit code $probeExit" }
 
   $dataRoot = Join-Path $env:LOCALAPPDATA 'CodexBridge\Service'
   if (-not (Test-Path -LiteralPath $dataRoot)) { throw 'Service data root was not created.' }
@@ -220,16 +164,6 @@ try {
   if ($app -and -not $app.HasExited) {
     Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
   }
-  if ($dumpMonitor -and -not $dumpMonitor.HasExited) {
-    Stop-Process -Id $dumpMonitor.Id -Force -ErrorAction SilentlyContinue
-  }
-  if ($werKeyCreated) {
-    $dumpDeadline = [DateTime]::UtcNow.AddSeconds(10)
-    while (-not (Get-ChildItem -LiteralPath $werDumpDirectory -Filter '*.dmp' -ErrorAction SilentlyContinue) -and
-      [DateTime]::UtcNow -lt $dumpDeadline) {
-      Start-Sleep -Milliseconds 200
-    }
-  }
   $cleanupUninstaller = Join-Path $installRoot 'unins000.exe'
   if (Test-Path -LiteralPath $cleanupUninstaller) {
     Start-Process `
@@ -238,58 +172,17 @@ try {
       -Wait `
       -ErrorAction SilentlyContinue | Out-Null
   }
-  foreach ($name in @(
-    'COREHOST_TRACE',
-    'COREHOST_TRACEFILE',
-    'DOTNET_DbgEnableMiniDump',
-    'DOTNET_DbgMiniDumpType',
-    'DOTNET_DbgMiniDumpName'
-  )) {
-    Remove-Item "Env:$name" -ErrorAction SilentlyContinue
-  }
   foreach ($log in @(
     $installLog,
     $upgradeLog,
     $uninstallLog,
     $appStdout,
-    $appStderr,
-    $coreHostTrace,
-    $cdbLog
+    $appStderr
   )) {
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
-  }
-  $crashDumps = @(
-    Get-Item -LiteralPath $appCrashDump -ErrorAction SilentlyContinue
-    Get-ChildItem -LiteralPath $werDumpDirectory -Filter '*.dmp' -ErrorAction SilentlyContinue
-  )
-  if ($crashDumps.Count -gt 0) {
-    $debuggerArchitecture = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
-    $debugger = @(
-      "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe",
-      "$env:ProgramFiles\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe"
-    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    foreach ($dump in $crashDumps) {
-      Write-Host "Codex Bridge App crash dump: $($dump.FullName)"
-      if ($debugger) {
-        & $debugger -z $dump.FullName -c '.symfix; .reload; !analyze -v; .ecxr; kb; q'
-      }
-    }
-  }
-  if ($werKeyCreated) {
-    Remove-Item -LiteralPath $werKey -Recurse -Force -ErrorAction SilentlyContinue
   }
   if (Test-Path -LiteralPath $appStartupLog) {
     Write-Host 'Codex Bridge App startup diagnostics:'
     Get-Content -LiteralPath $appStartupLog
   }
-  Get-WinEvent -FilterHashtable @{
-    LogName = 'Application'
-    StartTime = [DateTime]::Now.AddMinutes(-10)
-  } -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.ProviderName -in @('Application Error', '.NET Runtime', 'Windows Error Reporting') -and
-      $_.Message -like '*CodexBridge.App*'
-    } |
-    Select-Object -First 10 |
-    Format-List TimeCreated, ProviderName, Id, LevelDisplayName, Message
 }
