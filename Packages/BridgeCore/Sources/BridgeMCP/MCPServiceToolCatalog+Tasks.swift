@@ -98,6 +98,8 @@ extension MCPServiceToolCatalog {
         "permission_mode": [
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
+          "description":
+            "Selects the native Codex sandbox. Build and test tasks that generate artifacts or caches should request workspace-write even when source edits are not intended.",
         ],
         "network_access": boolSchema,
         "acceptance_criteria": [

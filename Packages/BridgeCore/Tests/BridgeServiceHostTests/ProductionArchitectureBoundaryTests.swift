@@ -84,6 +84,44 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     }
   }
 
+  func testCodexExecutionTargetsDoNotImportDirectExecutionModules() throws {
+    let sourcesRoot = Self.packageRoot.appending(path: "Sources", directoryHint: .isDirectory)
+    let forbidden: Set<String> = ["BridgeDirectCommand", "BridgeProcess"]
+    for target in ["BridgeCodexRPC", "BridgeCodexService"] {
+      let targetRoot = sourcesRoot.appending(path: target, directoryHint: .isDirectory)
+      for sourceFile in try Self.swiftFiles(in: targetRoot) {
+        let imports = try Self.internalImports(in: sourceFile)
+        XCTAssertTrue(
+          imports.isDisjoint(with: forbidden),
+          "\(target) imports a Direct execution module in \(sourceFile.lastPathComponent)"
+        )
+      }
+    }
+  }
+
+  func testCodexAppServerUsesFoundationProcessWithoutBridgeSandboxWrapper() throws {
+    let sourceFile = Self.packageRoot.appending(
+      path: "Sources/BridgeCodexRPC/AppServerProcess.swift",
+      directoryHint: .notDirectory
+    )
+    let source = try String(contentsOf: sourceFile, encoding: .utf8)
+    XCTAssertTrue(source.contains("let process = Process()"))
+    XCTAssertTrue(source.contains("try state.process.run()"))
+
+    let forbidden = [
+      "BridgeDirectCommand",
+      "DirectCommandRunner",
+      "ManagedStdioProcess",
+      "sandbox-exec",
+    ]
+    for token in forbidden {
+      XCTAssertFalse(
+        source.contains(token),
+        "Codex app-server launch must not use the Bridge Direct execution path: \(token)"
+      )
+    }
+  }
+
   private static var packageRoot: URL {
     URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
