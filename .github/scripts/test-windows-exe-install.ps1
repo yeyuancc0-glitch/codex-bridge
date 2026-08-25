@@ -18,6 +18,7 @@ $uninstallLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-uninstall.log'
 $appStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stdout.log'
 $appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
 $coreHostTrace = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-corehost.log'
+$cdbLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-cdb.log'
 $appCrashDump = Join-Path $env:RUNNER_TEMP 'CodexBridge.App.dmp'
 $werDumpDirectory = Join-Path $env:RUNNER_TEMP 'CodexBridge-App-WER'
 $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\CodexBridge.App.exe'
@@ -79,21 +80,18 @@ try {
     Write-Warning "Unable to enable WER LocalDumps: $($_.Exception.Message)"
   }
 
-  $procDumpRoot = Join-Path $env:RUNNER_TEMP 'CodexBridge-ProcDump'
-  $procDumpArchive = Join-Path $procDumpRoot 'Procdump.zip'
-  New-Item -ItemType Directory -Path $procDumpRoot -Force | Out-Null
-  Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/Procdump.zip' -OutFile $procDumpArchive
-  $procDumpDigest = (Get-FileHash -LiteralPath $procDumpArchive -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($procDumpDigest -cne '68e057587b0fd654efa095f76d80d633c0e5c60ea26fd3e7c0011c076bb2d00c') {
-    throw "ProcDump archive digest mismatch: $procDumpDigest"
-  }
-  Expand-Archive -LiteralPath $procDumpArchive -DestinationPath $procDumpRoot
-  $procDumpName = if ($env:RUNNER_ARCH -eq 'ARM64') { 'procdump64a.exe' } else { 'procdump64.exe' }
-  $procDump = Join-Path $procDumpRoot $procDumpName
-  New-Item -ItemType Directory -Path $werDumpDirectory -Force | Out-Null
+  $debuggerArchitecture = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
+  $debugger = @(
+    "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe",
+    "$env:ProgramFiles\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe"
+  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  if (-not $debugger) { throw "Windows debugger for $debuggerArchitecture was not found." }
+  $appExecutable = Join-Path $installRoot 'CodexBridge.App.exe'
+  $debugCommands = 'sxe -c "!analyze -v; .ecxr; kb; lm; q" 0xc0000409; g'
+  $debugArguments = "-o -G -logo `"$cdbLog`" -c `"$debugCommands`" `"$appExecutable`""
   $dumpMonitor = Start-Process `
-    -FilePath $procDump `
-    -ArgumentList '-accepteula', '-ma', '-e', '-t', '-x', $werDumpDirectory, (Join-Path $installRoot 'CodexBridge.App.exe') `
+    -FilePath $debugger `
+    -ArgumentList $debugArguments `
     -WorkingDirectory $installRoot `
     -PassThru
   $launchDeadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -102,7 +100,7 @@ try {
     $app = Get-Process -Name 'CodexBridge.App' -ErrorAction SilentlyContinue | Select-Object -First 1
   } while (-not $app -and -not $dumpMonitor.HasExited -and [DateTime]::UtcNow -lt $launchDeadline)
   if (-not $app) {
-    throw "ProcDump did not start CodexBridge.App (exit code $($dumpMonitor.ExitCode))."
+    throw "Windows debugger did not start CodexBridge.App (exit code $($dumpMonitor.ExitCode))."
   }
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
   do {
@@ -210,7 +208,8 @@ try {
     $uninstallLog,
     $appStdout,
     $appStderr,
-    $coreHostTrace
+    $coreHostTrace,
+    $cdbLog
   )) {
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
   }
