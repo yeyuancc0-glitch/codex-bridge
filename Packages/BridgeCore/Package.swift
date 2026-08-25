@@ -260,6 +260,7 @@ let package = Package(
     .target(
       name: "BridgeServiceApplication",
       dependencies: [
+        "BridgeAgentCore",
         "BridgeCodexRPC",
         "BridgeCodexService",
         "BridgeDirectCommand",
@@ -298,6 +299,7 @@ let package = Package(
         "BridgeLegacyImport",
         "BridgeIPC",
         "BridgeMCP",
+        "BridgeOpenCodeACP",
         "BridgeProjects",
         "BridgeSecurity",
         "BridgeServiceApplication",
@@ -544,6 +546,7 @@ let package = Package(
     .testTarget(
       name: "BridgeServiceApplicationTests",
       dependencies: [
+        "BridgeAgentCore",
         "BridgeCodexRPC",
         "BridgeCodexService",
         "BridgeDirectCommand",

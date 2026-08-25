@@ -85,7 +85,8 @@ func makeServiceApplicationFixture(_ testCase: XCTestCase) async throws
 
 func makeServiceApplication(
   fixture: ServiceApplicationFixture,
-  catalogScript: String
+  catalogScript: String,
+  agentRegistry: ServiceAgentRegistry? = nil
 ) -> BridgeServiceApplication {
   BridgeServiceApplication(
     appVersion: "0.2.0",
@@ -103,7 +104,8 @@ func makeServiceApplication(
         requestTimeoutNanoseconds: 2_000_000_000
       )
     ),
-    runtimeStatus: fixture.runtimeStatus
+    runtimeStatus: fixture.runtimeStatus,
+    agentRegistry: agentRegistry
   )
 }
 

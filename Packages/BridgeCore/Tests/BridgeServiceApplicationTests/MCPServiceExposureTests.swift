@@ -56,7 +56,8 @@ final class MCPServiceExposureTests: XCTestCase {
   func testReadOnlyModeExposesCommandsAndObservationOnly() {
     let catalog = MCPServiceToolCatalog(exposureMode: .readOnly)
     let names = catalog.definitions.map(\.name)
-    XCTAssertEqual(names.count, 13)
+    XCTAssertEqual(names.count, 14)
+    XCTAssertTrue(names.contains("list_agents"))
     XCTAssertTrue(names.contains("list_project_commands"))
     XCTAssertTrue(names.contains("get_project_changes"))
     for name in directToolNames {
@@ -70,7 +71,7 @@ final class MCPServiceExposureTests: XCTestCase {
   func testFullModeExposesDirectAndCodexActions() {
     let catalog = MCPServiceToolCatalog(exposureMode: .full)
     let names = catalog.definitions.map(\.name)
-    XCTAssertEqual(names.count, 26)
+    XCTAssertEqual(names.count, 27)
     for name in directToolNames {
       XCTAssertTrue(names.contains(name), "full must expose \(name)")
     }
@@ -84,6 +85,7 @@ final class MCPServiceExposureTests: XCTestCase {
     let expectedReadOnly = [
       "bridge_status",
       "list_projects",
+      "list_agents",
       "get_project",
       "search_project_files",
       "read_project_file",
@@ -146,6 +148,16 @@ final class MCPServiceExposureTests: XCTestCase {
 
     let status = try outputProperties("bridge_status", in: definitions)
     XCTAssertNotNil(status["execution_environment"])
+
+    let agents = try outputProperties("list_agents", in: definitions)
+    let agent = try XCTUnwrap(
+      agents["agents"]?.objectValue?["items"]?.objectValue?["properties"]?.objectValue
+    )
+    XCTAssertNotNil(agent["effective_capabilities"])
+    XCTAssertNotNil(agent["task_submission_enabled"])
+    XCTAssertNotNil(agent["workspace_enforcement"])
+    XCTAssertNil(agent["executable_path"])
+    XCTAssertNil(agent["executable_sha256"])
 
     let stdin = try outputProperties("direct_write_stdin", in: definitions)
     XCTAssertEqual(

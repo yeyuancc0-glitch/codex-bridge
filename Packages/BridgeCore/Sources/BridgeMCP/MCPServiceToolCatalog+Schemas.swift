@@ -25,6 +25,37 @@ extension MCPServiceToolCatalog {
     required: ["project_id", "name", "capabilities"]
   )
 
+  static let agentSummarySchema = objectSchema(
+    properties: [
+      "provider_id": stringSchema,
+      "installation_id": stringSchema,
+      "display_name": stringSchema,
+      "availability": [
+        "type": "string", "enum": ["available", "unavailable", "needs_review"],
+      ],
+      "enabled": boolSchema,
+      "task_submission_enabled": boolSchema,
+      "version": stringSchema,
+      "protocol_revision": stringSchema,
+      "adapter_revision": integerSchema(minimum: 1),
+      "effective_capabilities": arraySchema(stringSchema),
+      "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
+      "security_profile_id": stringSchema,
+      "workspace_enforcement": stringSchema,
+      "approval_enforcement": stringSchema,
+      "network_enforcement": stringSchema,
+      "models_summary": arraySchema(stringSchema),
+      "unavailable_reason": stringSchema,
+      "last_verified_at": stringSchema,
+    ],
+    required: [
+      "provider_id", "installation_id", "display_name", "availability", "enabled",
+      "task_submission_enabled", "adapter_revision", "effective_capabilities",
+      "trust_profile", "workspace_enforcement", "approval_enforcement",
+      "network_enforcement", "models_summary",
+    ]
+  )
+
   static let projectDetailSchema = objectSchema(
     properties: [
       "project_id": stringSchema,

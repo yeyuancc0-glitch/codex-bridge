@@ -162,6 +162,21 @@ public struct ListProjectsOutput: Codable, Equatable, Sendable {
   }
 }
 
+public struct ListAgentsOutput: Codable, Equatable, Sendable {
+  public let schemaVersion: Int
+  public let agents: [MCPAgentSummary]
+
+  public init(list: MCPAgentList) {
+    schemaVersion = 1
+    agents = list.agents
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion = "schema_version"
+    case agents
+  }
+}
+
 public struct ListThreadsOutput: Codable, Equatable, Sendable {
   public let schemaVersion: Int
   public let threads: [MCPThreadSummary]

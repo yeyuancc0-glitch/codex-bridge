@@ -3,6 +3,7 @@ import MCP
 public enum MCPServiceToolName: String, CaseIterable, Sendable {
   case bridgeStatus = "bridge_status"
   case listProjects = "list_projects"
+  case listAgents = "list_agents"
   case getProject = "get_project"
   case searchProjectFiles = "search_project_files"
   case readProjectFile = "read_project_file"
@@ -69,6 +70,7 @@ public struct MCPServiceToolCatalog: Sendable {
   private static let contracts: [MCPServiceToolContract] = [
     contract(.bridgeStatus, bridgeStatus, exposure: .readOnly, route: .readOnly),
     contract(.listProjects, listProjects, exposure: .readOnly, route: .readOnly),
+    contract(.listAgents, listAgents, exposure: .readOnly, route: .readOnly),
     contract(.getProject, getProject, exposure: .readOnly, route: .readOnly),
     contract(.searchProjectFiles, searchProjectFiles, exposure: .readOnly, route: .readOnly),
     contract(.readProjectFile, readProjectFile, exposure: .readOnly, route: .readOnly),
