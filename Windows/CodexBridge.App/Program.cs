@@ -2,11 +2,15 @@
 using CodexBridge.App.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using System.Runtime.InteropServices;
 
 namespace CodexBridge.App;
 
 public static class Program
 {
+    [DllImport("Microsoft.WindowsAppRuntime.dll", ExactSpelling = true)]
+    private static extern int WindowsAppRuntime_EnsureIsLoaded();
+
     [STAThread]
     public static int Main(string[] args)
     {
@@ -24,6 +28,7 @@ public static class Program
 
         try
         {
+            InitializeSelfContainedRuntime();
             WinRT.ComWrappersSupport.InitializeComWrappers();
             StartupDiagnostics.Record("com-wrappers-initialized");
             Application.Start(_initialization =>
@@ -51,6 +56,19 @@ public static class Program
             StartupDiagnostics.Record("main-failed", error);
             return 1;
         }
+    }
+
+    private static void InitializeSelfContainedRuntime()
+    {
+        Environment.SetEnvironmentVariable(
+            "MICROSOFT_WINDOWSAPPRUNTIME_BASE_DIRECTORY",
+            AppContext.BaseDirectory);
+        Environment.SetEnvironmentVariable(
+            "MICROSOFT_WINDOWSAPPRUNTIME_BASE_DIRECTORY_PID",
+            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        StartupDiagnostics.Record("windows-app-runtime-loading");
+        Marshal.ThrowExceptionForHR(WindowsAppRuntime_EnsureIsLoaded());
+        StartupDiagnostics.Record("windows-app-runtime-loaded");
     }
 }
 #endif
