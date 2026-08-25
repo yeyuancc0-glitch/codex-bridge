@@ -1,6 +1,12 @@
 name: Windows x64 Startup Diagnostic
 
 on:
+  push:
+    branches:
+      - feature/windows-port
+    paths:
+      - '.github/scripts/test-windows-exe-install.ps1'
+      - '.github/workflows/windows-startup-diagnostic.yml'
   workflow_dispatch:
     inputs:
       source_run:
@@ -31,7 +37,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN: ${{ inputs.source_run }}
+          SOURCE_RUN: ${{ inputs.source_run || '32846439603' }}
         run: >-
           gh run download $env:SOURCE_RUN
           --repo '${{ github.repository }}'
