@@ -1,4 +1,3 @@
-using System.Text;
 using global::Microsoft.Windows.ApplicationModel.Resources;
 
 namespace CodexBridge.App.Services;
@@ -6,81 +5,81 @@ namespace CodexBridge.App.Services;
 /// <summary>Temporary startup probes for the XamlParseException investigation; removed once resolved.</summary>
 internal static class StartupProbes
 {
-    public static string Run()
+    public static void Run(Action<string> record)
     {
-        var report = new StringBuilder();
-        ProbePriFiles(report);
-        ProbePriMap(report);
-        ProbeCustomControls(report);
-        ProbeThemeResources(report);
-        ProbeNavigationSymbols(report);
-        return report.ToString();
+        ProbePriFiles(record);
+        ProbePriMap(record);
+        ProbeThemeResources(record);
+        ProbeCustomControls(record);
     }
 
-    private static void ProbePriFiles(StringBuilder report)
+    private static void ProbePriFiles(Action<string> record)
     {
         foreach (var name in new[] { "resources.pri", "CodexBridge.App.pri" })
         {
             var path = Path.Combine(AppContext.BaseDirectory, name);
             var length = File.Exists(path) ? new FileInfo(path).Length : -1;
-            report.AppendLine($"pri-file {name} exists={File.Exists(path)} bytes={length}");
+            record($"pri-file {name} exists={File.Exists(path)} bytes={length}");
+        }
+        foreach (var pri in Directory.GetFiles(AppContext.BaseDirectory, "*.pri"))
+        {
+            record($"pri-file {Path.GetFileName(pri)} bytes={new FileInfo(pri).Length}");
         }
     }
 
-    private static void ProbePriMap(StringBuilder report)
+    private static void ProbePriMap(Action<string> record)
     {
+        ResourceMap map;
         try
         {
-            var map = new ResourceManager().MainResourceMap;
-            foreach (var key in new[]
-            {
-                "Files/App.xbf",
-                "Files/MainWindow.xbf",
-                "Files/Views/WorkbenchHost.xbf",
-                "Files/WorkbenchHost.xbf",
-                "Files/Views/ProjectWorkspaceView.xbf",
-                "Files/ProjectWorkspaceView.xbf",
-                "Files/Views/WorkbenchHost.xaml",
-                "Files/WorkbenchHost.xaml",
-            })
-            {
-                try
-                {
-                    var candidate = map.GetValue(key);
-                    report.AppendLine($"pri-probe {key} => {(candidate is null ? "missing" : $"kind={candidate.Kind}")}");
-                }
-                catch (Exception error)
-                {
-                    report.AppendLine($"pri-probe {key} => threw {error.GetType().Name}: {error.Message}");
-                }
-            }
+            map = new ResourceManager().MainResourceMap;
         }
         catch (Exception error)
         {
-            report.AppendLine($"pri-map-unavailable: {error.GetType().FullName}: {error.Message}");
+            record($"pri-map-unavailable: {error.GetType().FullName}: {error.Message}");
+            return;
+        }
+
+        foreach (var key in new[]
+        {
+            "Files/App.xbf",
+            "Files/MainWindow.xbf",
+            "Files/Views/WorkbenchHost.xbf",
+            "Files/WorkbenchHost.xbf",
+            "Files/Views/ProjectWorkspaceView.xbf",
+            "Files/ProjectWorkspaceView.xbf",
+            "Files/Microsoft.UI.Xaml/Themes/generic.xaml",
+            "Microsoft.UI.Xaml/Themes/generic.xaml",
+        })
+        {
+            try
+            {
+                var candidate = map.GetValue(key);
+                record($"pri-probe {key} => {(candidate is null ? "missing" : Describe(candidate))}");
+            }
+            catch (Exception error)
+            {
+                record($"pri-probe {key} => threw {error.GetType().Name}: {error.Message}");
+            }
         }
     }
 
-    private static void ProbeCustomControls(StringBuilder report)
+    private static string Describe(ResourceCandidate candidate)
     {
-        TryAppend(report, "workbench-host-ctor", () =>
+        var description = $"kind={candidate.Kind}";
+        try
         {
-            _ = new Views.WorkbenchHost();
-            return "ok";
-        });
-        TryAppend(report, "project-workspace-view-ctor", () =>
+            var value = candidate.ValueAsString();
+            description += $" value={value}";
+        }
+        catch
         {
-            var project = new Models.ProjectSummary(
-                "probe",
-                "probe",
-                new Models.ProjectCapabilities("denied", "denied", "denied"),
-                null);
-            _ = new Views.ProjectWorkspaceView(null!, project, default);
-            return "ok";
-        });
+            description += " value=<non-string>";
+        }
+        return description;
     }
 
-    private static void ProbeThemeResources(StringBuilder report)
+    private static void ProbeThemeResources(Action<string> record)
     {
         foreach (var key in new[]
         {
@@ -88,15 +87,12 @@ internal static class StartupProbes
             "SystemFillColorCautionBrush",
             "BodyStrongTextBlockStyle",
             "TitleTextBlockStyle",
-            "SubtitleTextBlockStyle",
-            "CaptionTextBlockStyle",
-            "ApplicationPageBackgroundThemeBrush",
         })
         {
             var xaml =
                 "<TextBlock xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' "
                 + $"Style='{{ThemeResource {key}}}' />";
-            TryAppend(report, $"theme-resource {key}", () =>
+            TryAppend(record, $"theme-resource {key}", () =>
             {
                 _ = global::Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);
                 return "ok";
@@ -104,31 +100,24 @@ internal static class StartupProbes
         }
     }
 
-    private static void ProbeNavigationSymbols(StringBuilder report)
+    private static void ProbeCustomControls(Action<string> record)
     {
-        foreach (var symbol in new[] { "Home", "AllApps", "Folder", "Important", "World", "Globe" })
+        TryAppend(record, "workbench-host-ctor", () =>
         {
-            var xaml =
-                "<NavigationViewItem xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' "
-                + $"Icon='{symbol}' />";
-            TryAppend(report, $"symbol {symbol}", () =>
-            {
-                _ = global::Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);
-                return "ok";
-            });
-        }
+            _ = new Views.WorkbenchHost();
+            return "ok";
+        });
     }
 
-    private static void TryAppend(StringBuilder report, string label, Func<string> action)
+    private static void TryAppend(Action<string> record, string label, Func<string> action)
     {
         try
         {
-            report.AppendLine($"{label} => {action()}");
+            record($"{label} => {action()}");
         }
         catch (Exception error)
         {
-            report.AppendLine(
-                $"{label} => threw {error.GetType().FullName} 0x{error.HResult:x8}: {error.Message}");
+            record($"{label} => threw {error.GetType().FullName} 0x{error.HResult:x8}: {error.Message}");
         }
     }
 }
