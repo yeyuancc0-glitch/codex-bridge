@@ -12,8 +12,6 @@
     <SelfContained Condition="'$(BuildSelfContained)' == 'true'">true</SelfContained>
     <WindowsAppSDKSelfContained Condition="'$(BuildSelfContained)' == 'true'">true</WindowsAppSDKSelfContained>
     <WindowsAppSdkBootstrapInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkBootstrapInitialize>
-    <WindowsAppSdkUndockedRegFreeWinRTInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
-    <WindowsAppSdkAutoInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkAutoInitialize>
     <DefineConstants Condition="'$(BuildSelfContained)' == 'true'">$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
