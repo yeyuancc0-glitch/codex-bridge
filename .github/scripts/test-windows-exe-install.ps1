@@ -24,6 +24,7 @@ $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\C
 $appStartupLog = Join-Path $env:LOCALAPPDATA 'CodexBridge\Logs\app-startup.log'
 $service = $null
 $app = $null
+$dumpMonitor = $null
 $werKeyCreated = $false
 
 try {
@@ -68,21 +69,41 @@ try {
     if (-not (Test-Path -LiteralPath $werKey)) {
       New-Item -ItemType Directory -Path $werDumpDirectory -Force | Out-Null
       New-Item -Path $werKey -Force | Out-Null
+      $werKeyCreated = $true
       New-ItemProperty -Path $werKey -Name DumpFolder -PropertyType ExpandString -Value $werDumpDirectory -Force | Out-Null
       New-ItemProperty -Path $werKey -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
       New-ItemProperty -Path $werKey -Name DumpCount -PropertyType DWord -Value 2 -Force | Out-Null
-      $werKeyCreated = $true
     }
   }
   catch {
     Write-Warning "Unable to enable WER LocalDumps: $($_.Exception.Message)"
   }
-  $app = Start-Process `
-    -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
+
+  $procDumpRoot = Join-Path $env:RUNNER_TEMP 'CodexBridge-ProcDump'
+  $procDumpArchive = Join-Path $procDumpRoot 'Procdump.zip'
+  New-Item -ItemType Directory -Path $procDumpRoot -Force | Out-Null
+  Invoke-WebRequest -Uri 'https://download.sysinternals.com/files/Procdump.zip' -OutFile $procDumpArchive
+  $procDumpDigest = (Get-FileHash -LiteralPath $procDumpArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($procDumpDigest -cne '68e057587b0fd654efa095f76d80d633c0e5c60ea26fd3e7c0011c076bb2d00c') {
+    throw "ProcDump archive digest mismatch: $procDumpDigest"
+  }
+  Expand-Archive -LiteralPath $procDumpArchive -DestinationPath $procDumpRoot
+  $procDumpName = if ($env:RUNNER_ARCH -eq 'ARM64') { 'procdump64a.exe' } else { 'procdump64.exe' }
+  $procDump = Join-Path $procDumpRoot $procDumpName
+  New-Item -ItemType Directory -Path $werDumpDirectory -Force | Out-Null
+  $dumpMonitor = Start-Process `
+    -FilePath $procDump `
+    -ArgumentList '-accepteula', '-ma', '-e', '-t', '-x', $werDumpDirectory, (Join-Path $installRoot 'CodexBridge.App.exe') `
     -WorkingDirectory $installRoot `
-    -RedirectStandardOutput $appStdout `
-    -RedirectStandardError $appStderr `
     -PassThru
+  $launchDeadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    Start-Sleep -Milliseconds 100
+    $app = Get-Process -Name 'CodexBridge.App' -ErrorAction SilentlyContinue | Select-Object -First 1
+  } while (-not $app -and -not $dumpMonitor.HasExited -and [DateTime]::UtcNow -lt $launchDeadline)
+  if (-not $app) {
+    throw "ProcDump did not start CodexBridge.App (exit code $($dumpMonitor.ExitCode))."
+  }
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
   do {
     Start-Sleep -Milliseconds 100
@@ -155,6 +176,9 @@ try {
   }
   if ($app -and -not $app.HasExited) {
     Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+  }
+  if ($dumpMonitor -and -not $dumpMonitor.HasExited) {
+    Stop-Process -Id $dumpMonitor.Id -Force -ErrorAction SilentlyContinue
   }
   if ($werKeyCreated) {
     $dumpDeadline = [DateTime]::UtcNow.AddSeconds(10)
