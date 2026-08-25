@@ -3,6 +3,14 @@ import MCP
 import XCTest
 
 final class MCPServiceExposureTests: XCTestCase {
+  func testProjectChangesUsesASeparateBoundedReadDeadline() {
+    let deadlines = MCPServiceToolDeadlines.production
+
+    XCTAssertEqual(deadlines.read, .seconds(15))
+    XCTAssertEqual(deadlines.projectChanges, .seconds(20))
+    XCTAssertGreaterThan(deadlines.projectChanges, deadlines.read)
+  }
+
   func testServerInstructionsExposeGlobalInstructionsToChatGPTAndQwenBeforeToolUse() throws {
     let custom = String(repeating: "先说明操作再调用。", count: 20)
     XCTAssertGreaterThanOrEqual(custom.utf8.count, 440)

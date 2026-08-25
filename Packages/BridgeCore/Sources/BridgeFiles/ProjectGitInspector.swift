@@ -11,20 +11,21 @@ public struct ProjectGitInspector: Sendable {
     let workingDirectory = try OpenedWorkingDirectory(
       canonicalURL: URL(fileURLWithPath: root.canonicalPath, isDirectory: true))
 
-    let status = try await runGit(
+    async let statusTask = runGit(
       workingDirectory: workingDirectory,
       arguments: ["status", "--porcelain=v1", "-z"]
     )
-    let notGitRepository = isGitRepositoryFailure(status)
-    let changedFiles = parseStatus(status)
-    let diff = try await runGit(
+    async let diffTask = runGit(
       workingDirectory: workingDirectory,
       arguments: ["diff", "--no-ext-diff", "--no-color"]
     )
-    let cached = try await runGit(
+    async let cachedTask = runGit(
       workingDirectory: workingDirectory,
       arguments: ["diff", "--cached", "--no-ext-diff", "--no-color"]
     )
+    let (status, diff, cached) = try await (statusTask, diffTask, cachedTask)
+    let notGitRepository = isGitRepositoryFailure(status)
+    let changedFiles = parseStatus(status)
     let combined = combine(diff.standardOutput, cached.standardOutput)
     let stats = diffStatistics(combined)
     let output = boundedOutput(combined)
