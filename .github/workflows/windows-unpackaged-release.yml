@@ -55,7 +55,7 @@ jobs:
           - arch: ARM64
             runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 70
+    timeout-minutes: 110
     steps:
       - name: Check out release tag
         uses: actions/checkout@v7
