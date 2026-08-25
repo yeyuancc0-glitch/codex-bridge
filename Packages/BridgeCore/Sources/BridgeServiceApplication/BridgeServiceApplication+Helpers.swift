@@ -395,8 +395,12 @@ extension BridgeServiceApplication {
           relativePath: relativePath,
           currentSHA256: currentSHA256,
           changedSinceRevision: true,
-          removedLines: boundedDiff.removedLines,
-          addedLines: boundedDiff.addedLines,
+          removedLines: boundedDiff.removedLines.map {
+            safe($0, maximum: 64 * 1_024)
+          },
+          addedLines: boundedDiff.addedLines.map {
+            safe($0, maximum: 64 * 1_024)
+          },
           truncated: boundedDiff.truncated,
           byteCount: boundedDiff.byteCount
         )

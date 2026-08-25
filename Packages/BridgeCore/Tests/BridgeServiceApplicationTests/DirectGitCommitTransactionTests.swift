@@ -98,6 +98,55 @@ final class DirectGitCommitTransactionTests: XCTestCase {
     XCTAssertEqual(receipt.exitCode, 0)
   }
 
+  func testExistingCredentialFixtureDoesNotBlockSafeStagedChange() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try initializeRepository(at: fixture.root)
+    let file = fixture.root.appending(path: "CredentialFixture.swift")
+    try Data((#"const api_key = "definitely-secret";"# + "\n").utf8).write(to: file)
+    _ = try runGit(["add", "--", file.lastPathComponent], at: fixture.root)
+    _ = try runGit(["commit", "-m", "test: baseline fixture"], at: fixture.root)
+    try Data((#"const api_key = "definitely-secret";"# + "\nlet safeValue = 1\n").utf8)
+      .write(to: file)
+
+    let receipt = try await BridgeServiceApplication.runGitCommit(
+      project: fixture.project,
+      message: "test: add safe line beside fixture",
+      files: [file.lastPathComponent],
+      runner: DirectGitRunner()
+    )
+
+    XCTAssertEqual(receipt.exitCode, 0)
+    XCTAssertEqual(receipt.changedFiles, [file.lastPathComponent])
+    XCTAssertTrue(
+      try runGit(["show", "HEAD:\(file.lastPathComponent)"], at: fixture.root).contains(
+        "let safeValue = 1"))
+  }
+
+  func testNewCredentialInStagedAdditionIsRejected() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try initializeRepository(at: fixture.root)
+    let file = fixture.root.appending(path: "Source.swift")
+    try Data("let safeValue = 1\n".utf8).write(to: file)
+    _ = try runGit(["add", "--", file.lastPathComponent], at: fixture.root)
+    _ = try runGit(["commit", "-m", "test: safe baseline"], at: fixture.root)
+    try Data(("let safeValue = 1\n" + #"const api_key = "new-secret-value";"# + "\n").utf8)
+      .write(to: file)
+    let originalHead = try runGit(["rev-parse", "HEAD"], at: fixture.root)
+
+    do {
+      _ = try await BridgeServiceApplication.runGitCommit(
+        project: fixture.project,
+        message: "test: reject new credential",
+        files: [file.lastPathComponent],
+        runner: DirectGitRunner()
+      )
+      XCTFail("Expected newly introduced credential material to be rejected")
+    } catch let error as BridgeMCPQueryError {
+      XCTAssertEqual(error, .unsafeContentDetected)
+    }
+    XCTAssertEqual(try runGit(["rev-parse", "HEAD"], at: fixture.root), originalHead)
+  }
+
   private func initializeRepository(at root: URL) throws {
     _ = try runGit(["init"], at: root)
     _ = try runGit(["config", "user.email", "bridge@example.com"], at: root)

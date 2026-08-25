@@ -81,6 +81,21 @@ final class PathSecurityTests: XCTestCase {
     XCTAssertFalse(OutboundContentSecurity.isSafeSecrets(patch))
   }
 
+  func testSecretCheckDistinguishesLiteralCredentialsFromRuntimeExpressions() {
+    XCTAssertFalse(OutboundContentSecurity.isSafeSecrets(#"api_key = "credential-value""#))
+    XCTAssertFalse(OutboundContentSecurity.isSafeSecrets("password = bare-secret-value"))
+    XCTAssertTrue(
+      OutboundContentSecurity.isSafeSecrets(
+        #"let secret = String(repeating: "S", count: 43)"#
+      )
+    )
+    XCTAssertTrue(
+      OutboundContentSecurity.isSafeSecrets(
+        #"const api_key = ["fixture", "value"].join("-");"#
+      )
+    )
+  }
+
   func testOutboundContentRedactsWholeAbsolutePathContainingSpaces() {
     for input in [
       "Open /Users/My Team/private.txt, then continue.",

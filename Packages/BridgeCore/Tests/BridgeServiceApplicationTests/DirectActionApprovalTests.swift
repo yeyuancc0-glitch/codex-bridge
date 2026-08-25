@@ -1261,7 +1261,7 @@ final class DirectApprovalFlowTests: XCTestCase {
       )
       XCTFail("Expected sensitive content rejection")
     } catch let error as BridgeMCPQueryError {
-      XCTAssertEqual(error, .contractRejected)
+      XCTAssertEqual(error, .unsafeContentDetected)
     }
 
     do {

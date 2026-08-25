@@ -126,9 +126,7 @@ extension MCPServiceToolDispatcher {
     )
     let oldText = try values.requiredText("old_text", maximumUTF8Bytes: 256 * 1_024)
     let newText = try values.requiredText("new_text", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafeSecrets(oldText),
-      OutboundContentSecurity.isSafeSecrets(newText)
-    else {
+    guard OutboundContentSecurity.isSafeSecrets(newText) else {
       throw BridgeMCPQueryError.unsafeContentDetected
     }
     let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
@@ -157,7 +155,7 @@ extension MCPServiceToolDispatcher {
       required: ["project_id", "patch"]
     )
     let patch = try values.requiredText("patch", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafeSecrets(patch) else {
+    guard isSafePatchSecretChange(patch) else {
       throw MCPError.invalidParams("Patch text contains restricted local data.")
     }
     return MCPDirectPatchRequest(
@@ -165,6 +163,24 @@ extension MCPServiceToolDispatcher {
       patch: patch,
       clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
     )
+  }
+
+  private func isSafePatchSecretChange(_ patch: String) -> Bool {
+    guard let operations = try? ProjectPatchParser.parse(patch) else {
+      return OutboundContentSecurity.isSafeSecrets(patch)
+    }
+    return operations.allSatisfy { operation in
+      operation.hunks.allSatisfy { hunk in
+        var existing = Dictionary(hunk.removals.map { ($0, 1) }, uniquingKeysWith: +)
+        return hunk.additions.allSatisfy { line in
+          if let count = existing[line], count > 0 {
+            existing[line] = count - 1
+            return true
+          }
+          return OutboundContentSecurity.isSafeSecrets(line)
+        }
+      }
+    }
   }
 
   func parseDirectExec(_ arguments: [String: Value]?) throws -> MCPDirectExecRequest {

@@ -78,6 +78,13 @@ extension BridgeServiceApplication {
         exitCode: 0
       )
     }
+    try await validateStagedSecretAdditions(
+      root: root,
+      git: git,
+      changedFiles: changedFiles,
+      runner: runner,
+      environment: gitEnvironment
+    )
     let indexTransaction = try await DirectGitIndexTransaction.begin(
       root: root,
       git: git,
@@ -277,29 +284,83 @@ extension BridgeServiceApplication {
       if let canonical = try? SecureRelativePath(canonicalRelative) {
         guard sensitive.allows(canonical) else { throw DirectGitError.invalidArgument }
       }
-      try validateGitFileContent(at: resolved)
     }
   }
 
-  private static func validateGitFileContent(at path: String) throws {
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-      !isDirectory.boolValue
-    else { return }
-    guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
-      throw DirectGitError.invalidArgument
+  private static func validateStagedSecretAdditions(
+    root: String,
+    git: String,
+    changedFiles: [String],
+    runner: DirectGitRunner,
+    environment: [String: String]
+  ) async throws {
+    for path in changedFiles {
+      let staged = try await runner.run(
+        argv: [git, "-C", root, "show", ":\(path)"],
+        workingDirectory: root,
+        environment: environment,
+        maximumOutputBytes: 8 * 1_024 * 1_024
+      )
+      if staged.exitCode != 0 {
+        let deletion = try await runner.run(
+          argv: [
+            git, "-C", root, "diff", "--cached", "--quiet", "--diff-filter=D", "--", path,
+          ],
+          workingDirectory: root,
+          environment: environment
+        )
+        if deletion.exitCode == 1 { continue }
+        throw DirectGitCommitError.gitFailed(gitSummary(staged.output))
+      }
+      guard let stagedData = staged.completeOutput else {
+        throw DirectGitError.invalidArgument
+      }
+      guard let stagedText = String(data: stagedData, encoding: .utf8),
+        !OutboundContentSecurity.isSafeSecrets(stagedText)
+      else { continue }
+
+      let diff = try await runner.run(
+        argv: [
+          git, "-C", root, "diff", "--cached", "--unified=0", "--no-ext-diff", "--no-color",
+          "--no-textconv", "--no-renames", "--", path,
+        ],
+        workingDirectory: root,
+        environment: environment,
+        maximumOutputBytes: 20 * 1_024 * 1_024
+      )
+      guard diff.exitCode == 0 else {
+        throw DirectGitCommitError.gitFailed(gitSummary(diff.output))
+      }
+      guard let diffData = diff.completeOutput,
+        let patch = String(data: diffData, encoding: .utf8),
+        stagedDiffIntroductionsAreSafe(patch)
+      else {
+        throw BridgeMCPQueryError.unsafeContentDetected
+      }
     }
-    if let size = attributes[.size] as? NSNumber, size.intValue > 8 * 1_024 * 1_024 {
-      throw DirectGitError.invalidArgument
+  }
+
+  private static func stagedDiffIntroductionsAreSafe(_ patch: String) -> Bool {
+    var insideHunk = false
+    for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+      if line.hasPrefix("@@") {
+        insideHunk = true
+        continue
+      }
+      if line.hasPrefix("diff --git ") {
+        insideHunk = false
+        continue
+      }
+      guard insideHunk, line.hasPrefix("+") else { continue }
+      guard OutboundContentSecurity.isSafeSecrets(String(line.dropFirst())) else {
+        return false
+      }
     }
-    let data = try Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe])
-    guard let text = String(data: data, encoding: .utf8) else { return }
-    guard OutboundContentSecurity.isSafeSecrets(text) else {
-      throw DirectGitError.invalidArgument
-    }
+    return true
   }
 
   static func publicGitError(_ error: Error) -> BridgeMCPQueryError {
+    if let error = error as? BridgeMCPQueryError { return error }
     switch error {
     case DirectGitError.notGitRepository:
       return .notGitRepository

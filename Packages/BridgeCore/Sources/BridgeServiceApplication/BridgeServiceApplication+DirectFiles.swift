@@ -1,5 +1,6 @@
 import BridgeFiles
 import BridgeMCP
+import BridgeSecurity
 import BridgeServiceCore
 import Foundation
 
@@ -38,12 +39,7 @@ extension BridgeServiceApplication {
           oldSHA256: result.oldSHA256,
           newSHA256: result.newSHA256,
           byteCount: result.byteCount,
-          boundedDiff: MCPBoundedDiff(
-            removedLines: result.boundedDiff.removedLines,
-            addedLines: result.boundedDiff.addedLines,
-            truncated: result.boundedDiff.truncated,
-            byteCount: result.boundedDiff.byteCount
-          )
+          boundedDiff: Self.safeBoundedDiff(result.boundedDiff)
         )
       }
     } catch {
@@ -85,12 +81,7 @@ extension BridgeServiceApplication {
           oldSHA256: result.oldSHA256,
           newSHA256: result.newSHA256,
           byteCount: result.byteCount,
-          boundedDiff: MCPBoundedDiff(
-            removedLines: result.boundedDiff.removedLines,
-            addedLines: result.boundedDiff.addedLines,
-            truncated: result.boundedDiff.truncated,
-            byteCount: result.boundedDiff.byteCount
-          )
+          boundedDiff: Self.safeBoundedDiff(result.boundedDiff)
         )
       }
     } catch {
@@ -135,12 +126,7 @@ extension BridgeServiceApplication {
             oldSHA256: result.oldSHA256,
             newSHA256: result.newSHA256,
             byteCount: result.byteCount,
-            boundedDiff: MCPBoundedDiff(
-              removedLines: result.boundedDiff.removedLines,
-              addedLines: result.boundedDiff.addedLines,
-              truncated: result.boundedDiff.truncated,
-              byteCount: result.boundedDiff.byteCount
-            )
+            boundedDiff: Self.safeBoundedDiff(result.boundedDiff)
           )
         }
         return MCPDirectPatchReceipt(operations: receipts)
@@ -159,6 +145,19 @@ extension BridgeServiceApplication {
     } catch {
       throw error
     }
+  }
+
+  private static func safeBoundedDiff(_ diff: BoundedDiff) -> MCPBoundedDiff {
+    MCPBoundedDiff(
+      removedLines: diff.removedLines.map {
+        OutboundContentSecurity.redacted($0, maximumUTF8Bytes: 64 * 1_024)
+      },
+      addedLines: diff.addedLines.map {
+        OutboundContentSecurity.redacted($0, maximumUTF8Bytes: 64 * 1_024)
+      },
+      truncated: diff.truncated,
+      byteCount: diff.byteCount
+    )
   }
 
   public func serviceDirectManagePath(
