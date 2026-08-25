@@ -26,7 +26,7 @@ public static class Program
         {
             WinRT.ComWrappersSupport.InitializeComWrappers();
             StartupDiagnostics.Record("com-wrappers-initialized");
-            Application.Start(_ =>
+            Application.Start(_initialization =>
             {
                 StartupDiagnostics.Record("application-start-callback");
                 var queue = DispatcherQueue.GetForCurrentThread();
@@ -34,7 +34,7 @@ public static class Program
                     new DispatcherQueueSynchronizationContext(queue));
                 try
                 {
-                    _ = new App();
+                    new App();
                     StartupDiagnostics.Record("app-created");
                 }
                 catch (Exception error)
