@@ -69,7 +69,7 @@ internal static class StartupProbes
         var description = $"kind={candidate.Kind}";
         try
         {
-            var value = candidate.ValueAsString();
+            var value = candidate.ValueAsString;
             description += $" value={value}";
         }
         catch
