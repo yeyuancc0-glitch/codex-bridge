@@ -90,7 +90,7 @@ try {
   $appExecutable = Join-Path $installRoot 'CodexBridge.App.exe'
   [IO.File]::WriteAllLines(
     $cdbCommands,
-    @('sxe -c "!analyze -v; .ecxr; kb; lm; q" 0xc0000409', 'g'),
+    @('g', '!analyze -v', '.ecxr', 'kb', 'lm', 'q'),
     [Text.UTF8Encoding]::new($false))
   $debugArguments = @('-o', '-G', '-logo', $cdbLog, '-cf', $cdbCommands, $appExecutable)
   $dumpMonitor = Start-Process `
