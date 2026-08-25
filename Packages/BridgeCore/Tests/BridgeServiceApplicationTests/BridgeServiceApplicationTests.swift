@@ -1577,10 +1577,10 @@ final class BridgeServiceApplicationTests: XCTestCase {
       )
     )
     XCTAssertEqual(result.isError, false)
-    let receipt = result.structuredContent?.objectValue?["receipt"]?.objectValue
-    XCTAssertEqual(receipt?["status"], .string("ended"))
-    XCTAssertEqual(receipt?["exit_code"], .int(0))
-    let output = receipt?["output"]?.objectValue
+    let outputObj = result.structuredContent?.objectValue
+    XCTAssertEqual(outputObj?["status"], .string("ended"))
+    XCTAssertEqual(outputObj?["exit_code"], .int(0))
+    let output = outputObj?["output"]?.objectValue
     XCTAssertTrue(output?["tail"]?.stringValue?.contains("skill-fast-result") == true)
 
     await application.directCommands.cancelAll()
