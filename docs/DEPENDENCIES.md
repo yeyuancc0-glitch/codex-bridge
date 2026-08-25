@@ -47,7 +47,7 @@ Release packaging must:
 
 Do not publish either thin release executable unchanged: the arm64 file is ad-hoc linker-signed with no Team Identifier and the final App requires a same-Team signed Universal 2 helper. The v0.0.10 platform archives contain only `tunnel-client`; no adjacent `cloudflared` binary is bundled.
 
-Windows v0.0.12 supply evidence is enforced by `.github/scripts/stage-windows-tunnel-client.ps1` before MSIX staging:
+Windows v0.0.12 supply evidence is enforced by `.github/scripts/stage-windows-tunnel-client.ps1` before EXE staging:
 
 | Architecture | Archive SHA-256 | tunnel-client.exe SHA-256 | cloudflared.exe SHA-256 |
 |---|---|---|---|

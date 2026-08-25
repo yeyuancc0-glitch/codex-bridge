@@ -8,14 +8,9 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
-    <WindowsPackageType Condition="'$(BuildMsix)' != 'true'">None</WindowsPackageType>
-    <WindowsPackageType Condition="'$(BuildMsix)' == 'true'">MSIX</WindowsPackageType>
-    <EnableMsixTooling Condition="'$(BuildMsix)' == 'true'">true</EnableMsixTooling>
-    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
-    <GenerateAppxPackageOnBuild Condition="'$(BuildMsix)' == 'true'">true</GenerateAppxPackageOnBuild>
-    <AppxBundle>Never</AppxBundle>
-    <SelfContained Condition="'$(BuildMsix)' == 'true' Or '$(BuildSelfContained)' == 'true'">true</SelfContained>
-    <WindowsAppSDKSelfContained Condition="'$(BuildMsix)' == 'true' Or '$(BuildSelfContained)' == 'true'">true</WindowsAppSDKSelfContained>
+    <WindowsPackageType>None</WindowsPackageType>
+    <SelfContained Condition="'$(BuildSelfContained)' == 'true'">true</SelfContained>
+    <WindowsAppSDKSelfContained Condition="'$(BuildSelfContained)' == 'true'">true</WindowsAppSDKSelfContained>
     <WindowsAppSdkBootstrapInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkBootstrapInitialize>
     <WindowsAppSdkUndockedRegFreeWinRTInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
     <WindowsAppSdkAutoInitialize Condition="'$(BuildSelfContained)' == 'true'">false</WindowsAppSdkAutoInitialize>
@@ -24,14 +19,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />
     <PackageReference Include="Microsoft.Web.WebView2" />
-    <PackageReference Include="System.Security.Permissions"
-                      Condition="'$(BuildMsix)' == 'true'"
-                      PrivateAssets="all" />
     <ProjectReference Include="..\BridgeIPC.Client\BridgeIPC.Client.csproj" />
-  </ItemGroup>
-  <ItemGroup Condition="'$(BuildMsix)' == 'true'">
-    <Content Include="..\..\App\Resources\Assets.xcassets\AppIcon.appiconset\AppIcon-512@2x.png"
-             Link="Assets\AppIcon.png" />
   </ItemGroup>
   <ItemGroup Condition="Exists('$(BridgeServicePayload)')">
     <Content Include="$(BridgeServicePayload)\**\*"

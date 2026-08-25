@@ -93,8 +93,6 @@ $manifestPath = Join-Path $publish 'payload-manifest.json'
 
 $architectureName = $Architecture.ToLowerInvariant()
 $assetBase = "CodexBridge-Windows-$architectureName-$AppVersion"
-$portable = Join-Path $output.FullName "$assetBase-Portable.zip"
-Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $portable -CompressionLevel Optimal
 
 $isccPath = @(
   Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
@@ -124,10 +122,8 @@ if (-not (Test-Path -LiteralPath $setup)) { throw "Installer was not created at 
 
 if ($env:GITHUB_OUTPUT) {
   Add-Content $env:GITHUB_OUTPUT "setup=$setup"
-  Add-Content $env:GITHUB_OUTPUT "portable=$portable"
 }
 Write-Host "Windows installer: $setup"
-Write-Host "Windows portable archive: $portable"
 $completed = $true
 } finally {
   if (Test-Path -LiteralPath $stagingRoot) {

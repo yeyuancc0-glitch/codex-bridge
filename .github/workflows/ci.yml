@@ -274,18 +274,7 @@ jobs:
         shell: pwsh
         run: .github/scripts/run-windows-service-probe.ps1
 
-      - name: Build unsigned x64 MSIX
-        shell: pwsh
-        run: .github/scripts/package-windows-msix.ps1 -Architecture x64
-
-      - name: Upload unsigned x64 MSIX
-        uses: actions/upload-artifact@v6
-        with:
-          name: CodexBridge-Windows-x64-unsigned
-          path: Windows/CodexBridge.App/**/AppPackages/**/*.msix
-          if-no-files-found: error
-
-      - name: Build x64 EXE installer and portable archive
+      - name: Build x64 EXE installer
         id: unpackaged
         shell: pwsh
         run: >-
@@ -293,10 +282,6 @@ jobs:
           -Architecture x64
           -OutputDirectory '${{ runner.temp }}/unpackaged-output'
           -AppVersion '0.2.0.0'
-
-      - name: Test x64 portable archive
-        shell: pwsh
-        run: .github/scripts/test-windows-portable.ps1 -ArchivePath '${{ steps.unpackaged.outputs.portable }}'
 
       - name: Test x64 EXE installer
         shell: pwsh
@@ -313,12 +298,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-      - name: Upload x64 EXE and portable artifacts
+      - name: Upload x64 EXE installer
         if: always() && steps.unpackaged.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: CodexBridge-Windows-x64-unpackaged
-          path: ${{ runner.temp }}/unpackaged-output/*
+          path: ${{ steps.unpackaged.outputs.setup }}
           if-no-files-found: error
 
       - name: Save Windows Swift build cache
@@ -455,18 +440,7 @@ jobs:
         shell: pwsh
         run: .github/scripts/run-windows-service-probe.ps1
 
-      - name: Build unsigned ARM64 MSIX
-        shell: pwsh
-        run: .github/scripts/package-windows-msix.ps1 -Architecture ARM64
-
-      - name: Upload unsigned ARM64 MSIX
-        uses: actions/upload-artifact@v6
-        with:
-          name: CodexBridge-Windows-ARM64-unsigned
-          path: Windows/CodexBridge.App/**/AppPackages/**/*.msix
-          if-no-files-found: error
-
-      - name: Build ARM64 EXE installer and portable archive
+      - name: Build ARM64 EXE installer
         id: unpackaged
         shell: pwsh
         run: >-
@@ -474,10 +448,6 @@ jobs:
           -Architecture ARM64
           -OutputDirectory '${{ runner.temp }}/unpackaged-output'
           -AppVersion '0.2.0.0'
-
-      - name: Test ARM64 portable archive
-        shell: pwsh
-        run: .github/scripts/test-windows-portable.ps1 -ArchivePath '${{ steps.unpackaged.outputs.portable }}'
 
       - name: Test ARM64 EXE installer
         shell: pwsh
@@ -494,12 +464,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-      - name: Upload ARM64 EXE and portable artifacts
+      - name: Upload ARM64 EXE installer
         if: always() && steps.unpackaged.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: CodexBridge-Windows-ARM64-unpackaged
-          path: ${{ runner.temp }}/unpackaged-output/*
+          path: ${{ steps.unpackaged.outputs.setup }}
           if-no-files-found: error
 
       - name: Save Windows Swift build cache
@@ -508,52 +478,3 @@ jobs:
         with:
           path: Packages/BridgeCore/.build
           key: bridge-core-windows-${{ runner.arch }}-${{ hashFiles('Packages/BridgeCore/Package.resolved') }}
-
-  windows-package-bundle:
-    name: Windows installer bundle smoke test
-    needs: [windows-x64, windows-arm64]
-    runs-on: windows-latest
-    timeout-minutes: 25
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Install .NET SDK for installed Service probe
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: Windows/global.json
-
-      - name: Download architecture packages
-        uses: actions/download-artifact@v7
-        with:
-          pattern: CodexBridge-Windows-*-unsigned
-          path: ${{ runner.temp }}/bundle-input
-          merge-multiple: true
-
-      - name: Build installable bundle and update feed
-        id: bundle
-        shell: pwsh
-        run: >-
-          .github/scripts/bundle-windows-release.ps1
-          -InputDirectory '${{ runner.temp }}/bundle-input'
-          -OutputDirectory '${{ runner.temp }}/bundle-output'
-          -PackageVersion '0.2.0.0'
-          -Publisher 'CN=CodexBridge'
-          -IdentityName 'org.codexbridge.windows'
-          -ReleaseBaseUri 'https://example.invalid/codex-bridge'
-
-      - name: Verify installer artifacts
-        shell: pwsh
-        run: |
-          $bundle = '${{ steps.bundle.outputs.bundle }}'
-          $appInstaller = '${{ steps.bundle.outputs.appinstaller }}'
-          if (-not (Test-Path -LiteralPath $bundle)) { throw 'MSIX bundle was not created.' }
-          if (-not (Test-Path -LiteralPath $appInstaller)) { throw 'App Installer feed was not created.' }
-          [xml]$feed = [IO.File]::ReadAllText($appInstaller)
-          if ($feed.AppInstaller.MainBundle.Version -ne '0.2.0.0') { throw 'App Installer version mismatch.' }
-
-      - name: Install, probe, and uninstall bundle
-        shell: pwsh
-        run: .github/scripts/test-windows-msix-install.ps1 -BundlePath '${{ steps.bundle.outputs.bundle }}'

@@ -150,7 +150,7 @@ public sealed partial class MainWindow : Window
                     _lifetime.Token)).Clients;
                 break;
             case "settings":
-                await PresentStartupTaskAsync();
+                PresentStartup();
                 await LoadModelSettingsAsync();
                 await LoadTunnelSettingsAsync();
                 break;
@@ -402,50 +402,50 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void EnableStartupTaskClick(object sender, RoutedEventArgs args)
+    private void EnableStartupClick(object sender, RoutedEventArgs args)
     {
-        EnableStartupTaskButton.IsEnabled = false;
+        EnableStartupButton.IsEnabled = false;
         try
         {
-            PresentStartupTask(await StartupTaskController.RequestEnableAsync());
+            PresentStartup(StartupController.Enable());
         }
         catch (Exception error)
         {
             PresentError(error.Message);
-            EnableStartupTaskButton.IsEnabled = true;
+            EnableStartupButton.IsEnabled = true;
         }
     }
 
-    private async void DisableStartupTaskClick(object sender, RoutedEventArgs args)
+    private void DisableStartupClick(object sender, RoutedEventArgs args)
     {
-        DisableStartupTaskButton.IsEnabled = false;
+        DisableStartupButton.IsEnabled = false;
         try
         {
-            PresentStartupTask(await StartupTaskController.RequestDisableAsync());
+            PresentStartup(StartupController.Disable());
         }
         catch (Exception error)
         {
             PresentError(error.Message);
-            DisableStartupTaskButton.IsEnabled = true;
+            DisableStartupButton.IsEnabled = true;
         }
     }
 
-    private async Task PresentStartupTaskAsync()
+    private void PresentStartup()
     {
-        PresentStartupTask(await StartupTaskController.ReadAsync());
+        PresentStartup(StartupController.Read());
     }
 
-    private void PresentStartupTask(StartupTaskPresentation presentation)
+    private void PresentStartup(StartupPresentation presentation)
     {
-        StartupTaskStateLabel.Text = presentation.State;
-        EnableStartupTaskButton.Visibility = presentation.CanRequestEnable
+        StartupStateLabel.Text = presentation.State;
+        EnableStartupButton.Visibility = presentation.CanRequestEnable
             ? Visibility.Visible
             : Visibility.Collapsed;
-        EnableStartupTaskButton.IsEnabled = presentation.CanRequestEnable;
-        DisableStartupTaskButton.Visibility = presentation.CanRequestDisable
+        EnableStartupButton.IsEnabled = presentation.CanRequestEnable;
+        DisableStartupButton.Visibility = presentation.CanRequestDisable
             ? Visibility.Visible
             : Visibility.Collapsed;
-        DisableStartupTaskButton.IsEnabled = presentation.CanRequestDisable;
+        DisableStartupButton.IsEnabled = presentation.CanRequestDisable;
     }
 
     private async void WindowClosed(object sender, WindowEventArgs args)

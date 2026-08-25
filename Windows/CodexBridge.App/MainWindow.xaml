@@ -230,10 +230,10 @@
                         <TextBlock Text="设置" Style="{ThemeResource TitleTextBlockStyle}" />
                         <StackPanel Spacing="4">
                             <TextBlock Text="后台 Service" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                            <TextBlock x:Name="StartupTaskStateLabel" Text="正在读取 StartupTask 状态" />
+                            <TextBlock x:Name="StartupStateLabel" Text="正在读取自动启动状态" />
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button x:Name="EnableStartupTaskButton" Content="登录后自动启动" Click="EnableStartupTaskClick" Visibility="Collapsed" />
-                                <Button x:Name="DisableStartupTaskButton" Content="关闭自动启动" Click="DisableStartupTaskClick" Visibility="Collapsed" />
+                                <Button x:Name="EnableStartupButton" Content="登录后自动启动" Click="EnableStartupClick" Visibility="Collapsed" />
+                                <Button x:Name="DisableStartupButton" Content="关闭自动启动" Click="DisableStartupClick" Visibility="Collapsed" />
                             </StackPanel>
                         </StackPanel>
                         <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="4" Padding="16">

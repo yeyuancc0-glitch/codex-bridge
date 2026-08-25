@@ -1,4 +1,4 @@
-name: Windows EXE and Portable Release
+name: Windows EXE Release
 
 on:
   push:
@@ -44,7 +44,7 @@ jobs:
           Add-Content $env:GITHUB_OUTPUT "app-version=$($Matches[1]).$($Matches[2]).$($Matches[3]).$revision"
 
   build:
-    name: Build Windows ${{ matrix.arch }} EXE and Portable
+    name: Build Windows ${{ matrix.arch }} EXE
     needs: prepare
     strategy:
       fail-fast: false
@@ -81,7 +81,7 @@ jobs:
           -Xcc "-I$env:SQLITE_INCLUDE_DIR"
           -Xlinker "/LIBPATH:$env:SQLITE_LIBRARY_DIR"
 
-      - name: Build EXE installer and portable archive
+      - name: Build EXE installer
         id: unpackaged
         shell: pwsh
         run: >-
@@ -89,10 +89,6 @@ jobs:
           -Architecture ${{ matrix.arch }}
           -OutputDirectory '${{ runner.temp }}/release-output'
           -AppVersion '${{ needs.prepare.outputs.app-version }}'
-
-      - name: Test portable archive
-        shell: pwsh
-        run: .github/scripts/test-windows-portable.ps1 -ArchivePath '${{ steps.unpackaged.outputs.portable }}'
 
       - name: Test EXE installer
         shell: pwsh
@@ -107,7 +103,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish Windows EXE and Portable release
+    name: Publish Windows EXE release
     needs: [prepare, build]
     runs-on: windows-latest
     timeout-minutes: 25
@@ -157,7 +153,7 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@v6
         with:
-          name: CodexBridge-Windows-EXE-and-Portable
+          name: CodexBridge-Windows-EXE
           path: ${{ runner.temp }}/release-output/*
           if-no-files-found: error
 
@@ -171,7 +167,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & gh release view $env:RELEASE_TAG --repo '${{ github.repository }}' *> $null
           if ($LASTEXITCODE -ne 0) {
-            & gh release create $env:RELEASE_TAG --repo '${{ github.repository }}' --verify-tag --draft --title "Codex Bridge $env:RELEASE_TAG" --notes 'Unsigned Windows EXE installers and portable archives. Windows may show an Unknown publisher or SmartScreen warning.'
+            & gh release create $env:RELEASE_TAG --repo '${{ github.repository }}' --verify-tag --draft --title "Codex Bridge $env:RELEASE_TAG" --notes 'Unsigned Windows EXE installers. Windows may show an Unknown publisher or SmartScreen warning.'
             if ($LASTEXITCODE -ne 0) { throw "Unable to create release $env:RELEASE_TAG" }
           }
           $assets = @(Get-ChildItem -Path $env:RELEASE_OUTPUT -File | ForEach-Object { $_.FullName })

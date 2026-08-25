@@ -87,13 +87,11 @@ ChatGPT / Qwen  ──[direct_write_file]──►  Desktop Approval Sheet (Payl
 ### Windows: Download and install
 
 1. Open [GitHub Releases](https://github.com/yeyuancc0-glitch/codex-bridge/releases). Most Intel/AMD PCs should download the `Setup.exe` containing `Windows-x64`; Windows on ARM devices should choose `Windows-arm64`.
-2. Run the installer. It installs per-user under `%LOCALAPPDATA%\Programs\CodexBridge`, needs no administrator access, and does not require importing an MSIX certificate.
+2. Run the installer. It installs per-user under `%LOCALAPPDATA%\Programs\CodexBridge`, needs no administrator access, and does not require a certificate.
 3. Current open-source GitHub builds are not commercially code-signed, so Windows may show an Unknown publisher or SmartScreen warning. Verify the source and the release `SHA256SUMS.txt`, then choose **More info** → **Run anyway** if you trust the download.
 4. Launch **Codex Bridge** from the Start menu. Install a newer version over the existing one to upgrade; Service data is preserved during upgrade and uninstall.
 
 Run `Get-FileHash .\downloaded-file -Algorithm SHA256` in PowerShell and compare the result with the release `SHA256SUMS.txt`.
-
-For a no-install option, download the matching `Portable.zip`, extract the entire archive to a normal local directory, and run `CodexBridge.App.exe`. Do not copy only the EXE out of the archive or run it from a network share. Portable does not register login startup by default; it can be enabled in Settings. Deleting the extracted directory does not remove user data under `%LOCALAPPDATA%\CodexBridge\Service`. MSIX remains an optional enterprise/signed distribution path, not a prerequisite for GitHub users.
 
 Windows 10 version 1809 or later is supported; 32-bit x86 Windows is not. The fixed WebView2 Runtime is bundled. Codex is not bundled and must be installed and signed in separately, or the `codex` executable must be discoverable by Bridge.
 

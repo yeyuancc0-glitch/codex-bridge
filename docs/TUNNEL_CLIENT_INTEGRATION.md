@@ -13,7 +13,7 @@ This document defines the process boundary used by `BridgeTunnel`. The current s
 
 ### Windows package supply
 
-Windows x64 and ARM64 MSIX builds pin the official v0.0.12 architecture archives. Packaging validates the external archive, `tunnel-client.exe`, and `cloudflared.exe` SHA-256 values recorded in `docs/DEPENDENCIES.md`, rejects any unexpected ZIP entry, verifies both PE machine types, and preserves LICENSE, NOTICE, third-party license and SPDX SBOM files. Runtime opens the packaged executables without following reparse points and binds the verified digest and file identity to the Job Object-managed process. No helper is selected from `PATH` or downloaded after installation.
+Windows x64 and ARM64 Inno Setup EXE installers stage the official v0.0.12 architecture archives. Packaging validates the external archive, `tunnel-client.exe`, and `cloudflared.exe` SHA-256 values recorded in `docs/DEPENDENCIES.md`, rejects any unexpected ZIP entry, verifies both PE machine types, and preserves LICENSE, NOTICE, third-party license and SPDX SBOM files. Runtime opens the staged executables without following reparse points and binds the verified digest and file identity to the Job Object-managed process. No helper is selected from `PATH` or downloaded after installation.
 
 ## Secret-safe launch contract
 

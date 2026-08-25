@@ -3,8 +3,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 using System.Diagnostics;
-using Windows.Storage;
-using Windows.Storage.Pickers;
+using System.Text.Json;
 using WinRT.Interop;
 
 namespace CodexBridge.App.Views;
@@ -16,6 +15,9 @@ public sealed partial class WorkbenchHost : UserControl
         "https://developer.microsoft.com/en-us/microsoft-edge/webview2/consumer/");
     private const string FixedRuntimeVersion = "151.0.4129.101";
     private const string ResumeUrlSetting = "workbench.resume-url";
+    private const string UnpackagedDataRoot = "CodexBridge";
+    private const string UnpackagedAppDirectory = "App";
+    private const string UnpackagedSettingsFile = "settings.json";
     private readonly DispatcherTimer _releaseTimer = new() { Interval = TimeSpan.FromMinutes(3) };
     private WebView2? _webView;
     private nint _ownerWindow;
@@ -327,13 +329,13 @@ public sealed partial class WorkbenchHost : UserControl
         var uri = CurrentWebUri();
         if (uri is not null && IsSafeResumeUri(uri))
         {
-            ApplicationData.Current.LocalSettings.Values[ResumeUrlSetting] = uri.AbsoluteUri;
+            SaveUnpackagedSetting(ResumeUrlSetting, uri.AbsoluteUri);
         }
     }
 
     private static Uri ReadResumeUri()
     {
-        var value = ApplicationData.Current.LocalSettings.Values[ResumeUrlSetting] as string;
+        var value = ReadUnpackagedSetting(ResumeUrlSetting);
         return Uri.TryCreate(value, UriKind.Absolute, out var uri) && IsSafeResumeUri(uri)
             ? uri
             : WorkbenchUri;
@@ -354,14 +356,90 @@ public sealed partial class WorkbenchHost : UserControl
 
     private static string PrepareUserDataFolder()
     {
-        var folder = Path.Combine(ApplicationData.Current.LocalCacheFolder.Path, "WebView2");
-        if (Directory.Exists(folder) &&
-            (File.GetAttributes(folder) & System.IO.FileAttributes.ReparsePoint) != 0)
-        {
-            throw new IOException("WebView2 数据目录不能是重解析点。");
-        }
-        Directory.CreateDirectory(folder);
+        var folder = Path.Combine(GetUnpackagedAppDirectory(), "WebView2");
+        EnsureDirectory(folder, "WebView2 数据目录不能是重解析点。");
         return folder;
+    }
+
+    private static string ReadUnpackagedSetting(string key)
+    {
+        var path = Path.Combine(GetUnpackagedAppDirectory(), UnpackagedSettingsFile);
+        if (!File.Exists(path) || IsReparsePoint(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var values = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                File.ReadAllText(path));
+            return values is not null && values.TryGetValue(key, out var value) ? value : string.Empty;
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void SaveUnpackagedSetting(string key, string value)
+    {
+        var directory = GetUnpackagedAppDirectory();
+        var path = Path.Combine(directory, UnpackagedSettingsFile);
+        if (File.Exists(path) && IsReparsePoint(path))
+        {
+            throw new IOException("Codex Bridge 设置文件不能是重解析点。");
+        }
+        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [key] = value,
+        };
+        var temporaryPath = Path.Combine(directory, $".{UnpackagedSettingsFile}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(values));
+            File.Move(temporaryPath, path, true);
+        }
+        finally
+        {
+            try { File.Delete(temporaryPath); } catch { }
+        }
+    }
+
+    private static string GetUnpackagedAppDirectory()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            throw new InvalidOperationException("无法确定本机应用数据目录。");
+        }
+
+        var root = Path.Combine(localAppData, UnpackagedDataRoot);
+        EnsureDirectory(root, "Codex Bridge 数据目录不能是重解析点。");
+        var appDirectory = Path.Combine(root, UnpackagedAppDirectory);
+        EnsureDirectory(appDirectory, "Codex Bridge App 数据目录不能是重解析点。");
+        return appDirectory;
+    }
+
+    private static void EnsureDirectory(string path, string reparseMessage)
+    {
+        if (Directory.Exists(path) && IsReparsePoint(path))
+        {
+            throw new IOException(reparseMessage);
+        }
+        Directory.CreateDirectory(path);
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        return (File.GetAttributes(path) & System.IO.FileAttributes.ReparsePoint) != 0;
     }
 
     private static string? FixedRuntimeFolder()

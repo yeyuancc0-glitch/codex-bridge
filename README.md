@@ -87,13 +87,11 @@ ChatGPT / Qwen  ──[direct_write_file]──►  本机桌面审批弹窗 (Pa
 ### Windows：下载安装
 
 1. 打开 [GitHub Releases](https://github.com/yeyuancc0-glitch/codex-bridge/releases)，普通 Intel/AMD 电脑下载名称含 `Windows-x64` 的 `Setup.exe`；Windows on ARM 设备下载名称含 `Windows-arm64` 的 `Setup.exe`。
-2. 双击安装。安装器按当前用户安装到 `%LOCALAPPDATA%\Programs\CodexBridge`，不需要管理员权限，也不要求导入 MSIX 证书。
+2. 双击安装。安装器按当前用户安装到 `%LOCALAPPDATA%\Programs\CodexBridge`，不需要管理员权限。
 3. 当前 GitHub 开源构件未做商业代码签名，Windows 可能显示“未知发布者”或 SmartScreen 提示。确认下载来源与 Release 中的 `SHA256SUMS.txt` 后，可选择“更多信息”→“仍要运行”。
 4. 从开始菜单启动 **Codex Bridge**。卸载可使用 Windows“已安装的应用”；升级直接运行新版安装器，Service 数据会保留。
 
 可在 PowerShell 中运行 `Get-FileHash .\下载的文件 -Algorithm SHA256`，将结果与 Release 的 `SHA256SUMS.txt` 对照。
-
-不想安装时可下载同架构的 `Portable.zip`，完整解压到本机普通目录后运行 `CodexBridge.App.exe`。不要只从 ZIP 中单独拖出 EXE，也不要从网络共享目录运行。Portable 默认不注册登录启动，可在设置页按需启用；删除解压目录不会删除 `%LOCALAPPDATA%\CodexBridge\Service` 中的用户数据。MSIX 仍保留为可选的企业/签名分发路径，不是 GitHub 用户安装的前置条件。
 
 Windows 10 版本 1809 或更高版本受支持，32 位 x86 Windows 不受支持；固定 WebView2 Runtime 已包含在发行包内。本机还需自行安装并登录 Codex，或让 `codex` 命令可被 Bridge 发现，发行包不包含 Codex。
 
