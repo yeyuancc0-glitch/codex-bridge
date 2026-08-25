@@ -302,6 +302,17 @@ jobs:
         shell: pwsh
         run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
 
+      - name: Upload x64 App startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-x64-app-diagnostics
+          path: |
+            ${{ runner.temp }}/CodexBridge-EXE-*.log
+            ${{ runner.temp }}/CodexBridge.App.dmp
+          if-no-files-found: ignore
+          retention-days: 3
+
       - name: Upload x64 EXE and portable artifacts
         if: always() && steps.unpackaged.outcome == 'success'
         uses: actions/upload-artifact@v6
@@ -471,6 +482,17 @@ jobs:
       - name: Test ARM64 EXE installer
         shell: pwsh
         run: .github/scripts/test-windows-exe-install.ps1 -InstallerPath '${{ steps.unpackaged.outputs.setup }}'
+
+      - name: Upload ARM64 App startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBridge-Windows-ARM64-app-diagnostics
+          path: |
+            ${{ runner.temp }}/CodexBridge-EXE-*.log
+            ${{ runner.temp }}/CodexBridge.App.dmp
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload ARM64 EXE and portable artifacts
         if: always() && steps.unpackaged.outcome == 'success'

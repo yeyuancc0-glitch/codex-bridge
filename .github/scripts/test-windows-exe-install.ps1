@@ -17,6 +17,8 @@ $upgradeLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-upgrade.log'
 $uninstallLog = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-uninstall.log'
 $appStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stdout.log'
 $appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
+$coreHostTrace = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-corehost.log'
+$appCrashDump = Join-Path $env:RUNNER_TEMP 'CodexBridge.App.dmp'
 $appStartupLog = Join-Path $env:LOCALAPPDATA 'CodexBridge\Logs\app-startup.log'
 $service = $null
 $app = $null
@@ -54,6 +56,11 @@ try {
   dotnet build Windows/BridgeIPC.ServiceProbe/BridgeIPC.ServiceProbe.csproj --configuration Release
   if ($LASTEXITCODE -ne 0) { throw "Service probe build failed with exit code $LASTEXITCODE" }
 
+  $env:COREHOST_TRACE = '1'
+  $env:COREHOST_TRACEFILE = $coreHostTrace
+  $env:DOTNET_DbgEnableMiniDump = '1'
+  $env:DOTNET_DbgMiniDumpType = '4'
+  $env:DOTNET_DbgMiniDumpName = $appCrashDump
   $app = Start-Process `
     -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
     -WorkingDirectory $installRoot `
@@ -141,8 +148,34 @@ try {
       -Wait `
       -ErrorAction SilentlyContinue | Out-Null
   }
-  foreach ($log in @($installLog, $upgradeLog, $uninstallLog, $appStdout, $appStderr)) {
+  foreach ($name in @(
+    'COREHOST_TRACE',
+    'COREHOST_TRACEFILE',
+    'DOTNET_DbgEnableMiniDump',
+    'DOTNET_DbgMiniDumpType',
+    'DOTNET_DbgMiniDumpName'
+  )) {
+    Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+  }
+  foreach ($log in @(
+    $installLog,
+    $upgradeLog,
+    $uninstallLog,
+    $appStdout,
+    $appStderr,
+    $coreHostTrace
+  )) {
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
+  }
+  if (Test-Path -LiteralPath $appCrashDump) {
+    Write-Host "Codex Bridge App crash dump: $appCrashDump"
+    $debugger = @(
+      "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe",
+      "$env:ProgramFiles\Windows Kits\10\Debuggers\x64\cdb.exe"
+    ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($debugger) {
+      & $debugger -z $appCrashDump -c '.symfix; .reload; !analyze -v; .ecxr; kb; q'
+    }
   }
   if (Test-Path -LiteralPath $appStartupLog) {
     Write-Host 'Codex Bridge App startup diagnostics:'
