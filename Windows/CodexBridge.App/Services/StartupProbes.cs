@@ -31,7 +31,7 @@ internal static class StartupProbes
     {
         try
         {
-            var map = new ResourceManager().MainResourceMap();
+            var map = new ResourceManager().MainResourceMap;
             foreach (var key in new[]
             {
                 "Files/App.xbf",
