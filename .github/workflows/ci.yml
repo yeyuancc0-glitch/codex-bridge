@@ -282,6 +282,7 @@ jobs:
           -Architecture x64
           -OutputDirectory '${{ runner.temp }}/unpackaged-output'
           -AppVersion '0.2.0.0'
+          -FastCompression
 
       - name: Test x64 EXE installer
         shell: pwsh
@@ -295,6 +296,7 @@ jobs:
           path: |
             ${{ runner.temp }}/CodexBridge-EXE-*.log
             ${{ runner.temp }}/CodexBridge.App.dmp
+            ${{ runner.temp }}/CodexBridge-App-WER/*.dmp
           if-no-files-found: ignore
           retention-days: 3
 
@@ -448,6 +450,7 @@ jobs:
           -Architecture ARM64
           -OutputDirectory '${{ runner.temp }}/unpackaged-output'
           -AppVersion '0.2.0.0'
+          -FastCompression
 
       - name: Test ARM64 EXE installer
         shell: pwsh
@@ -461,6 +464,7 @@ jobs:
           path: |
             ${{ runner.temp }}/CodexBridge-EXE-*.log
             ${{ runner.temp }}/CodexBridge.App.dmp
+            ${{ runner.temp }}/CodexBridge-App-WER/*.dmp
           if-no-files-found: ignore
           retention-days: 3
 

@@ -6,7 +6,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$OutputDirectory,
 
-  [string]$AppVersion = '0.2.0.0'
+  [string]$AppVersion = '0.2.0.0',
+
+  [switch]$FastCompression
 )
 
 $ErrorActionPreference = 'Stop'
@@ -108,12 +110,14 @@ if ($isccBanner -notmatch '(?i)Inno Setup') {
 }
 $installerScript = (Resolve-Path 'Windows/Installer/CodexBridge.iss').Path
 $setupBase = "$assetBase-Setup"
+$compression = if ($FastCompression) { 'lzma2/fast' } else { 'lzma2/max' }
 & $isccPath `
   "/DPayloadDir=$publish" `
   "/DOutputDir=$($output.FullName)" `
   "/DArchitecture=$Architecture" `
   "/DAppVersion=$AppVersion" `
   "/DOutputBaseFilename=$setupBase" `
+  "/DCompression=$compression" `
   $installerScript
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed with exit code $LASTEXITCODE" }
 

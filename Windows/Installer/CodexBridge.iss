@@ -13,6 +13,9 @@
 #ifndef OutputBaseFilename
   #error OutputBaseFilename is required
 #endif
+#ifndef Compression
+  #define Compression "lzma2/max"
+#endif
 
 [Setup]
 AppId={{6F51B5A4-4C25-4E72-A8E5-93447D72D031}
@@ -28,7 +31,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseFilename}
-Compression=lzma2/max
+Compression={#Compression}
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes

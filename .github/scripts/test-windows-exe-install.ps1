@@ -19,9 +19,12 @@ $appStdout = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stdout.log'
 $appStderr = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-app.stderr.log'
 $coreHostTrace = Join-Path $env:RUNNER_TEMP 'CodexBridge-EXE-corehost.log'
 $appCrashDump = Join-Path $env:RUNNER_TEMP 'CodexBridge.App.dmp'
+$werDumpDirectory = Join-Path $env:RUNNER_TEMP 'CodexBridge-App-WER'
+$werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\CodexBridge.App.exe'
 $appStartupLog = Join-Path $env:LOCALAPPDATA 'CodexBridge\Logs\app-startup.log'
 $service = $null
 $app = $null
+$werKeyCreated = $false
 
 try {
   $install = Start-Process `
@@ -61,6 +64,19 @@ try {
   $env:DOTNET_DbgEnableMiniDump = '1'
   $env:DOTNET_DbgMiniDumpType = '4'
   $env:DOTNET_DbgMiniDumpName = $appCrashDump
+  try {
+    if (-not (Test-Path -LiteralPath $werKey)) {
+      New-Item -ItemType Directory -Path $werDumpDirectory -Force | Out-Null
+      New-Item -Path $werKey -Force | Out-Null
+      New-ItemProperty -Path $werKey -Name DumpFolder -PropertyType ExpandString -Value $werDumpDirectory -Force | Out-Null
+      New-ItemProperty -Path $werKey -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+      New-ItemProperty -Path $werKey -Name DumpCount -PropertyType DWord -Value 2 -Force | Out-Null
+      $werKeyCreated = $true
+    }
+  }
+  catch {
+    Write-Warning "Unable to enable WER LocalDumps: $($_.Exception.Message)"
+  }
   $app = Start-Process `
     -FilePath (Join-Path $installRoot 'CodexBridge.App.exe') `
     -WorkingDirectory $installRoot `
@@ -140,6 +156,13 @@ try {
   if ($app -and -not $app.HasExited) {
     Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
   }
+  if ($werKeyCreated) {
+    $dumpDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not (Get-ChildItem -LiteralPath $werDumpDirectory -Filter '*.dmp' -ErrorAction SilentlyContinue) -and
+      [DateTime]::UtcNow -lt $dumpDeadline) {
+      Start-Sleep -Milliseconds 200
+    }
+  }
   $cleanupUninstaller = Join-Path $installRoot 'unins000.exe'
   if (Test-Path -LiteralPath $cleanupUninstaller) {
     Start-Process `
@@ -167,15 +190,25 @@ try {
   )) {
     if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log }
   }
-  if (Test-Path -LiteralPath $appCrashDump) {
-    Write-Host "Codex Bridge App crash dump: $appCrashDump"
+  $crashDumps = @(
+    Get-Item -LiteralPath $appCrashDump -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $werDumpDirectory -Filter '*.dmp' -ErrorAction SilentlyContinue
+  )
+  if ($crashDumps.Count -gt 0) {
+    $debuggerArchitecture = if ($env:RUNNER_ARCH -eq 'ARM64') { 'arm64' } else { 'x64' }
     $debugger = @(
-      "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe",
-      "$env:ProgramFiles\Windows Kits\10\Debuggers\x64\cdb.exe"
+      "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe",
+      "$env:ProgramFiles\Windows Kits\10\Debuggers\$debuggerArchitecture\cdb.exe"
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-    if ($debugger) {
-      & $debugger -z $appCrashDump -c '.symfix; .reload; !analyze -v; .ecxr; kb; q'
+    foreach ($dump in $crashDumps) {
+      Write-Host "Codex Bridge App crash dump: $($dump.FullName)"
+      if ($debugger) {
+        & $debugger -z $dump.FullName -c '.symfix; .reload; !analyze -v; .ecxr; kb; q'
+      }
     }
+  }
+  if ($werKeyCreated) {
+    Remove-Item -LiteralPath $werKey -Recurse -Force -ErrorAction SilentlyContinue
   }
   if (Test-Path -LiteralPath $appStartupLog) {
     Write-Host 'Codex Bridge App startup diagnostics:'
