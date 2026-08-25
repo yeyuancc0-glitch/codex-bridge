@@ -25,6 +25,8 @@ struct BridgeServiceSettingsView: View {
 
       CustomInstructionsEditor(model: model)
 
+      BridgeServiceAgentSettingsSection(model: model)
+
       modelDefaultsSection(
         title: "Supervisor 只读监督",
         icon: "eye.fill",

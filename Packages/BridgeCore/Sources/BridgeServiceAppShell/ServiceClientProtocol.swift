@@ -26,6 +26,19 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func setProjectCommandMode(projectID: String, commandMode: String) async throws
     -> MCPProjectDetail
   func setWorkbenchProject(projectID: String?) async throws
+  func agentCatalog() async throws -> IPCAgentCatalogResponse
+  func registerAgentInstallation(
+    _ request: IPCAgentRegistrationRequest
+  ) async throws -> IPCAgentInstallationSummary
+  func reprobeAgentInstallation(
+    installationID: String,
+    acceptReplacement: Bool
+  ) async throws -> IPCAgentInstallationSummary
+  func setAgentInstallationEnabled(
+    installationID: String,
+    enabled: Bool
+  ) async throws -> IPCAgentInstallationSummary
+  func removeAgentInstallation(installationID: String) async throws
   func customInstructions() async throws -> String
   func setCustomInstructions(_ instructions: String) async throws
   func removeProject(projectID: String) async throws
@@ -69,6 +82,34 @@ extension BridgeServiceClient: BridgeServiceClientProtocol {
 }
 
 extension BridgeServiceClientProtocol {
+  public func agentCatalog() async throws -> IPCAgentCatalogResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func registerAgentInstallation(
+    _ request: IPCAgentRegistrationRequest
+  ) async throws -> IPCAgentInstallationSummary {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func reprobeAgentInstallation(
+    installationID: String,
+    acceptReplacement: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setAgentInstallationEnabled(
+    installationID: String,
+    enabled: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func removeAgentInstallation(installationID: String) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
   public func customInstructions() async throws -> String {
     throw BridgeServiceClientError.unavailable
   }

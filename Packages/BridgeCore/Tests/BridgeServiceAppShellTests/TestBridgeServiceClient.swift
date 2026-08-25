@@ -52,6 +52,15 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   )
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
   private var workbenchProjectSelections: [String?] = []
+  private var agentInstallationsValue: [IPCAgentInstallationSummary] = []
+  private var agentActions: [String] = []
+  private let agentProvidersValue = [
+    IPCAgentProviderSummary(
+      providerID: "opencode",
+      displayName: "OpenCode",
+      adapterRevision: 1
+    )
+  ]
 
   struct TaskConversationQuery: Hashable {
     let taskID: String
@@ -244,6 +253,80 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func workbenchProjectSelectionsValue() -> [String?] {
     workbenchProjectSelections
+  }
+
+  func agentCatalog() async throws -> IPCAgentCatalogResponse {
+    IPCAgentCatalogResponse(
+      providers: agentProvidersValue,
+      installations: agentInstallationsValue
+    )
+  }
+
+  func registerAgentInstallation(
+    _ request: IPCAgentRegistrationRequest
+  ) async throws -> IPCAgentInstallationSummary {
+    let installation = makeAgentInstallation(
+      installationID: "agent-installation-1",
+      displayName: request.displayName,
+      executablePath: request.executablePath,
+      isEnabled: false
+    )
+    agentInstallationsValue = [installation]
+    agentActions.append("register:\(request.providerID)")
+    return installation
+  }
+
+  func reprobeAgentInstallation(
+    installationID: String,
+    acceptReplacement: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    agentActions.append("reprobe:\(installationID):\(acceptReplacement)")
+    guard
+      let existing = agentInstallationsValue.first(where: {
+        $0.installationID == installationID
+      })
+    else {
+      throw BridgeServiceClientError.responseFailed
+    }
+    let installation = makeAgentInstallation(
+      installationID: existing.installationID,
+      displayName: existing.displayName,
+      executablePath: existing.executablePath,
+      isEnabled: existing.isEnabled
+    )
+    agentInstallationsValue = [installation]
+    return installation
+  }
+
+  func setAgentInstallationEnabled(
+    installationID: String,
+    enabled: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    agentActions.append("enabled:\(installationID):\(enabled)")
+    guard
+      let existing = agentInstallationsValue.first(where: {
+        $0.installationID == installationID
+      })
+    else {
+      throw BridgeServiceClientError.responseFailed
+    }
+    let installation = makeAgentInstallation(
+      installationID: existing.installationID,
+      displayName: existing.displayName,
+      executablePath: existing.executablePath,
+      isEnabled: enabled
+    )
+    agentInstallationsValue = [installation]
+    return installation
+  }
+
+  func removeAgentInstallation(installationID: String) async throws {
+    agentActions.append("remove:\(installationID)")
+    agentInstallationsValue.removeAll { $0.installationID == installationID }
+  }
+
+  func agentActionsValue() -> [String] {
+    agentActions
   }
 
   func models() async throws -> MCPModelList {
@@ -508,6 +591,30 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       tunnelClearCount: tunnelClearCount,
       modelPreferences: modelPreferencesValue,
       customInstructions: customInstructionsValue
+    )
+  }
+
+  private func makeAgentInstallation(
+    installationID: String,
+    displayName: String,
+    executablePath: String,
+    isEnabled: Bool
+  ) -> IPCAgentInstallationSummary {
+    IPCAgentInstallationSummary(
+      installationID: installationID,
+      providerID: "opencode",
+      displayName: displayName,
+      executablePath: executablePath,
+      version: "1.18.22",
+      protocolRevision: "1",
+      adapterRevision: 1,
+      trustProfile: "managed",
+      securityProfileID: "controlled-readonly",
+      isEnabled: isEnabled,
+      availability: "available",
+      effectiveCapabilities: ["workspace.read"],
+      lastProbedAt: "2026-08-25T00:00:00Z",
+      updatedAt: "2026-08-25T00:00:00Z"
     )
   }
 

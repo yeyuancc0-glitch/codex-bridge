@@ -123,6 +123,49 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func agentCatalog() async throws -> IPCAgentCatalogResponse {
+    try await call(
+      operation: .getAgentCatalog,
+      payload: Optional<IPCMutationResponse>.none
+    )
+  }
+
+  public func registerAgentInstallation(
+    _ request: IPCAgentRegistrationRequest
+  ) async throws -> IPCAgentInstallationSummary {
+    try await call(operation: .registerAgentInstallation, payload: request)
+  }
+
+  public func reprobeAgentInstallation(
+    installationID: String,
+    acceptReplacement: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    try await call(
+      operation: .reprobeAgentInstallation,
+      payload: IPCAgentReprobeRequest(
+        installationID: installationID,
+        acceptReplacement: acceptReplacement
+      )
+    )
+  }
+
+  public func setAgentInstallationEnabled(
+    installationID: String,
+    enabled: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    try await call(
+      operation: .setAgentInstallationEnabled,
+      payload: IPCAgentEnabledRequest(installationID: installationID, enabled: enabled)
+    )
+  }
+
+  public func removeAgentInstallation(installationID: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .removeAgentInstallation,
+      payload: IPCAgentInstallationIDRequest(installationID: installationID)
+    )
+  }
+
   public func customInstructions() async throws -> String {
     let response: IPCCustomInstructions = try await call(
       operation: .getCustomInstructions,

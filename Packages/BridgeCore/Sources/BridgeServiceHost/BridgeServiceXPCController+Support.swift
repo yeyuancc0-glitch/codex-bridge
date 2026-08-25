@@ -222,6 +222,31 @@ extension BridgeServiceXPCController {
         return .init(code: "client_disabled", message: "The MCP client is disabled.")
       }
     }
+    if let error = error as? ServiceAgentRegistryError {
+      switch error {
+      case .providerUnavailable:
+        return .init(
+          code: "agent_provider_unavailable",
+          message: "The Agent Provider adapter is unavailable."
+        )
+      case .installationUnavailable:
+        return .init(
+          code: "agent_installation_unavailable",
+          message: "The Agent installation must pass Probe before it can be enabled."
+        )
+      case .installationNeedsReview:
+        return .init(
+          code: "agent_installation_needs_review",
+          message: "The Agent executable changed and requires explicit local review."
+        )
+      case .registrationInProgress:
+        return .init(
+          code: "agent_registration_in_progress",
+          message: "This Agent executable is already being registered.",
+          retryable: true
+        )
+      }
+    }
     if let error = error as? ServiceStoreError {
       switch error {
       case .unknownProject:

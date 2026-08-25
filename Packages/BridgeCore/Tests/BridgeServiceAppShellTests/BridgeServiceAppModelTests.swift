@@ -35,7 +35,60 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.models.map(\.modelID), ["fixture-model"])
     XCTAssertEqual(model.modelPreferences?.executionEffort, "medium")
     XCTAssertEqual(model.customInstructions, "Fixture global instructions")
+    XCTAssertEqual(model.agentProviders.map(\.providerID), ["opencode"])
+    XCTAssertTrue(model.agentInstallations.isEmpty)
     XCTAssertEqual(factory.makeCount, 1)
+  }
+
+  func testAgentInstallationManagementUsesExplicitLocalClientOperations() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.registerAgentInstallation(
+      providerID: "opencode",
+      displayName: "OpenCode",
+      executableURL: URL(fileURLWithPath: "/tmp/opencode-fixture")
+    )
+    try await waitUntil {
+      model.agentInstallations.count == 1 && !model.isManagingAgents
+    }
+    let installationID = try XCTUnwrap(model.agentInstallations.first?.installationID)
+    XCTAssertFalse(model.agentInstallations[0].isEnabled)
+    XCTAssertEqual(model.agentInstallations[0].availability, "available")
+
+    model.setAgentInstallationEnabled(installationID, enabled: true)
+    try await waitUntil {
+      model.agentInstallations.first?.isEnabled == true && !model.isManagingAgents
+    }
+
+    model.reprobeAgentInstallation(installationID, acceptReplacement: false)
+    try await waitUntil {
+      let actions = await client.agentActionsValue()
+      return actions.count == 3 && !model.isManagingAgents
+    }
+
+    model.removeAgentInstallation(installationID)
+    try await waitUntil {
+      model.agentInstallations.isEmpty && !model.isManagingAgents
+    }
+    let actions = await client.agentActionsValue()
+    XCTAssertEqual(
+      actions,
+      [
+        "register:opencode",
+        "enabled:agent-installation-1:true",
+        "reprobe:agent-installation-1:false",
+        "remove:agent-installation-1",
+      ]
+    )
   }
 
   func testGlobalCustomInstructionsReachServiceClient() async throws {

@@ -87,7 +87,7 @@ final class BridgeServiceHostTests: XCTestCase {
     defer { Task { await readOnlyClient.disconnect() } }
 
     let readOnlyTools = try await readOnlyClient.listTools()
-    XCTAssertEqual(readOnlyTools.tools.count, 13)
+    XCTAssertEqual(readOnlyTools.tools.count, 14)
     XCTAssertFalse(
       readOnlyTools.tools.contains(where: {
         $0.name == MCPServiceToolName.submitTask.rawValue
@@ -101,7 +101,7 @@ final class BridgeServiceHostTests: XCTestCase {
     )
     defer { Task { await fullClient.disconnect() } }
     let fullTools = try await fullClient.listTools()
-    XCTAssertEqual(fullTools.tools.count, 26)
+    XCTAssertEqual(fullTools.tools.count, 27)
     XCTAssertTrue(
       fullTools.tools.contains(where: {
         $0.name == MCPServiceToolName.submitTask.rawValue
@@ -221,11 +221,68 @@ final class BridgeServiceHostTests: XCTestCase {
     let mcpClient = try await connectMCP(endpoint: endpoint.localURL, secret: secret)
     defer { Task { await mcpClient.disconnect() } }
     let tools = try await mcpClient.listTools()
-    XCTAssertEqual(tools.tools.count, 26)
+    XCTAssertEqual(tools.tools.count, 27)
 
     try await client.removeProject(projectID: registered.projectID)
     let remainingProjects = try await client.projects()
     XCTAssertTrue(remainingProjects.isEmpty)
+  }
+
+  func testXPCManagesAgentInstallationThroughExplicitLocalActions() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let initial = try await client.agentCatalog()
+    XCTAssertEqual(initial.providers.map(\.providerID), ["opencode"])
+    XCTAssertTrue(initial.installations.isEmpty)
+
+    let registered = try await client.registerAgentInstallation(
+      IPCAgentRegistrationRequest(
+        providerID: "opencode",
+        displayName: "Unavailable OpenCode Fixture",
+        executablePath: "/usr/bin/false"
+      )
+    )
+    XCTAssertEqual(registered.availability, "unavailable")
+    XCTAssertNil(registered.version)
+    XCTAssertFalse(registered.isEnabled)
+    XCTAssertEqual(registered.securityProfileID, "controlled-readonly")
+    XCTAssertTrue(registered.effectiveCapabilities.isEmpty)
+    XCTAssertNotNil(registered.lastProbeError)
+
+    do {
+      _ = try await client.setAgentInstallationEnabled(
+        installationID: registered.installationID,
+        enabled: true
+      )
+      XCTFail("An unavailable Agent installation must not be enabled.")
+    } catch let error as BridgeServiceIPCCodecError {
+      guard case .remoteError(let remote) = error else {
+        return XCTFail("Expected a stable remote Agent availability error.")
+      }
+      XCTAssertEqual(remote.code, "agent_installation_unavailable")
+    }
+
+    let reprobed = try await client.reprobeAgentInstallation(
+      installationID: registered.installationID,
+      acceptReplacement: false
+    )
+    XCTAssertEqual(reprobed.availability, "unavailable")
+    XCTAssertFalse(reprobed.isEnabled)
+
+    let catalog = try await client.agentCatalog()
+    XCTAssertEqual(catalog.installations.map(\.installationID), [registered.installationID])
+    XCTAssertFalse(String(describing: catalog).contains("executable_sha256"))
+
+    try await client.removeAgentInstallation(installationID: registered.installationID)
+    let finalCatalog = try await client.agentCatalog()
+    XCTAssertTrue(finalCatalog.installations.isEmpty)
   }
 
   func testXPCProjectManagementIgnoresReadPolicyAndDeletesAllTerminalTasks() async throws {

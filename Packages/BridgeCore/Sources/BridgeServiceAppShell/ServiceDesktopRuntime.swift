@@ -83,6 +83,9 @@ extension BridgeServiceAppModel {
       connectionState = .idle
       serviceStatus = nil
       projects = []
+      agentProviders = []
+      agentInstallations = []
+      isManagingAgents = false
       tasks = []
       approvals = []
       mcpClients = []
@@ -198,6 +201,7 @@ extension BridgeServiceAppModel {
     includeThreads: Bool
   ) async {
     async let projectResult = optional { try await client.projects() }
+    async let agentCatalogResult = optional { try await client.agentCatalog() }
     async let taskResult = optional {
       try await client.tasks(IPCTaskListRequest(limit: 200))
     }
@@ -214,6 +218,11 @@ extension BridgeServiceAppModel {
           value.first(where: { $0.projectID == serviceStatus?.workbenchProjectID })?.projectID
           ?? value.first?.projectID
       }
+    }
+
+    if let value = await agentCatalogResult {
+      agentProviders = value.providers
+      agentInstallations = value.installations
     }
 
     if let projectID = selectedProjectID, projectDetails[projectID] == nil,

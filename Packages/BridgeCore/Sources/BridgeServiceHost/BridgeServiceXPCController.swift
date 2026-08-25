@@ -117,6 +117,16 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleSetProjectCommandMode(request)
     case .setWorkbenchProject:
       return try await handleSetWorkbenchProject(request)
+    case .getAgentCatalog:
+      return try await handleGetAgentCatalog(request)
+    case .registerAgentInstallation:
+      return try await handleRegisterAgentInstallation(request)
+    case .reprobeAgentInstallation:
+      return try await handleReprobeAgentInstallation(request)
+    case .setAgentInstallationEnabled:
+      return try await handleSetAgentInstallationEnabled(request)
+    case .removeAgentInstallation:
+      return try await handleRemoveAgentInstallation(request)
     case .getCustomInstructions:
       return try await handleGetCustomInstructions(request)
     case .setCustomInstructions:
