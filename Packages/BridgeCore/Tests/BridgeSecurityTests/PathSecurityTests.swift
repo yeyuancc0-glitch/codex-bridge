@@ -111,6 +111,38 @@ final class PathSecurityTests: XCTestCase {
     }
   }
 
+  func testCommandOutputRedactionPreservesDiagnosticContextAroundPaths() {
+    let input = """
+      SwiftCompile /Users/alice/src/App.swift -o /tmp/App.o status=failed
+      error: /Users/alice/src/App.swift:20:7: assertion failed
+      Process: /usr/bin/swift (PID 1234) exit=1
+      """
+
+    let redacted = OutboundContentSecurity.redactedCommandOutput(
+      input,
+      maximumUTF8Bytes: 4_096
+    )
+
+    XCTAssertFalse(redacted.contains("/Users/"))
+    XCTAssertFalse(redacted.contains("/tmp/"))
+    XCTAssertFalse(redacted.contains("/usr/bin/"))
+    XCTAssertTrue(redacted.contains("-o"))
+    XCTAssertTrue(redacted.contains(":20:7: assertion failed"))
+    XCTAssertTrue(redacted.contains("(PID 1234) exit=1"))
+    XCTAssertGreaterThanOrEqual(redacted.components(separatedBy: "[REDACTED_PATH]").count, 5)
+  }
+
+  func testCommandOutputRedactionFailsClosedForAmbiguousPathWithSpaces() {
+    let input = "Open /Users/Alice/Project Draft/private.txt and inspect it"
+
+    let redacted = OutboundContentSecurity.redactedCommandOutput(
+      input,
+      maximumUTF8Bytes: 4_096
+    )
+
+    XCTAssertEqual(redacted, "Open [REDACTED_PATH]")
+  }
+
   func testOutboundContentConsumesAuthenticationHeaderValueDuringRedaction() {
     let inputs = [
       "x-codex-bridge-token: topsecret",

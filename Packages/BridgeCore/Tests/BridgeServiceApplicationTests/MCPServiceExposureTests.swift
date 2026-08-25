@@ -128,6 +128,16 @@ final class MCPServiceExposureTests: XCTestCase {
     let read = try outputProperties("direct_read_command", in: definitions)
     XCTAssertNotNil(read["schema_version"])
     XCTAssertEqual(read["exit_code"]?.objectValue?["type"], "integer")
+    XCTAssertNotNil(read["command_status"])
+    XCTAssertNotNil(read["command_timed_out"])
+    XCTAssertNotNil(read["read_timeout"])
+    XCTAssertNotNil(read["execution_environment"])
+
+    let readInput = try inputProperties("direct_read_command", in: definitions)
+    XCTAssertEqual(readInput["wait_timeout_ms"]?.objectValue?["maximum"], .int(10_000))
+
+    let status = try outputProperties("bridge_status", in: definitions)
+    XCTAssertNotNil(status["execution_environment"])
 
     let stdin = try outputProperties("direct_write_stdin", in: definitions)
     XCTAssertEqual(

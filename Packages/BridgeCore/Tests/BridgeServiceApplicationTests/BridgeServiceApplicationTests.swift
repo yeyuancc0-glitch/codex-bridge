@@ -1093,6 +1093,69 @@ final class BridgeServiceApplicationTests: XCTestCase {
     await application.directCommands.cancelAll()
   }
 
+  func testDirectReadTimeoutDoesNotChangeCommandStateAndTerminalInterruptIsIdempotent()
+    async throws
+  {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture, catalogScript: serviceModelCatalogScript)
+    try await application.serviceSetDirectApprovalMode(
+      .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
+
+    let launched = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directExecCommand.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "argv": .array([.string("/usr/bin/grep"), .string("needle")]),
+          "yield_time_ms": .int(0),
+          "timeout_ms": .int(5_000),
+        ]
+      ))
+    let sessionID = try XCTUnwrap(
+      launched.structuredContent?.objectValue?["session_id"]?.stringValue)
+
+    let read = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directReadCommand.rawValue,
+        arguments: [
+          "session_id": .string(sessionID),
+          "wait_timeout_ms": .int(50),
+        ]
+      ))
+    let readContent = try XCTUnwrap(read.structuredContent?.objectValue)
+    XCTAssertEqual(readContent["status"], .string("running"))
+    XCTAssertEqual(readContent["command_status"], .string("running"))
+    XCTAssertEqual(readContent["timed_out"], .bool(false))
+    XCTAssertEqual(readContent["command_timed_out"], .bool(false))
+    XCTAssertEqual(readContent["read_timeout"], .bool(true))
+    XCTAssertNotNil(readContent["execution_environment"])
+
+    _ = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directWriteStdin.rawValue,
+        arguments: [
+          "session_id": .string(sessionID),
+          "close_stdin": .bool(true),
+        ]
+      ))
+    let final = try await waitForCommand(
+      application,
+      sessionID: sessionID,
+      deadline: ContinuousClock.now.advanced(by: .seconds(5))
+    )
+    let interrupted = try await application.serviceDirectInterruptCommand(
+      sessionID: sessionID,
+      deadline: ContinuousClock.now.advanced(by: .seconds(3))
+    )
+
+    XCTAssertEqual(final.status, "ended")
+    XCTAssertEqual(interrupted.status, "ended")
+    XCTAssertEqual(interrupted.exitCode, final.exitCode)
+    await application.directCommands.cancelAll()
+  }
+
   func testReadOnlyDispatcherRejectsEveryFullOnlyToolEvenWhenCalledByName() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

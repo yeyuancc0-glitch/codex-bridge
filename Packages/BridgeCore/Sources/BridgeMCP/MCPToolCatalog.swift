@@ -100,6 +100,19 @@ public struct MCPToolCatalog: Sendable {
         "supervisor_state": stringSchema,
         "degradations": arraySchema(items: stringSchema),
         "pending_approval_count": integerSchema(minimum: 0),
+        "execution_environment": objectSchema(
+          properties: [
+            "bridge_sandbox": stringSchema,
+            "sandbox_exec": stringSchema,
+            "nested_sandbox": stringSchema,
+            "loopback": stringSchema,
+            "child_network_policy": stringSchema,
+            "limitations": arraySchema(items: stringSchema),
+          ],
+          required: [
+            "bridge_sandbox", "sandbox_exec", "nested_sandbox", "loopback", "limitations",
+          ]
+        ),
       ],
       required: [
         "app_version", "mcp_state", "tunnel_state", "execution_state", "supervisor_state",

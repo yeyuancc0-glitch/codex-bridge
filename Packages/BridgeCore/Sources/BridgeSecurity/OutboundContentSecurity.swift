@@ -11,6 +11,11 @@ public struct OutboundRedaction: Equatable, Sendable {
 }
 
 public enum OutboundContentSecurity {
+  private enum PathRedactionMode {
+    case remainderOfLine
+    case commandOutput
+  }
+
   private static let forbiddenPatterns = [
     #"(?i)-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----"#,
     #"(?i)\bBearer\s+[^\s,;]+"#,
@@ -74,6 +79,32 @@ public enum OutboundContentSecurity {
     maximumUTF8Bytes: Int,
     preservingSourceSyntax: Bool = false
   ) -> OutboundRedaction {
+    redaction(
+      of: value,
+      maximumUTF8Bytes: maximumUTF8Bytes,
+      preservingSourceSyntax: preservingSourceSyntax,
+      pathMode: .remainderOfLine
+    )
+  }
+
+  public static func redactedCommandOutput(
+    _ value: String,
+    maximumUTF8Bytes: Int
+  ) -> String {
+    redaction(
+      of: value,
+      maximumUTF8Bytes: maximumUTF8Bytes,
+      preservingSourceSyntax: false,
+      pathMode: .commandOutput
+    ).text
+  }
+
+  private static func redaction(
+    of value: String,
+    maximumUTF8Bytes: Int,
+    preservingSourceSyntax: Bool,
+    pathMode: PathRedactionMode
+  ) -> OutboundRedaction {
     precondition(maximumUTF8Bytes > 0)
     var insidePrivateKey = false
     var redactedLineCount = 0
@@ -87,10 +118,13 @@ public enum OutboundContentSecurity {
           options: .regularExpression
         )
       }
-      let pathRedacted = redactUnsafePath(
-        in: secretsRedacted,
-        preservingSourceSyntax: preservingSourceSyntax
-      )
+      let pathRedacted =
+        switch pathMode {
+        case .remainderOfLine:
+          redactUnsafePath(in: secretsRedacted, preservingSourceSyntax: preservingSourceSyntax)
+        case .commandOutput:
+          redactCommandOutputPaths(in: secretsRedacted)
+        }
       if pathRedacted != line {
         redactedLineCount += 1
       }
@@ -135,6 +169,87 @@ public enum OutboundContentSecurity {
       )
     else { return line }
     return String(line[..<start]) + "[REDACTED]"
+  }
+
+  private static func redactCommandOutputPaths(in line: String) -> String {
+    var result = line
+    while let start = unsafeAbsolutePathStart(in: result) {
+      let end = commandOutputPathEnd(in: result, from: start)
+      result.replaceSubrange(start..<end, with: "[REDACTED_PATH]")
+    }
+    return result
+  }
+
+  private static func unsafeAbsolutePathStart(in line: String) -> String.Index? {
+    if let home = line.range(of: "~/")?.lowerBound { return home }
+    let safeRanges = safeRanges(in: line, preservingSourceSyntax: false)
+    var safeRangeIndex = 0
+    var index = line.startIndex
+    while index < line.endIndex {
+      defer { index = line.index(after: index) }
+      while safeRangeIndex < safeRanges.count, index >= safeRanges[safeRangeIndex].upperBound {
+        safeRangeIndex += 1
+      }
+      let isSafeURL =
+        safeRangeIndex < safeRanges.count && safeRanges[safeRangeIndex].contains(index)
+      guard line[index] == "/", !isSafeURL else { continue }
+      let next = line.index(after: index)
+      if next < line.endIndex, line[next].isWhitespace { continue }
+      guard index == line.startIndex || !isRelativePathPrefix(line[line.index(before: index)])
+      else { continue }
+      return index
+    }
+    return nil
+  }
+
+  private static func commandOutputPathEnd(
+    in line: String,
+    from start: String.Index
+  ) -> String.Index {
+    if start > line.startIndex {
+      let quote = line[line.index(before: start)]
+      if quote == "\"" || quote == "'",
+        let endQuote = line[start...].firstIndex(of: quote)
+      {
+        return endQuote
+      }
+    }
+    var index = start
+    while index < line.endIndex {
+      let character = line[index]
+      if character == ":" {
+        let next = line.index(after: index)
+        if next < line.endIndex, line[next].isNumber { return index }
+      }
+      if character == "," || character == ";" {
+        let next = line.index(after: index)
+        if next == line.endIndex || line[next].isWhitespace { return index }
+      }
+      if character == ")" || character == "]" {
+        let next = line.index(after: index)
+        if next == line.endIndex || line[next].isWhitespace { return index }
+      }
+      if character.isWhitespace {
+        let next = line[index...].firstIndex { !$0.isWhitespace } ?? line.endIndex
+        if isCommandOutputBoundary(line[next...]) { return index }
+      }
+      index = line.index(after: index)
+    }
+    return line.endIndex
+  }
+
+  private static func isCommandOutputBoundary(_ suffix: Substring) -> Bool {
+    guard !suffix.isEmpty else { return true }
+    if suffix.hasPrefix("/") || suffix.hasPrefix("~/") || suffix.hasPrefix("-") { return true }
+    let lowercased = suffix.lowercased()
+    return lowercased.hasPrefix("(pid")
+      || lowercased.hasPrefix("[pid")
+      || lowercased.hasPrefix("pid=")
+      || lowercased.hasPrefix("exit=")
+      || lowercased.hasPrefix("status=")
+      || lowercased.hasPrefix("assertion ")
+      || lowercased.hasPrefix("error:")
+      || lowercased.hasPrefix("warning:")
   }
 
   private static func unsafePathStart(

@@ -108,13 +108,29 @@ extension MCPServiceToolDispatcher {
   {
     let values = try StrictToolArguments(
       arguments,
-      allowed: ["session_id"],
+      allowed: ["session_id", "wait_timeout_ms"],
       required: ["session_id"]
     )
     let sessionID = try values.requiredIdentifier("session_id", maximumUTF8Bytes: 128)
+    let waitTimeoutMS = try values.optionalNonnegativeInteger("wait_timeout_ms") ?? 0
+    guard waitTimeoutMS <= 10_000 else {
+      throw MCPError.invalidParams("wait_timeout_ms must not exceed 10000.")
+    }
     let deadline = clock.now.advanced(by: deadlines.read)
-    let output = try await withToolDeadline(until: deadline) {
+    var output = try await withToolDeadline(until: deadline) {
       try await service.serviceDirectReadCommand(sessionID: sessionID, deadline: deadline)
+    }
+    let baselineByteCount = output.byteCount
+    let waitDeadline = clock.now.advanced(by: .milliseconds(waitTimeoutMS))
+    while waitTimeoutMS > 0, output.status == "running", clock.now < waitDeadline {
+      try await Task.sleep(for: .milliseconds(25))
+      output = try await withToolDeadline(until: deadline) {
+        try await service.serviceDirectReadCommand(sessionID: sessionID, deadline: deadline)
+      }
+      if output.status != "running" || output.byteCount != baselineByteCount { break }
+    }
+    if waitTimeoutMS > 0, output.status == "running", output.byteCount == baselineByteCount {
+      output = output.markingReadTimeout()
     }
     return try resultEncoder.encode(ServiceDirectCommandOutput(output: output))
 

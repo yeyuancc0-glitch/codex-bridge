@@ -85,6 +85,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       $0.state.status == .awaitingLocalApproval
         && $0.requiresLocalStartApproval
     }.count
+    let directEnvironment = await directCommands.executionEnvironmentCapabilities()
     var degradations = runtime.degradations
     let activeTasks = taskList.filter { !$0.state.status.isTerminal }
     for task in activeTasks where task.state.supervisorStatus == .degraded {
@@ -104,7 +105,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       executionState: Self.executionState(taskList),
       supervisorState: Self.supervisorState(taskList),
       degradations: degradations,
-      pendingApprovalCount: codexApprovals + taskStartApprovals
+      pendingApprovalCount: codexApprovals + taskStartApprovals,
+      executionEnvironment: Self.mcpEnvironment(directEnvironment)
     )
   }
 

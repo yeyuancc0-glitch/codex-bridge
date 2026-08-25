@@ -247,6 +247,12 @@ extension BridgeServiceApplication {
     guard !sessionID.isEmpty, sessionID.utf8.count <= 128 else {
       throw BridgeMCPQueryError.commandSessionNotFound
     }
+    guard let existing = await directCommands.snapshot(sessionID: sessionID) else {
+      throw BridgeMCPQueryError.commandSessionNotFound
+    }
+    if existing.status != "running" {
+      return Self.output(existing)
+    }
     do {
       try await directCommands.interrupt(sessionID: sessionID)
     } catch {
@@ -277,10 +283,41 @@ extension BridgeServiceApplication {
       status: session.status,
       exitCode: session.exitCode.map(Int.init),
       timedOut: session.timedOut,
-      head: safe(session.output.head, maximum: 16 * 1_024),
-      tail: safe(session.output.tail, maximum: 64 * 1_024),
+      commandStatus: session.status,
+      commandTimedOut: session.timedOut,
+      readTimeout: false,
+      head: OutboundContentSecurity.redactedCommandOutput(
+        session.output.head, maximumUTF8Bytes: 16 * 1_024),
+      tail: OutboundContentSecurity.redactedCommandOutput(
+        session.output.tail, maximumUTF8Bytes: 64 * 1_024),
       byteCount: session.output.byteCount,
-      truncated: session.output.truncated
+      truncated: session.output.truncated,
+      executionEnvironment: Self.mcpEnvironment(session.executionEnvironment)
+    )
+  }
+
+  static func mcpEnvironment(
+    _ environment: DirectExecutionEnvironmentCapabilities
+  ) -> MCPExecutionEnvironment {
+    MCPExecutionEnvironment(
+      bridgeSandbox: environment.bridgeSandbox,
+      sandboxExec: environment.sandboxExec,
+      nestedSandbox: environment.nestedSandbox,
+      loopback: environment.loopback,
+      limitations: environment.limitations
+    )
+  }
+
+  private static func mcpEnvironment(
+    _ environment: DirectCommandExecutionEnvironment
+  ) -> MCPExecutionEnvironment {
+    MCPExecutionEnvironment(
+      bridgeSandbox: environment.bridgeSandbox,
+      sandboxExec: environment.sandboxExec,
+      nestedSandbox: environment.nestedSandbox,
+      loopback: environment.loopback,
+      childNetworkPolicy: environment.childNetworkPolicy,
+      limitations: environment.limitations
     )
   }
 
@@ -392,8 +429,10 @@ extension BridgeServiceApplication {
     switch error {
     case let error as DirectCommandSessionError:
       switch error {
-      case .sessionNotFound, .notRunning:
+      case .sessionNotFound:
         return .commandSessionNotFound
+      case .notRunning:
+        return .commandSessionNotRunning
       case .projectBusy:
         return .busy
       case .invalidStdin:

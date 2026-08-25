@@ -113,6 +113,7 @@ public struct BridgeStatusOutput: Codable, Equatable, Sendable {
   public let supervisorState: String
   public let degradations: [String]
   public let pendingApprovalCount: Int
+  public let executionEnvironment: MCPExecutionEnvironment?
 
   public init(snapshot: BridgeStatusSnapshot) {
     schemaVersion = 1
@@ -125,6 +126,7 @@ public struct BridgeStatusOutput: Codable, Equatable, Sendable {
     supervisorState = snapshot.supervisorState
     degradations = snapshot.degradations
     pendingApprovalCount = snapshot.pendingApprovalCount
+    executionEnvironment = snapshot.executionEnvironment
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -138,6 +140,7 @@ public struct BridgeStatusOutput: Codable, Equatable, Sendable {
     case supervisorState = "supervisor_state"
     case degradations
     case pendingApprovalCount = "pending_approval_count"
+    case executionEnvironment = "execution_environment"
   }
 }
 

@@ -1314,6 +1314,38 @@ final class DirectCommandSessionManagerTests: XCTestCase {
     XCTAssertNotNil(second)
   }
 
+  func testCompletedSessionRetainsFinalSnapshotAndExecutionEnvironment() async throws {
+    let environment = DirectExecutionEnvironmentCapabilities(
+      bridgeSandbox: "unknown",
+      sandboxExec: "available",
+      nestedSandbox: "unsupported",
+      loopback: "available"
+    )
+    let manager = DirectCommandSessionManager(
+      runner: DirectCommandRunner(defaultTimeout: .seconds(5)),
+      completedSessionTTL: .seconds(60),
+      executionEnvironment: environment
+    )
+    defer { Task { await manager.cancelAll() } }
+
+    _ = try await manager.launch(
+      sessionID: "dcmd-retained",
+      projectID: ProjectID(rawValue: "prj-retained"),
+      argv: ["/bin/echo", "done"],
+      workingDirectory: nil,
+      requiresNetwork: false,
+      usePTY: false
+    )
+    let finished = try await waitForFinishedSession(manager, sessionID: "dcmd-retained")
+    let retained = await manager.snapshot(sessionID: "dcmd-retained")
+    let reread = try XCTUnwrap(retained)
+
+    XCTAssertEqual(finished.status, "ended")
+    XCTAssertEqual(reread.status, "ended")
+    XCTAssertEqual(reread.executionEnvironment.nestedSandbox, "unsupported")
+    XCTAssertEqual(reread.executionEnvironment.childNetworkPolicy, "inherited")
+  }
+
   private func waitForFinishedSession(
     _ manager: DirectCommandSessionManager,
     sessionID: String
