@@ -214,6 +214,7 @@ let package = Package(
     .target(
       name: "BridgeServiceCore",
       dependencies: [
+        "BridgeAgentCore",
         "BridgeDomain",
         "BridgeProjects",
         "BridgeSecurity",
@@ -499,6 +500,7 @@ let package = Package(
     .testTarget(
       name: "BridgeServiceCoreTests",
       dependencies: [
+        "BridgeAgentCore",
         "BridgeDomain",
         "BridgeProjects",
         "BridgeSkills",

@@ -333,7 +333,8 @@ extension BridgeServiceApplication {
       return .idempotencyConflict
     case .activeWriteTaskExists:
       return .busy
-    case .invalidArgument, .invalidTaskTransition, .immutableTaskChanged:
+    case .invalidArgument, .invalidTaskTransition, .immutableTaskChanged,
+      .duplicateAgentInstallation, .duplicateAgentExecutable, .unknownAgentInstallation:
       return .contractRejected
     case .corruptSchema, .corruptRecord, .unsupportedSchemaVersion,
       .duplicateProject, .duplicateProjectRoot, .storageFailure:

@@ -228,6 +228,16 @@ extension BridgeServiceXPCController {
         return .init(code: "project_not_found", message: "The project is unavailable.")
       case .unknownTask:
         return .init(code: "task_not_found", message: "The task is unavailable.")
+      case .unknownAgentInstallation:
+        return .init(
+          code: "agent_installation_not_found",
+          message: "The Agent installation is unavailable."
+        )
+      case .duplicateAgentInstallation, .duplicateAgentExecutable:
+        return .init(
+          code: "duplicate_agent_installation",
+          message: "The Agent executable is already registered."
+        )
       case .activeWriteTaskExists:
         return .init(
           code: "busy",

@@ -76,17 +76,20 @@ public struct AgentProbeRequest: Equatable, Sendable {
 public struct AgentProbeResult: Equatable, Sendable {
   public let installation: AgentInstallation
   public let available: Bool
+  public let reviewRequired: Bool
   public let capabilities: AgentCapabilitySnapshot
   public let unavailableReason: String?
 
   public init(
     installation: AgentInstallation,
     available: Bool,
+    reviewRequired: Bool = false,
     capabilities: AgentCapabilitySnapshot,
     unavailableReason: String? = nil
   ) {
     self.installation = installation
     self.available = available
+    self.reviewRequired = !available && reviewRequired
     self.capabilities = capabilities
     if available {
       self.unavailableReason = nil

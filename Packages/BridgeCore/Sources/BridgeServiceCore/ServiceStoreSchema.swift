@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 9
+  static let version: Int64 = 10
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -31,9 +31,10 @@ enum ServiceStoreSchema {
   static let migrationV7 = "BridgeServiceCore.v7"
   static let migrationV8 = "BridgeServiceCore.v8"
   static let migrationV9 = "BridgeServiceCore.v9"
+  static let migrationV10 = "BridgeServiceCore.v10"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
-    migrationV8, migrationV9,
+    migrationV8, migrationV9, migrationV10,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -64,6 +65,7 @@ enum ServiceStoreSchema {
     switch sourceVersion {
     case 7: backupSuffix = ".pre-v8"
     case 8: backupSuffix = ".pre-v9"
+    case 9: backupSuffix = ".pre-v10"
     default: return
     }
     let backupPath = sourcePath + backupSuffix
@@ -125,6 +127,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV9) { db in
       try createVersionNine(in: db)
+    }
+    migrator.registerMigration(migrationV10) { db in
+      try createVersionTen(in: db)
     }
     return migrator
   }
@@ -624,6 +629,83 @@ enum ServiceStoreSchema {
     )
   }
 
+  static func createVersionTen(in db: Database) throws {
+    try db.execute(
+      sql: """
+        CREATE TABLE bridge_service_agent_installations (
+            installation_id TEXT PRIMARY KEY NOT NULL,
+            provider_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            executable_path TEXT NOT NULL,
+            canonical_executable_path TEXT NOT NULL,
+            executable_device TEXT NOT NULL,
+            executable_inode TEXT NOT NULL,
+            executable_size TEXT NOT NULL,
+            executable_mtime_ns INTEGER NOT NULL,
+            executable_sha256 TEXT NOT NULL,
+            version TEXT,
+            protocol_revision TEXT,
+            adapter_revision INTEGER NOT NULL,
+            trust_profile TEXT NOT NULL
+              CHECK (trust_profile IN ('managed', 'user_trusted')),
+            security_profile_id TEXT,
+            is_enabled INTEGER NOT NULL CHECK (is_enabled IN (0, 1)),
+            availability TEXT NOT NULL
+              CHECK (availability IN ('available', 'unavailable', 'needs_review')),
+            capabilities_json BLOB NOT NULL,
+            last_probe_error TEXT,
+            last_probed_at REAL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE (provider_id, canonical_executable_path),
+            CHECK (length(CAST(installation_id AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(display_name AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (substr(executable_path, 1, 1) = '/'),
+            CHECK (length(CAST(executable_path AS BLOB)) BETWEEN 1 AND 16384),
+            CHECK (substr(canonical_executable_path, 1, 1) = '/'),
+            CHECK (length(CAST(canonical_executable_path AS BLOB)) BETWEEN 1 AND 16384),
+            CHECK (length(executable_device) BETWEEN 1 AND 20),
+            CHECK (length(executable_inode) BETWEEN 1 AND 20),
+            CHECK (length(executable_size) BETWEEN 1 AND 20),
+            CHECK (executable_mtime_ns >= 0),
+            CHECK (length(executable_sha256) = 64),
+            CHECK (executable_sha256 NOT GLOB '*[^0-9a-f]*'),
+            CHECK (version IS NULL OR length(CAST(version AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (
+              protocol_revision IS NULL OR
+              length(CAST(protocol_revision AS BLOB)) BETWEEN 1 AND 128
+            ),
+            CHECK (adapter_revision > 0),
+            CHECK (
+              security_profile_id IS NULL OR
+              length(CAST(security_profile_id AS BLOB)) BETWEEN 1 AND 256
+            ),
+            CHECK (typeof(capabilities_json) = 'blob'),
+            CHECK (length(capabilities_json) BETWEEN 2 AND 65536),
+            CHECK (
+              last_probe_error IS NULL OR
+              length(CAST(last_probe_error AS BLOB)) BETWEEN 1 AND 4096
+            ),
+            CHECK (
+              availability <> 'available' OR
+              (version IS NOT NULL AND last_probed_at IS NOT NULL AND last_probe_error IS NULL)
+            ),
+            CHECK (last_probed_at IS NULL OR last_probed_at >= created_at),
+            CHECK (updated_at >= created_at),
+            CHECK (last_probed_at IS NULL OR last_probed_at <= updated_at)
+        ) WITHOUT ROWID;
+
+        CREATE INDEX bridge_service_agent_installations_provider
+        ON bridge_service_agent_installations(provider_id, display_name COLLATE NOCASE);
+
+        CREATE INDEX bridge_service_agent_installations_updated
+        ON bridge_service_agent_installations(updated_at DESC, installation_id);
+
+        UPDATE bridge_service_meta SET schema_version = 10 WHERE singleton = 1;
+        """)
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -788,6 +870,14 @@ enum ServiceStoreSchema {
           "direct_blacklist_json",
         ],
         "bridge_service_settings": ["setting_key", "setting_value", "updated_at"],
+        "bridge_service_agent_installations": [
+          "installation_id", "provider_id", "display_name", "executable_path",
+          "canonical_executable_path", "executable_device", "executable_inode",
+          "executable_size", "executable_mtime_ns", "executable_sha256", "version",
+          "protocol_revision", "adapter_revision", "trust_profile", "security_profile_id",
+          "is_enabled", "availability", "capabilities_json", "last_probe_error",
+          "last_probed_at", "created_at", "updated_at",
+        ],
         "bridge_service_tasks": [
           "task_id", "project_id", "source", "source_client_id", "client_request_id", "prompt",
           "requested_thread_id", "codex_thread_id", "codex_turn_id", "status",

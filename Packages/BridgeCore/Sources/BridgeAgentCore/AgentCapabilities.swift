@@ -45,6 +45,12 @@ public struct AgentCapabilitySnapshot: Codable, Equatable, Sendable {
   public func supports(_ required: Set<AgentCapability>) -> Bool {
     effective.isSuperset(of: required)
   }
+
+  public static let empty = AgentCapabilitySnapshot(
+    advertised: [],
+    observed: [],
+    enforced: []
+  )
 }
 
 public enum AgentMutationIntent: String, Codable, CaseIterable, Sendable {
@@ -56,4 +62,9 @@ public enum AgentWorkspaceStrategy: String, Codable, CaseIterable, Sendable {
   case sharedProject = "shared_project"
   case exclusiveProject = "exclusive_project"
   case isolatedGitWorktree = "isolated_git_worktree"
+}
+
+public enum AgentTrustProfile: String, Codable, CaseIterable, Sendable {
+  case managed
+  case userTrusted = "user_trusted"
 }

@@ -117,7 +117,11 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     } catch {
       await client?.shutdown()
       cleanup(runDirectory: runDirectory, probeRoot: probeRoot)
-      return unavailableProbe(request.installation, reason: Self.probeReason(error))
+      return unavailableProbe(
+        request.installation,
+        reason: Self.probeReason(error),
+        reviewRequired: Self.requiresReview(error)
+      )
     }
   }
 
@@ -260,16 +264,14 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
 
   private func unavailableProbe(
     _ installation: AgentInstallation,
-    reason: String
+    reason: String,
+    reviewRequired: Bool = false
   ) -> AgentProbeResult {
     AgentProbeResult(
       installation: installation,
       available: false,
-      capabilities: AgentCapabilitySnapshot(
-        advertised: [],
-        observed: [],
-        enforced: []
-      ),
+      reviewRequired: reviewRequired,
+      capabilities: .empty,
       unavailableReason: reason
     )
   }
@@ -414,6 +416,16 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       return "OpenCode ACP exited during initialization (code: \(value))."
     default:
       return "OpenCode ACP probe failed."
+    }
+  }
+
+  private static func requiresReview(_ error: any Error) -> Bool {
+    switch error {
+    case OpenCodeACPError.unsupportedProtocol,
+      AgentRuntimeError.unsupportedProtocol:
+      return true
+    default:
+      return false
     }
   }
 
