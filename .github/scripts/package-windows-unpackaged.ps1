@@ -70,6 +70,7 @@ if ($LASTEXITCODE -ne 0) { throw "Unpackaged publish failed with exit code $LAST
 $required = @(
   'CodexBridge.App.exe',
   'CodexBridge.App.dll',
+  'CodexBridge.App.pri',
   'CodexBridge.App.deps.json',
   'CodexBridge.App.runtimeconfig.json',
   'codex-bridge-service.exe',

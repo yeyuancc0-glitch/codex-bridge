@@ -9,6 +9,9 @@
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Required so CLI builds run the PRI pipeline; without it no app .pri is
+         produced and every ThemeResource/XBF lookup fails at runtime (WinAppSDK#3718). -->
+    <EnableMsixTooling>true</EnableMsixTooling>
     <GenerateLibraryLayout>true</GenerateLibraryLayout>
     <SelfContained Condition="'$(BuildSelfContained)' == 'true'">true</SelfContained>
     <WindowsAppSDKSelfContained Condition="'$(BuildSelfContained)' == 'true'">true</WindowsAppSDKSelfContained>

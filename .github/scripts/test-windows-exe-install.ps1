@@ -40,6 +40,7 @@ try {
   foreach ($relative in @(
     'CodexBridge.App.exe',
     'CodexBridge.App.dll',
+    'CodexBridge.App.pri',
     'codex-bridge-service.exe',
     'sqlite3.dll',
     'Microsoft.WindowsAppRuntime.dll',
