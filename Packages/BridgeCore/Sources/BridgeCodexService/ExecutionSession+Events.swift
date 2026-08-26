@@ -28,6 +28,9 @@ extension ExecutionSession {
         return
       }
       if item.type == "mcpToolCall" || item.type == "dynamicToolCall" {
+        guard isPrimaryBinding(threadID: item.key.threadID, turnID: item.key.turnID) else {
+          return
+        }
         guard let call = Self.toolCall(from: notification.params) else {
           await fail(
             code: "invalid_tool_call_item",
@@ -35,7 +38,7 @@ extension ExecutionSession {
           )
           return
         }
-        yield(.toolCall(call))
+        await yield(.toolCall(call))
         return
       }
       guard item.type == "commandExecution" || item.type == "fileChange" else { return }

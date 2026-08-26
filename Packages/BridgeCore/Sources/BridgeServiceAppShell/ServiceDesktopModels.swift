@@ -1,6 +1,6 @@
 import BridgeIPC
 import BridgeMCP
-import Crypto
+import CryptoKit
 import Foundation
 
 extension MCPServiceTaskSnapshot {
@@ -231,5 +231,43 @@ public struct BridgeBlacklistDraft: Equatable, Identifiable, Sendable {
       executable: executableValue.isEmpty ? nil : executableValue,
       pattern: patternValue.isEmpty ? nil : patternValue
     )
+  }
+}
+
+struct ProjectWorkspaceDraftState: Equatable, Sendable {
+  let commandMode: String
+  let commands: [BridgeWorkspaceCommandDraft]
+  let commandBlacklist: [BridgeBlacklistDraft]
+
+  init(workspace: MCPDirectWorkspace) {
+    commandMode = workspace.commandMode
+    commands = workspace.commands.map(BridgeWorkspaceCommandDraft.init)
+    commandBlacklist = workspace.commandBlacklist.map(BridgeBlacklistDraft.init)
+  }
+
+  init(
+    commandMode: String,
+    commands: [BridgeWorkspaceCommandDraft],
+    commandBlacklist: [BridgeBlacklistDraft]
+  ) {
+    self.commandMode = commandMode
+    self.commands = commands.map { draft in
+      let command = draft.toIPCCommand()
+      return BridgeWorkspaceCommandDraft(
+        name: command.name,
+        executable: command.executable,
+        arguments: command.arguments.joined(separator: "\n"),
+        workingDirectory: command.workingDirectory ?? "",
+        requiresNetwork: command.requiresNetwork,
+        risk: command.risk
+      )
+    }
+    self.commandBlacklist = commandBlacklist.map { draft in
+      let rule = draft.toIPCRule()
+      return BridgeBlacklistDraft(
+        executable: rule.executable ?? "",
+        pattern: rule.pattern ?? ""
+      )
+    }
   }
 }

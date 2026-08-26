@@ -1,3 +1,6 @@
+#if canImport(Darwin)
+  import Darwin
+#endif
 import Foundation
 import GRDB
 
@@ -47,65 +50,73 @@ enum ServiceStoreSchema {
     }
   }
 
-  static func createPreVersionEightBackupIfNeeded(
+  static func createPreMigrationBackupIfNeeded(
     _ database: DatabaseQueue,
     sourcePath: String
   ) throws {
     guard sourcePath != ":memory:" else { return }
-    let requiresBackup = try database.read { db -> Bool in
-      guard try db.tableExists("bridge_service_meta") else { return false }
+    let sourceVersion = try database.read { db -> Int64? in
+      guard try db.tableExists("bridge_service_meta") else { return nil }
       return try Int64.fetchOne(
         db,
         sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
-      ) == 7
+      )
     }
-    guard requiresBackup else { return }
-    let backupPath = sourcePath + ".pre-v8"
-    if try ServiceStorePrivateBackup.prepare(at: backupPath) == .existing {
-      try ServiceStorePrivateBackup.validate(at: backupPath)
-      return
+    let backupSuffix: String
+    switch sourceVersion {
+    case 7: backupSuffix = ".pre-v8"
+    case 8: backupSuffix = ".pre-v9"
+    default: return
     }
-    var configuration = Configuration()
-    configuration.foreignKeysEnabled = true
-    let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
-    do {
-      try database.backup(to: destination)
-      try ServiceStorePrivateBackup.protectAndValidate(at: backupPath)
-    } catch {
-      try? FileManager.default.removeItem(atPath: backupPath)
-      throw error
-    }
+    let backupPath = sourcePath + backupSuffix
+    #if canImport(Darwin)
+      if FileManager.default.fileExists(atPath: backupPath) {
+        try validatePrivateBackup(at: backupPath)
+        return
+      }
+      var configuration = Configuration()
+      configuration.foreignKeysEnabled = true
+      let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
+      do {
+        try database.backup(to: destination)
+        guard chmod(backupPath, 0o600) == 0 else {
+          throw ServiceStoreError.storageFailure
+        }
+        try validatePrivateBackup(at: backupPath)
+      } catch {
+        try? FileManager.default.removeItem(atPath: backupPath)
+        throw error
+      }
+    #else
+      if FileManager.default.fileExists(atPath: backupPath) {
+        try ServiceStorePrivateBackup.validate(at: backupPath)
+        return
+      }
+      var configuration = Configuration()
+      configuration.foreignKeysEnabled = true
+      let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
+      do {
+        try database.backup(to: destination)
+        try ServiceStorePrivateBackup.protectAndValidate(at: backupPath)
+      } catch {
+        try? FileManager.default.removeItem(atPath: backupPath)
+        throw error
+      }
+    #endif
   }
 
-  static func createPreVersionNineBackupIfNeeded(
-    _ database: DatabaseQueue,
-    sourcePath: String
-  ) throws {
-    guard sourcePath != ":memory:" else { return }
-    let requiresBackup = try database.read { db -> Bool in
-      guard try db.tableExists("bridge_service_meta") else { return false }
-      return try Int64.fetchOne(
-        db,
-        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
-      ) == 8
+  #if canImport(Darwin)
+    private static func validatePrivateBackup(at path: String) throws {
+      var metadata = stat()
+      guard lstat(path, &metadata) == 0,
+        metadata.st_uid == getuid(),
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_mode & 0o777 == 0o600
+      else {
+        throw ServiceStoreError.storageFailure
+      }
     }
-    guard requiresBackup else { return }
-    let backupPath = sourcePath + ".pre-v9"
-    if try ServiceStorePrivateBackup.prepare(at: backupPath) == .existing {
-      try ServiceStorePrivateBackup.validate(at: backupPath)
-      return
-    }
-    var configuration = Configuration()
-    configuration.foreignKeysEnabled = true
-    let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
-    do {
-      try database.backup(to: destination)
-      try ServiceStorePrivateBackup.protectAndValidate(at: backupPath)
-    } catch {
-      try? FileManager.default.removeItem(atPath: backupPath)
-      throw error
-    }
-  }
+  #endif
 
   static func makeMigrator() -> DatabaseMigrator {
     var migrator = DatabaseMigrator()

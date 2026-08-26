@@ -13,11 +13,7 @@ public actor SimpleServiceStore {
     configuration.foreignKeysEnabled = true
     do {
       let openedDatabase = try DatabaseQueue(path: path, configuration: configuration)
-      try ServiceStoreSchema.createPreVersionEightBackupIfNeeded(
-        openedDatabase,
-        sourcePath: path
-      )
-      try ServiceStoreSchema.createPreVersionNineBackupIfNeeded(
+      try ServiceStoreSchema.createPreMigrationBackupIfNeeded(
         openedDatabase,
         sourcePath: path
       )
@@ -323,7 +319,8 @@ public actor SimpleServiceStore {
 
   public func updateTask(
     _ task: ServiceTaskRecord,
-    event: ServiceTaskEventDraft
+    event: ServiceTaskEventDraft,
+    expectedStatus: ServiceTaskStatus? = nil
   ) throws {
     guard event.createdAt == task.updatedAt else {
       throw ServiceStoreError.invalidArgument("task.updateEvent")
@@ -339,6 +336,12 @@ public actor SimpleServiceStore {
         }
         guard task.updatedAt >= existing.updatedAt else {
           throw ServiceStoreError.invalidArgument("task.updatedAt")
+        }
+        if let expectedStatus, existing.state.status != expectedStatus {
+          throw ServiceStoreError.invalidTaskTransition(
+            from: existing.state.status,
+            to: task.state.status
+          )
         }
         try Self.validateTransition(from: existing.state.status, to: task.state.status)
         try updateTaskRow(task, in: db)
@@ -537,6 +540,11 @@ public actor SimpleServiceStore {
         updated.reserveCapacity(rows.count)
         for row in rows {
           let task = try Self.decodeTask(row)
+          if task.state.status == .awaitingLocalApproval,
+            task.requiresLocalStartApproval
+          {
+            continue
+          }
           let wasNotStarted = task.state.status == .awaitingLocalApproval
           let recoveredStatus: ServiceTaskStatus = wasNotStarted ? .interrupted : .unknown
           let supervisorStatus: ServiceSupervisorStatus =

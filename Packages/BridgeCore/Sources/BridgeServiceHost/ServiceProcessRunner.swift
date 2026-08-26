@@ -1,8 +1,9 @@
 import BridgeCodexRPC
 import BridgeIPC
 import BridgeLegacyImport
-import BridgeSecurity
-import Darwin
+#if canImport(Darwin)
+  import Darwin
+#endif
 import Foundation
 
 public enum ServiceProcessArgumentError: Error, Equatable, LocalizedError, Sendable {
@@ -67,9 +68,11 @@ public struct ServiceProcessOptions: Equatable, Sendable {
 public enum ServiceProcessRunner {
   public static func run(
     arguments: [String] = Array(CommandLine.arguments.dropFirst()),
-    appVersion: String = "0.2.0"
+    appVersion: String = "0.2.1"
   ) async throws {
-    _ = umask(0o077)
+    #if canImport(Darwin)
+      _ = umask(0o077)
+    #endif
     let options = try ServiceProcessOptions.parse(arguments)
     let composition = try await ServiceComposition.make(
       configuration: ServiceCompositionConfiguration(
@@ -77,8 +80,7 @@ public enum ServiceProcessRunner {
         dataRootURL: options.dataRootURL,
         clientInfo: .bridge(version: appVersion),
         legacyDataRootURL: LegacyConfigurationImporter.defaultSourceRoot()
-      ),
-      secretStore: KeychainSecretStore()
+      )
     )
     let endpoint = try await composition.startLocalMCP()
     let listener: BridgeServiceXPCListener?
@@ -104,42 +106,48 @@ public enum ServiceProcessRunner {
 
 private enum ServiceTerminationSignal {
   static func wait() async {
-    await withCheckedContinuation { continuation in
-      let state = SignalState(continuation: continuation)
-      signal(SIGINT, SIG_IGN)
-      signal(SIGTERM, SIG_IGN)
-      state.install(signal: SIGINT)
-      state.install(signal: SIGTERM)
+    #if canImport(Darwin)
+      await withCheckedContinuation { continuation in
+        let state = SignalState(continuation: continuation)
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+        state.install(signal: SIGINT)
+        state.install(signal: SIGTERM)
+      }
+    #else
+      await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+    #endif
+  }
+}
+
+#if canImport(Darwin)
+  private final class SignalState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var sources: [DispatchSourceSignal] = []
+
+    init(continuation: CheckedContinuation<Void, Never>) {
+      self.continuation = continuation
+    }
+
+    func install(signal: Int32) {
+      let source = DispatchSource.makeSignalSource(signal: signal, queue: .global())
+      source.setEventHandler { [weak self] in self?.finish() }
+      lock.lock()
+      sources.append(source)
+      lock.unlock()
+      source.resume()
+    }
+
+    private func finish() {
+      lock.lock()
+      let continuation = continuation
+      self.continuation = nil
+      let activeSources = sources
+      sources.removeAll(keepingCapacity: false)
+      lock.unlock()
+      for source in activeSources { source.cancel() }
+      continuation?.resume()
     }
   }
-}
-
-private final class SignalState: @unchecked Sendable {
-  private let lock = NSLock()
-  private var continuation: CheckedContinuation<Void, Never>?
-  private var sources: [DispatchSourceSignal] = []
-
-  init(continuation: CheckedContinuation<Void, Never>) {
-    self.continuation = continuation
-  }
-
-  func install(signal: Int32) {
-    let source = DispatchSource.makeSignalSource(signal: signal, queue: .global())
-    source.setEventHandler { [weak self] in self?.finish() }
-    lock.lock()
-    sources.append(source)
-    lock.unlock()
-    source.resume()
-  }
-
-  private func finish() {
-    lock.lock()
-    let continuation = continuation
-    self.continuation = nil
-    let activeSources = sources
-    sources.removeAll(keepingCapacity: false)
-    lock.unlock()
-    for source in activeSources { source.cancel() }
-    continuation?.resume()
-  }
-}
+#endif

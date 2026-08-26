@@ -52,7 +52,7 @@ public struct RestrictedProjectFileService: Sendable {
       policy: policy,
       limits: limits
     )
-    let candidates = try enumerator.candidates(scope: scope)
+    let candidates = try await enumerator.candidates(scope: scope)
     let signature = SearchCursor.signature(
       projectID: request.projectID,
       root: project.primaryRoot,
@@ -73,7 +73,7 @@ public struct RestrictedProjectFileService: Sendable {
       caseSensitive: request.caseSensitive,
       limit: limit
     )
-    let page = try scanner.scan(paths: candidates.paths, from: position)
+    let page = try await scanner.scan(paths: candidates.paths, from: position)
     return try fitSearchResult(
       page,
       signature: signature,
@@ -289,26 +289,14 @@ private struct SearchPageScanner {
   private var bytesRead = 0
   private var scannedLines = 0
 
-  init(
-    root: RegisteredRoot,
-    limits: ProjectFileLimits,
-    query: String,
-    caseSensitive: Bool,
-    limit: Int
-  ) {
-    self.root = root
-    self.limits = limits
-    self.query = query
-    self.caseSensitive = caseSensitive
-    self.limit = limit
-  }
-
-  mutating func scan(paths: [String], from start: SearchPosition) throws -> SearchScanPage {
+  mutating func scan(paths: [String], from start: SearchPosition) async throws -> SearchScanPage {
     guard start.candidateIndex < paths.count else {
       return page(start: start, continuation: nil)
     }
     let reader = SecureFileReader(maximumBytes: limits.maximumFileBytes, maximumLines: .max)
     for candidateIndex in start.candidateIndex..<paths.count {
+      try Task.checkCancellation()
+      await Task.yield()
       let position = SearchPosition(candidateIndex: candidateIndex, lineIndex: 0)
       if bytesRead >= limits.maximumSearchBytes {
         return page(start: start, continuation: position)
@@ -319,7 +307,7 @@ private struct SearchPageScanner {
       }
       bytesRead += file.bytesRead
       let firstLine = candidateIndex == start.candidateIndex ? start.lineIndex : 0
-      let continuation = try scanFile(
+      let continuation = try await scanFile(
         file,
         path: paths[candidateIndex],
         candidateIndex: candidateIndex,
@@ -335,7 +323,7 @@ private struct SearchPageScanner {
     path: String,
     candidateIndex: Int,
     firstLine: Int
-  ) throws -> SearchPosition? {
+  ) async throws -> SearchPosition? {
     guard !containsUnsupportedControl(file.text) else {
       skippedFileCount += 1
       return nil
@@ -343,6 +331,10 @@ private struct SearchPageScanner {
     let lines = normalizedLines(file.text)
     guard firstLine <= lines.count else { throw ProjectFileError.invalidCursor }
     for lineIndex in firstLine..<lines.count {
+      if lineIndex.isMultiple(of: 256) {
+        try Task.checkCancellation()
+        await Task.yield()
+      }
       let current = SearchPosition(candidateIndex: candidateIndex, lineIndex: lineIndex)
       if scannedLines >= limits.maximumScannedLines { return current }
       let next = nextPosition(candidateIndex: candidateIndex, lineIndex: lineIndex, lines: lines)

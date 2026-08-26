@@ -1,5 +1,8 @@
 import BridgeDomain
 import BridgeServiceCore
+#if canImport(Darwin)
+  import Darwin
+#endif
 import Foundation
 import Logging
 
@@ -14,6 +17,7 @@ public struct DirectCommandSession: Sendable {
   public let timedOut: Bool
   public let output: DirectCommandOutputBuffer
   public let processID: Int32?
+  public let executionEnvironment: DirectCommandExecutionEnvironment
 
   public init(
     sessionID: String,
@@ -25,7 +29,14 @@ public struct DirectCommandSession: Sendable {
     exitCode: Int32? = nil,
     timedOut: Bool = false,
     output: DirectCommandOutputBuffer,
-    processID: Int32?
+    processID: Int32?,
+    executionEnvironment: DirectCommandExecutionEnvironment = DirectCommandExecutionEnvironment(
+      bridgeSandbox: "unknown",
+      sandboxExec: "unknown",
+      nestedSandbox: "unknown",
+      loopback: "unknown",
+      childNetworkPolicy: "unknown"
+    )
   ) {
     self.sessionID = sessionID
     self.projectID = projectID
@@ -37,6 +48,7 @@ public struct DirectCommandSession: Sendable {
     self.timedOut = timedOut
     self.output = output
     self.processID = processID
+    self.executionEnvironment = executionEnvironment
   }
 }
 
@@ -57,6 +69,7 @@ public actor DirectCommandSessionManager {
   private let logger: Logger
   private let completedSessionTTL: TimeInterval
   private let maximumCompletedSessions: Int
+  private let executionEnvironment: DirectExecutionEnvironmentCapabilities
   private var sessions: [String: DirectCommandSession] = [:]
   private var completedSessionAccess: [String: Date] = [:]
   private var activeProjectSession: [String: String] = [:]
@@ -70,13 +83,15 @@ public actor DirectCommandSessionManager {
     orphanPIDFileURL: URL? = nil,
     logger: Logger = Logger(label: "com.codexbridge.direct.command"),
     completedSessionTTL: Duration = .seconds(600),
-    maximumCompletedSessions: Int = 128
+    maximumCompletedSessions: Int = 128,
+    executionEnvironment: DirectExecutionEnvironmentCapabilities = .current()
   ) {
     self.runner = runner
     self.orphanPIDFileURL = orphanPIDFileURL
     self.logger = logger
     self.completedSessionTTL = max(0, Self.timeInterval(completedSessionTTL))
     self.maximumCompletedSessions = max(1, maximumCompletedSessions)
+    self.executionEnvironment = executionEnvironment
     self.trackedPIDs = Self.loadTrackedPIDs(orphanPIDFileURL)
     Self.reapOrphans(trackedPIDs: trackedPIDs, logger: logger)
     Self.clearTrackedPIDs(orphanPIDFileURL)
@@ -106,6 +121,10 @@ public actor DirectCommandSessionManager {
     return activeProjectSession[projectID.rawValue] != nil
   }
 
+  public func executionEnvironmentCapabilities() -> DirectExecutionEnvironmentCapabilities {
+    executionEnvironment
+  }
+
   public func launch(
     sessionID: String,
     projectID: ProjectID,
@@ -114,11 +133,11 @@ public actor DirectCommandSessionManager {
     requiresNetwork: Bool,
     usePTY: Bool,
     timeout: Duration? = nil,
-    sandboxRoot: String? = nil,
     denyNetwork: Bool = false,
     onExit: (@Sendable () async -> Void)? = nil
   ) async throws -> DirectCommandSession {
     pruneCompletedSessions()
+    guard !shutdown else { throw DirectCommandSessionError.notRunning }
     guard sessions[sessionID] == nil else { throw DirectCommandSessionError.sessionNotFound }
     guard activeProjectSession[projectID.rawValue] == nil else {
       throw DirectCommandSessionError.projectBusy
@@ -130,7 +149,6 @@ public actor DirectCommandSessionManager {
       environment: nil,
       usePTY: usePTY,
       output: output,
-      sandboxRoot: sandboxRoot,
       denyNetwork: denyNetwork
     )
     let startedAt = Date()
@@ -145,7 +163,8 @@ public actor DirectCommandSessionManager {
       startedAt: startedAt,
       status: "running",
       output: DirectCommandOutputBuffer(head: "", tail: "", byteCount: 0, truncated: false),
-      processID: process.pid
+      processID: process.pid,
+      executionEnvironment: executionEnvironment.commandEnvironment(denyNetwork: denyNetwork)
     )
     sessions[sessionID] = initial
 
@@ -207,7 +226,9 @@ public actor DirectCommandSessionManager {
       exitCode: exitCode,
       timedOut: result.timedOut,
       output: result.output,
-      processID: nil
+      processID: nil,
+      executionEnvironment: sessions[sessionID]?.executionEnvironment
+        ?? executionEnvironment.commandEnvironment(denyNetwork: false)
     )
     untrackPID(sessionID: sessionID)
     processes[sessionID] = nil
@@ -320,13 +341,20 @@ public actor DirectCommandSessionManager {
   }
 
   private static func reapOrphans(trackedPIDs: [String: TrackedPID], logger: Logger) {
-    for (sessionID, tracked) in trackedPIDs {
-      let identity = tracked.identity
-      guard DirectProcessLifetime.terminateIfMatches(identity) else { continue }
-      logger.warning(
-        "Reaped orphan direct command session \(sessionID) pid \(identity.pid)"
-      )
-    }
+    #if canImport(Darwin)
+      for (sessionID, tracked) in trackedPIDs {
+        let identity = tracked.identity
+        guard DirectProcessLifetime.matchesCurrentProcess(identity) else { continue }
+        _ = Darwin.kill(-identity.processGroupID, SIGKILL)
+        logger.warning(
+          "Reaped orphan direct command session \(sessionID) pid \(identity.pid)"
+        )
+      }
+    #else
+      // Windows: orphan reaping is handled via Job Objects; no POSIX signals.
+      _ = trackedPIDs
+      _ = logger
+    #endif
   }
 
   private static func clearTrackedPIDs(_ url: URL?) {

@@ -48,6 +48,7 @@ let sharedTargets: [Target] = [
     name: "BridgeProcessRuntime",
     dependencies: ["BridgePlatform"]
   ),
+  .target(name: "BridgeProcess"),
   .target(
     name: "BridgeCodexRPC",
     dependencies: ["BridgeProcessRuntime"]
@@ -229,6 +230,7 @@ let sharedTargets: [Target] = [
     name: "BridgeDirectCommand",
     dependencies: [
       "BridgeDomain",
+      "BridgeProcess",
       "BridgeProcessRuntime",
       "BridgeProjects",
       "BridgeSecurity",

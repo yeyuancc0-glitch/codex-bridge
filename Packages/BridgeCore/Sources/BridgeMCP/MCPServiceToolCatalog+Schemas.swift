@@ -159,6 +159,8 @@ extension MCPServiceToolCatalog {
       "task_id": stringSchema,
       "project_id": stringSchema,
       "status": stringSchema,
+      "execution_model": stringSchema,
+      "execution_effort": stringSchema,
       "thread_id": stringSchema,
       "turn_id": stringSchema,
       "current_step": stringSchema,
@@ -173,7 +175,8 @@ extension MCPServiceToolCatalog {
     ],
     required: [
       "task_id", "project_id", "status", "changed_files", "recent_events",
-      "supervisor_status", "local_approval_required", "updated_at",
+      "execution_model", "execution_effort", "supervisor_status",
+      "local_approval_required", "updated_at",
     ]
   )
 
@@ -195,6 +198,14 @@ extension MCPServiceToolCatalog {
 
   static func nullableStringSchema(maximum: Int) -> Value {
     ["type": ["string", "null"], "maxLength": .int(maximum)]
+  }
+
+  static func nullableStringSchema(maximum: Int, description: String) -> Value {
+    [
+      "type": ["string", "null"],
+      "maxLength": .int(maximum),
+      "description": .string(description),
+    ]
   }
 
   static func integerSchema(minimum: Int, maximum: Int? = nil) -> Value {

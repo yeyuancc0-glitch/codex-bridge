@@ -163,6 +163,10 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
   public let createdAt: Date
   public let updatedAt: Date
 
+  public var requiresLocalStartApproval: Bool {
+    source.isRemoteMCPOrigin
+  }
+
   public init(
     id: TaskID,
     projectID: ProjectID,

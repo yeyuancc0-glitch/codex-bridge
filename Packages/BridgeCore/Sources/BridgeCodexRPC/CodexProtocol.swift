@@ -24,9 +24,12 @@ public struct InitializeCapabilities: Codable, Equatable, Sendable {
   public let experimentalAPI: Bool
   public let requestAttestation: Bool
 
-  public init() {
-    experimentalAPI = false
-    requestAttestation = false
+  public init(
+    experimentalAPI: Bool = false,
+    requestAttestation: Bool = false
+  ) {
+    self.experimentalAPI = experimentalAPI
+    self.requestAttestation = requestAttestation
   }
 
   private enum CodingKeys: String, CodingKey {

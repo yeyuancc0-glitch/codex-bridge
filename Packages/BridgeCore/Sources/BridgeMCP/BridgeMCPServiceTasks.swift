@@ -26,6 +26,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let source: String?
   public let sourceClientID: String?
   public let status: String
+  public let executionModel: String?
+  public let executionEffort: String?
   public let threadID: String?
   public let turnID: String?
   public let currentStep: String?
@@ -44,6 +46,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     source: String? = nil,
     sourceClientID: String? = nil,
     status: String,
+    executionModel: String? = nil,
+    executionEffort: String? = nil,
     threadID: String? = nil,
     turnID: String? = nil,
     currentStep: String? = nil,
@@ -61,6 +65,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     self.source = source
     self.sourceClientID = sourceClientID
     self.status = status
+    self.executionModel = executionModel
+    self.executionEffort = executionEffort
     self.threadID = threadID
     self.turnID = turnID
     self.currentStep = currentStep
@@ -80,6 +86,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     case source
     case sourceClientID = "source_client_id"
     case status
+    case executionModel = "execution_model"
+    case executionEffort = "execution_effort"
     case threadID = "thread_id"
     case turnID = "turn_id"
     case currentStep = "current_step"
@@ -101,6 +109,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   public let threadID: String?
   public let executionModel: String?
   public let executionEffort: String?
+  public let modelOverride: Bool?
   public let supervisorModel: String?
   public let supervisorEffort: String?
   public let permissionMode: String?
@@ -115,6 +124,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     threadID: String? = nil,
     executionModel: String? = nil,
     executionEffort: String? = nil,
+    modelOverride: Bool? = nil,
     supervisorModel: String? = nil,
     supervisorEffort: String? = nil,
     permissionMode: String? = nil,
@@ -128,6 +138,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     self.threadID = threadID
     self.executionModel = executionModel
     self.executionEffort = executionEffort
+    self.modelOverride = modelOverride
     self.supervisorModel = supervisorModel
     self.supervisorEffort = supervisorEffort
     self.permissionMode = permissionMode
@@ -143,6 +154,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     case threadID = "thread_id"
     case executionModel = "execution_model"
     case executionEffort = "execution_effort"
+    case modelOverride = "model_override"
     case supervisorModel = "supervisor_model"
     case supervisorEffort = "supervisor_effort"
     case permissionMode = "permission_mode"

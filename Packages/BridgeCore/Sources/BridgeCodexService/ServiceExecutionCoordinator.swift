@@ -180,7 +180,7 @@ public actor ServiceExecutionCoordinator {
     do {
       let updated = try await tasks.resumeAfterCodexApproval(
         taskID: taskID,
-        approved: decision == .allow
+        approved: decision.isApproval
       )
       await execution.finalizeApproval(
         taskID: taskID,
@@ -382,10 +382,7 @@ public actor ServiceExecutionCoordinator {
     do {
       guard let handle = try await supervisor.launch(task: task) else { return }
       let events = handle.events
-      // Elevated priority: this consumer owns supervisor state transitions.
-      // Inheriting ambient priority let full-suite load starve it for tens of
-      // seconds, freezing tasks at .running after the session had degraded.
-      supervisorCollectors[task.id] = Task(priority: .userInitiated) { [weak self] in
+      supervisorCollectors[task.id] = Task { [weak self] in
         for await event in events {
           guard let self else { return }
           await self.consumeSupervisor(event, taskID: task.id)

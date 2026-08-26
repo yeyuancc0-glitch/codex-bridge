@@ -319,20 +319,28 @@ struct ServiceDirectCommandOutput: Codable, Sendable {
   let status: String
   let exitCode: Int?
   let timedOut: Bool
+  let commandStatus: String
+  let commandTimedOut: Bool
+  let readTimeout: Bool
   let head: String
   let tail: String
   let byteCount: Int
   let truncated: Bool
+  let executionEnvironment: MCPExecutionEnvironment?
 
   init(output: MCPDirectCommandOutput) {
     sessionID = output.sessionID
     status = output.status
     exitCode = output.exitCode
     timedOut = output.timedOut
+    commandStatus = output.commandStatus ?? output.status
+    commandTimedOut = output.commandTimedOut ?? output.timedOut
+    readTimeout = output.readTimeout ?? false
     head = output.head
     tail = output.tail
     byteCount = output.byteCount
     truncated = output.truncated
+    executionEnvironment = output.executionEnvironment
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -341,10 +349,14 @@ struct ServiceDirectCommandOutput: Codable, Sendable {
     case status
     case exitCode = "exit_code"
     case timedOut = "timed_out"
+    case commandStatus = "command_status"
+    case commandTimedOut = "command_timed_out"
+    case readTimeout = "read_timeout"
     case head
     case tail
     case byteCount = "byte_count"
     case truncated
+    case executionEnvironment = "execution_environment"
   }
 }
 

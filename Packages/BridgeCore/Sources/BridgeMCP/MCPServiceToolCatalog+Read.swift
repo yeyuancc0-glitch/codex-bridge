@@ -23,6 +23,7 @@ extension MCPServiceToolCatalog {
         "supervisor_state": stringSchema,
         "degradations": arraySchema(stringSchema),
         "pending_approval_count": integerSchema(minimum: 0),
+        "execution_environment": executionEnvironmentSchema,
       ],
       required: [
         "app_version", "mcp_state", "tunnel_state", "execution_state", "supervisor_state",

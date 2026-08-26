@@ -1,5 +1,39 @@
 import Foundation
 
+public struct MCPExecutionEnvironment: Codable, Equatable, Sendable {
+  public let bridgeSandbox: String
+  public let sandboxExec: String
+  public let nestedSandbox: String
+  public let loopback: String
+  public let childNetworkPolicy: String?
+  public let limitations: [String]
+
+  public init(
+    bridgeSandbox: String,
+    sandboxExec: String,
+    nestedSandbox: String,
+    loopback: String,
+    childNetworkPolicy: String? = nil,
+    limitations: [String] = []
+  ) {
+    self.bridgeSandbox = bridgeSandbox
+    self.sandboxExec = sandboxExec
+    self.nestedSandbox = nestedSandbox
+    self.loopback = loopback
+    self.childNetworkPolicy = childNetworkPolicy
+    self.limitations = limitations
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case bridgeSandbox = "bridge_sandbox"
+    case sandboxExec = "sandbox_exec"
+    case nestedSandbox = "nested_sandbox"
+    case loopback
+    case childNetworkPolicy = "child_network_policy"
+    case limitations
+  }
+}
+
 public struct MCPDirectExecRequest: Codable, Equatable, Sendable {
   public let projectID: String
   public let commandID: String?
@@ -84,29 +118,58 @@ public struct MCPDirectCommandOutput: Codable, Equatable, Sendable {
   public let status: String
   public let exitCode: Int?
   public let timedOut: Bool
+  public let commandStatus: String?
+  public let commandTimedOut: Bool?
+  public let readTimeout: Bool?
   public let head: String
   public let tail: String
   public let byteCount: Int
   public let truncated: Bool
+  public let executionEnvironment: MCPExecutionEnvironment?
 
   public init(
     sessionID: String,
     status: String,
     exitCode: Int? = nil,
     timedOut: Bool = false,
+    commandStatus: String? = nil,
+    commandTimedOut: Bool? = nil,
+    readTimeout: Bool? = nil,
     head: String,
     tail: String,
     byteCount: Int,
-    truncated: Bool
+    truncated: Bool,
+    executionEnvironment: MCPExecutionEnvironment? = nil
   ) {
     self.sessionID = sessionID
     self.status = status
     self.exitCode = exitCode
     self.timedOut = timedOut
+    self.commandStatus = commandStatus
+    self.commandTimedOut = commandTimedOut
+    self.readTimeout = readTimeout
     self.head = head
     self.tail = tail
     self.byteCount = byteCount
     self.truncated = truncated
+    self.executionEnvironment = executionEnvironment
+  }
+
+  public func markingReadTimeout() -> MCPDirectCommandOutput {
+    MCPDirectCommandOutput(
+      sessionID: sessionID,
+      status: status,
+      exitCode: exitCode,
+      timedOut: timedOut,
+      commandStatus: commandStatus ?? status,
+      commandTimedOut: commandTimedOut ?? timedOut,
+      readTimeout: true,
+      head: head,
+      tail: tail,
+      byteCount: byteCount,
+      truncated: truncated,
+      executionEnvironment: executionEnvironment
+    )
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -114,9 +177,13 @@ public struct MCPDirectCommandOutput: Codable, Equatable, Sendable {
     case status
     case exitCode = "exit_code"
     case timedOut = "timed_out"
+    case commandStatus = "command_status"
+    case commandTimedOut = "command_timed_out"
+    case readTimeout = "read_timeout"
     case head
     case tail
     case byteCount = "byte_count"
     case truncated
+    case executionEnvironment = "execution_environment"
   }
 }

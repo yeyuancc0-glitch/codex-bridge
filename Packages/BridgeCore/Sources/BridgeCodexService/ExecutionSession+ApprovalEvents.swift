@@ -37,7 +37,7 @@ extension ExecutionSession {
   }
 
   func processServerRequest(_ rpcRequest: RPCServerRequest) async {
-    guard let binding else {
+    guard binding != nil else {
       await rejectInvalidApproval(rpcRequest)
       return
     }
@@ -51,8 +51,12 @@ extension ExecutionSession {
         itemID: correlation.item.itemID,
         callbackID: correlation.callbackID
       )
-      guard correlation.item.threadID == binding.threadID,
-        correlation.item.turnID == binding.turnID,
+      guard
+        let approvalBinding = try? ExecutionBinding(
+          threadID: correlation.item.threadID,
+          turnID: correlation.item.turnID
+        ),
+        isKnownBinding(approvalBinding),
         let itemEvidence = knownItems[correlation.item],
         !usedApprovalRequests.contains(requestKey),
         usedApprovalRequests.count < configuration.maximumKnownItems,
@@ -64,7 +68,7 @@ extension ExecutionSession {
       let prepared = try ExecutionApprovalBuilder.build(
         approvalID: id,
         taskID: taskID,
-        binding: binding,
+        binding: approvalBinding,
         request: decoded,
         itemEvidence: itemEvidence,
         rawParameters: rpcRequest.params,
@@ -77,7 +81,7 @@ extension ExecutionSession {
         response: prepared.response,
         request: prepared.request
       )
-      yield(.approvalRequested(prepared.request))
+      await yield(.approvalRequested(prepared.request))
     } catch {
       await rejectInvalidApproval(rpcRequest)
     }

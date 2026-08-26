@@ -3,6 +3,23 @@ import BridgeMCP
 import Foundation
 
 extension BridgeServiceAppModel {
+  func saveCustomInstructions(_ instructions: String) {
+    guard !isSavingCustomInstructions else { return }
+    isSavingCustomInstructions = true
+    errorMessage = nil
+    Task { [weak self] in
+      guard let self else { return }
+      defer { self.isSavingCustomInstructions = false }
+      do {
+        try await self.currentClient().setCustomInstructions(instructions)
+        self.customInstructions = instructions
+        self.postToast("全局自定义指令已保存；Qwen 重连后应用，ChatGPT 请刷新插件并在新对话中重新添加")
+      } catch {
+        self.errorMessage = Self.message(error)
+      }
+    }
+  }
+
   public func registerProject(at url: URL) {
     runMutation { [weak self] client in
       guard let self else { return }
@@ -220,21 +237,21 @@ extension BridgeServiceAppModel {
     }
   }
 
-  public func resolveApproval(_ approval: IPCApprovalSummary, allow: Bool) {
+  public func resolveApproval(_ approval: IPCApprovalSummary, decision: String) {
     runMutation { [weak self] client in
       guard let self else { return }
       try await client.resolveApproval(
         IPCApprovalResolutionRequest(
           taskID: approval.taskID,
           approvalID: approval.approvalID,
-          decision: allow ? "allow" : "deny"
+          decision: decision
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
       self.postToast(
-        allow ? "已批准 Codex 操作" : "已拒绝 Codex 操作",
-        symbol: allow ? "checkmark.shield.fill" : "xmark.shield.fill",
-        tone: allow ? .success : .warning
+        decision == "deny" ? "已拒绝 Codex 操作" : "已批准 Codex 操作",
+        symbol: decision == "deny" ? "xmark.shield.fill" : "checkmark.shield.fill",
+        tone: decision == "deny" ? .warning : .success
       )
     }
   }
@@ -484,7 +501,6 @@ extension BridgeServiceAppModel {
     } catch {
       guard selectedProjectID == projectID else { return }
       threads = []
-      errorMessage = Self.message(error)
     }
   }
 }

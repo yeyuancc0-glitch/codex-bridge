@@ -14,7 +14,7 @@ extension MCPServiceToolDispatcher {
       arguments,
       allowed: [
         "project_id", "prompt", "thread_id", "execution_model", "execution_effort",
-        "skill_name",
+        "model_override", "skill_name",
         "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
         "acceptance_criteria", "client_request_id",
       ],
@@ -64,6 +64,7 @@ extension MCPServiceToolDispatcher {
         "execution_effort",
         maximumUTF8Bytes: 64
       ),
+      modelOverride: try values.optionalBoolean("model_override"),
       supervisorModel: supervisorModel,
       supervisorEffort: supervisorEffort,
       permissionMode: permissionMode,
@@ -240,7 +241,8 @@ extension MCPServiceToolDispatcher {
       actionName: actionName,
       arguments: arguments,
       projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
-      yieldTimeMS: try values.optionalNonnegativeInteger("yield_time_ms").map(Int.init) ?? 1_000,
+      yieldTimeMS: try values.optionalNonnegativeInteger("yield_time_ms").map(Int.init)
+        ?? 15_000,
       timeoutMS: try values.optionalPositiveInteger("timeout_ms", maximum: 3_600_000) ?? 300_000,
       clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
     )

@@ -8,6 +8,19 @@ extension ExecutionSession {
       else {
         throw ExecutionServiceError.protocolViolation("turn completed")
       }
+      let completedBinding = try ExecutionBinding(
+        threadID: completed.threadId,
+        turnID: completed.turn.id
+      )
+      guard isKnownBinding(completedBinding) else {
+        throw ExecutionServiceError.bindingMismatch
+      }
+      if collaborationBindings.remove(completedBinding) != nil {
+        guard Self.isTerminalTurnStatus(completed.turn.status) else {
+          throw ExecutionServiceError.protocolViolation("collaboration turn status")
+        }
+        return
+      }
       guard let binding else {
         guard deferredCompletion == nil else {
           throw ExecutionServiceError.protocolViolation("duplicate deferred completion")
@@ -49,16 +62,16 @@ extension ExecutionSession {
 
     let messages = Self.agentMessages(from: completed.turn)
     if !messages.isEmpty {
-      yield(.turnCompleted(messages: messages))
+      await yield(.turnCompleted(messages: messages))
     }
 
     switch completed.turn.status {
     case "completed":
-      finish(with: .completed(resultSummary: Self.finalMessage(completed.turn)))
+      await finish(with: .completed(resultSummary: Self.finalMessage(completed.turn)))
     case "interrupted":
-      finish(with: .interrupted)
+      await finish(with: .interrupted)
     case "failed":
-      finish(
+      await finish(
         with: .failed(
           code: "codex_turn_failed",
           summary: Self.turnFailureSummary(completed.turn)
@@ -71,21 +84,56 @@ extension ExecutionSession {
 
   func eventStreamEnded() async {
     guard !terminal else { return }
+    let failure = await client.terminalFailure()
     await fail(
-      code: "execution_stream_ended",
-      summary: "The Codex execution event stream ended unexpectedly."
+      code: Self.streamFailureCode(failure),
+      summary: Self.streamFailureSummary(failure)
     )
+  }
+
+  private static func streamFailureCode(_ failure: CodexRPCError?) -> String {
+    switch failure {
+    case .processExited:
+      "codex_process_exited"
+    case .protocolLineTooLarge:
+      "codex_protocol_line_too_large"
+    case .transportReadOverflow, .eventBufferOverflow:
+      "codex_transport_capacity"
+    case .invalidUTF8, .malformedMessage, .protocolContamination:
+      "codex_protocol_invalid"
+    case nil:
+      "execution_stream_ended"
+    default:
+      "codex_transport_failed"
+    }
+  }
+
+  private static func streamFailureSummary(_ failure: CodexRPCError?) -> String {
+    switch failure {
+    case .processExited(let status):
+      return "Codex app-server exited before the active Turn completed (status \(status))."
+    case .protocolLineTooLarge(let maximumBytes):
+      return "Codex app-server emitted a protocol message larger than \(maximumBytes) bytes."
+    case .transportReadOverflow, .eventBufferOverflow:
+      return "Codex app-server transport capacity was exceeded."
+    case .invalidUTF8, .malformedMessage, .protocolContamination:
+      return "Codex app-server emitted an invalid protocol message."
+    case nil:
+      return "The Codex execution event stream ended unexpectedly."
+    default:
+      return "The Codex app-server transport failed before the active Turn completed."
+    }
   }
 
   func fail(code: String, summary: String) async {
     guard !terminal else { return }
-    finish(with: .failed(code: code, summary: summary))
+    await finish(with: .failed(code: code, summary: summary))
   }
 
-  private func finish(with event: ExecutionEvent) {
+  private func finish(with event: ExecutionEvent) async {
     guard !terminal else { return }
     terminal = true
-    _ = continuation.yield(event)
+    await enqueue(event)
     continuation.finish()
     eventTask?.cancel()
     lifetimeTask?.cancel()
@@ -95,23 +143,24 @@ extension ExecutionSession {
     }
   }
 
-  func yield(_ event: ExecutionEvent) {
-    switch continuation.yield(event) {
-    case .enqueued:
-      return
-    case .dropped, .terminated:
-      Task {
-        await self.fail(
-          code: "execution_event_capacity",
-          summary: "The Codex execution event capacity was exceeded."
-        )
-      }
-    @unknown default:
-      Task {
-        await self.fail(
-          code: "execution_event_capacity",
-          summary: "The Codex execution event capacity was exceeded."
-        )
+  func yield(_ event: ExecutionEvent) async {
+    guard !terminal else { return }
+    await enqueue(event)
+  }
+
+  private func enqueue(_ event: ExecutionEvent) async {
+    while true {
+      switch continuation.yield(event) {
+      case .enqueued, .terminated:
+        return
+      case .dropped:
+        do {
+          try await Task.sleep(for: .milliseconds(1))
+        } catch {
+          return
+        }
+      @unknown default:
+        return
       }
     }
   }
@@ -178,9 +227,13 @@ extension ExecutionSession {
   }
 
   func requireActiveEvidence(threadID: String, turnID: String) throws {
-    guard threadID == expectedThreadID, startedTurnIDs.contains(turnID) else {
+    guard isKnownBinding(threadID: threadID, turnID: turnID) else {
       throw ExecutionServiceError.bindingMismatch
     }
+  }
+
+  static func isTerminalTurnStatus(_ status: String) -> Bool {
+    status == "completed" || status == "interrupted" || status == "failed"
   }
 
   private func requireKnownCompletedItem(

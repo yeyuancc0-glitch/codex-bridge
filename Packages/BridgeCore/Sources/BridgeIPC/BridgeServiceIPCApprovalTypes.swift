@@ -92,6 +92,7 @@ public struct IPCApprovalSummary: Codable, Equatable, Sendable {
   public let displayCommand: String?
   public let relativePaths: [String]
   public let reason: String?
+  public let decisionOptions: [String]?
 
   public init(
     approvalID: String,
@@ -104,7 +105,8 @@ public struct IPCApprovalSummary: Codable, Equatable, Sendable {
     summary: String,
     displayCommand: String? = nil,
     relativePaths: [String] = [],
-    reason: String? = nil
+    reason: String? = nil,
+    decisionOptions: [String]? = nil
   ) {
     self.approvalID = approvalID
     self.taskID = taskID
@@ -117,6 +119,7 @@ public struct IPCApprovalSummary: Codable, Equatable, Sendable {
     self.displayCommand = displayCommand
     self.relativePaths = relativePaths
     self.reason = reason
+    self.decisionOptions = decisionOptions
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -131,6 +134,7 @@ public struct IPCApprovalSummary: Codable, Equatable, Sendable {
     case displayCommand = "display_command"
     case relativePaths = "relative_paths"
     case reason
+    case decisionOptions = "decision_options"
   }
 }
 

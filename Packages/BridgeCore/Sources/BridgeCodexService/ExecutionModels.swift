@@ -14,18 +14,20 @@ public struct ExecutionManagerConfiguration: Sendable {
   public let maximumConcurrentSessions: Int
   public let maximumPendingApprovals: Int
   public let maximumKnownItems: Int
+  public let synchronizeCodexProjects: Bool
 
   public init(
     appServer: AppServerConfiguration = .codex(),
     clientInfo: CodexClientInfo,
     requestTimeoutNanoseconds: UInt64 = 30_000_000_000,
     turnStartTimeoutNanoseconds: UInt64 = 10_000_000_000,
-    maximumSessionNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000,
+    maximumSessionNanoseconds: UInt64 = 24 * 60 * 60 * 1_000_000_000,
     eventBufferLimit: Int = 256,
     outputBufferLimit: Int = 128,
     maximumConcurrentSessions: Int = 4,
     maximumPendingApprovals: Int = 16,
-    maximumKnownItems: Int = 2_048
+    maximumKnownItems: Int = 16_384,
+    synchronizeCodexProjects: Bool = false
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
@@ -37,6 +39,7 @@ public struct ExecutionManagerConfiguration: Sendable {
     self.maximumConcurrentSessions = max(1, maximumConcurrentSessions)
     self.maximumPendingApprovals = max(1, maximumPendingApprovals)
     self.maximumKnownItems = max(1, maximumKnownItems)
+    self.synchronizeCodexProjects = synchronizeCodexProjects
   }
 }
 
@@ -111,7 +114,7 @@ public enum ExecutionServiceError: Error, Equatable, LocalizedError, Sendable {
   }
 }
 
-public struct ExecutionBinding: Codable, Equatable, Sendable {
+public struct ExecutionBinding: Codable, Equatable, Hashable, Sendable {
   public let threadID: String
   public let turnID: String
 
@@ -157,9 +160,15 @@ public enum ExecutionApprovalKind: String, Codable, Equatable, Sendable {
   case permissions
 }
 
-public enum LocalApprovalDecision: String, Codable, Equatable, Sendable {
+public enum LocalApprovalDecision: String, Codable, Equatable, Hashable, Sendable {
   case allow
+  case allowForSession = "allow_for_session"
+  case allowSimilarCommands = "allow_similar_commands"
   case deny
+
+  public var isApproval: Bool {
+    self != .deny
+  }
 }
 
 public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
@@ -173,6 +182,7 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
   public let displayCommand: String?
   public let relativePaths: [String]
   public let reason: String?
+  public let availableDecisions: [LocalApprovalDecision]
 
   public init(
     id: String,
@@ -184,7 +194,8 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
     summary: String,
     displayCommand: String? = nil,
     relativePaths: [String] = [],
-    reason: String? = nil
+    reason: String? = nil,
+    availableDecisions: [LocalApprovalDecision] = [.allow, .deny]
   ) throws {
     try ExecutionValidation.identifier(id, field: "approval.id", maximumBytes: 128)
     try ExecutionValidation.identifier(itemID, field: "approval.itemID", maximumBytes: 256)
@@ -197,6 +208,13 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
     )
     try ExecutionValidation.relativePaths(relativePaths, field: "approval.relativePaths")
     try ExecutionValidation.optionalText(reason, field: "approval.reason", maximumBytes: 4 * 1_024)
+    guard !availableDecisions.isEmpty,
+      availableDecisions.count <= 4,
+      Set(availableDecisions).count == availableDecisions.count,
+      availableDecisions.contains(.deny)
+    else {
+      throw ExecutionServiceError.invalidRequest("approval.availableDecisions")
+    }
     self.id = id
     self.taskID = taskID
     self.binding = binding
@@ -207,6 +225,7 @@ public struct ExecutionApprovalRequest: Codable, Equatable, Sendable {
     self.displayCommand = displayCommand
     self.relativePaths = relativePaths
     self.reason = reason
+    self.availableDecisions = availableDecisions
   }
 }
 
@@ -311,6 +330,7 @@ public enum ExecutionToolCallStatus: String, Codable, Equatable, Sendable {
   case inProgress
   case completed
   case failed
+  case declined
 }
 
 public struct ExecutionToolCall: Codable, Equatable, Sendable {

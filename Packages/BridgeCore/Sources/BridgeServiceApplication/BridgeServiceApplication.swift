@@ -81,6 +81,21 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
     let taskList = try await tasks.tasks(limit: 500)
     let runtime = await runtimeStatus.current()
     let codexApprovals = await coordinator.pendingApprovals().count
+    let taskStartApprovals = taskList.filter {
+      $0.state.status == .awaitingLocalApproval
+        && $0.requiresLocalStartApproval
+    }.count
+    let directEnvironment = await directCommands.executionEnvironmentCapabilities()
+    var degradations = runtime.degradations
+    let activeTasks = taskList.filter { !$0.state.status.isTerminal }
+    for task in activeTasks where task.state.supervisorStatus == .degraded {
+      let summary =
+        task.state.supervisorSummary
+        ?? "Supervisor degraded for active task \(task.id.rawValue)"
+      if !degradations.contains(summary) {
+        degradations.append(summary)
+      }
+    }
     return BridgeStatusSnapshot(
       appVersion: appVersion,
       mcpState: runtime.mcpState,
@@ -89,9 +104,25 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
       loginMode: runtime.loginMode,
       executionState: Self.executionState(taskList),
       supervisorState: Self.supervisorState(taskList),
-      degradations: runtime.degradations,
-      pendingApprovalCount: codexApprovals
+      degradations: degradations,
+      pendingApprovalCount: codexApprovals + taskStartApprovals,
+      executionEnvironment: Self.mcpEnvironment(directEnvironment)
     )
+  }
+
+  public func serviceCustomInstructions(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String {
+    try Self.checkDeadline(deadline)
+    return try await settings.customInstructions()
+  }
+
+  public func setServiceCustomInstructions(
+    _ instructions: String,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setCustomInstructions(instructions)
   }
 
   public func serviceProjects(
@@ -150,8 +181,7 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   }
 
   private func builtInCommands() -> [MCPBuiltInCommand] {
-    commandPolicy.safeCommandRules.compactMap { rule in
-      guard !rule.executable.hasPrefix("/") else { return nil }
+    commandPolicy.effectiveSafeCommandRules.map { rule in
       return MCPBuiltInCommand(
         executable: rule.executable,
         argumentsPrefix: rule.argumentsPrefix,
@@ -193,6 +223,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
         nextCursor: result.nextCursor,
         skippedFileCount: result.skippedFileCount
       )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       throw Self.publicFileError(error)
     }
@@ -225,6 +257,8 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
         sha256: result.sha256,
         byteCount: result.byteCount
       )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       throw Self.publicFileError(error)
     }

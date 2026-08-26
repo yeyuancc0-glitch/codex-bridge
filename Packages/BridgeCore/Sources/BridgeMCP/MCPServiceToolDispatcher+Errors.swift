@@ -132,6 +132,12 @@ extension MCPServiceToolDispatcher {
         message: "The command session is unavailable.",
         retryable: false
       )
+    case .commandSessionNotRunning:
+      dto = .init(
+        code: "command_session_not_running",
+        message: "The command session exists but is no longer running.",
+        retryable: false
+      )
     case .commandTimeout:
       dto = .init(
         code: "command_timeout",

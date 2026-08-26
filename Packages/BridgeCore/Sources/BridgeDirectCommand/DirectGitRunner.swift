@@ -1,4 +1,3 @@
-import BridgeProcessRuntime
 import Foundation
 
 public enum DirectGitError: Error, Equatable, Sendable {
@@ -26,16 +25,7 @@ public struct DirectGitResult: Equatable, Sendable {
 /// captures bounded head/tail output. Used by the controlled Direct Git
 /// commit path so that no shell is involved and no history rewrite is possible.
 public struct DirectGitRunner: Sendable {
-  public static var gitPath: String {
-    (try? resolveGitPath()) ?? missingGitPath
-  }
-
-  public static func resolveGitPath() throws -> String {
-    guard let resolved = GitExecutableResolver().resolve() else {
-      throw DirectGitError.launchFailed
-    }
-    return resolved.path
-  }
+  public static let gitPath = "/usr/bin/git"
 
   public let defaultTimeout: Duration
 
@@ -53,12 +43,11 @@ public struct DirectGitRunner: Sendable {
       throw DirectGitError.invalidArgument
     }
     return try await Task.detached(priority: .userInitiated) {
-      var environment = Self.gitEnvironment()
+      var environment = ProcessInfo.processInfo.environment
+      environment["PATH"] = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
       if let overrides {
         environment.merge(overrides) { _, replacement in replacement }
       }
-      environment["GIT_TERMINAL_PROMPT"] = "0"
-      environment["GCM_INTERACTIVE"] = "Never"
       let collector = DirectCommandOutputCollector(maximumBytes: 256 * 1_024)
       let process: DirectProcessLifetime
       do {
@@ -67,8 +56,7 @@ public struct DirectGitRunner: Sendable {
           workingDirectory: workingDirectory,
           environment: environment,
           usePTY: false,
-          output: collector,
-          requiresSandbox: false
+          output: collector
         )
       } catch {
         throw DirectGitError.launchFailed
@@ -97,35 +85,5 @@ public struct DirectGitRunner: Sendable {
       }
       return DirectGitResult(exitCode: exitCode, output: collector.snapshot())
     }.value
-  }
-
-  private static var missingGitPath: String {
-    #if canImport(WinSDK)
-      return "C:\\CodexBridge\\Missing\\git.exe"
-    #else
-      return "/usr/bin/git"
-    #endif
-  }
-
-  private static func gitEnvironment() -> [String: String] {
-    let current = ProcessInfo.processInfo.environment
-    #if canImport(WinSDK)
-      let allowed = [
-        "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
-        "HOME", "LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)",
-        "ProgramW6432", "PATH", "PATHEXT", "LANG", "LC_ALL",
-      ]
-      var result: [String: String] = [:]
-      for key in allowed {
-        if let value = WindowsPath.environmentValue(key, in: current) {
-          result[key] = value
-        }
-      }
-      return result
-    #else
-      var result = current
-      result["PATH"] = result["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-      return result
-    #endif
   }
 }

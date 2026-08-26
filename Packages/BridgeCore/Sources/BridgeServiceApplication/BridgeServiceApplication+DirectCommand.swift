@@ -54,10 +54,26 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.contractRejected
     }
     let project = try await writableProject(request.projectID)
-    let resolvedExecutable = Self.resolvedExecutableForPolicy(
-      request: request,
-      project: project
+    let unresolvedPolicyRequest = DirectCommandRequest(
+      projectID: project.id,
+      commandID: request.commandID,
+      argv: request.argv,
+      workingDirectory: request.workingDirectory,
+      requiresNetwork: requiresNetwork,
+      isValidatedSkillScript: isValidatedSkillScript
     )
+    let resolvedExecutable: String?
+    if let builtInExecutable = commandPolicy.preferredSystemBuiltInExecutable(
+      project: project,
+      request: unresolvedPolicyRequest
+    ) {
+      resolvedExecutable = builtInExecutable
+    } else {
+      resolvedExecutable = try Self.resolvedExecutableForPolicy(
+        request: request,
+        project: project
+      )
+    }
     let resolution = commandPolicy.resolve(
       project: project,
       request: DirectCommandRequest(
@@ -112,7 +128,6 @@ extension BridgeServiceApplication {
         requiresNetwork: resolution.requiresNetwork,
         usePTY: request.tty,
         timeout: .milliseconds(request.timeoutMS),
-        sandboxRoot: project.root.canonicalPath,
         denyNetwork: denyNetwork || !resolution.requiresNetwork
           || project.accessPolicy.network == .denied,
         onExit: { await lease.release() }
@@ -124,6 +139,11 @@ extension BridgeServiceApplication {
       let yieldDeadline = requestedYieldDeadline < deadline ? requestedYieldDeadline : deadline
       while ContinuousClock.now < yieldDeadline {
         try Task.checkCancellation()
+        if let session = await directCommands.snapshot(sessionID: sessionID),
+          session.status != "running"
+        {
+          break
+        }
         try await Task.sleep(for: .milliseconds(20))
       }
       try Self.checkDeadline(deadline)
@@ -150,15 +170,20 @@ extension BridgeServiceApplication {
   private static func resolvedExecutableForPolicy(
     request: MCPDirectExecRequest,
     project: ServiceProjectRecord
-  ) -> String? {
+  ) throws -> String? {
     let requestedExecutable =
       request.argv.first
       ?? request.commandID.flatMap { commandID in
         project.workspaceCommands.first(where: { $0.id == commandID })?.executable
       }
     guard let requestedExecutable, !requestedExecutable.isEmpty else { return nil }
-    guard let resolved = try? resolvedLaunchArgv([requestedExecutable], project: project).first,
-      Self.isAbsoluteExecutablePath(resolved)
+    guard
+      let resolved = try resolvedLaunchArgv(
+        [requestedExecutable],
+        project: project,
+        allowUnresolvedBareExecutable: true
+      ).first,
+      resolved.hasPrefix("/")
     else { return nil }
     return resolved
   }
@@ -222,6 +247,12 @@ extension BridgeServiceApplication {
     guard !sessionID.isEmpty, sessionID.utf8.count <= 128 else {
       throw BridgeMCPQueryError.commandSessionNotFound
     }
+    guard let existing = await directCommands.snapshot(sessionID: sessionID) else {
+      throw BridgeMCPQueryError.commandSessionNotFound
+    }
+    if existing.status != "running" {
+      return Self.output(existing)
+    }
     do {
       try await directCommands.interrupt(sessionID: sessionID)
     } catch {
@@ -252,10 +283,41 @@ extension BridgeServiceApplication {
       status: session.status,
       exitCode: session.exitCode.map(Int.init),
       timedOut: session.timedOut,
-      head: safe(session.output.head, maximum: 16 * 1_024),
-      tail: safe(session.output.tail, maximum: 64 * 1_024),
+      commandStatus: session.status,
+      commandTimedOut: session.timedOut,
+      readTimeout: false,
+      head: OutboundContentSecurity.redactedCommandOutput(
+        session.output.head, maximumUTF8Bytes: 16 * 1_024),
+      tail: OutboundContentSecurity.redactedCommandOutput(
+        session.output.tail, maximumUTF8Bytes: 64 * 1_024),
       byteCount: session.output.byteCount,
-      truncated: session.output.truncated
+      truncated: session.output.truncated,
+      executionEnvironment: Self.mcpEnvironment(session.executionEnvironment)
+    )
+  }
+
+  static func mcpEnvironment(
+    _ environment: DirectExecutionEnvironmentCapabilities
+  ) -> MCPExecutionEnvironment {
+    MCPExecutionEnvironment(
+      bridgeSandbox: environment.bridgeSandbox,
+      sandboxExec: environment.sandboxExec,
+      nestedSandbox: environment.nestedSandbox,
+      loopback: environment.loopback,
+      limitations: environment.limitations
+    )
+  }
+
+  private static func mcpEnvironment(
+    _ environment: DirectCommandExecutionEnvironment
+  ) -> MCPExecutionEnvironment {
+    MCPExecutionEnvironment(
+      bridgeSandbox: environment.bridgeSandbox,
+      sandboxExec: environment.sandboxExec,
+      nestedSandbox: environment.nestedSandbox,
+      loopback: environment.loopback,
+      childNetworkPolicy: environment.childNetworkPolicy,
+      limitations: environment.limitations
     )
   }
 
@@ -287,15 +349,11 @@ extension BridgeServiceApplication {
   /// (e.g. `git`) against a fixed trusted PATH. Absolute paths pass through unchanged.
   static func resolvedLaunchArgv(
     _ argv: [String],
-    project: ServiceProjectRecord
+    project: ServiceProjectRecord,
+    allowUnresolvedBareExecutable: Bool = false
   ) throws -> [String] {
     guard let executable = argv.first, !executable.isEmpty else { return argv }
-    if Self.isAbsoluteExecutablePath(executable) {
-      #if canImport(WinSDK)
-        guard !executable.hasPrefix("\\\\") else {
-          throw BridgeMCPQueryError.pathDenied
-        }
-      #endif
+    if executable.hasPrefix("/") {
       let rootURL = URL(fileURLWithPath: project.root.canonicalPath, isDirectory: true)
         .standardizedFileURL.resolvingSymlinksInPath()
       let candidate = URL(fileURLWithPath: executable).standardizedFileURL
@@ -304,16 +362,16 @@ extension BridgeServiceApplication {
       // Trusted system binaries and full-mode absolute executables remain
       // valid.  An absolute path lexically inside the project is different:
       // resolve it before launch so a project-local symlink cannot escape.
-      guard Self.path(lexical, isContainedBy: rootPath) else { return argv }
+      guard lexical == rootPath || lexical.hasPrefix(rootPath + "/") else { return argv }
       let resolved = try containedResolvedPath(candidate, root: rootPath)
       return [resolved] + argv.dropFirst()
     }
-    if executable.contains("/") || executable.contains("\\") {
+    if executable.contains("/") {
       let root = project.root.canonicalPath
       let candidate =
         ((root as NSString).appendingPathComponent(executable) as NSString).standardizingPath
       let resolved = URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
-      guard Self.path(resolved, isContainedBy: root) else {
+      guard resolved == root || resolved.hasPrefix(root + "/") else {
         throw BridgeMCPQueryError.pathDenied
       }
       return [resolved] + argv.dropFirst()
@@ -321,66 +379,24 @@ extension BridgeServiceApplication {
     if let resolved = Self.executableInTrustedPath(executable) {
       return [resolved] + argv.dropFirst()
     }
+    guard allowUnresolvedBareExecutable else { throw BridgeMCPQueryError.processLaunchFailed }
     return argv
   }
 
   /// Fixed trusted PATH used to resolve bare binary names without invoking a shell.
   static var trustedPathDirectories: [String] {
-    #if canImport(WinSDK)
-      let environment = ProcessInfo.processInfo.environment
-      let systemRoot =
-        environment.first { $0.key.caseInsensitiveCompare("SystemRoot") == .orderedSame }?.value
-        ?? #"C:\Windows"#
-      let programFiles =
-        environment.first {
-          $0.key.caseInsensitiveCompare("ProgramFiles") == .orderedSame
-        }?.value ?? #"C:\Program Files"#
-      let localAppData = environment.first {
-        $0.key.caseInsensitiveCompare("LOCALAPPDATA") == .orderedSame
-      }?.value
-      return [
-        URL(fileURLWithPath: systemRoot).appendingPathComponent("System32").path,
-        systemRoot,
-        URL(fileURLWithPath: programFiles).appendingPathComponent("Git/cmd").path,
-        URL(fileURLWithPath: programFiles).appendingPathComponent("Git/bin").path,
-        URL(fileURLWithPath: programFiles).appendingPathComponent("PowerShell/7").path,
-        URL(fileURLWithPath: programFiles).appendingPathComponent("nodejs").path,
-        localAppData.map {
-          URL(fileURLWithPath: $0).appendingPathComponent("Programs/Git/cmd").path
-        },
-      ].compactMap { $0 }
-    #else
-      return [
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
-        "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-      ]
-    #endif
+    [
+      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
+      "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    ]
   }
 
   static func executableInTrustedPath(_ name: String) -> String? {
-    guard !name.isEmpty, !name.contains("/"), !name.contains("\\"), name.utf8.count <= 4_096
-    else { return nil }
-    #if canImport(WinSDK)
-      let candidates =
-        URL(fileURLWithPath: name).pathExtension.isEmpty ? [name, name + ".exe"] : [name]
-    #else
-      let candidates = [name]
-    #endif
+    guard !name.isEmpty, !name.contains("/"), name.utf8.count <= 4_096 else { return nil }
     for directory in trustedPathDirectories {
-      for name in candidates {
-        let candidate = URL(fileURLWithPath: directory).appendingPathComponent(name).path
-        #if canImport(WinSDK)
-          var isDirectory: ObjCBool = false
-          if FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory),
-            !isDirectory.boolValue
-          {
-            return candidate
-          }
-        #else
-          if FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-          }
-        #endif
+      let candidate = URL(fileURLWithPath: directory).appendingPathComponent(name).path
+      if FileManager.default.isExecutableFile(atPath: candidate) {
+        return candidate
       }
     }
     return nil
@@ -390,33 +406,10 @@ extension BridgeServiceApplication {
     let rootPath = URL(fileURLWithPath: root, isDirectory: true)
       .standardizedFileURL.resolvingSymlinksInPath().path
     let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath().path
-    guard Self.path(resolved, isContainedBy: rootPath) else {
+    guard resolved == rootPath || resolved.hasPrefix(rootPath + "/") else {
       throw BridgeMCPQueryError.pathDenied
     }
     return resolved
-  }
-
-  private static func isAbsoluteExecutablePath(_ path: String) -> Bool {
-    #if canImport(WinSDK)
-      let units = Array(path.utf16)
-      return path.hasPrefix("\\\\")
-        || (units.count >= 3 && units[1] == 0x3A && (units[2] == 0x5C || units[2] == 0x2F))
-    #else
-      return path.hasPrefix("/")
-    #endif
-  }
-
-  private static func path(_ candidate: String, isContainedBy root: String) -> Bool {
-    #if canImport(WinSDK)
-      let normalizedCandidate = candidate.replacingOccurrences(of: "/", with: "\\")
-        .trimmingCharacters(in: CharacterSet(charactersIn: "\\"))
-      let normalizedRoot = root.replacingOccurrences(of: "/", with: "\\")
-        .trimmingCharacters(in: CharacterSet(charactersIn: "\\"))
-      return normalizedCandidate.caseInsensitiveCompare(normalizedRoot) == .orderedSame
-        || normalizedCandidate.lowercased().hasPrefix(normalizedRoot.lowercased() + "\\")
-    #else
-      return candidate == root || candidate.hasPrefix(root + "/")
-    #endif
   }
 
   static func denialMessage(_ reason: DirectCommandDenialReason?) -> String {
@@ -436,8 +429,10 @@ extension BridgeServiceApplication {
     switch error {
     case let error as DirectCommandSessionError:
       switch error {
-      case .sessionNotFound, .notRunning:
+      case .sessionNotFound:
         return .commandSessionNotFound
+      case .notRunning:
+        return .commandSessionNotRunning
       case .projectBusy:
         return .busy
       case .invalidStdin:

@@ -1,6 +1,18 @@
 import MCP
 
 extension MCPServiceToolCatalog {
+  static let executionEnvironmentSchema = objectSchema(
+    properties: [
+      "bridge_sandbox": stringSchema,
+      "sandbox_exec": stringSchema,
+      "nested_sandbox": stringSchema,
+      "loopback": stringSchema,
+      "child_network_policy": stringSchema,
+      "limitations": arraySchema(stringSchema),
+    ],
+    required: ["bridge_sandbox", "sandbox_exec", "nested_sandbox", "loopback", "limitations"]
+  )
+
   static let directMutationOutputSchema = outputSchema(
     properties: [
       "relative_path": stringSchema,
@@ -224,9 +236,13 @@ extension MCPServiceToolCatalog {
     description:
       "Read the latest bounded output of a direct command session. Use only when the user "
       + "explicitly asked the MCP client to run commands directly and this session was started with "
-      + "direct_exec_project_command.",
+      + "direct_exec_project_command. timed_out reports only the command execution deadline; "
+      + "read_timeout reports only expiration of this optional read wait.",
     inputSchema: objectSchema(
-      properties: ["session_id": boundedStringSchema(maximum: 128)],
+      properties: [
+        "session_id": boundedStringSchema(maximum: 128),
+        "wait_timeout_ms": integerSchema(minimum: 0, maximum: 10_000),
+      ],
       required: ["session_id"]
     ),
     annotations: readAnnotations,
@@ -289,10 +305,14 @@ extension MCPServiceToolCatalog {
       "status": stringSchema,
       "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
       "timed_out": boolSchema,
+      "command_status": stringSchema,
+      "command_timed_out": boolSchema,
+      "read_timeout": boolSchema,
       "head": stringSchema,
       "tail": stringSchema,
       "byte_count": integerSchema(minimum: 0),
       "truncated": boolSchema,
+      "execution_environment": executionEnvironmentSchema,
     ],
     required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
   )
@@ -303,10 +323,14 @@ extension MCPServiceToolCatalog {
       "status": stringSchema,
       "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
       "timed_out": boolSchema,
+      "command_status": stringSchema,
+      "command_timed_out": boolSchema,
+      "read_timeout": boolSchema,
       "head": stringSchema,
       "tail": stringSchema,
       "byte_count": integerSchema(minimum: 0),
       "truncated": boolSchema,
+      "execution_environment": executionEnvironmentSchema,
     ],
     required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
   )

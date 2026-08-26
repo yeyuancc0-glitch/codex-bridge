@@ -55,6 +55,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case notGitRepository
   case revisionConflict(RevisionConflictDetail)
   case commandSessionNotFound
+  case commandSessionNotRunning
   case commandTimeout
   case commandDenied(String)
   case processLaunchFailed
@@ -161,6 +162,7 @@ public struct BridgeStatusSnapshot: Codable, Equatable, Sendable {
   public let supervisorState: String
   public let degradations: [String]
   public let pendingApprovalCount: Int
+  public let executionEnvironment: MCPExecutionEnvironment?
 
   public init(
     appVersion: String,
@@ -171,7 +173,8 @@ public struct BridgeStatusSnapshot: Codable, Equatable, Sendable {
     executionState: String,
     supervisorState: String,
     degradations: [String] = [],
-    pendingApprovalCount: Int
+    pendingApprovalCount: Int,
+    executionEnvironment: MCPExecutionEnvironment? = nil
   ) {
     self.appVersion = appVersion
     self.mcpState = mcpState
@@ -182,6 +185,7 @@ public struct BridgeStatusSnapshot: Codable, Equatable, Sendable {
     self.supervisorState = supervisorState
     self.degradations = degradations
     self.pendingApprovalCount = pendingApprovalCount
+    self.executionEnvironment = executionEnvironment
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -194,6 +198,7 @@ public struct BridgeStatusSnapshot: Codable, Equatable, Sendable {
     case supervisorState = "supervisor_state"
     case degradations
     case pendingApprovalCount = "pending_approval_count"
+    case executionEnvironment = "execution_environment"
   }
 }
 

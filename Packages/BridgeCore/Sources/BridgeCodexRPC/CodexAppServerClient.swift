@@ -56,14 +56,15 @@ public actor CodexAppServerClient {
   }
 
   public func initialize(
-    clientInfo: CodexClientInfo
+    clientInfo: CodexClientInfo,
+    capabilities: InitializeCapabilities = InitializeCapabilities()
   ) async throws -> InitializeResponse {
     guard lifecycle.isRunning else { throw CodexRPCError.notStarted }
     guard lifecycle == .ready else { throw CodexRPCError.alreadyInitialized }
     lifecycle = .initializing
     let params = InitializeParams(
       clientInfo: clientInfo,
-      capabilities: InitializeCapabilities()
+      capabilities: capabilities
     )
     do {
       let result = try await performRequest(
@@ -141,6 +142,39 @@ public actor CodexAppServerClient {
       method: "thread/start",
       params: params,
       response: ThreadStartResponse.self
+    )
+  }
+
+  package func listProjects(
+    _ params: ProjectListParams = ProjectListParams()
+  ) async throws -> ProjectListResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "project/list",
+      params: params,
+      response: ProjectListResponse.self
+    )
+  }
+
+  package func createProject(
+    _ params: ProjectCreateParams
+  ) async throws -> ProjectCreateResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "project/create",
+      params: params,
+      response: ProjectCreateResponse.self
+    )
+  }
+
+  package func updateThreadMetadata(
+    _ params: ThreadMetadataUpdateParams
+  ) async throws -> ThreadMetadataUpdateResponse {
+    try ensureInitialized()
+    return try await request(
+      method: "thread/metadata/update",
+      params: params,
+      response: ThreadMetadataUpdateResponse.self
     )
   }
 
@@ -298,6 +332,10 @@ public actor CodexAppServerClient {
 
   public func stderrSnapshot() async -> Data {
     await process.stderrSnapshot()
+  }
+
+  package func terminalFailure() async -> CodexRPCError? {
+    await dispatcher.terminalFailure()
   }
 
   public func stop() async {

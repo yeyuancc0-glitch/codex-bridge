@@ -50,14 +50,16 @@ extension BridgeServiceApplication {
     guard !models.isEmpty else { throw BridgeMCPQueryError.unavailable }
     let configuredExecutionModel = try await settings.string(for: .defaultExecutionModel)
     let configuredExecutionEffort = try await settings.string(for: .defaultExecutionEffort)
+    let usesExplicitOverride = submission.modelOverride == true
     let executionModelID =
-      submission.executionModel
+      (usesExplicitOverride ? submission.executionModel : nil)
       ?? configuredExecutionModel
       ?? models.first(where: \.isDefault)?.modelID
       ?? models[0].modelID
     let execution = try Self.select(
       modelID: executionModelID,
-      effort: submission.executionEffort ?? configuredExecutionEffort,
+      effort: (usesExplicitOverride ? submission.executionEffort : nil)
+        ?? configuredExecutionEffort,
       models: models
     )
 
@@ -66,8 +68,9 @@ extension BridgeServiceApplication {
     }
 
     let explicitSupervisor =
-      submission.supervisorModel != nil
-      || submission.supervisorEffort != nil
+      usesExplicitOverride
+      && (submission.supervisorModel != nil
+        || submission.supervisorEffort != nil)
     let configuredSupervisorModel = try await settings.string(for: .defaultSupervisorModel)
     let configuredSupervisorEffort = try await settings.string(for: .defaultSupervisorEffort)
     let supervisor: SelectedModel
@@ -254,10 +257,11 @@ extension BridgeServiceApplication {
   }
 
   static func supervisorState(_ tasks: [ServiceTaskRecord]) -> String {
-    if tasks.contains(where: { $0.state.supervisorStatus == .degraded }) {
+    let activeTasks = tasks.filter { !$0.state.status.isTerminal }
+    if activeTasks.contains(where: { $0.state.supervisorStatus == .degraded }) {
       return "degraded"
     }
-    if tasks.contains(where: {
+    if activeTasks.contains(where: {
       [.starting, .running].contains($0.state.supervisorStatus)
     }) {
       return "active"

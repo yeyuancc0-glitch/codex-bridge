@@ -68,6 +68,35 @@ public actor ServiceTaskManager {
   }
 
   @discardableResult
+  public func approveAndBegin(taskID: TaskID) async throws -> ServiceTaskRecord {
+    try await mutate(
+      taskID: taskID,
+      patch: StatePatch(
+        status: .starting,
+        supervisorStatus: try await supervisorStartStatus(taskID: taskID)
+      ),
+      eventKind: .taskApproved,
+      summary: "The local user approved this Codex invocation.",
+      expectedStatus: .awaitingLocalApproval
+    )
+  }
+
+  @discardableResult
+  public func denyStart(taskID: TaskID) async throws -> ServiceTaskRecord {
+    try await mutate(
+      taskID: taskID,
+      patch: StatePatch(
+        status: .failed,
+        resultSummary: .set("The local user denied this Codex invocation."),
+        failureCode: .set("local_approval_denied")
+      ),
+      eventKind: .taskFailed,
+      summary: "The local user denied this Codex invocation.",
+      expectedStatus: .awaitingLocalApproval
+    )
+  }
+
+  @discardableResult
   public func markExecutionStarted(
     taskID: TaskID,
     threadID: String,
@@ -303,7 +332,8 @@ public actor ServiceTaskManager {
     taskID: TaskID,
     patch: StatePatch,
     eventKind: ServiceTaskEventKind,
-    summary: String
+    summary: String,
+    expectedStatus: ServiceTaskStatus? = nil
   ) async throws -> ServiceTaskRecord {
     let current = try await requiredTask(id: taskID)
     let date = now()
@@ -315,7 +345,8 @@ public actor ServiceTaskManager {
         kind: eventKind,
         summary: summary,
         createdAt: date
-      )
+      ),
+      expectedStatus: expectedStatus
     )
     return updated
   }

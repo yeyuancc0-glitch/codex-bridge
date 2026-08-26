@@ -1,16 +1,18 @@
 import BridgeIPC
 import Foundation
 
-public final class BridgeServiceXPCController: @unchecked Sendable {
+public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCProtocol,
+  @unchecked Sendable
+{
   let composition: ServiceComposition
   let admission: XPCRequestAdmission
-  let streamProxy: (any BridgeServiceIPCStreamSink)?
+  let streamProxy: CodexBridgeTaskStreamListener?
   let streams = StreamRegistry()
   let conversationStreamGate = AsyncMutex()
 
   public init(
     composition: ServiceComposition,
-    streamProxy: (any BridgeServiceIPCStreamSink)? = nil,
+    streamProxy: CodexBridgeTaskStreamListener? = nil,
     maximumConcurrentRequests: Int = 8
   ) {
     precondition(maximumConcurrentRequests > 0)
@@ -19,6 +21,7 @@ public final class BridgeServiceXPCController: @unchecked Sendable {
     self.admission = XPCRequestAdmission(
       maximumConcurrent: maximumConcurrentRequests
     )
+    super.init()
   }
 
   public func perform(_ request: Data, withReply reply: @escaping (Data) -> Void) {
@@ -59,29 +62,6 @@ public final class BridgeServiceXPCController: @unchecked Sendable {
       self?.admission.release()
       replyBox.call(response)
     }
-  }
-
-  public func perform(_ request: Data) async -> Data {
-    let decoded: BridgeServiceIPCRequest
-    do {
-      decoded = try BridgeServiceIPCCodec.decodeRequest(request)
-    } catch {
-      return Self.fallbackFailure(
-        requestID: "invalid",
-        code: "invalid_request",
-        message: "The IPC request is invalid."
-      )
-    }
-    guard admission.acquire() else {
-      return Self.fallbackFailure(
-        requestID: decoded.requestID,
-        code: "busy",
-        message: "The service is busy.",
-        retryable: true
-      )
-    }
-    defer { admission.release() }
-    return await handle(decoded)
   }
 
   public func stopStreaming() {
@@ -137,6 +117,10 @@ public final class BridgeServiceXPCController: @unchecked Sendable {
       return try await handleSetProjectCommandMode(request)
     case .setWorkbenchProject:
       return try await handleSetWorkbenchProject(request)
+    case .getCustomInstructions:
+      return try await handleGetCustomInstructions(request)
+    case .setCustomInstructions:
+      return try await handleSetCustomInstructions(request)
     case .listModels:
       return try await handleListModels(request)
     case .getModelCatalog:
@@ -151,8 +135,6 @@ public final class BridgeServiceXPCController: @unchecked Sendable {
       return try await handleListThreads(request)
     case .listSkills:
       return try await handleListSkills(request)
-    case .readSkill:
-      return try await handleReadSkill(request)
     case .readThread:
       return try await handleReadThread(request)
     case .listTasks:

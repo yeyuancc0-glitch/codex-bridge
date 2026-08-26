@@ -18,7 +18,7 @@ public actor RPCDispatcher {
     let eventBufferLimit = max(1, eventBufferLimit)
     let pair = AsyncStream.makeStream(
       of: AppServerEvent.self,
-      bufferingPolicy: .bufferingNewest(eventBufferLimit)
+      bufferingPolicy: .bufferingOldest(eventBufferLimit)
     )
     events = pair.stream
     eventContinuation = pair.continuation
@@ -33,7 +33,7 @@ public actor RPCDispatcher {
   ) async throws -> JSONValue {
     try await withTaskCancellationHandler {
       try Task.checkCancellation()
-      let value = try await withCheckedThrowingContinuation { continuation in
+      return try await withCheckedThrowingContinuation { continuation in
         beginRequest(
           id: id,
           method: method,
@@ -42,14 +42,13 @@ public actor RPCDispatcher {
           send: send
         )
       }
-      return value
     } onCancel: {
       Task { await self.cancel(id: id) }
     }
   }
 
-  func receive(_ value: JSONValue) throws {
-    try dispatch(RPCEnvelope.decode(value))
+  func receive(_ value: JSONValue) async throws {
+    try await dispatch(RPCEnvelope.decode(value))
   }
 
   func terminate(with error: CodexRPCError) {
@@ -64,6 +63,10 @@ public actor RPCDispatcher {
       request.continuation.resume(throwing: error)
     }
     eventContinuation.finish()
+  }
+
+  func terminalFailure() -> CodexRPCError? {
+    terminalError
   }
 
   private func beginRequest(
@@ -84,9 +87,7 @@ public actor RPCDispatcher {
       return
     }
 
-    // Elevated priority so the watchdog always fires even when the ambient
-    // context is saturated; a late timeout wedges the caller indefinitely.
-    let timeoutTask = Task(priority: .userInitiated) { [weak self] in
+    let timeoutTask = Task { [weak self] in
       do {
         try await Task.sleep(nanoseconds: timeoutNanoseconds)
       } catch {
@@ -94,7 +95,7 @@ public actor RPCDispatcher {
       }
       await self?.timeOut(id: id, method: method)
     }
-    let sendTask = Task(priority: .userInitiated) { [weak self] in
+    let sendTask = Task { [weak self] in
       do {
         try Task.checkCancellation()
         try await send()
@@ -116,7 +117,7 @@ public actor RPCDispatcher {
     )
   }
 
-  private func dispatch(_ message: InboundRPCMessage) throws {
+  private func dispatch(_ message: InboundRPCMessage) async throws {
     switch message {
     case .response(let id, let result):
       complete(id: id, with: .success(result))
@@ -128,22 +129,23 @@ public actor RPCDispatcher {
         )
       )
     case .notification(let notification):
-      try publish(.notification(notification))
+      try await publish(.notification(notification))
     case .serverRequest(let request):
-      try publish(.serverRequest(request))
+      try await publish(.serverRequest(request))
     }
   }
 
-  private func publish(_ event: AppServerEvent) throws {
-    switch eventContinuation.yield(event) {
-    case .enqueued:
-      return
-    case .dropped:
-      throw CodexRPCError.eventBufferOverflow(maximumEvents: eventBufferLimit)
-    case .terminated:
-      return
-    @unknown default:
-      throw CodexRPCError.eventBufferOverflow(maximumEvents: eventBufferLimit)
+  private func publish(_ event: AppServerEvent) async throws {
+    while true {
+      try Task.checkCancellation()
+      switch eventContinuation.yield(event) {
+      case .enqueued, .terminated:
+        return
+      case .dropped:
+        try await Task.sleep(for: .milliseconds(1))
+      @unknown default:
+        throw CodexRPCError.eventBufferOverflow(maximumEvents: eventBufferLimit)
+      }
     }
   }
 

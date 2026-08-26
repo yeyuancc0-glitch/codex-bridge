@@ -8,22 +8,28 @@ public struct MCPServiceToolDeadlines: Sendable {
   public static let production = MCPServiceToolDeadlines(
     read: .seconds(15),
     submit: .seconds(5),
-    mutation: .seconds(10)
+    mutation: .seconds(10),
+    projectChanges: .seconds(20)
   )
 
   public let read: ContinuousClock.Duration
   public let submit: ContinuousClock.Duration
   public let mutation: ContinuousClock.Duration
+  public let projectChanges: ContinuousClock.Duration
 
   public init(
     read: ContinuousClock.Duration,
     submit: ContinuousClock.Duration,
-    mutation: ContinuousClock.Duration
+    mutation: ContinuousClock.Duration,
+    projectChanges: ContinuousClock.Duration = .seconds(20)
   ) {
-    precondition(read > .zero && submit > .zero && mutation > .zero)
+    precondition(
+      read > .zero && submit > .zero && mutation > .zero && projectChanges > .zero
+    )
     self.read = read
     self.submit = submit
     self.mutation = mutation
+    self.projectChanges = projectChanges
   }
 }
 

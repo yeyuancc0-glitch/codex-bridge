@@ -12,7 +12,12 @@ public actor ServiceProjectRepositoryAdapter: ProjectRepository {
   }
 
   public func allProjects() async throws -> [RegisteredProject] {
-    try await projects.projects().map(Self.registeredProject)
+    var result: [RegisteredProject] = []
+    for summary in try await projects.projects() {
+      guard let project = try await projects.project(id: summary.id) else { continue }
+      result.append(try Self.registeredProject(project))
+    }
+    return result
   }
 
   public func project(id: ProjectID) async throws -> RegisteredProject? {
@@ -47,6 +52,7 @@ public actor ServiceProjectRepositoryAdapter: ProjectRepository {
   private static func registeredProject(_ source: ServiceProjectRecord) throws
     -> RegisteredProject
   {
+    try source.root.validateCurrentIdentity()
     let root = try RegisteredRoot(
       capturing: URL(fileURLWithPath: source.root.canonicalPath, isDirectory: true)
     )

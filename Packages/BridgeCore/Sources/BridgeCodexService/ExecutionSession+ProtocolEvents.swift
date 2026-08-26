@@ -4,13 +4,28 @@ extension ExecutionSession {
   func receiveTurnStarted(_ notification: RPCNotification) async {
     do {
       guard case .turnStarted(let started) = try notification.decodedCodexNotification(),
-        started.threadId == expectedThreadID,
-        Self.isSafeWireIdentifier(started.turn.id),
-        startedTurnIDs.isEmpty || startedTurnIDs.contains(started.turn.id)
+        let expectedThreadID,
+        let eventBinding = try? ExecutionBinding(
+          threadID: started.threadId,
+          turnID: started.turn.id
+        )
       else {
         throw ExecutionServiceError.protocolViolation("turn started")
       }
-      startedTurnIDs.insert(started.turn.id)
+      if eventBinding.threadID == expectedThreadID {
+        guard startedTurnIDs.isEmpty || startedTurnIDs.contains(eventBinding.turnID) else {
+          throw ExecutionServiceError.protocolViolation("primary turn started")
+        }
+        startedTurnIDs.insert(eventBinding.turnID)
+        return
+      }
+      guard !startedTurnIDs.isEmpty,
+        collaborationBindings.count < configuration.maximumKnownItems
+          || collaborationBindings.contains(eventBinding)
+      else {
+        throw ExecutionServiceError.protocolViolation("collaboration turn started")
+      }
+      collaborationBindings.insert(eventBinding)
     } catch {
       await fail(
         code: "invalid_turn_started",
@@ -21,8 +36,7 @@ extension ExecutionSession {
 
   func receiveItemStarted(_ notification: RPCNotification) async {
     guard let item = parseItem(notification.params),
-      item.key.threadID == expectedThreadID,
-      startedTurnIDs.contains(item.key.turnID),
+      isKnownBinding(threadID: item.key.threadID, turnID: item.key.turnID),
       seenItems[item.key] == nil,
       seenItems.count < configuration.maximumKnownItems
     else {
@@ -31,6 +45,9 @@ extension ExecutionSession {
     }
     seenItems[item.key] = item.type
     if item.type == "mcpToolCall" || item.type == "dynamicToolCall" {
+      guard isPrimaryBinding(threadID: item.key.threadID, turnID: item.key.turnID) else {
+        return
+      }
       guard let call = Self.toolCall(from: notification.params) else {
         await fail(
           code: "invalid_tool_call_item",
@@ -38,7 +55,7 @@ extension ExecutionSession {
         )
         return
       }
-      yield(.toolCall(call))
+      await yield(.toolCall(call))
       return
     }
     guard item.type == "commandExecution" || item.type == "fileChange" else { return }
@@ -48,12 +65,31 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("approval item")
       }
       knownItems[item.key] = evidence
+      if isPrimaryBinding(threadID: item.key.threadID, turnID: item.key.turnID) {
+        await yield(.toolCall(try conversationToolCall(from: evidence)))
+      }
     } catch {
       await fail(
         code: "invalid_approval_item",
         summary: "Codex emitted invalid approval item evidence."
       )
     }
+  }
+
+  func isKnownBinding(threadID: String, turnID: String) -> Bool {
+    guard let value = try? ExecutionBinding(threadID: threadID, turnID: turnID) else {
+      return false
+    }
+    return isKnownBinding(value)
+  }
+
+  func isKnownBinding(_ value: ExecutionBinding) -> Bool {
+    isPrimaryBinding(threadID: value.threadID, turnID: value.turnID)
+      || collaborationBindings.contains(value)
+  }
+
+  func isPrimaryBinding(threadID: String, turnID: String) -> Bool {
+    threadID == expectedThreadID && startedTurnIDs.contains(turnID)
   }
 
   func receiveSemanticNotification(_ notification: RPCNotification) async {
@@ -66,6 +102,18 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("semantic event capacity")
       }
       evidence = try CodexApprovalWireDecoder.decodeSemanticNotification(notification)
+      let evidenceBinding = Self.binding(of: evidence)
+      if !isPrimaryBinding(
+        threadID: evidenceBinding.threadID,
+        turnID: evidenceBinding.turnID
+      ) {
+        try requireActiveEvidence(
+          threadID: evidenceBinding.threadID,
+          turnID: evidenceBinding.turnID
+        )
+        seenSemanticSources.insert(sourceID)
+        return
+      }
     } catch {
       await fail(code: "invalid_semantic_event", summary: "Codex emitted invalid task progress.")
       return
@@ -74,7 +122,10 @@ extension ExecutionSession {
     do {
       let event = try makeEvent(evidence)
       seenSemanticSources.insert(sourceID)
-      yield(event)
+      if let call = try conversationToolCall(from: evidence) {
+        await yield(.toolCall(call))
+      }
+      await yield(event)
     } catch {
       await fail(code: "invalid_semantic_event", summary: "Codex emitted invalid task progress.")
     }

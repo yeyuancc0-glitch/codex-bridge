@@ -8,13 +8,14 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("agent message delta")
       }
       try requireActiveEvidence(threadID: delta.threadId, turnID: delta.turnId)
+      guard isPrimaryBinding(threadID: delta.threadId, turnID: delta.turnId) else { return }
       let event = try ExecutionAgentMessageDelta(
         threadID: delta.threadId,
         turnID: delta.turnId,
         itemID: delta.itemId,
         delta: delta.delta
       )
-      yield(.agentMessageDelta(event))
+      await yield(.agentMessageDelta(event))
     } catch {
       await fail(
         code: "invalid_agent_delta",
@@ -30,13 +31,14 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("reasoning text delta")
       }
       try requireActiveEvidence(threadID: delta.threadId, turnID: delta.turnId)
+      guard isPrimaryBinding(threadID: delta.threadId, turnID: delta.turnId) else { return }
       let event = try ExecutionReasoningDelta(
         threadID: delta.threadId,
         turnID: delta.turnId,
         itemID: delta.itemId,
         delta: delta.delta
       )
-      yield(.reasoningDelta(event))
+      await yield(.reasoningDelta(event))
     } catch {
       await fail(
         code: "invalid_reasoning_delta",
@@ -52,10 +54,11 @@ extension ExecutionSession {
         throw ExecutionServiceError.protocolViolation("mcp tool call progress")
       }
       try requireActiveEvidence(threadID: progress.threadId, turnID: progress.turnId)
+      guard isPrimaryBinding(threadID: progress.threadId, turnID: progress.turnId) else { return }
       guard Self.isSafeWireIdentifier(progress.itemId) else {
         throw ExecutionServiceError.protocolViolation("tool call progress item")
       }
-      yield(.toolCallProgress(itemID: progress.itemId, progress: progress.message))
+      await yield(.toolCallProgress(itemID: progress.itemId, progress: progress.message))
     } catch {
       await fail(
         code: "invalid_tool_progress",
