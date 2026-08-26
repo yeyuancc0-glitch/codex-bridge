@@ -308,6 +308,7 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         control: AgentExecutionControl(
           interrupt: { try await execution.interrupt() },
           shutdown: { await execution.shutdown() },
+          steer: { text in try await execution.steer(text: text) },
           resolveApproval: { approvalID, optionID in
             try await execution.resolveApproval(
               approvalID: approvalID,
@@ -414,6 +415,7 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     var supported: Set<AgentCapability> = [
       .sessionCreate,
       .interrupt,
+      .steer,
       .textDelta,
       .reasoningDelta,
       .toolLifecycle,

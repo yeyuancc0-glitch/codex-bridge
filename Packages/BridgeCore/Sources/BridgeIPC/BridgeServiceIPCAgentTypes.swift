@@ -218,21 +218,25 @@ public struct IPCAgentModelsRequest: Codable, Equatable, Sendable {
   public let installationID: String
   public let projectID: String?
   public let modelID: String?
+  public let useStoredDefault: Bool?
 
   public init(
     installationID: String,
     projectID: String? = nil,
-    modelID: String? = nil
+    modelID: String? = nil,
+    useStoredDefault: Bool? = nil
   ) {
     self.installationID = installationID
     self.projectID = projectID
     self.modelID = modelID
+    self.useStoredDefault = useStoredDefault
   }
 
   private enum CodingKeys: String, CodingKey {
     case installationID = "installation_id"
     case projectID = "project_id"
     case modelID = "model_id"
+    case useStoredDefault = "use_stored_default"
   }
 }
 

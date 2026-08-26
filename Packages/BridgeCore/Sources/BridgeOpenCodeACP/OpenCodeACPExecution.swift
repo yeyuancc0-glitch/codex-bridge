@@ -7,7 +7,7 @@ public actor OpenCodeACPExecution {
   private let client: OpenCodeACPClient
   private let normalizer: OpenCodeACPEventNormalizer
   private let sessionID: String
-  private let prompt: String
+  private let initialPrompt: String
   private let initialClientEventSequence: Int64
   private let inactivityTimeout: Duration
   private let cleanup: @Sendable () -> Void
@@ -16,8 +16,13 @@ public actor OpenCodeACPExecution {
   private var promptTask: Task<Void, Never>?
   private var watchdogTask: Task<Void, Never>?
   private var consumedClientEventBarrier: Int64
+  private var queuedSteers: [String] = []
+  private var queuedSteerBytes = 0
   private var interruptRequested = false
   private var terminal = false
+
+  private static let maximumQueuedSteers = 32
+  private static let maximumQueuedSteerBytes = 256 * 1_024
 
   public init(
     client: OpenCodeACPClient,
@@ -37,7 +42,7 @@ public actor OpenCodeACPExecution {
     self.client = client
     self.normalizer = normalizer
     self.sessionID = sessionID
-    self.prompt = prompt
+    self.initialPrompt = prompt
     self.initialClientEventSequence = max(0, initialClientEventSequence)
     self.inactivityTimeout = inactivityTimeout
     consumedClientEventBarrier = max(0, initialClientEventSequence)
@@ -66,6 +71,27 @@ public actor OpenCodeACPExecution {
     guard !terminal else { throw AgentRuntimeError.processUnavailable }
     interruptRequested = true
     try await client.cancel(sessionID: sessionID)
+  }
+
+  /// ACP has no standard in-flight steer operation. Queue the input and send
+  /// it as the next prompt on this same session after the current prompt
+  /// resolves. Keeping this actor as the queue owner also serializes steer,
+  /// completion, and interrupt races without a second control plane.
+  public func steer(text: String) throws {
+    guard !terminal, !interruptRequested else {
+      throw AgentRuntimeError.processUnavailable
+    }
+    let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !prompt.isEmpty, prompt.utf8.count <= 64 * 1_024, !prompt.contains("\0") else {
+      throw AgentRuntimeError.invalidRequest("steer.text")
+    }
+    guard queuedSteers.count < Self.maximumQueuedSteers,
+      queuedSteerBytes + prompt.utf8.count <= Self.maximumQueuedSteerBytes
+    else {
+      throw AgentRuntimeError.invalidRequest("steer.queue")
+    }
+    queuedSteers.append(prompt)
+    queuedSteerBytes += prompt.utf8.count
   }
 
   public func resolveApproval(
@@ -115,28 +141,25 @@ public actor OpenCodeACPExecution {
 
   private func runPrompt() async {
     do {
-      let result = try await client.prompt(sessionID: sessionID, text: prompt)
-      try await waitUntilConsumed(result.eventSequenceBarrier)
-      guard !terminal else { return }
-      let finalizedContent = try await normalizer.finalizeContent()
-      let final: AgentEventEnvelope
-      if result.stopReason == "cancelled" || interruptRequested {
-        final = try await normalizer.interrupted()
-      } else {
-        final = try await normalizer.completed(stopReason: result.stopReason)
-      }
-      guard claimTerminal() else { return }
-      for event in finalizedContent {
-        guard emit(event) else {
-          await closeStream(throwing: OpenCodeACPError.transportClosed)
+      var prompt = initialPrompt
+      while true {
+        if interruptRequested {
+          await finishInterrupted()
           return
         }
-      }
-      guard emit(final) else {
-        await closeStream(throwing: OpenCodeACPError.transportClosed)
+        let result = try await client.prompt(sessionID: sessionID, text: prompt)
+        try await waitUntilConsumed(result.eventSequenceBarrier)
+        guard !terminal else { return }
+        if result.stopReason == "cancelled" || interruptRequested {
+          await finishInterrupted()
+          return
+        }
+        if let nextPrompt = try await nextPromptOrTerminal(stopReason: result.stopReason) {
+          prompt = nextPrompt
+          continue
+        }
         return
       }
-      await closeStream()
     } catch is CancellationError {
       guard claimTerminal() else { return }
       if let interrupted = try? await normalizer.interrupted() {
@@ -150,6 +173,56 @@ public actor OpenCodeACPExecution {
         summary: Self.failureSummary(error)
       )
     }
+  }
+
+  private func nextPromptOrTerminal(stopReason: String) async throws -> String? {
+    if let nextPrompt = dequeueSteer() {
+      return nextPrompt
+    }
+
+    let finalizedContent = try await normalizer.finalizeContent()
+    guard !terminal else { return nil }
+    if interruptRequested {
+      await finishInterrupted()
+      return nil
+    }
+    // A steer can arrive while the normalizer is finalizing the previous
+    // turn. Re-check before claiming terminal so accepted input is never
+    // lost to a completion race.
+    if let nextPrompt = dequeueSteer() {
+      return nextPrompt
+    }
+    guard claimTerminal() else { return nil }
+    do {
+      let final = try await normalizer.completed(stopReason: stopReason)
+      for event in finalizedContent {
+        guard emit(event) else {
+          throw OpenCodeACPError.transportClosed
+        }
+      }
+      guard emit(final) else {
+        throw OpenCodeACPError.transportClosed
+      }
+      await closeStream()
+    } catch {
+      await closeStream(throwing: error)
+    }
+    return nil
+  }
+
+  private func finishInterrupted() async {
+    guard claimTerminal() else { return }
+    if let interrupted = try? await normalizer.interrupted() {
+      _ = emit(interrupted)
+    }
+    await closeStream()
+  }
+
+  private func dequeueSteer() -> String? {
+    guard !queuedSteers.isEmpty else { return nil }
+    let prompt = queuedSteers.removeFirst()
+    queuedSteerBytes -= prompt.utf8.count
+    return prompt
   }
 
   private func waitUntilConsumed(_ barrier: Int64) async throws {

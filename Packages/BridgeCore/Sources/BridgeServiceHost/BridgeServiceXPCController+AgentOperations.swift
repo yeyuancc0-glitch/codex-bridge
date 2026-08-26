@@ -156,6 +156,7 @@ extension BridgeServiceXPCController {
       installationID: AgentInstallationID(rawValue: payload.installationID),
       projectID: payload.projectID,
       modelID: payload.modelID,
+      useStoredDefault: payload.useStoredDefault != false,
       deadline: deadline
     )
     return try BridgeServiceIPCCodec.success(

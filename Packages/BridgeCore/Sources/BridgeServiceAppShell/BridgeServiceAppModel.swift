@@ -92,6 +92,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var openCodeDefaultPermissionMode = "build"
   @Published public internal(set) var openCodeDefaultEffort: String?
   @Published public internal(set) var isManagingAgents = false
+  @Published public internal(set) var isRefreshingAgentModels = false
+  @Published public internal(set) var agentModelRefreshError: String?
   @Published public internal(set) var tasks: [MCPServiceTaskSnapshot] = []
   @Published public internal(set) var approvals: [IPCApprovalSummary] = []
   @Published public internal(set) var directApprovals: [IPCPendingDirectApproval] = []
@@ -146,6 +148,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   var toastDismissTask: Task<Void, Never>?
   var workbenchProjectSyncTask: Task<Void, Never>?
   var agentModelCatalogGeneration: UInt64 = 0
+  var agentModelRefreshGeneration: UInt64 = 0
+  var agentModelHydrationSuppression: AgentModelHydrationID?
   var agentModelDefaultLoadGeneration: UInt64 = 0
   var agentModelDefaultRevision: UInt64 = 0
   var agentModelDefaultMutationTask: Task<Void, Never>?
@@ -278,6 +282,12 @@ public final class BridgeServiceAppModel: ObservableObject {
       toast = nil
     }
   }
+}
+
+struct AgentModelHydrationID: Equatable {
+  let installationID: String?
+  let projectID: String?
+  let modelID: String?
 }
 
 public struct ToastNotice: Identifiable, Equatable, Sendable {

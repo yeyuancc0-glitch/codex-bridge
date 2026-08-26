@@ -241,6 +241,158 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.agentModelOptions, [option])
   }
 
+  func testRefreshingAgentModelsReplacesSnapshotAndClearsDeletedDefault() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let removed = IPCAgentModelSummary(
+      modelID: "opencode/removed",
+      displayName: "Removed"
+    )
+    let kept = IPCAgentModelSummary(
+      modelID: "opencode/kept",
+      displayName: "Kept"
+    )
+    let added = IPCAgentModelSummary(
+      modelID: "opencode/added",
+      displayName: "Added"
+    )
+    await client.configureAgentModels([removed, kept])
+    await client.configureAgentDefault(removed.modelID)
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(installationID: "agent-installation")
+    let requestCountBeforeRefresh = await client.agentModelRequestCountValue()
+
+    await client.configureAgentModels([kept, added])
+    model.refreshAgentModelCatalog(installationID: "agent-installation")
+
+    try await waitUntil {
+      let writes = await client.agentDefaultWrites()
+      let requestCount = await client.agentModelRequestCountValue()
+      return !model.isRefreshingAgentModels
+        && model.agentModelOptions == [kept, added]
+        && model.openCodeDefaultModel == nil
+        && writes == [nil]
+        && requestCount == requestCountBeforeRefresh + 1
+    }
+    XCTAssertEqual(
+      model.toast?.message,
+      "OpenCode 模型列表已刷新：新增 1 个，移除 1 个"
+    )
+  }
+
+  func testRefreshingAgentModelsFailureKeepsSnapshotAndShowsInlineError() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let option = IPCAgentModelSummary(
+      modelID: "opencode/current",
+      displayName: "Current"
+    )
+    await client.configureAgentModels([option])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(installationID: "agent-installation")
+    await client.setAgentModelsFailure(true)
+
+    model.refreshAgentModelCatalog(installationID: "agent-installation")
+
+    try await waitUntil {
+      !model.isRefreshingAgentModels && model.agentModelRefreshError != nil
+    }
+    XCTAssertEqual(model.agentModelOptions, [option])
+  }
+
+  func testRefreshingAgentModelsClearsRemovedEffortAndPreservesPersistedMode() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let option = IPCAgentModelSummary(
+      modelID: "opencode/current",
+      displayName: "Current",
+      supportedReasoningEfforts: ["low"],
+      defaultReasoningEffort: "low"
+    )
+    await client.configureAgentModels([option])
+    await client.configureOpenCodeDefault(
+      model: option.modelID,
+      permissionMode: "plan",
+      effort: "high"
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(installationID: "agent-installation")
+
+    model.refreshAgentModelCatalog(installationID: "agent-installation")
+
+    try await waitUntil {
+      !model.isRefreshingAgentModels
+        && model.openCodeDefaultModel == option.modelID
+        && model.openCodeDefaultPermissionMode == "plan"
+        && model.openCodeDefaultEffort == nil
+    }
+    let writes = await client.agentDefaultWrites()
+    XCTAssertEqual(writes, [option.modelID])
+  }
+
+  func testRefreshingAgentModelsInvalidatesInFlightHydrationDefaults() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let removed = IPCAgentModelSummary(
+      modelID: "opencode/removed",
+      displayName: "Removed"
+    )
+    let current = IPCAgentModelSummary(
+      modelID: "opencode/current",
+      displayName: "Current"
+    )
+    await client.configureAgentModels([current])
+    await client.configureAgentDefault(removed.modelID)
+    await client.setAgentDefaultReadDelay(.milliseconds(100))
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    let hydration = Task { @MainActor in
+      await model.hydrateAgentModelState(installationID: "agent-installation")
+    }
+    try await waitUntil {
+      await client.agentModelDefaultReadCountValue() == 1
+    }
+    model.refreshAgentModelCatalog(installationID: "agent-installation")
+
+    try await waitUntil {
+      !model.isRefreshingAgentModels && model.agentModelOptions == [current]
+    }
+    await hydration.value
+
+    XCTAssertEqual(model.agentModelOptions, [current])
+    XCTAssertNil(model.openCodeDefaultModel)
+    let writes = await client.agentDefaultWrites()
+    XCTAssertEqual(writes, [nil])
+  }
+
   func testModelCatalogFailureIsVisibleInsteadOfRemainingInLoadingState() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient(failModelCatalog: true)

@@ -133,6 +133,7 @@ extension BridgeServiceApplication {
     installationID: AgentInstallationID,
     projectID: String? = nil,
     modelID: String? = nil,
+    useStoredDefault: Bool = true,
     deadline: ContinuousClock.Instant
   ) async throws -> [ServiceAgentModelListItem] {
     try Self.checkDeadline(deadline)
@@ -145,8 +146,10 @@ extension BridgeServiceApplication {
     let selectedModelID: String?
     if let modelID {
       selectedModelID = modelID
-    } else {
+    } else if useStoredDefault {
       selectedModelID = try await settings.string(for: .openCodeDefaultModel)
+    } else {
+      selectedModelID = nil
     }
     let models = try await registry.models(
       installationID: installationID,

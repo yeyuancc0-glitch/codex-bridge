@@ -25,6 +25,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     private var runs: [TaskID: Run] = [:]
     private(set) var startedRequests: [AgentExecutionRequest] = []
     private(set) var interruptCount = 0
+    private(set) var steerInputs: [String] = []
     private(set) var shutdownCount = 0
     private(set) var approvalResponses: [(String, String)] = []
     private let returnedTaskID: TaskID?
@@ -33,6 +34,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     private let supportedReasoningEfforts: [String]
     private let resolveApprovalError: AgentRuntimeError?
     private var modelProjectRoots: [String?] = []
+    private var modelSelections: [String?] = []
 
     init(
       returnedTaskID: TaskID? = nil,
@@ -55,7 +57,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
 
     func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
       let capabilities: Set<AgentCapability> = [
-        .sessionCreate, .interrupt, .textDelta, .reasoningDelta,
+        .sessionCreate, .interrupt, .steer, .textDelta, .reasoningDelta,
         .toolLifecycle, .plan, .usage, .workspaceRead, .profileSelection,
       ]
 
@@ -91,10 +93,26 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     }
 
     func models(
-      installation _: AgentInstallation,
+      installation: AgentInstallation,
       projectRoot: String?
     ) async throws -> [AgentModelDescriptor] {
+      try await models(
+        installation: installation,
+        projectRoot: projectRoot,
+        selectedModelID: nil
+      )
+    }
+
+    func models(
+      installation _: AgentInstallation,
+      projectRoot: String?,
+      selectedModelID: String?
+    ) async throws -> [AgentModelDescriptor] {
       recordModelProjectRoot(projectRoot)
+      recordModelSelection(selectedModelID)
+      if let selectedModelID, selectedModelID == "opencode/deleted" {
+        throw AgentRuntimeError.modelUnavailable(selectedModelID)
+      }
       return [
         try AgentModelDescriptor(
           id: "opencode/x-preview-f-free",
@@ -111,10 +129,22 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       return modelProjectRoots
     }
 
+    func modelSelectionsValue() -> [String?] {
+      lock.lock()
+      defer { lock.unlock() }
+      return modelSelections
+    }
+
     private func recordModelProjectRoot(_ projectRoot: String?) {
       lock.lock()
       defer { lock.unlock() }
       modelProjectRoots.append(projectRoot)
+    }
+
+    private func recordModelSelection(_ selectedModelID: String?) {
+      lock.lock()
+      defer { lock.unlock() }
+      modelSelections.append(selectedModelID)
     }
 
     func start(
@@ -137,6 +167,9 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         shutdown: { [weak self] in
           self?.performShutdown(request.taskID)
         },
+        steer: { [weak self] text in
+          self?.performSteer(text)
+        },
         resolveApproval: { [weak self] approvalID, optionID in
           try self?.performResolve(approvalID: approvalID, optionID: optionID)
         }
@@ -144,7 +177,11 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       return AgentExecutionHandle(
         taskID: returnedTaskID ?? request.taskID,
         binding: binding,
-        capabilities: .empty,
+        capabilities: AgentCapabilitySnapshot(
+          advertised: [.steer],
+          observed: [.steer],
+          enforced: [.steer]
+        ),
         events: stream,
         control: control
       )
@@ -200,6 +237,12 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         run?.continuation.yield(envelope)
       }
       run?.continuation.finish()
+    }
+
+    private func performSteer(_ text: String) {
+      lock.lock()
+      steerInputs.append(text)
+      lock.unlock()
     }
 
     private func performShutdown(_ taskID: TaskID) {
@@ -546,6 +589,34 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       provider.modelProjectRootsValue(),
       [fixture.project.root.canonicalPath, fixture.project.root.canonicalPath]
     )
+  }
+
+  func testAgentModelRefreshCanIgnoreDeletedStoredDefault() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.set("opencode/deleted", for: .openCodeDefaultModel)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+
+    let models = try await application.serviceListAgentModels(
+      installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+      projectID: fixture.project.id.rawValue,
+      useStoredDefault: false,
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+
+    XCTAssertEqual(models.map(\.modelID), ["opencode/x-preview-f-free"])
+    let selections = provider.modelSelectionsValue()
+    XCTAssertEqual(selections.count, 1)
+    XCTAssertNil(selections[0])
   }
 
   func testOpenCodeSubmissionUsesSavedBuildModeAndSupportedEffortByDefault() async throws {
@@ -993,7 +1064,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     )
   }
 
-  func testSteerIsRejectedAndInterruptRequiresMatchingAgentRun() async throws {
+  func testSteerIsAcceptedAndInterruptRequiresMatchingAgentRun() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider()
     let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
@@ -1029,17 +1100,14 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     }
     let runID = try XCTUnwrap(runningRecord.state.providerRunID)
 
-    do {
-      _ = try await application.serviceSteerTask(
-        taskID: receipt.taskID,
-        expectedTurnID: runID,
-        input: "focus elsewhere",
-        deadline: deadline
-      )
-      XCTFail("Expected steer to be rejected for agent tasks")
-    } catch {
-      XCTAssertEqual(error as? BridgeMCPQueryError, .invalidTaskState)
-    }
+    let steerReceipt = try await application.serviceSteerTask(
+      taskID: receipt.taskID,
+      expectedTurnID: runID,
+      input: "focus elsewhere",
+      deadline: deadline
+    )
+    XCTAssertTrue(steerReceipt.accepted)
+    XCTAssertEqual(provider.steerInputs, ["focus elsewhere"])
 
     do {
       _ = try await application.serviceInterruptTask(

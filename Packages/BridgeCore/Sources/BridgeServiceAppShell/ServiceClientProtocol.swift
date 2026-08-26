@@ -50,6 +50,12 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
     projectID: String?,
     modelID: String?
   ) async throws -> IPCAgentModelsResponse
+  func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?,
+    useStoredDefault: Bool
+  ) async throws -> IPCAgentModelsResponse
   func agentModelDefault() async throws -> IPCAgentModelDefaultResponse
   func setAgentModelDefault(_ model: String?) async throws
   func setOpenCodeDefaults(
@@ -151,6 +157,19 @@ extension BridgeServiceClientProtocol {
     modelID _: String?
   ) async throws -> IPCAgentModelsResponse {
     try await agentModels(installationID: installationID, projectID: projectID)
+  }
+
+  public func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?,
+    useStoredDefault _: Bool
+  ) async throws -> IPCAgentModelsResponse {
+    try await agentModels(
+      installationID: installationID,
+      projectID: projectID,
+      modelID: modelID
+    )
   }
 
   public func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {

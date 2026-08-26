@@ -102,7 +102,8 @@ extension MCPToolCatalog {
   static let steerTask = Tool(
     name: MCPTaskToolName.steerTask.rawValue,
     title: "Steer task",
-    description: "Append bounded corrective input only to the explicitly expected active turn.",
+    description:
+      "Append bounded corrective input only to the explicitly expected active task turn or provider run.",
     inputSchema: taskObjectSchema(
       properties: [
         "task_id": taskBoundedString(128),

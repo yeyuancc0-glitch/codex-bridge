@@ -554,12 +554,17 @@ extension BridgeServiceApplication {
     guard let task = try await tasks.task(id: id) else {
       throw BridgeMCPQueryError.taskNotFound
     }
-    guard task.providerID == serviceCodexProviderID else {
-      // Non-Codex providers do not advertise steer capability yet.
-      throw BridgeMCPQueryError.invalidTaskState
-    }
-    guard task.state.status == .running, task.state.codexTurnID == expectedTurnID else {
+    guard task.state.status == .running else {
       throw BridgeMCPQueryError.turnMismatch
+    }
+    if task.providerID == serviceCodexProviderID {
+      guard task.state.codexTurnID == expectedTurnID else {
+        throw BridgeMCPQueryError.turnMismatch
+      }
+    } else {
+      guard task.state.providerRunID == expectedTurnID else {
+        throw BridgeMCPQueryError.turnMismatch
+      }
     }
     do {
       try await coordinator.steer(

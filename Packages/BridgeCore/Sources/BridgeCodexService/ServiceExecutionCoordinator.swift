@@ -12,6 +12,7 @@ public actor ServiceExecutionCoordinator {
     let providerRunID: String?
     let effectiveRunID: String
     let interrupt: @Sendable () async throws -> Void
+    let steer: (@Sendable (String) async throws -> Void)?
     let shutdown: @Sendable () async -> Void
     let resolveApproval: (@Sendable (String, String) async throws -> Void)?
     var lastSequence: Int64? = nil
@@ -118,6 +119,17 @@ public actor ServiceExecutionCoordinator {
     expectedTurnID: String,
     text: String
   ) async throws {
+    if let run = activeAgentRuns[taskID] {
+      guard run.effectiveRunID == expectedTurnID else {
+        throw ExecutionServiceError.bindingMismatch
+      }
+      guard let steer = run.steer else {
+        throw ExecutionServiceError.sessionUnavailable(taskID)
+      }
+      try await steer(text)
+      await conversation.appendUserMessage(taskID: taskID, content: text)
+      return
+    }
     try await execution.steer(
       taskID: taskID,
       expectedTurnID: expectedTurnID,
@@ -634,6 +646,7 @@ public actor ServiceExecutionCoordinator {
         providerRunID: handle.runID,
         effectiveRunID: runID,
         interrupt: handle.interrupt,
+        steer: handle.steer,
         shutdown: handle.shutdown,
         resolveApproval: handle.resolveApproval
       )

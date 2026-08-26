@@ -21,7 +21,9 @@ final class ExecutionPostureTests: XCTestCase {
           #""approvalPolicy":"on-request""#,
         ],
         turnStartChecks: [
-          #""sandboxPolicy":{"type":"readOnly","networkAccess":false}"#,
+          #""sandboxPolicy":{"#,
+          #""type":"readOnly""#,
+          #""networkAccess":false"#,
           #""approvalPolicy":"on-request""#,
         ],
         sandboxJSON: #"{"type":"readOnly","networkAccess":false}"#,
@@ -182,7 +184,9 @@ final class ExecutionPostureTests: XCTestCase {
           #""approvalPolicy":"on-request""#,
         ],
         turnStartChecks: [
-          #""sandboxPolicy":{"type":"readOnly","networkAccess":true}"#,
+          #""sandboxPolicy":{"#,
+          #""type":"readOnly""#,
+          #""networkAccess":true"#,
           #""approvalPolicy":"on-request""#,
         ],
         sandboxJSON: #"{"type":"readOnly","networkAccess":true}"#,

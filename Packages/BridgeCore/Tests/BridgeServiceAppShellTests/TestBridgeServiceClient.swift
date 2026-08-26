@@ -69,8 +69,12 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentActions: [String] = []
   private var agentModelOptionsValue: [IPCAgentModelSummary] = []
   private var agentModelDefaultValue: String?
+  private var agentModelDefaultPermissionMode = "build"
+  private var agentModelDefaultEffort: String?
   private var agentModelDefaultWrites: [String?] = []
   private var agentModelDefaultReadDelay: Duration = .zero
+  private var agentModelDefaultReadCount = 0
+  private var agentModelRequestCount = 0
   private var failAgentModels = false
   private var submittedAgentRequestValue: IPCAgentSubmitRequest?
   private var approvalResolutionDelay: Duration = .zero
@@ -138,12 +142,30 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     agentModelDefaultValue = model
   }
 
+  func configureOpenCodeDefault(
+    model: String?,
+    permissionMode: String,
+    effort: String?
+  ) {
+    agentModelDefaultValue = model
+    agentModelDefaultPermissionMode = permissionMode
+    agentModelDefaultEffort = effort
+  }
+
   func setAgentDefaultReadDelay(_ delay: Duration) {
     agentModelDefaultReadDelay = delay
   }
 
+  func agentModelDefaultReadCountValue() -> Int {
+    agentModelDefaultReadCount
+  }
+
   func setAgentModelsFailure(_ fail: Bool) {
     failAgentModels = fail
+  }
+
+  func agentModelRequestCountValue() -> Int {
+    agentModelRequestCount
   }
 
   func setApprovalResolutionDelay(_ delay: Duration) {
@@ -395,21 +417,43 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func agentModels(installationID _: String) async throws -> IPCAgentModelsResponse {
+    agentModelRequestCount += 1
     guard !failAgentModels else { throw BridgeServiceClientError.unavailable }
     return IPCAgentModelsResponse(models: agentModelOptionsValue)
   }
 
   func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
+    agentModelDefaultReadCount += 1
     let value = agentModelDefaultValue
     if agentModelDefaultReadDelay > .zero {
       try await Task.sleep(for: agentModelDefaultReadDelay)
     }
-    return IPCAgentModelDefaultResponse(model: value)
+    return IPCAgentModelDefaultResponse(
+      model: value,
+      permissionMode: agentModelDefaultPermissionMode,
+      effort: agentModelDefaultEffort
+    )
   }
 
   func setAgentModelDefault(_ model: String?) async throws {
     agentModelDefaultValue = model
     agentModelDefaultWrites.append(model)
+  }
+
+  func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
+    agentModelDefaultValue = model
+    agentModelDefaultPermissionMode = permissionMode ?? agentModelDefaultPermissionMode
+    agentModelDefaultEffort = effort
+    agentModelDefaultWrites.append(model)
+    return IPCAgentModelDefaultResponse(
+      model: model,
+      permissionMode: agentModelDefaultPermissionMode,
+      effort: effort
+    )
   }
 
   func agentActionsValue() -> [String] {

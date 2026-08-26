@@ -236,6 +236,7 @@ struct BridgeServiceAgentSettingsSection: View {
         Text("OpenCode 原生 Plan（只读）").tag("plan")
       }
       .pickerStyle(.menu)
+      .disabled(model.isRefreshingAgentModels)
       .help("仅当任务没有显式 permission_mode 时使用；项目权限仍会限制写入")
 
       if selectable.isEmpty {
@@ -256,6 +257,7 @@ struct BridgeServiceAgentSettingsSection: View {
         }
       }
       .pickerStyle(.menu)
+      .disabled(model.isRefreshingAgentModels)
       .task(
         id: AgentModelHydrationID(
           installationID: selectable.first?.installationID,
@@ -263,7 +265,49 @@ struct BridgeServiceAgentSettingsSection: View {
           modelID: model.openCodeDefaultModel
         )
       ) {
+        guard
+          !model.consumeAgentModelHydrationSuppression(
+            installationID: selectable.first?.installationID,
+            projectID: model.selectedProjectID,
+            modelID: model.openCodeDefaultModel
+          )
+        else { return }
         await model.hydrateAgentModelState(installationID: selectable.first?.installationID)
+      }
+
+      HStack(spacing: 10) {
+        Button {
+          model.refreshAgentModelCatalog(installationID: selectable.first?.installationID)
+        } label: {
+          if model.isRefreshingAgentModels {
+            ProgressView()
+              .controlSize(.small)
+            Text("正在刷新模型列表…")
+          } else {
+            Label("刷新模型列表", systemImage: "arrow.clockwise")
+          }
+        }
+        .controlSize(.small)
+        .disabled(
+          selectable.isEmpty
+            || model.isRefreshingAgentModels
+            || model.isManagingAgents
+        )
+        .accessibilityLabel("刷新 OpenCode 模型列表")
+        .accessibilityHint("从当前 OpenCode ACP 安装重新读取模型目录")
+
+        if !model.agentModelOptions.isEmpty {
+          Text("\(model.agentModelOptions.count) 个模型")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      if let refreshError = model.agentModelRefreshError {
+        Label(refreshError, systemImage: "exclamationmark.triangle.fill")
+          .font(.caption)
+          .foregroundStyle(.orange)
+          .textSelection(.enabled)
       }
 
       Picker("默认推理强度", selection: openCodeDefaultEffortBinding) {
@@ -277,6 +321,7 @@ struct BridgeServiceAgentSettingsSection: View {
         }
       }
       .pickerStyle(.menu)
+      .disabled(model.isRefreshingAgentModels)
       .help("OpenCode 通过 ACP 的 effort 选项提供模型支持的推理强度")
       if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
         Text("当前模型不提供可选推理强度，使用 Provider 默认")
@@ -386,10 +431,4 @@ struct BridgeServiceAgentSettingsSection: View {
     default: .red
     }
   }
-}
-
-private struct AgentModelHydrationID: Equatable {
-  let installationID: String?
-  let projectID: String?
-  let modelID: String?
 }

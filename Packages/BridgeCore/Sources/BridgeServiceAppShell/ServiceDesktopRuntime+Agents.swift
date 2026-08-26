@@ -2,6 +2,131 @@ import BridgeIPC
 import Foundation
 
 extension BridgeServiceAppModel {
+  func refreshAgentModelCatalog(installationID: String?) {
+    guard !isRefreshingAgentModels else { return }
+    guard let installationID, !installationID.isEmpty else {
+      agentModelRefreshError = "暂无已启用且可用的 OpenCode 安装。"
+      return
+    }
+
+    agentModelCatalogGeneration &+= 1
+    let catalogGeneration = agentModelCatalogGeneration
+    agentModelRefreshGeneration &+= 1
+    let refreshGeneration = agentModelRefreshGeneration
+    agentModelDefaultLoadGeneration &+= 1
+    let previousMutation = agentModelDefaultMutationTask
+    isRefreshingAgentModels = true
+    agentModelRefreshError = nil
+
+    Task { [weak self, previousMutation] in
+      guard let self else { return }
+      defer {
+        if self.agentModelRefreshGeneration == refreshGeneration {
+          self.isRefreshingAgentModels = false
+        }
+      }
+
+      do {
+        await previousMutation?.value
+        guard !Task.isCancelled,
+          catalogGeneration == self.agentModelCatalogGeneration
+        else { return }
+        let defaultRevision = self.agentModelDefaultRevision
+        let client = try self.currentClient()
+        let persistedDefault = try await client.agentModelDefault()
+        guard !Task.isCancelled,
+          defaultRevision == self.agentModelDefaultRevision
+        else { return }
+        let defaultModel = persistedDefault.model
+        let rawResponse = try await client.agentModels(
+          installationID: installationID,
+          projectID: self.selectedProjectID,
+          modelID: nil,
+          useStoredDefault: false
+        )
+        guard !Task.isCancelled,
+          catalogGeneration == self.agentModelCatalogGeneration,
+          refreshGeneration == self.agentModelRefreshGeneration,
+          defaultRevision == self.agentModelDefaultRevision
+        else { return }
+
+        let previousIDs = Set(self.agentModelOptions.map(\.modelID))
+        let currentIDs = Set(rawResponse.models.map(\.modelID))
+        let addedCount = currentIDs.subtracting(previousIDs).count
+        let removedCount = previousIDs.subtracting(currentIDs).count
+        let defaultWasRemoved = defaultModel.map { !currentIDs.contains($0) } ?? false
+        let response: IPCAgentModelsResponse
+        if let defaultModel, !defaultWasRemoved {
+          response = try await client.agentModels(
+            installationID: installationID,
+            projectID: self.selectedProjectID,
+            modelID: defaultModel,
+            useStoredDefault: false
+          )
+        } else {
+          response = rawResponse
+        }
+        let effortModel =
+          defaultModel.flatMap { selected in
+            response.models.first(where: { $0.modelID == selected })
+          } ?? response.models.first(where: { !$0.supportedReasoningEfforts.isEmpty })
+        let effortWasRemoved =
+          persistedDefault.effort.map { effort in
+            effortModel?.supportedReasoningEfforts.contains(effort) != true
+          } ?? false
+
+        let correctedDefault: IPCAgentModelDefaultResponse?
+        if defaultWasRemoved || effortWasRemoved,
+          defaultRevision == self.agentModelDefaultRevision
+        {
+          correctedDefault = try await client.setOpenCodeDefaults(
+            model: defaultWasRemoved ? nil : defaultModel,
+            permissionMode: persistedDefault.permissionMode,
+            effort: nil
+          )
+          guard defaultRevision == self.agentModelDefaultRevision else { return }
+        } else {
+          correctedDefault = nil
+        }
+
+        guard !Task.isCancelled,
+          catalogGeneration == self.agentModelCatalogGeneration,
+          refreshGeneration == self.agentModelRefreshGeneration,
+          defaultRevision == self.agentModelDefaultRevision
+        else { return }
+        self.agentModelOptions = response.models
+        self.agentModelRefreshError = nil
+        let finalDefault = correctedDefault ?? persistedDefault
+        if self.openCodeDefaultModel != finalDefault.model {
+          self.agentModelHydrationSuppression = AgentModelHydrationID(
+            installationID: installationID,
+            projectID: self.selectedProjectID,
+            modelID: finalDefault.model
+          )
+        }
+        if correctedDefault != nil {
+          self.agentModelDefaultRevision &+= 1
+        }
+        self.openCodeDefaultModel = finalDefault.model
+        self.openCodeDefaultPermissionMode = finalDefault.permissionMode
+        self.openCodeDefaultEffort = finalDefault.effort
+
+        let message: String
+        if addedCount == 0, removedCount == 0 {
+          message = "OpenCode 模型列表已是最新（共 \(response.models.count) 个）"
+        } else {
+          message = "OpenCode 模型列表已刷新：新增 \(addedCount) 个，移除 \(removedCount) 个"
+        }
+        self.postToast(message, symbol: "arrow.clockwise", tone: .success)
+      } catch {
+        guard catalogGeneration == self.agentModelCatalogGeneration,
+          refreshGeneration == self.agentModelRefreshGeneration
+        else { return }
+        self.agentModelRefreshError = Self.message(error)
+      }
+    }
+  }
+
   func registerAgentInstallation(
     providerID: String,
     displayName: String,
@@ -146,6 +271,24 @@ extension BridgeServiceAppModel {
 }
 
 extension BridgeServiceAppModel {
+  func consumeAgentModelHydrationSuppression(
+    installationID: String?,
+    projectID: String?,
+    modelID: String?
+  ) -> Bool {
+    let hydrationID = AgentModelHydrationID(
+      installationID: installationID,
+      projectID: projectID,
+      modelID: modelID
+    )
+    guard agentModelHydrationSuppression == hydrationID else {
+      agentModelHydrationSuppression = nil
+      return false
+    }
+    agentModelHydrationSuppression = nil
+    return true
+  }
+
   func hydrateAgentModelState(installationID: String?) async {
     agentModelCatalogGeneration &+= 1
     let catalogGeneration = agentModelCatalogGeneration
@@ -189,6 +332,8 @@ extension BridgeServiceAppModel {
   }
 
   func saveAgentModelDefault(_ model: String?) {
+    agentModelCatalogGeneration &+= 1
+    agentModelHydrationSuppression = nil
     saveOpenCodeDefaults(
       model: model,
       permissionMode: openCodeDefaultPermissionMode,

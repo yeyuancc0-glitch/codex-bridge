@@ -177,7 +177,8 @@ extension MCPServiceToolCatalog {
   static let steerTask = Tool(
     name: MCPServiceToolName.steerTask.rawValue,
     title: "Steer task",
-    description: "Send bounded corrective input to the exact active Codex Turn.",
+    description:
+      "Send bounded corrective input to the exact active provider run. For Codex this is sent to the active Turn; for OpenCode use provider_run_id from get_task and the input is queued as the next prompt on the same ACP session.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
