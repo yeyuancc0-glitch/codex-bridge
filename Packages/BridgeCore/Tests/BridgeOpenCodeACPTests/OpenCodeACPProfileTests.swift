@@ -98,6 +98,12 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertTrue(sandbox.contains("(deny file-write* "))
     XCTAssertTrue(sandbox.contains(launch.process.workingDirectory))
     XCTAssertTrue(sandbox.contains(launch.runDirectory))
+    XCTAssertTrue(
+      sandbox.contains(
+        URL(fileURLWithPath: dataHome).appendingPathComponent("opencode/log").path
+      )
+    )
+    XCTAssertFalse(sandbox.contains("(subpath \"\(dataHome)/opencode\")"))
     XCTAssertEqual(try permissions(of: runtime), 0o700)
     XCTAssertEqual(try permissions(of: runtime + "/home"), 0o700)
     XCTAssertEqual(try permissions(of: runtime + "/cache"), 0o700)

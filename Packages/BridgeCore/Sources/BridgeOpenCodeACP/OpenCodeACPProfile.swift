@@ -251,10 +251,15 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
   }
 
   private static func writableRoots(
-    environment _: [String: String],
+    environment: [String: String],
     runDirectory: String
   ) throws -> [String] {
-    try [runDirectory].map {
+    guard let dataHome = environment["XDG_DATA_HOME"] else {
+      throw AgentRuntimeError.invalidRequest("environment.XDG_DATA_HOME")
+    }
+    let logDirectory = URL(fileURLWithPath: dataHome)
+      .appendingPathComponent("opencode/log", isDirectory: true).path
+    return try [runDirectory, logDirectory].map {
       try canonicalPathAllowingMissingLeaf($0, field: "sandbox.writableRoot")
     }
   }
