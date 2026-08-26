@@ -110,7 +110,7 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 
 ## 6. 审批、查询和继续任务
 
-`submit_task` 通常先返回 `awaiting_local_approval`。本机用户在 Bridge 工作台批准后，任务才进入 `starting` 和 `running`。使用 `get_task` 查询最终状态、`result_summary`、`failure_code`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 以及 Provider 绑定字段。
+`submit_task` 通常先返回 `awaiting_local_approval`。本机用户在 Bridge 工作台批准后，任务才进入 `starting` 和 `running`。使用 `get_task` 查询阶段、`result_summary`、`failure_code`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 以及 Provider 绑定字段；进入终态后调用 `get_final_report` 获取结构化最终报告。
 
 不要因为 `updated_at` 暂时不变、`recent_activity` 为空或任务较安静就推断失败；按 `get_task` 返回的 `wait_policy` 继续轮询，终态才是权威结果。
 
