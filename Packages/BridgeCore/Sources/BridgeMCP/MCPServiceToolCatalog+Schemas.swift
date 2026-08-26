@@ -177,10 +177,22 @@ extension MCPServiceToolCatalog {
 
   static let taskEventSchema = objectSchema(
     properties: [
-      "seq": integerSchema(minimum: 0),
+      "seq": integerSchema(minimum: 1),
       "kind": stringSchema,
       "summary": stringSchema,
       "occurred_at": stringSchema,
+    ],
+    required: ["seq", "kind", "summary", "occurred_at"]
+  )
+
+  static let taskActivitySchema = objectSchema(
+    properties: [
+      "seq": integerSchema(minimum: 1),
+      "kind": stringSchema,
+      "summary": stringSchema,
+      "occurred_at": stringSchema,
+      "tool_name": stringSchema,
+      "tool_status": stringSchema,
     ],
     required: ["seq", "kind", "summary", "occurred_at"]
   )
@@ -203,6 +215,8 @@ extension MCPServiceToolCatalog {
       "current_step": stringSchema,
       "changed_files": arraySchema(stringSchema),
       "recent_events": arraySchema(taskEventSchema),
+      "recent_activity": arraySchema(taskActivitySchema),
+      "recent_activity_available": boolSchema,
       "supervisor_status": stringSchema,
       "supervisor_summary": stringSchema,
       "local_approval_required": boolSchema,
@@ -212,6 +226,7 @@ extension MCPServiceToolCatalog {
     ],
     required: [
       "task_id", "project_id", "status", "changed_files", "recent_events",
+      "recent_activity_available",
       "execution_model", "execution_effort", "permission_mode", "network_access",
       "supervisor_status",
       "local_approval_required", "updated_at",

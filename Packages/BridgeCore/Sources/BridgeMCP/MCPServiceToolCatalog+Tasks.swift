@@ -32,7 +32,10 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.getTask.rawValue,
     title: "Get task",
     description:
-      "Read task state, recent events, result and Supervisor state. After submit_task returns "
+      "Read task state, lifecycle events, recent provider activity, result and Supervisor state. "
+      + "While running, recent_activity exposes bounded reasoning, text and tool lifecycle updates, "
+      + "recent_activity_available reports whether that projection could be read, and updated_at "
+      + "reflects the latest persisted provider activity. After submit_task returns "
       + "awaiting_local_approval, poll this tool until the local user approves or denies the "
       + "provider invocation. A denial returns failed with failure_code local_approval_denied.",
     inputSchema: objectSchema(

@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 11
+  static let version: Int64 = 12
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -33,9 +33,10 @@ enum ServiceStoreSchema {
   static let migrationV9 = "BridgeServiceCore.v9"
   static let migrationV10 = "BridgeServiceCore.v10"
   static let migrationV11 = "BridgeServiceCore.v11"
+  static let migrationV12 = "BridgeServiceCore.v12"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
-    migrationV8, migrationV9, migrationV10, migrationV11,
+    migrationV8, migrationV9, migrationV10, migrationV11, migrationV12,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -68,6 +69,7 @@ enum ServiceStoreSchema {
     case 8: backupSuffix = ".pre-v9"
     case 9: backupSuffix = ".pre-v10"
     case 10: backupSuffix = ".pre-v11"
+    case 11: backupSuffix = ".pre-v12"
     default: return
     }
     let backupPath = sourcePath + backupSuffix
@@ -135,6 +137,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV11) { db in
       try createVersionEleven(in: db)
+    }
+    migrator.registerMigration(migrationV12) { db in
+      try createVersionTwelve(in: db)
     }
     return migrator
   }
@@ -741,6 +746,22 @@ enum ServiceStoreSchema {
         """)
   }
 
+  static func createVersionTwelve(in db: Database) throws {
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_task_messages
+          ADD COLUMN updated_at REAL NOT NULL DEFAULT 0;
+
+        UPDATE bridge_service_task_messages
+          SET updated_at = created_at;
+
+        CREATE INDEX bridge_service_task_messages_activity
+        ON bridge_service_task_messages(task_id, updated_at DESC, message_id DESC);
+
+        UPDATE bridge_service_meta SET schema_version = 12 WHERE singleton = 1;
+        """)
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -929,7 +950,7 @@ enum ServiceStoreSchema {
         ],
         "bridge_service_task_messages": [
           "message_id", "task_id", "message_key", "role", "kind", "content",
-          "tool_name", "tool_status", "tool_arguments", "created_at",
+          "tool_name", "tool_status", "tool_arguments", "created_at", "updated_at",
         ],
       ]
       for (table, expected) in requiredColumns {

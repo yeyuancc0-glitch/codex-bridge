@@ -44,6 +44,8 @@ final class ServiceTaskMessageAndDeleteTests: XCTestCase {
       taskID: task.id
     )
     XCTAssertEqual(updated.id, first.id)
+    XCTAssertEqual(updated.createdAt, first.createdAt)
+    XCTAssertGreaterThan(updated.updatedAt, first.updatedAt)
 
     let agent = try await store.upsertTaskMessage(
       ServiceTaskMessageDraft(
@@ -78,6 +80,56 @@ final class ServiceTaskMessageAndDeleteTests: XCTestCase {
     let agentOnly = try await store.taskMessages(
       taskID: task.id, beforeMessageID: agent.id, limit: 1)
     XCTAssertEqual(agentOnly.map(\.key), ["user:1"])
+  }
+
+  func testRecentActivityUsesLastUpdateInsteadOfMessageCreationOrder() async throws {
+    let (fixture, store, _) = try makeFixture()
+    defer { fixture.remove() }
+    let project = try makeServiceProject(id: "prj-activity-order", rootURL: fixture.firstProjectURL)
+    try await store.insertProject(project)
+    let task = try makeServiceTask(
+      id: "tsk-activity-order",
+      projectID: project.id,
+      status: .running
+    )
+    _ = try await store.createTask(task, event: creationEvent(at: task.createdAt))
+
+    let early = try ServiceTaskMessageDraft(
+      key: "reasoning:early",
+      role: .agent,
+      content: "first",
+      createdAt: Date(timeIntervalSince1970: 1_800_000_200),
+      kind: .reasoning
+    )
+    _ = try await store.upsertTaskMessage(early, taskID: task.id)
+    for index in 0..<12 {
+      _ = try await store.upsertTaskMessage(
+        ServiceTaskMessageDraft(
+          key: "agent:\(index)",
+          role: .agent,
+          content: "later \(index)",
+          createdAt: Date(timeIntervalSince1970: 1_800_000_300 + Double(index))
+        ),
+        taskID: task.id
+      )
+    }
+    _ = try await store.upsertTaskMessage(
+      ServiceTaskMessageDraft(
+        key: early.key,
+        role: early.role,
+        content: "updated last",
+        createdAt: early.createdAt,
+        kind: early.kind,
+        updatedAt: Date(timeIntervalSince1970: 1_800_000_500)
+      ),
+      taskID: task.id
+    )
+
+    let activity = try await store.recentTaskMessageActivity(taskID: task.id, limit: 8)
+    XCTAssertEqual(activity.last?.key, early.key)
+    XCTAssertEqual(activity.last?.content, "updated last")
+    XCTAssertEqual(activity.last?.createdAt, early.createdAt)
+    XCTAssertEqual(activity.last?.updatedAt, Date(timeIntervalSince1970: 1_800_000_500))
   }
 
   func testUpsertMessageRequiresExistingTask() async throws {

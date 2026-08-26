@@ -172,14 +172,14 @@ extension SimpleServiceStore {
       sql: """
         INSERT INTO bridge_service_task_messages (
           task_id, message_key, role, kind, content, tool_name, tool_status,
-          tool_arguments, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          tool_arguments, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id, message_key) DO UPDATE SET
           content = excluded.content,
           tool_name = excluded.tool_name,
           tool_status = excluded.tool_status,
           tool_arguments = excluded.tool_arguments,
-          created_at = excluded.created_at
+          updated_at = excluded.updated_at
         """,
       arguments: [
         taskID.rawValue,
@@ -191,6 +191,7 @@ extension SimpleServiceStore {
         message.toolStatus,
         message.toolArguments,
         message.createdAt.timeIntervalSince1970,
+        message.updatedAt.timeIntervalSince1970,
       ]
     )
   }
@@ -470,7 +471,8 @@ extension SimpleServiceStore {
       kind: kind,
       toolName: row["tool_name"],
       toolStatus: row["tool_status"],
-      toolArguments: row["tool_arguments"]
+      toolArguments: row["tool_arguments"],
+      updatedAt: Date(timeIntervalSince1970: row["updated_at"])
     )
   }
 

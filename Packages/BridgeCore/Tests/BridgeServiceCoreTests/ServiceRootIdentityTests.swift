@@ -160,7 +160,7 @@ final class ServiceRootIdentityTests: XCTestCase {
         row?["root_volume_uuid"] as String?
       )
     }
-    XCTAssertEqual(schema.0, 11)
+    XCTAssertEqual(schema.0, 12)
     XCTAssertEqual(schema.1, String(current.device))
     XCTAssertEqual(schema.2, String(current.inode))
     XCTAssertEqual(schema.3, volumeUUID)

@@ -10,7 +10,7 @@ extension TaskConversationBuffer {
     guard state.entries.count < Self.maximumMessagesPerTask else { return }
     let key = "user:" + UUID().uuidString.lowercased()
     append(Entry(key: key, role: .user, kind: .user, content: content, isFinal: true), in: state)
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -33,7 +33,7 @@ extension TaskConversationBuffer {
     guard state.entries.count < Self.maximumMessagesPerTask else { return }
     let key = "agent:bridge:" + UUID().uuidString.lowercased()
     append(Entry(key: key, role: .agent, kind: .agent, content: content, isFinal: true), in: state)
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -69,7 +69,7 @@ extension TaskConversationBuffer {
         in: state
       )
     else { return }
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(change, in: state)
     if await shouldFlush(state) {
       _ = await flush(taskID: taskID)
@@ -100,7 +100,7 @@ extension TaskConversationBuffer {
       isFinal: isFinal
     )
     guard apply(entry, in: state) else { return }
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -134,7 +134,7 @@ extension TaskConversationBuffer {
         in: state
       )
     else { return }
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(change, in: state)
     if await shouldFlush(state) {
       _ = await flush(taskID: taskID)
@@ -182,7 +182,7 @@ extension TaskConversationBuffer {
       isFinal: isFinal
     )
     guard apply(entry, in: state) else { return }
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,
@@ -223,7 +223,9 @@ extension TaskConversationBuffer {
         role: .agent,
         kind: kind,
         content: content,
-        isFinal: false
+        isFinal: false,
+        createdAt: entry.createdAt,
+        updatedAt: Date()
       )
       return ConversationChange(
         taskID: taskID,
@@ -277,7 +279,9 @@ extension TaskConversationBuffer {
       toolName: existing.toolName,
       toolStatus: existing.toolStatus,
       toolArguments: existing.toolArguments,
-      isFinal: false
+      isFinal: false,
+      createdAt: existing.createdAt,
+      updatedAt: Date()
     )
     return ConversationChange(
       taskID: taskID,
@@ -301,8 +305,20 @@ extension TaskConversationBuffer {
 
   private func apply(_ entry: Entry, in state: TaskState) -> Bool {
     if let index = state.index[entry.key] {
-      guard !state.entries[index].isFinal else { return false }
-      state.entries[index] = entry
+      let existing = state.entries[index]
+      guard !existing.isFinal else { return false }
+      state.entries[index] = Entry(
+        key: entry.key,
+        role: entry.role,
+        kind: entry.kind,
+        content: entry.content,
+        toolName: entry.toolName,
+        toolStatus: entry.toolStatus,
+        toolArguments: entry.toolArguments,
+        isFinal: entry.isFinal,
+        createdAt: existing.createdAt,
+        updatedAt: entry.updatedAt
+      )
       return true
     }
     guard state.entries.count < Self.maximumMessagesPerTask else { return false }
@@ -335,7 +351,7 @@ extension TaskConversationBuffer {
       isFinal: true
     )
     guard apply(entry, in: state) else { return false }
-    markDirty(key: key, in: state)
+    markDirty(taskID: taskID, key: key, in: state)
     notify(
       ConversationChange(
         taskID: taskID,

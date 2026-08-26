@@ -306,18 +306,23 @@ public actor ServiceTaskManager {
     kind: ServiceTaskMessageKind = .agent,
     toolName: String? = nil,
     toolStatus: String? = nil,
-    toolArguments: String? = nil
+    toolArguments: String? = nil,
+    createdAt: Date? = nil,
+    updatedAt: Date? = nil
   ) async throws {
+    let creationDate = createdAt ?? now()
+    let updateDate = updatedAt ?? creationDate
     try await store.upsertTaskMessage(
       ServiceTaskMessageDraft(
         key: key,
         role: role,
         content: content,
-        createdAt: now(),
+        createdAt: creationDate,
         kind: kind,
         toolName: toolName,
         toolStatus: toolStatus,
-        toolArguments: toolArguments
+        toolArguments: toolArguments,
+        updatedAt: updateDate
       ),
       taskID: taskID
     )
@@ -333,6 +338,13 @@ public actor ServiceTaskManager {
       beforeMessageID: beforeMessageID,
       limit: limit
     )
+  }
+
+  public func recentMessageActivity(
+    taskID: TaskID,
+    limit: Int = 12
+  ) async throws -> [ServiceTaskMessageRecord] {
+    try await store.recentTaskMessageActivity(taskID: taskID, limit: limit)
   }
 
   public func remove(taskID: TaskID) async throws {

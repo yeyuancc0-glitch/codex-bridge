@@ -20,6 +20,51 @@ public struct MCPServiceTaskEvent: Codable, Equatable, Sendable {
     case occurredAt = "occurred_at"
   }
 }
+
+public struct MCPServiceTaskActivity: Codable, Equatable, Sendable {
+  public let sequence: Int64
+  public let kind: String
+  public let summary: String
+  public let occurredAt: String
+  public let toolName: String?
+  public let toolStatus: String?
+
+  public init(
+    sequence: Int64,
+    kind: String,
+    summary: String,
+    occurredAt: String,
+    toolName: String? = nil,
+    toolStatus: String? = nil
+  ) {
+    self.sequence = sequence
+    self.kind = kind
+    self.summary = summary
+    self.occurredAt = occurredAt
+    self.toolName = toolName
+    self.toolStatus = toolStatus
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case sequence = "seq"
+    case kind
+    case summary
+    case occurredAt = "occurred_at"
+    case toolName = "tool_name"
+    case toolStatus = "tool_status"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    sequence = try container.decode(Int64.self, forKey: .sequence)
+    kind = try container.decode(String.self, forKey: .kind)
+    summary = try container.decode(String.self, forKey: .summary)
+    occurredAt = try container.decode(String.self, forKey: .occurredAt)
+    toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
+    toolStatus = try container.decodeIfPresent(String.self, forKey: .toolStatus)
+  }
+}
+
 public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let taskID: String
   public let projectID: String
@@ -39,6 +84,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let currentStep: String?
   public let changedFiles: [String]
   public let recentEvents: [MCPServiceTaskEvent]
+  public let recentActivity: [MCPServiceTaskActivity]
+  public let recentActivityAvailable: Bool
   public let supervisorStatus: String
   public let supervisorSummary: String?
   public let localApprovalRequired: Bool
@@ -65,6 +112,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     currentStep: String? = nil,
     changedFiles: [String] = [],
     recentEvents: [MCPServiceTaskEvent] = [],
+    recentActivity: [MCPServiceTaskActivity] = [],
+    recentActivityAvailable: Bool = true,
     supervisorStatus: String,
     supervisorSummary: String? = nil,
     localApprovalRequired: Bool,
@@ -90,6 +139,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     self.currentStep = currentStep
     self.changedFiles = changedFiles
     self.recentEvents = recentEvents
+    self.recentActivity = recentActivity
+    self.recentActivityAvailable = recentActivityAvailable
     self.supervisorStatus = supervisorStatus
     self.supervisorSummary = supervisorSummary
     self.localApprovalRequired = localApprovalRequired
@@ -117,6 +168,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     case currentStep = "current_step"
     case changedFiles = "changed_files"
     case recentEvents = "recent_events"
+    case recentActivity = "recent_activity"
+    case recentActivityAvailable = "recent_activity_available"
     case supervisorStatus = "supervisor_status"
     case supervisorSummary = "supervisor_summary"
     case localApprovalRequired = "local_approval_required"
@@ -146,6 +199,10 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     changedFiles = try container.decodeIfPresent([String].self, forKey: .changedFiles) ?? []
     recentEvents =
       try container.decodeIfPresent([MCPServiceTaskEvent].self, forKey: .recentEvents) ?? []
+    recentActivity =
+      try container.decodeIfPresent([MCPServiceTaskActivity].self, forKey: .recentActivity) ?? []
+    recentActivityAvailable =
+      try container.decodeIfPresent(Bool.self, forKey: .recentActivityAvailable) ?? true
     supervisorStatus = try container.decode(String.self, forKey: .supervisorStatus)
     supervisorSummary = try container.decodeIfPresent(String.self, forKey: .supervisorSummary)
     localApprovalRequired = try container.decode(Bool.self, forKey: .localApprovalRequired)

@@ -68,6 +68,11 @@ public actor TaskConversationBuffer {
     public let toolStatus: String?
     public let toolArguments: String?
     public let isFinal: Bool
+    public let createdAt: Date
+    /// The last provider event represented by this entry. Keeping this on the
+    /// buffered entry lets periodic persistence retain activity timing without
+    /// rewriting clean messages when the task closes.
+    public let updatedAt: Date
 
     public init(
       key: String,
@@ -77,7 +82,9 @@ public actor TaskConversationBuffer {
       toolName: String? = nil,
       toolStatus: String? = nil,
       toolArguments: String? = nil,
-      isFinal: Bool
+      isFinal: Bool,
+      createdAt: Date = Date(),
+      updatedAt: Date? = nil
     ) {
       self.key = key
       self.role = role
@@ -87,6 +94,8 @@ public actor TaskConversationBuffer {
       self.toolStatus = toolStatus
       self.toolArguments = toolArguments
       self.isFinal = isFinal
+      self.createdAt = createdAt
+      self.updatedAt = updatedAt ?? createdAt
     }
   }
 
@@ -104,7 +113,8 @@ public actor TaskConversationBuffer {
     var unflushedCount: Int = 0
     var lastFlush: Date?
     var isFlushing = false
-    var flushWaiters: [CheckedContinuation<Void, Never>] = []
+    var flushTask: Task<Void, Never>?
+    var cleanupGeneration = 0
     var subscribers: [Int: AsyncStream<ConversationChange>.Continuation] = [:]
     var nextSubscriberID = 0
   }
@@ -113,23 +123,35 @@ public actor TaskConversationBuffer {
   private let flushDeltaCount: Int
   private let flushInFlightCount: Int
   private let flushIntervalNanoseconds: UInt64
+  private let closeFlushRetryCount: Int
+  private let closeFlushRetryDelayNanoseconds: UInt64
+  private let failedCloseRetentionNanoseconds: UInt64
   var states: [TaskID: TaskState] = [:]
 
   public init(
     tasks: ServiceTaskManager,
     flushDeltaCount: Int = 64,
     flushInFlightCount: Int = 8,
-    flushIntervalNanoseconds: UInt64 = 1_000_000_000
+    flushIntervalNanoseconds: UInt64 = 1_000_000_000,
+    closeFlushRetryCount: Int = 30,
+    closeFlushRetryDelayNanoseconds: UInt64 = 100_000_000,
+    failedCloseRetentionNanoseconds: UInt64 = 30_000_000_000
   ) {
     self.tasks = tasks
     self.flushDeltaCount = max(1, flushDeltaCount)
     self.flushInFlightCount = max(1, flushInFlightCount)
     self.flushIntervalNanoseconds = max(1, flushIntervalNanoseconds)
+    self.closeFlushRetryCount = max(1, closeFlushRetryCount)
+    self.closeFlushRetryDelayNanoseconds = max(1, closeFlushRetryDelayNanoseconds)
+    self.failedCloseRetentionNanoseconds = max(1, failedCloseRetentionNanoseconds)
   }
 
   @discardableResult
   public func close(taskID: TaskID) async -> Bool {
     guard let state = states[taskID] else { return true }
+    state.flushTask?.cancel()
+    state.flushTask = nil
+    state.cleanupGeneration &+= 1
     for (index, entry) in state.entries.enumerated() where !entry.isFinal {
       state.entries[index] = Entry(
         key: entry.key,
@@ -139,8 +161,11 @@ public actor TaskConversationBuffer {
         toolName: entry.toolName,
         toolStatus: entry.toolStatus,
         toolArguments: entry.toolArguments,
-        isFinal: true
+        isFinal: true,
+        createdAt: entry.createdAt,
+        updatedAt: Date()
       )
+      markDirty(taskID: taskID, key: entry.key, in: state)
       notify(
         ConversationChange(
           taskID: taskID,
@@ -158,7 +183,25 @@ public actor TaskConversationBuffer {
         in: state
       )
     }
-    guard await flush(taskID: taskID, force: true) else { return false }
+    var didFlush = false
+    for attempt in 0..<closeFlushRetryCount {
+      if !state.isFlushing,
+        await flush(taskID: taskID),
+        state.dirtyRevisions.isEmpty
+      {
+        didFlush = true
+        break
+      }
+      if attempt + 1 < closeFlushRetryCount {
+        try? await Task.sleep(nanoseconds: closeFlushRetryDelayNanoseconds)
+      }
+    }
+    guard didFlush else {
+      scheduleFailedCloseCleanup(taskID: taskID, state: state)
+      return false
+    }
+    state.flushTask?.cancel()
+    state.flushTask = nil
     states.removeValue(forKey: taskID)
     finishStreams(in: state)
     return true
@@ -166,6 +209,8 @@ public actor TaskConversationBuffer {
 
   public func purge(taskID: TaskID) async {
     guard let state = states.removeValue(forKey: taskID) else { return }
+    state.flushTask?.cancel()
+    state.flushTask = nil
     finishStreams(in: state)
   }
 
@@ -227,6 +272,48 @@ public actor TaskConversationBuffer {
     return state
   }
 
+  private func armFlushLoop(taskID: TaskID, state: TaskState) {
+    guard state.flushTask == nil else { return }
+    let interval = flushIntervalNanoseconds
+    state.flushTask = Task { [weak self] in
+      do {
+        while !Task.isCancelled {
+          try await Task.sleep(nanoseconds: interval)
+          guard let self else { return }
+          await self.flushIfNeeded(taskID: taskID)
+        }
+      } catch {
+        return
+      }
+    }
+  }
+
+  private func flushIfNeeded(taskID: TaskID) async {
+    guard let state = states[taskID], state.unflushedCount > 0 else { return }
+    if await shouldFlush(state) {
+      _ = await flush(taskID: taskID)
+    }
+  }
+
+  private func scheduleFailedCloseCleanup(taskID: TaskID, state: TaskState) {
+    let retention = failedCloseRetentionNanoseconds
+    state.flushTask?.cancel()
+    state.flushTask = nil
+    state.cleanupGeneration &+= 1
+    let generation = state.cleanupGeneration
+    state.flushTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: retention)
+      guard !Task.isCancelled, let self else { return }
+      await self.discardFailedClose(taskID: taskID, generation: generation)
+    }
+  }
+
+  private func discardFailedClose(taskID: TaskID, generation: Int) {
+    guard let state = states[taskID], state.cleanupGeneration == generation else { return }
+    states.removeValue(forKey: taskID)
+    finishStreams(in: state)
+  }
+
   func notify(_ change: ConversationChange, in state: TaskState) {
     for subscriber in state.subscribers.values {
       switch subscriber.yield(change) {
@@ -254,23 +341,14 @@ public actor TaskConversationBuffer {
     return false
   }
 
-  func flush(taskID: TaskID, force: Bool = false) async -> Bool {
+  func flush(taskID: TaskID) async -> Bool {
     guard let state = states[taskID] else { return true }
-    while state.isFlushing {
-      await withCheckedContinuation { continuation in
-        state.flushWaiters.append(continuation)
-      }
-      guard states[taskID] === state else { return true }
-    }
+    guard !state.isFlushing else { return false }
     let revisions = state.dirtyRevisions
-    let snapshot: [(Entry, Int?)]
-    if force {
-      snapshot = state.entries.map { ($0, revisions[$0.key]) }
-    } else {
-      snapshot = state.entries.compactMap { entry in
-        guard let revision = revisions[entry.key] else { return nil }
-        return (entry, Optional(revision))
-      }
+    // Closing retries dirty entries without rewriting clean persisted messages.
+    let snapshot: [(Entry, Int?)] = state.entries.compactMap { entry in
+      guard let revision = revisions[entry.key] else { return nil }
+      return (entry, Optional(revision))
     }
     guard !snapshot.isEmpty else { return true }
 
@@ -287,7 +365,9 @@ public actor TaskConversationBuffer {
           kind: entry.kind,
           toolName: entry.toolName,
           toolStatus: entry.toolStatus,
-          toolArguments: entry.toolArguments
+          toolArguments: entry.toolArguments,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt
         )
         persisted.append((entry.key, revision))
       } catch {
@@ -306,18 +386,15 @@ public actor TaskConversationBuffer {
     )
     state.lastFlush = Date()
     state.isFlushing = false
-    if !force {
-      prunePersistedFinalEntries(in: state)
-    }
-    let waiters = state.flushWaiters
-    state.flushWaiters.removeAll(keepingCapacity: false)
-    for waiter in waiters {
-      waiter.resume()
-    }
+    prunePersistedFinalEntries(in: state)
     return persisted.count == snapshot.count
   }
 
-  func markDirty(key: String, in state: TaskState) {
+  func markDirty(taskID: TaskID, key: String, in state: TaskState) {
+    if state.lastFlush == nil {
+      state.lastFlush = Date()
+    }
+    armFlushLoop(taskID: taskID, state: state)
     state.nextRevision &+= 1
     state.dirtyRevisions[key] = state.nextRevision
     state.unflushedCount += 1

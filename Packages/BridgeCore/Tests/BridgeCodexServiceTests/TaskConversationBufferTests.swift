@@ -189,6 +189,50 @@ final class TaskConversationBufferTests: XCTestCase {
     XCTAssertEqual(persisted.map(\.content), ["abc"])
   }
 
+  func testPeriodicFlushPersistsSingleActivityWithoutWaitingForAnotherEvent() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-buffer-periodic-flush"
+    )
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks,
+      flushDeltaCount: 64,
+      flushInFlightCount: 64,
+      flushIntervalNanoseconds: 20_000_000
+    )
+
+    await buffer.appendDelta(taskID: task.id, itemID: "item-1", delta: "working")
+
+    try await waitUntil {
+      let messages = try? await fixture.store.taskMessages(taskID: task.id)
+      return messages?.first?.content == "working"
+    }
+    let inFlight = await buffer.inFlightCount(taskID: task.id)
+    XCTAssertEqual(inFlight, 0)
+    _ = await buffer.close(taskID: task.id)
+  }
+
+  func testCloseDoesNotRewriteCleanPersistedMessageTimestamp() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-buffer-close-timestamp"
+    )
+    let buffer = TaskConversationBuffer(tasks: fixture.tasks)
+    await buffer.appendUserMessage(taskID: task.id, content: "Persist once.")
+    let beforeMessages = try await fixture.store.taskMessages(taskID: task.id)
+    let before = try XCTUnwrap(beforeMessages.first?.createdAt)
+
+    try await Task.sleep(for: .milliseconds(20))
+    let closed = await buffer.close(taskID: task.id)
+    XCTAssertTrue(closed)
+
+    let afterMessages = try await fixture.store.taskMessages(taskID: task.id)
+    let after = try XCTUnwrap(afterMessages.first?.createdAt)
+    XCTAssertEqual(after, before)
+  }
+
   func testCloseRetainsConversationWhenFinalPersistenceFails() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(
@@ -198,7 +242,10 @@ final class TaskConversationBufferTests: XCTestCase {
     let buffer = TaskConversationBuffer(
       tasks: fixture.tasks,
       flushDeltaCount: 64,
-      flushInFlightCount: 64
+      flushInFlightCount: 64,
+      closeFlushRetryCount: 2,
+      closeFlushRetryDelayNanoseconds: 1_000_000,
+      failedCloseRetentionNanoseconds: 20_000_000
     )
     await buffer.appendDelta(taskID: task.id, itemID: "item-1", delta: "not persisted")
     _ = try await fixture.tasks.interrupt(taskID: task.id, summary: "test cleanup")
@@ -210,6 +257,44 @@ final class TaskConversationBufferTests: XCTestCase {
     let retained = await buffer.entries(taskID: task.id)
     XCTAssertEqual(retained.map(\.content), ["not persisted"])
     XCTAssertEqual(retained.map(\.isFinal), [true])
+    try await waitUntil {
+      await buffer.entries(taskID: task.id).isEmpty
+    }
+  }
+
+  func testFirstProviderEventKeepsCreationTimeAcrossDelayedInitialFlush() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-buffer-creation-time"
+    )
+    let buffer = TaskConversationBuffer(
+      tasks: fixture.tasks,
+      flushDeltaCount: 64,
+      flushInFlightCount: 64,
+      flushIntervalNanoseconds: 10_000_000_000
+    )
+
+    await buffer.appendDelta(taskID: task.id, itemID: "item-1", delta: "first")
+    let initialEntries = await buffer.entries(taskID: task.id)
+    let initial = try XCTUnwrap(initialEntries.first)
+    try await Task.sleep(for: .milliseconds(20))
+    await buffer.appendDelta(taskID: task.id, itemID: "item-1", delta: " second")
+    let updatedEntries = await buffer.entries(taskID: task.id)
+    let updated = try XCTUnwrap(updatedEntries.first)
+    XCTAssertEqual(updated.createdAt, initial.createdAt)
+    XCTAssertGreaterThan(updated.updatedAt, initial.updatedAt)
+
+    let closed = await buffer.close(taskID: task.id)
+    XCTAssertTrue(closed)
+    let messages = try await fixture.store.taskMessages(taskID: task.id)
+    let persisted = try XCTUnwrap(messages.first)
+    XCTAssertEqual(
+      persisted.createdAt.timeIntervalSince1970,
+      initial.createdAt.timeIntervalSince1970,
+      accuracy: 0.000_001
+    )
+    XCTAssertGreaterThanOrEqual(persisted.updatedAt, updated.updatedAt)
   }
 
   func testPurgeStopsDeliveringChanges() async throws {

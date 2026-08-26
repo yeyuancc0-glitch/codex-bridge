@@ -2,12 +2,172 @@ import BridgeDirectCommand
 import BridgeDomain
 import BridgeMCP
 import BridgeProjects
+import BridgeSecurity
 import BridgeServiceApplication
 import BridgeServiceCore
 import MCP
 import XCTest
 
 final class BridgeServiceApplicationTests: XCTestCase {
+  func testGetTaskRedactsProviderSummaryBeforeMCPValidation() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let creation = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: "chatgpt",
+        prompt: "Inspect the project.",
+        providerID: "opencode",
+        installationID: "ainst-test",
+        selectionMode: .explicit,
+        executionModel: serviceDefaultProviderExecutionModel,
+        executionEffort: serviceDefaultProviderExecutionEffort,
+        supervisorModel: "supervisor-model",
+        supervisorEffort: "medium",
+        permissionMode: .readOnly
+      )
+    )
+    let taskID = creation.task.id
+    _ = try await fixture.tasks.approveAndBegin(taskID: taskID)
+    _ = try await fixture.tasks.markAgentExecutionStarted(
+      taskID: taskID,
+      providerSessionID: "session-test",
+      providerRunID: "run-test"
+    )
+    _ = try await fixture.tasks.updatePlan(
+      taskID: taskID,
+      currentStep: "进程/占用，tool()/plan"
+    )
+    _ = try await fixture.tasks.updateSupervisor(
+      taskID: taskID,
+      status: .running,
+      summary: "分析进程/占用，tool()/plan"
+    )
+    let longResult =
+      String(repeating: "说明 ", count: 4_650)
+      + "OpenCode completed: 进程/协议 and tool()/plan details."
+    for index in 0..<20 {
+      _ = try await fixture.tasks.recordCommandCompletion(
+        taskID: taskID,
+        summary: String(repeating: "event \(index) tool()/path ", count: 80)
+      )
+    }
+    let changedFiles = (0..<200).map {
+      "Sources/Module\($0)/" + String(repeating: "component", count: 8) + ".swift"
+    }
+    _ = try await fixture.tasks.complete(
+      taskID: taskID,
+      resultSummary: longResult,
+      changedFiles: changedFiles
+    )
+
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
+    let result = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.getTask.rawValue,
+        arguments: ["task_id": .string(taskID.rawValue)]
+      )
+    )
+
+    XCTAssertNotEqual(result.isError, true)
+    let task = try XCTUnwrap(result.structuredContent?.objectValue?["task"]?.objectValue)
+    XCTAssertEqual(task["status"], .string(ServiceTaskStatus.completed.rawValue))
+    let currentStep = try XCTUnwrap(task["current_step"]?.stringValue)
+    XCTAssertTrue(OutboundContentSecurity.isSafe(currentStep))
+    XCTAssertTrue(currentStep.contains("[REDACTED]"))
+    XCTAssertLessThanOrEqual(currentStep.utf8.count, 2 * 1_024)
+    let supervisorSummary = try XCTUnwrap(task["supervisor_summary"]?.stringValue)
+    XCTAssertTrue(OutboundContentSecurity.isSafe(supervisorSummary))
+    XCTAssertTrue(supervisorSummary.contains("[REDACTED]"))
+    XCTAssertLessThanOrEqual(supervisorSummary.utf8.count, 8 * 1_024)
+    let summary = try XCTUnwrap(task["result_summary"]?.stringValue)
+    XCTAssertTrue(OutboundContentSecurity.isSafe(summary))
+    XCTAssertTrue(summary.contains("[REDACTED]"))
+    XCTAssertLessThanOrEqual(summary.utf8.count, 32 * 1_024)
+    let projectedFiles = try XCTUnwrap(task["changed_files"]?.arrayValue)
+    XCTAssertLessThanOrEqual(
+      projectedFiles.compactMap(\.stringValue).reduce(0) { $0 + $1.utf8.count },
+      16 * 1_024
+    )
+    XCTAssertLessThanOrEqual(try XCTUnwrap(task["recent_events"]?.arrayValue).count, 6)
+  }
+
+  func testGetTaskProjectsRecentProviderActivityAndEffectiveUpdateTime() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let creation = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: "chatgpt",
+        prompt: "Inspect the project.",
+        providerID: "opencode",
+        installationID: "ainst-activity",
+        selectionMode: .explicit,
+        executionModel: serviceDefaultProviderExecutionModel,
+        executionEffort: serviceDefaultProviderExecutionEffort,
+        permissionMode: .readOnly
+      )
+    )
+    let taskID = creation.task.id
+    _ = try await fixture.tasks.approveAndBegin(taskID: taskID)
+    let started = try await fixture.tasks.markAgentExecutionStarted(
+      taskID: taskID,
+      providerSessionID: "session-activity",
+      providerRunID: "run-activity"
+    )
+    let reasoningDate = started.updatedAt.addingTimeInterval(10)
+    let toolDate = started.updatedAt.addingTimeInterval(20)
+    try await fixture.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "reasoning:item-1",
+      role: .agent,
+      content: "Inspecting modules.",
+      kind: .reasoning,
+      createdAt: reasoningDate
+    )
+    try await fixture.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "tool:item-2",
+      role: .agent,
+      content: "{}",
+      kind: .toolCall,
+      toolName: "read",
+      toolStatus: "inProgress",
+      createdAt: toolDate
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    let snapshot = try await application.serviceTask(
+      taskID: taskID.rawValue,
+      recentEventLimit: 20,
+      deadline: deadline
+    )
+
+    XCTAssertEqual(snapshot.recentActivity.map(\.kind), ["reasoning", "tool_lifecycle"])
+    XCTAssertTrue(snapshot.recentActivityAvailable)
+    XCTAssertEqual(
+      snapshot.recentActivity.map(\.summary),
+      ["Inspecting modules.", "read (inProgress)"]
+    )
+    XCTAssertEqual(snapshot.recentActivity.last?.toolName, "read")
+    XCTAssertEqual(snapshot.recentActivity.last?.toolStatus, "inProgress")
+    XCTAssertTrue(snapshot.recentActivity[0].sequence < snapshot.recentActivity[1].sequence)
+    let effectiveUpdate = try XCTUnwrap(ISO8601DateFormatter().date(from: snapshot.updatedAt))
+    XCTAssertEqual(
+      effectiveUpdate.timeIntervalSince1970,
+      toolDate.timeIntervalSince1970,
+      accuracy: 1
+    )
+  }
+
   func testProjectRepositoryAdapterAcceptsStableVolumeAfterDeviceDrift() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let rootURL = fixture.root.appending(path: "adapter-project", directoryHint: .isDirectory)
