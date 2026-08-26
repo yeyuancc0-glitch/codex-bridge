@@ -340,6 +340,9 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     guard installation.providerID == .openCode else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
     }
+    guard !request.networkAccessRequested else {
+      throw AgentRuntimeError.invalidRequest("request.networkAccessRequested")
+    }
     guard
       request.workspaceStrategy == .sharedProject
         || request.workspaceStrategy == .exclusiveProject

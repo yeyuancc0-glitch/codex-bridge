@@ -13,6 +13,8 @@
 
 **Codex Bridge** 是一个**零开发者云端服务器、个人自托管、纯本地优先**的 macOS 桥接工具。它通过标准的 Model Context Protocol (MCP)，将 **ChatGPT 网页版**、**通义千问桌面版 (Qwen Studio)** 等 AI 客户端直接连接到你本地的 **Codex** 执行引擎，让云端顶尖大模型安全驱动本地代码开发与环境交互。
 
+v0.3.0 在保持 Codex 默认路径兼容的同时，加入了可选的本机 **OpenCode Provider（ACP）**，并改进任务结果可观测性、项目重挂载兼容、全局 MCP 指令、Skill 执行超时、Direct 环境能力与凭证扫描，以及工作台/XPC 稳定性。
+
 ---
 
 ## 🌟 核心价值与亮点
@@ -24,6 +26,7 @@
 - 🤖 **双重执行模式**：
   - **Codex 深度模式（推荐）**：任务委托给本机 Codex 引擎（支持多轮对话、工具链、独立 Supervisor 监督与打字机式实时流）。
   - **Direct 直接操作模式**：MCP 客户端直接进行文件读写、Patch 补丁应用、受控 Git 提交与安全命令执行（受 Mac 桌面弹窗审批保护）。
+- 🧩 **可选 Agent Provider**：在 App 中明确登记并 Probe 本机 OpenCode 安装后，可通过 OpenCode ACP 执行 Plan/Build 任务；模型目录来自 ACP，任务仍经过本机审批。
 - 🛡️ **本地唯一授权（Local-Only Approval）**：无论 AI 多么强大，任何高危文件写入、命令执行与 Git 提交，**必须由 Mac 本地用户在桌面弹窗中手动点击允许**。
 - 🖥️ **原生 macOS 体验（SwiftUI + AppKit）**：独立后台常驻守护服务（LaunchAgent），关闭 App 界面不中断正在运行的任务；内置工作台支持打字机实时流式对话、思考链折叠与工具进度卡片。
 
@@ -42,6 +45,7 @@
             ┌──────────────────────────────────────────────┐
             │        CodexBridgeService (后台常驻守护)      │
             │  ├─ 统一 MCP 网关 (只读/完整模式)               │
+            │  ├─ Codex app-server + OpenCode ACP 执行链    │
             │  ├─ 进程与会话管理 (Direct Process Session)   │
             │  ├─ 单 SQLite 存储 (任务、项目、设置)          │
             │  └─ 本机安全与审批中心 (Local Approval Center)│
@@ -52,6 +56,9 @@
       │    CodexBridge.app     │  │   本机 Codex 执行引擎    │
       │  (原生 macOS 桌面控制台) │  │  (app-server + 独立监督)│
       └────────────────────────┘  └────────────────────────┘
+                                      │
+                                      ▼
+                              本机 OpenCode ACP（可选）
 ```
 
 ---
@@ -79,6 +86,20 @@ ChatGPT / Qwen  ──[direct_write_file]──►  Mac 桌面审批弹窗 (Payl
 ```
 - **适用场景**：快速修改单个配置文件、应用小型 Patch、查看目录结构、执行受限只读命令。
 - **特性**：单次有效签名凭据、防刷冷却机制、支持受控 `direct_git_commit`（隔离临时 index，敏感文件自动防泄漏）。
+
+### 3. OpenCode Provider 工作流（可选）
+
+```text
+ChatGPT / Qwen / Bridge 工作台 ──[provider_id=opencode]──► 本机审批
+                                                       │
+                                                       ▼
+                                      OpenCode ACP（Plan / Build）
+```
+
+- 先在“设置 → 本机 Agent Provider”登记并启用 OpenCode，再从工作台或 MCP 提交任务。
+- 模型列表由 ACP `session/new.configOptions` 提供；使用 ACP 返回的精确模型 ID。
+- `read-only` 映射为 OpenCode Plan，`workspace-write` 映射为 OpenCode Build；网络权限仍由 OpenCode 原生设置控制。
+- 详细步骤、请求示例和故障排查见：[OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)。
 
 ---
 
@@ -123,6 +144,11 @@ Scripts/with-xcode.sh xcodebuild \
 2. 点击 **复制 MCP 配置 JSON**。
 3. 打开 Qwen Studio 设置 → **MCP 服务配置**，粘贴配置即可直接开始对话！
 
+#### 方式 C：启用 OpenCode Provider
+1. 按照 [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md) 安装并登录 OpenCode。
+2. 在 Bridge 的“设置 → 本机 Agent Provider”中登记 OpenCode 可执行文件，Probe 显示“可用”后启用。
+3. 在工作台刷新模型列表并选择 Plan 或 Build；ChatGPT/Qwen 通过 `submit_task` 时设置 `provider_id: "opencode"`。
+
 ---
 
 ## 🛡️ 安全与权限边界
@@ -145,6 +171,8 @@ App/                              macOS 原生客户端 (SwiftUI + AppKit)
 CodexBridge.xcodeproj/            Xcode 组合工程 (App + 后台 LaunchAgent Target)
 Packages/BridgeCore/
   Sources/BridgeServiceCore/      单 SQLite 数据层 (项目、任务、设置、事件)
+  Sources/BridgeAgentCore/        Provider、安装、能力与执行契约
+  Sources/BridgeOpenCodeACP/      OpenCode ACP stdio 适配、模型目录与事件归一化
   Sources/BridgeCodexRPC/         Codex app-server 协议适配器与 stdio 通信
   Sources/BridgeCodexService/     ExecutionManager、Supervisor、协调器与实时对话流
   Sources/BridgeServiceApplication/ MCP 与 XPC 共用的轻量业务服务层
@@ -181,13 +209,14 @@ Scripts/verify-mcp-inspector.sh
 Scripts/test-tunnel-helper-config.sh
 ```
 
-- **当前验证基准**：Swift 6 严格并发检查下，**28 个测试包、730+ 项测试 100% 通过（0 failures）**，并通过 MCP Inspector 2.1.0 与官方 tunnel-client 严格门禁。
+- **当前验证基准**：Swift 6 严格并发检查、完整 Package 测试、Universal 2 构建、MCP Inspector 2.1.0 与官方 tunnel-client 门禁均以本次 Release CI 和发布记录为准。
 
 ---
 
 ## 📚 详细文档
 
 - [ChatGPT Developer Mode 接入指南](./docs/CHATGPT_DEVELOPER_MODE.md)
+- [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)
 - [系统与环境兼容性矩阵](./docs/COMPATIBILITY.md)
 - [依赖版本与开源许可证明](./docs/DEPENDENCIES.md)
 - [Secure Tunnel Helper 对接技术规范](./docs/TUNNEL_CLIENT_INTEGRATION.md)

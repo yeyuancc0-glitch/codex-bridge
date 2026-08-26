@@ -6,6 +6,37 @@ import XCTest
 @testable import BridgeOpenCodeACP
 
 final class OpenCodeACPProviderTests: XCTestCase {
+  func testRejectsNetworkAccessRequestBeforeStartingProcess() async throws {
+    let projectRoot = try makeTemporaryDirectory(prefix: "network-project")
+    addTeardownBlock {
+      try? FileManager.default.removeItem(atPath: projectRoot)
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        transportFactory: { _ in
+          XCTFail("OpenCode must reject network access before launching")
+          return ScriptedACPTransport()
+        }
+      )
+    )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "network-task"),
+      projectID: ProjectID(rawValue: "network-project"),
+      projectRoot: projectRoot,
+      prompt: "This request must not start.",
+      mutationIntent: .readOnly,
+      workspaceStrategy: .sharedProject,
+      networkAccessRequested: true
+    )
+
+    do {
+      _ = try await provider.start(request, installation: try makeInstallation(id: "network"))
+      XCTFail("Expected network access to be rejected")
+    } catch let error as AgentRuntimeError {
+      XCTAssertEqual(error, .invalidRequest("request.networkAccessRequested"))
+    }
+  }
+
   func testProbeUsesEphemeralWorkspaceAndReportsObservedCapabilities() async throws {
     let transport = ScriptedACPTransport()
     await transport.setHandler { message, transport in

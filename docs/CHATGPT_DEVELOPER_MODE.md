@@ -77,15 +77,15 @@ Codex Bridge 通过 OpenAI 官方开源的 `tunnel-client` 建立安全的双向
    - 在应用设置的 **Server Instructions**（或 Custom Instructions）中粘贴以下最佳实践提示词，以规范 ChatGPT 的工具调用流程：
 
 ```text
-Before starting any coding task, call list_projects to discover registered workspaces, list_threads to check ongoing discussions, and list_models to inspect available Codex models. Never invent or guess identifiers.
-For long-running tasks, submit a structured task contract using submit_task (with explicit goal, requirements, and constraints) to delegate work to local Codex. 
+Before starting any coding task, call list_projects to discover registered workspaces, list_agents to inspect explicitly registered local providers, and list_models to inspect Codex models. Never invent or guess identifiers.
+For long-running tasks, call submit_task with a structured prompt, project_id, and explicit requirements. Omit provider_id for the default Codex path; set provider_id="opencode" only when the user explicitly requests the registered OpenCode provider.
 If direct edits or commands are explicitly requested by the user, use direct_write_project_file, direct_apply_project_patch, or direct_exec_project_command and inform the user that local desktop approval may be required.
-Periodically check progress with get_task, and do not claim completion until get_final_report returns a terminal result.
+Periodically check progress with get_task. Do not claim completion until get_task reports a terminal status and includes the final result.
 ```
 
 4. **保存并测试扫描工具**：
    - 保存配置，点击 **Test Connection / Scan Tools**。
-   - 验证工具列表已正确加载（只读模式显示 11 个，完整模式显示 22 个）。
+   - 验证工具列表已正确加载；具体工具数量以当前 Bridge 返回的扫描结果为准。
 
 ---
 
@@ -115,11 +115,32 @@ Periodically check progress with get_task, and do not claim completion until get
 3. **桌面端反馈**：
    - 打开 `CodexBridge.app`，在工作台中可以看到该任务正处于实时运行状态。
    - 会话流以打字机式实时呈现 Codex 的推理思考过程（可折叠）与工具执行进度。
-4. ChatGPT 端通过 `get_task` 轮询进度，任务完成后调用 `get_final_report` 汇总执行结论。
+4. ChatGPT 端通过 `get_task` 按返回的 `wait_policy` 轮询进度，终态结果以 `get_task` 返回为准。
 
 ---
 
-### 场景 3：直接文件修改与本地桌面审批（Direct 工具路径）
+### 场景 3：通过 OpenCode Provider 执行任务（可选）
+
+先按照 [OpenCode 连接指南](./OPENCODE_CONNECTION_GUIDE.md) 在 Bridge 中登记、Probe 并启用 OpenCode。确认 `list_agents` 返回 `provider_id: "opencode"`、`availability: "available"`、`enabled: true` 和 `task_submission_enabled: true`。
+
+最小请求示例：
+
+```json
+{
+  "project_id": "<list_projects 返回的项目 ID>",
+  "provider_id": "opencode",
+  "prompt": "检查项目结构并总结当前构建问题。",
+  "network_access": false
+}
+```
+
+如需本次明确选择模型或权限模式，再使用 ACP 返回的精确模型 ID，并设置 `model_override: true`、`permission_mode_override: true`。`read-only` 映射 OpenCode Plan，`workspace-write` 映射 OpenCode Build；当前 OpenCode ACP 不接受 `network_access: true`，网络行为由 OpenCode 原生权限控制。OpenCode 任务不要携带 `thread_id`、`skill_name` 或 Supervisor 字段。
+
+任务提交后通常先进入 `awaiting_local_approval`，本机用户在 Bridge 工作台批准后才会启动 OpenCode。使用 `get_task` 查看 `provider_session_id`、`provider_run_id`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 和终态结果。OpenCode 的 `steer_task`/`interrupt_task` 将 `get_task` 返回的 `provider_run_id` 填入 `expected_turn_id`。
+
+---
+
+### 场景 4：直接文件修改与本地桌面审批（Direct 工具路径）
 
 在对话中明确要求 ChatGPT 直接修改文件：
 > *“请直接使用 direct_write_project_file 工具，为当前项目新建一个 `test_demo.txt` 文件，内容为 `Hello Codex Bridge`。”*
