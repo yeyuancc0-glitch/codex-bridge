@@ -37,7 +37,13 @@ extension MCPServiceToolCatalog {
       + "recent_activity_available reports whether that projection could be read, and updated_at "
       + "reflects the latest persisted provider activity. After submit_task returns "
       + "awaiting_local_approval, poll this tool until the local user approves or denies the "
-      + "provider invocation. A denial returns failed with failure_code local_approval_denied.",
+      + "provider invocation. A denial returns failed with failure_code local_approval_denied. "
+      + "The response wait_policy is executable polling guidance: fast means wait 120 seconds "
+      + "for approval, standard means wait 300 seconds for active work, and deep means wait 600 "
+      + "seconds when a long provider run has no recent activity. Do not poll before the returned "
+      + "recommended_poll_after_seconds unless the user asks; a non-terminal status, unchanged "
+      + "updated_at, or empty recent_activity is not a failure. Only a terminal status is "
+      + "authoritative; use diagnostic_after_quiet_seconds for a diagnostic check, not to infer failure.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
@@ -69,13 +75,19 @@ extension MCPServiceToolCatalog {
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
       + "Model and effort fields are applied only when model_override is true. "
       + "Set provider_id to route the task to another registered agent provider (for example "
-      + "opencode). For OpenCode, permission_mode selects its native ACP Plan (read-only) or "
-      + "native ACP Build (workspace-write). OpenCode network access follows its native permissions; the "
+      + "opencode). For OpenCode, omit permission_mode to use the saved Bridge default. Set "
+      + "permission_mode_override=true together with permission_mode only when the user explicitly "
+      + "asks for native ACP Plan/read-only or native ACP Build/workspace-write; an unmarked client-selected "
+      + "mode is ignored. OpenCode network access follows its native permissions; the "
       + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
       + "Codex. For OpenCode, execution_effort accepts only the selected model's ACP effort values; "
       + "when omitted, Bridge uses the saved OpenCode default when supported and otherwise the Provider default. "
       + "If permission_mode is omitted, Bridge uses the saved OpenCode default mode; supervisor, "
-      + "skill and thread fields must also be omitted.",
+      + "skill and thread fields must also be omitted. The response includes wait_policy; follow "
+      + "its recommended_poll_after_seconds before checking get_task again. The three profiles are "
+      + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
+      + "seconds, quiet long-running work). Never treat a non-terminal status or unchanged "
+      + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -121,7 +133,12 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For OpenCode, read-only maps to native ACP Plan and workspace-write maps to native ACP Build.",
+            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build.",
+        ],
+        "permission_mode_override": [
+          "type": ["boolean", "null"],
+          "description":
+            "For OpenCode, set true only when the user's request explicitly asks for Plan/read-only or Build/workspace-write. Otherwise omit so Bridge uses the saved default mode; a supplied unmarked permission_mode is ignored.",
         ],
         "network_access": [
           "type": "boolean",
@@ -149,9 +166,10 @@ extension MCPServiceToolCatalog {
         "status": stringSchema,
         "reused_existing_task": boolSchema,
         "local_approval_required": boolSchema,
+        "wait_policy": taskWaitPolicySchema,
       ],
       required: [
-        "task_id", "status", "reused_existing_task", "local_approval_required",
+        "task_id", "status", "reused_existing_task", "local_approval_required", "wait_policy",
       ]
     )
   )

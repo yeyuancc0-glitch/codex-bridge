@@ -22,7 +22,13 @@ extension MCPServiceToolDispatcher {
       }),
       snapshot.currentStep.map(OutboundContentSecurity.isSafe) ?? true,
       snapshot.supervisorSummary.map(OutboundContentSecurity.isSafe) ?? true,
-      snapshot.resultSummary.map(OutboundContentSecurity.isSafe) ?? true
+      snapshot.resultSummary.map(OutboundContentSecurity.isSafe) ?? true,
+      snapshot.waitPolicy
+        == MCPServiceTaskWaitPolicy.forTask(
+          status: snapshot.status,
+          recentActivityAvailable: snapshot.recentActivityAvailable,
+          recentActivityCount: snapshot.recentActivity.count
+        )
     else {
       throw MCPToolAdapterError.invalidQueryOutput
     }

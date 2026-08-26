@@ -21,8 +21,15 @@ final class MCPServiceExposureTests: XCTestCase {
       )
       XCTAssertTrue(instructions.contains(custom))
       XCTAssertTrue(instructions.contains("before calling any Codex Bridge tool"))
-      XCTAssertTrue(instructions.contains("native ACP Plan or Build"))
+      XCTAssertTrue(instructions.contains("native ACP Plan/read-only"))
       XCTAssertTrue(instructions.contains("network_access does not override it"))
+      XCTAssertTrue(instructions.contains("permission_mode_override=true"))
+      XCTAssertTrue(instructions.contains("Unmarked permission_mode values are ignored"))
+      XCTAssertTrue(instructions.contains("wait_policy"))
+      XCTAssertTrue(instructions.contains("120 seconds"))
+      XCTAssertTrue(instructions.contains("300 seconds"))
+      XCTAssertTrue(instructions.contains("600 seconds"))
+      XCTAssertTrue(instructions.contains("non-terminal status"))
       XCTAssertFalse(instructions.contains("Project custom instructions"))
       let customRange = try XCTUnwrap(instructions.range(of: custom))
       XCTAssertLessThan(
@@ -166,6 +173,25 @@ final class MCPServiceExposureTests: XCTestCase {
     )
     XCTAssertNotNil(task["permission_mode"])
     XCTAssertNotNil(task["network_access"])
+    let waitPolicy = try XCTUnwrap(task["wait_policy"]?.objectValue)
+    XCTAssertEqual(waitPolicy["type"], "object")
+    let waitProperties = try XCTUnwrap(waitPolicy["properties"]?.objectValue)
+    XCTAssertNotNil(waitProperties["wait_profile"])
+    XCTAssertEqual(
+      waitProperties["recommended_poll_after_seconds"]?.objectValue?["maximum"],
+      .int(600)
+    )
+    XCTAssertNotNil(waitProperties["diagnostic_after_quiet_seconds"])
+    XCTAssertNotNil(waitProperties["do_not_infer_failure"])
+    let waitRequired = waitPolicy["required"]?.arrayValue ?? []
+    XCTAssertTrue(waitRequired.contains(.string("recommended_poll_after_seconds")))
+    XCTAssertTrue(waitRequired.contains(.string("next_action")))
+
+    let submitWaitPolicy = try XCTUnwrap(
+      definitions["submit_task"]?.outputSchema?.objectValue?["properties"]?.objectValue?[
+        "wait_policy"]?.objectValue
+    )
+    XCTAssertEqual(submitWaitPolicy["type"], "object")
 
     let stdin = try outputProperties("direct_write_stdin", in: definitions)
     XCTAssertEqual(
@@ -250,11 +276,18 @@ final class MCPServiceExposureTests: XCTestCase {
     )
     XCTAssertTrue(description.contains("native ACP Plan"))
     XCTAssertTrue(description.contains("native ACP Build"))
+    XCTAssertTrue(description.contains("permission_mode_override=true"))
     XCTAssertTrue(description.contains("network_access field does not override"))
+    XCTAssertTrue(description.contains("wait_policy"))
+    XCTAssertTrue(description.contains("300 seconds"))
     XCTAssertFalse(description.contains("read-only in this version"))
     XCTAssertTrue(
       properties?["permission_mode"]?.objectValue?["description"]?.stringValue?
         .contains("native ACP Plan") == true
+    )
+    XCTAssertTrue(
+      properties?["permission_mode_override"]?.objectValue?["description"]?.stringValue?
+        .contains("user's request explicitly asks") == true
     )
     XCTAssertTrue(
       properties?["network_access"]?.objectValue?["description"]?.stringValue?

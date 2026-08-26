@@ -197,6 +197,30 @@ extension MCPServiceToolCatalog {
     required: ["seq", "kind", "summary", "occurred_at"]
   )
 
+  static let taskWaitPolicySchema = objectSchema(
+    properties: [
+      "wait_profile": [
+        "type": ["string", "null"],
+        "enum": ["fast", "standard", "deep", .null],
+      ],
+      "recommended_poll_after_seconds": integerSchema(minimum: 0, maximum: 600),
+      "diagnostic_after_quiet_seconds": integerSchema(minimum: 0, maximum: 3_600),
+      "terminal": boolSchema,
+      "next_action": [
+        "type": "string",
+        "enum": [
+          "await_local_approval", "poll_get_task", "read_final_report",
+          "inspect_terminal_state", "inspect_task",
+        ],
+      ],
+      "do_not_infer_failure": boolSchema,
+    ],
+    required: [
+      "wait_profile", "recommended_poll_after_seconds", "diagnostic_after_quiet_seconds",
+      "terminal", "next_action", "do_not_infer_failure",
+    ]
+  )
+
   static let taskSchema = objectSchema(
     properties: [
       "task_id": stringSchema,
@@ -223,13 +247,14 @@ extension MCPServiceToolCatalog {
       "result_summary": stringSchema,
       "failure_code": stringSchema,
       "updated_at": stringSchema,
+      "wait_policy": taskWaitPolicySchema,
     ],
     required: [
       "task_id", "project_id", "status", "changed_files", "recent_events",
       "recent_activity_available",
       "execution_model", "execution_effort", "permission_mode", "network_access",
       "supervisor_status",
-      "local_approval_required", "updated_at",
+      "local_approval_required", "updated_at", "wait_policy",
     ]
   )
 

@@ -343,8 +343,15 @@ extension BridgeServiceApplication {
     let configuredEffort = try await settings.openCodeDefaultEffort()
     let configuredMode = try await settings.openCodeDefaultPermissionMode()
     let defaultMode: ServicePermissionMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
+    // A remote MCP model can fill optional tool arguments from its own safety
+    // preference. Only a submission explicitly marked as a user-requested
+    // override may replace the persisted OpenCode default. The nil case keeps
+    // older in-process callers source-compatible; the MCP parser normalizes a
+    // missing marker to false.
+    let requestedPermissionMode =
+      submission.permissionModeOverride == false ? nil : submission.permissionMode
     let permission = try Self.permissionMode(
-      submission.permissionMode,
+      requestedPermissionMode,
       project: project,
       defaultMode: defaultMode
     )
@@ -369,11 +376,7 @@ extension BridgeServiceApplication {
     let selectedDescriptor: AgentModelDescriptor?
     if let modelCatalog {
       if let resolvedModel {
-        selectedDescriptor = modelCatalog.first(where: { descriptor in
-          if descriptor.id == resolvedModel { return true }
-          return resolvedModel == "opencode-go/ox-alpha-free"
-            && descriptor.id == "opencode/x-preview-f-free"
-        })
+        selectedDescriptor = modelCatalog.first(where: { $0.id == resolvedModel })
       } else {
         selectedDescriptor = modelCatalog.first(where: {
           !$0.supportedReasoningEfforts.isEmpty

@@ -585,6 +585,66 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.executionEffort, "high")
   }
 
+  func testOpenCodeSubmissionIgnoresUnmarkedClientPermissionMode() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
+    let provider = try ScriptedAgentProvider(supportsWorkspaceWrite: true)
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect the repository.",
+        providerID: "opencode",
+        permissionMode: "read-only",
+        permissionModeOverride: false,
+        clientRequestID: "unmarked-permission-mode"
+      ),
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(storedTask?.permissionMode, .workspaceWrite)
+  }
+
+  func testOpenCodeSubmissionHonorsExplicitPermissionModeOverride() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Perform a read-only analysis without changing files.",
+        providerID: "opencode",
+        permissionMode: "read-only",
+        permissionModeOverride: true,
+        clientRequestID: "explicit-permission-mode"
+      ),
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(storedTask?.permissionMode, .readOnly)
+  }
+
   func testAgentApprovalUsesExistingLocalApprovalResolution() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider()

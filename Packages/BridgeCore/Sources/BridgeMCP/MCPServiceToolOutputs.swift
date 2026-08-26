@@ -117,12 +117,18 @@ struct ServiceSubmitTaskOutput: Codable, Sendable {
   let status: String
   let reusedExistingTask: Bool
   let localApprovalRequired: Bool
+  let waitPolicy: MCPServiceTaskWaitPolicy
 
   init(receipt: MCPServiceTaskSubmissionReceipt) {
     taskID = receipt.taskID
     status = receipt.status
     reusedExistingTask = receipt.reusedExistingTask
     localApprovalRequired = receipt.localApprovalRequired
+    waitPolicy = MCPServiceTaskWaitPolicy.forTask(
+      status: receipt.status,
+      recentActivityAvailable: true,
+      recentActivityCount: 0
+    )
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -131,6 +137,7 @@ struct ServiceSubmitTaskOutput: Codable, Sendable {
     case status
     case reusedExistingTask = "reused_existing_task"
     case localApprovalRequired = "local_approval_required"
+    case waitPolicy = "wait_policy"
   }
 }
 

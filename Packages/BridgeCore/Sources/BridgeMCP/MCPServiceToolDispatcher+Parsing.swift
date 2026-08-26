@@ -16,7 +16,8 @@ extension MCPServiceToolDispatcher {
         "project_id", "prompt", "thread_id", "provider_id", "installation_id",
         "execution_model", "execution_effort",
         "model_override", "skill_name",
-        "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
+        "supervisor_model", "supervisor_effort", "permission_mode", "permission_mode_override",
+        "network_access",
         "acceptance_criteria", "client_request_id",
       ],
       required: ["prompt"]
@@ -41,6 +42,7 @@ extension MCPServiceToolDispatcher {
       "permission_mode",
       maximumUTF8Bytes: 32
     )
+    let permissionModeOverride = try values.optionalBoolean("permission_mode_override") ?? false
     if let permissionMode,
       permissionMode != "read-only" && permissionMode != "workspace-write"
     {
@@ -78,6 +80,7 @@ extension MCPServiceToolDispatcher {
       supervisorModel: supervisorModel,
       supervisorEffort: supervisorEffort,
       permissionMode: permissionMode,
+      permissionModeOverride: permissionModeOverride,
       networkAccess: try values.optionalBoolean("network_access") ?? false,
       acceptanceCriteria: criteria,
       clientRequestID: try values.optionalIdentifier(

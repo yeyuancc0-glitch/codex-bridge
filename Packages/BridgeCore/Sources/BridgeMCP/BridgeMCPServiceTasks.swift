@@ -65,6 +65,111 @@ public struct MCPServiceTaskActivity: Codable, Equatable, Sendable {
   }
 }
 
+/// Machine-readable guidance for remote clients polling a task.
+///
+/// The three non-terminal profiles are intentionally conservative: a provider
+/// can spend minutes reading a repository or waiting on a native permission
+/// decision without producing a new text delta. Clients must use the task
+/// status as the source of truth and must not infer failure from a quiet
+/// `updated_at` or an empty activity page.
+public struct MCPServiceTaskWaitPolicy: Codable, Equatable, Sendable {
+  public let waitProfile: String?
+  public let recommendedPollAfterSeconds: Int
+  public let diagnosticAfterQuietSeconds: Int
+  public let terminal: Bool
+  public let nextAction: String
+  public let doNotInferFailure: Bool
+
+  public init(
+    waitProfile: String?,
+    recommendedPollAfterSeconds: Int,
+    diagnosticAfterQuietSeconds: Int,
+    terminal: Bool,
+    nextAction: String,
+    doNotInferFailure: Bool
+  ) {
+    self.waitProfile = waitProfile
+    self.recommendedPollAfterSeconds = recommendedPollAfterSeconds
+    self.diagnosticAfterQuietSeconds = diagnosticAfterQuietSeconds
+    self.terminal = terminal
+    self.nextAction = nextAction
+    self.doNotInferFailure = doNotInferFailure
+  }
+
+  public static func forTask(
+    status: String,
+    recentActivityAvailable: Bool,
+    recentActivityCount: Int
+  ) -> Self {
+    switch status {
+    case "awaiting_local_approval", "waiting_for_codex_approval":
+      return Self(
+        waitProfile: "fast",
+        recommendedPollAfterSeconds: 120,
+        diagnosticAfterQuietSeconds: 1_800,
+        terminal: false,
+        nextAction: "await_local_approval",
+        doNotInferFailure: true
+      )
+    case "starting":
+      return Self(
+        waitProfile: "standard",
+        recommendedPollAfterSeconds: 300,
+        diagnosticAfterQuietSeconds: 1_800,
+        terminal: false,
+        nextAction: "poll_get_task",
+        doNotInferFailure: true
+      )
+    case "running":
+      return Self(
+        waitProfile: recentActivityAvailable && recentActivityCount > 0 ? "standard" : "deep",
+        recommendedPollAfterSeconds: recentActivityAvailable && recentActivityCount > 0 ? 300 : 600,
+        diagnosticAfterQuietSeconds: recentActivityAvailable && recentActivityCount > 0
+          ? 1_800 : 3_600,
+        terminal: false,
+        nextAction: "poll_get_task",
+        doNotInferFailure: true
+      )
+    case "completed":
+      return Self(
+        waitProfile: nil,
+        recommendedPollAfterSeconds: 0,
+        diagnosticAfterQuietSeconds: 0,
+        terminal: true,
+        nextAction: "read_final_report",
+        doNotInferFailure: false
+      )
+    case "failed", "interrupted":
+      return Self(
+        waitProfile: nil,
+        recommendedPollAfterSeconds: 0,
+        diagnosticAfterQuietSeconds: 0,
+        terminal: true,
+        nextAction: "inspect_terminal_state",
+        doNotInferFailure: false
+      )
+    default:
+      return Self(
+        waitProfile: "deep",
+        recommendedPollAfterSeconds: 600,
+        diagnosticAfterQuietSeconds: 3_600,
+        terminal: false,
+        nextAction: "inspect_task",
+        doNotInferFailure: true
+      )
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case waitProfile = "wait_profile"
+    case recommendedPollAfterSeconds = "recommended_poll_after_seconds"
+    case diagnosticAfterQuietSeconds = "diagnostic_after_quiet_seconds"
+    case terminal
+    case nextAction = "next_action"
+    case doNotInferFailure = "do_not_infer_failure"
+  }
+}
+
 public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let taskID: String
   public let projectID: String
@@ -92,6 +197,7 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let resultSummary: String?
   public let failureCode: String?
   public let updatedAt: String
+  public let waitPolicy: MCPServiceTaskWaitPolicy
 
   public init(
     taskID: String,
@@ -119,7 +225,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     localApprovalRequired: Bool,
     resultSummary: String? = nil,
     failureCode: String? = nil,
-    updatedAt: String
+    updatedAt: String,
+    waitPolicy: MCPServiceTaskWaitPolicy? = nil
   ) {
     self.taskID = taskID
     self.projectID = projectID
@@ -147,6 +254,13 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     self.resultSummary = resultSummary
     self.failureCode = failureCode
     self.updatedAt = updatedAt
+    self.waitPolicy =
+      waitPolicy
+      ?? MCPServiceTaskWaitPolicy.forTask(
+        status: status,
+        recentActivityAvailable: recentActivityAvailable,
+        recentActivityCount: recentActivity.count
+      )
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -176,6 +290,7 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     case resultSummary = "result_summary"
     case failureCode = "failure_code"
     case updatedAt = "updated_at"
+    case waitPolicy = "wait_policy"
   }
 
   public init(from decoder: Decoder) throws {
@@ -209,6 +324,13 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     resultSummary = try container.decodeIfPresent(String.self, forKey: .resultSummary)
     failureCode = try container.decodeIfPresent(String.self, forKey: .failureCode)
     updatedAt = try container.decode(String.self, forKey: .updatedAt)
+    waitPolicy =
+      try container.decodeIfPresent(MCPServiceTaskWaitPolicy.self, forKey: .waitPolicy)
+      ?? MCPServiceTaskWaitPolicy.forTask(
+        status: status,
+        recentActivityAvailable: recentActivityAvailable,
+        recentActivityCount: recentActivity.count
+      )
   }
 }
 
@@ -225,6 +347,10 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   public let supervisorModel: String?
   public let supervisorEffort: String?
   public let permissionMode: String?
+  /// Whether a remote client explicitly derived `permission_mode` from the
+  /// user's request. The parser supplies `false` when the marker is absent;
+  /// `nil` is retained for in-process callers that predate this field.
+  public let permissionModeOverride: Bool?
   public let networkAccess: Bool
   public let acceptanceCriteria: [String]
   public let clientRequestID: String?
@@ -242,6 +368,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     supervisorModel: String? = nil,
     supervisorEffort: String? = nil,
     permissionMode: String? = nil,
+    permissionModeOverride: Bool? = nil,
     networkAccess: Bool = false,
     acceptanceCriteria: [String] = [],
     clientRequestID: String? = nil
@@ -258,6 +385,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     self.supervisorModel = supervisorModel
     self.supervisorEffort = supervisorEffort
     self.permissionMode = permissionMode
+    self.permissionModeOverride = permissionModeOverride
     self.networkAccess = networkAccess
     self.acceptanceCriteria = acceptanceCriteria
     self.clientRequestID = clientRequestID
@@ -276,6 +404,7 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     case supervisorModel = "supervisor_model"
     case supervisorEffort = "supervisor_effort"
     case permissionMode = "permission_mode"
+    case permissionModeOverride = "permission_mode_override"
     case networkAccess = "network_access"
     case acceptanceCriteria = "acceptance_criteria"
     case clientRequestID = "client_request_id"

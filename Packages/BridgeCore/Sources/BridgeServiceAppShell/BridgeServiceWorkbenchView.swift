@@ -18,6 +18,7 @@ struct BridgeServiceWorkbenchView: View {
           .frame(minWidth: 280, idealWidth: 400, maxWidth: .infinity)
       }
     }
+    .frame(minHeight: 0, maxHeight: .infinity)
     .navigationTitle("工作台")
     .toolbar {
       ToolbarItem(placement: .automatic) {
@@ -167,10 +168,12 @@ struct BridgeServiceWorkbenchView: View {
       }
       inspectorBody
         .frame(minHeight: 0, maxHeight: .infinity)
+        .layoutPriority(1)
       Divider()
       inspectorFooter
         .fixedSize(horizontal: false, vertical: true)
     }
+    .frame(minHeight: 0, maxHeight: .infinity)
     .background(Color(nsColor: .controlBackgroundColor))
   }
 
@@ -319,7 +322,7 @@ struct BridgeServiceWorkbenchView: View {
 
   private var inspectorBody: some View {
     ScrollViewReader { proxy in
-      ScrollView {
+      ScrollView(.vertical) {
         VStack(alignment: .leading, spacing: 12) {
           if let task = currentTask, task.isExternalAgentTask {
             WorkbenchExternalTaskCard(task: task)
@@ -348,6 +351,8 @@ struct BridgeServiceWorkbenchView: View {
         }
         .padding(12)
       }
+      .frame(minHeight: 0, maxHeight: .infinity)
+      .clipped()
       .onChange(of: model.conversation?.scrollAnchor) { _, anchor in
         guard let anchor else { return }
         withAnimation(.easeOut(duration: 0.15)) {
@@ -355,6 +360,8 @@ struct BridgeServiceWorkbenchView: View {
         }
       }
     }
+    .frame(minHeight: 0, maxHeight: .infinity)
+    .layoutPriority(1)
   }
 
   private var approvalTray: some View {

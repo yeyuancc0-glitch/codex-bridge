@@ -486,12 +486,6 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
   ) throws -> String {
     let models = try modelDescriptors(from: session)
     if models.contains(where: { $0.id == requested }) { return requested }
-    let aliases = [
-      "opencode-go/ox-alpha-free": "opencode/x-preview-f-free"
-    ]
-    if let replacement = aliases[requested], models.contains(where: { $0.id == replacement }) {
-      return replacement
-    }
     throw AgentRuntimeError.modelUnavailable(requested)
   }
 

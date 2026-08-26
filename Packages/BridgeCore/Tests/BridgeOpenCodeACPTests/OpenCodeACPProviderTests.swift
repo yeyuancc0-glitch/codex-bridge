@@ -81,7 +81,7 @@ final class OpenCodeACPProviderTests: XCTestCase {
             id: id,
             result: Self.sessionResult(
               id: "session-provider",
-              models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+              models: [("opencode-go/ox-alpha-free", "Ox Alpha Free (Unlimited)")]
             )
           )
         )
@@ -145,7 +145,7 @@ final class OpenCodeACPProviderTests: XCTestCase {
       projectID: ProjectID(rawValue: "project-provider"),
       projectRoot: projectRoot,
       prompt: "Inspect this project without changing it.",
-      model: "openai/gpt-5.6-sol",
+      model: "opencode-go/ox-alpha-free",
       profileID: OpenCodeACPProfiles.controlledReadOnly,
       mutationIntent: .readOnly,
       workspaceStrategy: .sharedProject,
@@ -217,10 +217,10 @@ final class OpenCodeACPProviderTests: XCTestCase {
     let modelMessage = try XCTUnwrap(
       configMessages.first { $0.params?["configId"] == .string("model") }
     )
-    XCTAssertEqual(modelMessage.params?["value"], .string("openai/gpt-5.6-sol"))
+    XCTAssertEqual(modelMessage.params?["value"], .string("opencode-go/ox-alpha-free"))
   }
 
-  func testLegacyOxAlphaModelUsesCurrentACPIdentifier() async throws {
+  func testGoOxAlphaModelIsNotAliasedToZen() async throws {
     let transport = ScriptedACPTransport()
     await transport.setHandler { message, transport in
       guard let id = message.id else { return }
@@ -273,20 +273,23 @@ final class OpenCodeACPProviderTests: XCTestCase {
       networkAccessRequested: false
     )
 
-    let handle = try await provider.start(
-      request,
-      installation: try makeInstallation(id: "legacy-model-installation")
-    )
-    for try await _ in handle.events {}
+    do {
+      _ = try await provider.start(
+        request,
+        installation: try makeInstallation(id: "legacy-model-installation")
+      )
+      XCTFail("Expected the unavailable Go model to be rejected instead of routed to Zen")
+    } catch {
+      XCTAssertEqual(error as? AgentRuntimeError, .modelUnavailable("opencode-go/ox-alpha-free"))
+    }
 
     let sent = await transport.sentMessages()
-    let message = try XCTUnwrap(
-      sent.first {
+    XCTAssertFalse(
+      sent.contains {
         $0.method == "session/set_config_option"
           && $0.params?["configId"] == .string("model")
       }
     )
-    XCTAssertEqual(message.params?["value"], .string("opencode/x-preview-f-free"))
   }
 
   func testModelsComeFromSessionConfiguration() async throws {
@@ -305,6 +308,7 @@ final class OpenCodeACPProviderTests: XCTestCase {
               models: [
                 ("opencode/x-preview-f-free", "OpenCode Zen/Ox Alpha Free"),
                 ("opencode/big-pickle", "Big Pickle"),
+                ("opencode-go/ox-alpha-free", "Ox Alpha Free (Unlimited)"),
               ]
             )
           )
@@ -316,6 +320,7 @@ final class OpenCodeACPProviderTests: XCTestCase {
             models: [
               ("opencode/x-preview-f-free", "OpenCode Zen/Ox Alpha Free"),
               ("opencode/big-pickle", "Big Pickle"),
+              ("opencode-go/ox-alpha-free", "Ox Alpha Free (Unlimited)"),
             ]
           )["configOptions"] ?? .array([])
         try await transport.emit(
@@ -345,7 +350,10 @@ final class OpenCodeACPProviderTests: XCTestCase {
       projectRoot: nil
     )
 
-    XCTAssertEqual(models.map(\.id), ["opencode/x-preview-f-free", "opencode/big-pickle"])
+    XCTAssertEqual(
+      models.map(\.id),
+      ["opencode/x-preview-f-free", "opencode/big-pickle", "opencode-go/ox-alpha-free"]
+    )
     XCTAssertEqual(models.first?.displayName, "OpenCode Zen/Ox Alpha Free")
     XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: runtimeBase).isEmpty)
   }
