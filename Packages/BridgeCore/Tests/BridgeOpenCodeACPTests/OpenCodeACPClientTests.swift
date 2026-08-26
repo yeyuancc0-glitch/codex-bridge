@@ -280,7 +280,21 @@ final class OpenCodeACPClientTests: XCTestCase {
         try await transport.emit(
           ACPWireMessage(
             id: id,
-            result: .object(["sessionId": .string("session-config")])
+            result: .object([
+              "sessionId": .string("session-config"),
+              "configOptions": .array([
+                .object([
+                  "id": .string("model"),
+                  "currentValue": .string("openai/gpt-5.6-sol"),
+                  "options": .array([
+                    .object([
+                      "value": .string("openai/gpt-5.6-sol"),
+                      "name": .string("GPT-5.6 Sol"),
+                    ])
+                  ]),
+                ])
+              ]),
+            ])
           )
         )
       case "session/set_config_option":
@@ -303,6 +317,9 @@ final class OpenCodeACPClientTests: XCTestCase {
 
     _ = try await client.initialize()
     let session = try await client.newSession(cwd: FileManager.default.temporaryDirectory.path)
+    XCTAssertEqual(session.configOptions.first?.id, "model")
+    XCTAssertEqual(session.configOptions.first?.currentValue, "openai/gpt-5.6-sol")
+    XCTAssertEqual(session.configOptions.first?.values.first?.name, "GPT-5.6 Sol")
     try await client.setSessionConfigOption(
       sessionID: session.id,
       configID: "model",

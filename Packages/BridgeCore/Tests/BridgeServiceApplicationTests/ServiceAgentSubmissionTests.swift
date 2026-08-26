@@ -27,9 +27,14 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     private(set) var interruptCount = 0
     private(set) var shutdownCount = 0
     private let returnedTaskID: TaskID?
+    private let startError: AgentRuntimeError?
 
-    init(returnedTaskID: TaskID? = nil) throws {
+    init(
+      returnedTaskID: TaskID? = nil,
+      startError: AgentRuntimeError? = nil
+    ) throws {
       self.returnedTaskID = returnedTaskID
+      self.startError = startError
       descriptor = try AgentProviderDescriptor(
         providerID: .openCode,
         displayName: "OpenCode",
@@ -69,10 +74,23 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       )
     }
 
+    func models(
+      installation _: AgentInstallation,
+      projectRoot _: String?
+    ) async throws -> [AgentModelDescriptor] {
+      [
+        try AgentModelDescriptor(
+          id: "opencode/x-preview-f-free",
+          displayName: "OpenCode Zen/Ox Alpha Free"
+        )
+      ]
+    }
+
     func start(
       _ request: AgentExecutionRequest,
       installation: AgentInstallation
     ) async throws -> AgentExecutionHandle {
+      if let startError { throw startError }
       let stream = register(request.taskID)
       recordStarted(request)
       let binding = try AgentBinding(
@@ -202,6 +220,13 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       )
     )
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+
+    let models = try await application.serviceListAgentModels(
+      installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+      deadline: deadline
+    )
+    XCTAssertEqual(models.map(\.modelID), ["opencode/x-preview-f-free"])
+    XCTAssertEqual(models.first?.displayName, "OpenCode Zen/Ox Alpha Free")
 
     let receipt = try await application.serviceSubmitTask(
       MCPServiceTaskSubmission(
@@ -345,6 +370,53 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(snapshot.executionModel, serviceDefaultProviderExecutionModel)
   }
 
+  func testUnavailableModelKeepsItsOwnFailureCode() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(
+      startError: .modelUnavailable("provider/missing-model")
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect.",
+        providerID: "opencode",
+        clientRequestID: "agent-model-unavailable"
+      ),
+      deadline: deadline
+    )
+
+    do {
+      try await application.resolveTaskStartApproval(
+        taskID: TaskID(rawValue: receipt.taskID),
+        approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(
+          for: TaskID(rawValue: receipt.taskID)
+        ),
+        approved: true,
+        deadline: deadline
+      )
+      XCTFail("Expected the unavailable model to fail startup")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
+    let failed = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .failed
+    }
+
+    XCTAssertEqual(failed.state.failureCode, "agent_model_unavailable")
+    XCTAssertTrue(failed.state.resultSummary?.contains("provider/missing-model") == true)
+  }
+
   func testChangedPayloadConflictsOnSameRequestIdempotencyKey() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider()
@@ -465,17 +537,25 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         MCPServiceTaskSubmission(
           projectID: fixture2.project.id.rawValue, prompt: "x",
           providerID: "opencode", executionModel: "openai/gpt-5.6-sol",
-          executionEffort: "high", modelOverride: true,
+          modelOverride: true,
           clientRequestID: "model-override-ok"
         ),
         deadline: ContinuousClock.now.advanced(by: .seconds(10))
       )
       let stored = try await fixture2.tasks.task(id: TaskID(rawValue: receipt.taskID))
       XCTAssertEqual(stored?.executionModel, "openai/gpt-5.6-sol")
-      XCTAssertEqual(stored?.executionEffort, "high")
+      XCTAssertEqual(stored?.executionEffort, serviceDefaultProviderExecutionEffort)
     } catch {
       XCTFail("Expected model override to be accepted, got \(error)")
     }
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: projectID, prompt: "x", providerID: "opencode",
+        executionEffort: "high", modelOverride: true),
+      expected: .contractRejected,
+      reason: "effort is not an ACP session option"
+    )
     try await assertRejected(
       application,
       submission: MCPServiceTaskSubmission(

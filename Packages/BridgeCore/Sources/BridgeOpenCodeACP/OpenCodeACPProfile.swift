@@ -213,6 +213,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     let cache = URL(fileURLWithPath: runDirectory).appendingPathComponent("cache").path
     let state = URL(fileURLWithPath: runDirectory).appendingPathComponent("state").path
     let temporary = URL(fileURLWithPath: runDirectory).appendingPathComponent("tmp").path
+    let database = URL(fileURLWithPath: runDirectory).appendingPathComponent("opencode.db").path
     for path in [home, cache, state, temporary] {
       try createPrivateDirectory(path)
     }
@@ -233,6 +234,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       "OPENCODE_DISABLE_LSP_DOWNLOAD": "1",
       "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
       "OPENCODE_DISABLE_TERMINAL_TITLE": "1",
+      "OPENCODE_DB": database,
       "OPENCODE_ENABLE_EXA": "false",
       "OPENCODE_EXPERIMENTAL": "false",
       "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER": "1",
@@ -249,14 +251,10 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
   }
 
   private static func writableRoots(
-    environment: [String: String],
+    environment _: [String: String],
     runDirectory: String
   ) throws -> [String] {
-    guard let dataHome = environment["XDG_DATA_HOME"] else {
-      throw AgentRuntimeError.invalidRequest("environment.XDG_DATA_HOME")
-    }
-    let openCodeData = URL(fileURLWithPath: dataHome).appendingPathComponent("opencode").path
-    return try [runDirectory, openCodeData].map {
+    try [runDirectory].map {
       try canonicalPathAllowingMissingLeaf($0, field: "sandbox.writableRoot")
     }
   }

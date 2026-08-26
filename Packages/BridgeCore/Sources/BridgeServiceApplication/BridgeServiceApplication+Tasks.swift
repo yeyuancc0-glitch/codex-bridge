@@ -217,7 +217,7 @@ extension BridgeServiceApplication {
 
   /// Explicit non-Codex submissions resolve against the user-registered agent
   /// installations. The provider owns defaults unless the caller explicitly
-  /// opts into a model/effort override; Bridge still enforces read-only posture.
+  /// opts into a model override; Bridge still enforces read-only posture.
   private func prepareAgentSubmission(
     _ submission: MCPServiceTaskSubmission,
     providerRaw: String,
@@ -252,12 +252,8 @@ extension BridgeServiceApplication {
       requestedModel ?? configuredModel
     )
     let requestedEffort = usesOverride ? submission.executionEffort : nil
-    if let effort = requestedEffort {
-      guard !effort.isEmpty, effort.utf8.count <= 64,
-        effort.rangeOfCharacter(from: .controlCharacters) == nil
-      else {
-        throw BridgeMCPQueryError.contractRejected
-      }
+    guard requestedEffort == nil else {
+      throw BridgeMCPQueryError.contractRejected
     }
     guard submission.permissionMode == nil || submission.permissionMode == "read-only" else {
       throw BridgeMCPQueryError.contractRejected
@@ -281,7 +277,6 @@ extension BridgeServiceApplication {
     }
     let accessMode = try await settings.accessMode()
     let executionModel = resolvedModel ?? serviceDefaultProviderExecutionModel
-    let executionEffort = requestedEffort ?? serviceDefaultProviderExecutionEffort
     return PreparedTaskSubmission(
       projectID: project.id,
       request: ServiceTaskRequest(
@@ -294,7 +289,7 @@ extension BridgeServiceApplication {
         installationID: record.id.rawValue,
         selectionMode: .explicit,
         executionModel: executionModel,
-        executionEffort: executionEffort,
+        executionEffort: serviceDefaultProviderExecutionEffort,
         permissionMode: .readOnly,
         networkAllowed: false,
         accessMode: accessMode

@@ -79,6 +79,10 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertEqual(launch.process.environment["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
     XCTAssertEqual(launch.process.environment["OPENCODE_ENABLE_EXA"], "false")
     XCTAssertEqual(launch.process.environment["OPENCODE_EXPERIMENTAL"], "false")
+    XCTAssertEqual(
+      launch.process.environment["OPENCODE_DB"],
+      URL(fileURLWithPath: runtime).appendingPathComponent("opencode.db").path
+    )
 
     let permission = try XCTUnwrap(launch.process.environment["OPENCODE_PERMISSION"])
     let permissionObject = try XCTUnwrap(
@@ -137,8 +141,9 @@ final class OpenCodeACPProfileTests: XCTestCase {
     let root = try makeTemporaryDirectory(prefix: "sandbox-project")
     let runtime = temporaryPath(prefix: "sandbox-runtime")
     let sourceHome = try makeTemporaryDirectory(prefix: "sandbox-home")
+    let dataHome = try makeTemporaryDirectory(prefix: "sandbox-data")
     addTeardownBlock {
-      for path in [root, runtime, sourceHome] {
+      for path in [root, runtime, sourceHome, dataHome] {
         try? FileManager.default.removeItem(atPath: path)
       }
     }
@@ -153,7 +158,7 @@ final class OpenCodeACPProfileTests: XCTestCase {
       projectRoot: root,
       runDirectory: runtime,
       networkAllowed: false,
-      sourceEnvironment: ["HOME": sourceHome]
+      sourceEnvironment: ["HOME": sourceHome, "XDG_DATA_HOME": dataHome]
     )
     let profile = launch.process.argv[2]
     let allowedPath = URL(fileURLWithPath: runtime).appendingPathComponent("allowed").path
@@ -163,6 +168,7 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertTrue(FileManager.default.fileExists(atPath: allowedPath))
     XCTAssertNotEqual(try runTouch(path: deniedPath, sandboxProfile: profile), 0)
     XCTAssertFalse(FileManager.default.fileExists(atPath: deniedPath))
+    XCTAssertFalse(profile.contains("(subpath \"\(dataHome)\")"))
   }
 
   func testRejectsRuntimeDirectoryInsideProject() throws {

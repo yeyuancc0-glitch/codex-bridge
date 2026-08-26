@@ -412,6 +412,11 @@ public actor ServiceExecutionCoordinator {
   }
 
   private static func agentStartFailureSummary(_ error: Error, provider: String) -> String {
+    if case AgentRuntimeError.modelUnavailable(let model) = error {
+      let value = String(model.prefix(256))
+      return
+        "The selected \(provider) model is unavailable: \(value). Refresh the model list and choose an available model."
+    }
     var detail = String(describing: error)
     if detail.count > 300 { detail = String(detail.prefix(300)) }
     detail =
@@ -419,6 +424,13 @@ public actor ServiceExecutionCoordinator {
       .split(whereSeparator: \.isWhitespace)
       .joined(separator: " ")
     return "The \(provider) agent could not start the task: \(detail)"
+  }
+
+  private static func agentStartFailureCode(_ error: Error) -> String {
+    if case AgentRuntimeError.modelUnavailable = error {
+      return "agent_model_unavailable"
+    }
+    return "agent_start_failed"
   }
 
   private func startAgentTask(
@@ -454,7 +466,7 @@ public actor ServiceExecutionCoordinator {
         _ = try? await tasks.fail(
           taskID: task.id,
           failureCode: conversationPersisted
-            ? "agent_start_failed" : "conversation_persistence_failed",
+            ? Self.agentStartFailureCode(error) : "conversation_persistence_failed",
           summary: conversationPersisted
             ? Self.agentStartFailureSummary(error, provider: task.providerID)
             : "The task conversation could not be persisted."
@@ -494,7 +506,7 @@ public actor ServiceExecutionCoordinator {
         _ = try? await tasks.fail(
           taskID: task.id,
           failureCode: conversationPersisted
-            ? "agent_start_failed" : "conversation_persistence_failed",
+            ? Self.agentStartFailureCode(error) : "conversation_persistence_failed",
           summary: conversationPersisted
             ? Self.agentStartFailureSummary(error, provider: task.providerID)
             : "The task conversation could not be persisted."

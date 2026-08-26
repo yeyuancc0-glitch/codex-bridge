@@ -104,13 +104,39 @@ public struct AgentProbeResult: Equatable, Sendable {
   }
 }
 
+public struct AgentModelDescriptor: Codable, Equatable, Sendable {
+  public let id: String
+  public let displayName: String
+
+  public init(id: String, displayName: String) throws {
+    try AgentValidation.identifier(id, field: "model.id", maximumBytes: 256)
+    try AgentValidation.text(displayName, field: "model.displayName", maximumBytes: 512)
+    self.id = id
+    self.displayName = displayName
+  }
+}
+
 public protocol AgentProvider: Sendable {
   var descriptor: AgentProviderDescriptor { get }
 
   func probe(_ request: AgentProbeRequest) async -> AgentProbeResult
 
+  func models(
+    installation: AgentInstallation,
+    projectRoot: String?
+  ) async throws -> [AgentModelDescriptor]
+
   func start(
     _ request: AgentExecutionRequest,
     installation: AgentInstallation
   ) async throws -> AgentExecutionHandle
+}
+
+extension AgentProvider {
+  public func models(
+    installation _: AgentInstallation,
+    projectRoot _: String?
+  ) async throws -> [AgentModelDescriptor] {
+    throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
+  }
 }

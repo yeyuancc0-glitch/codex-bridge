@@ -67,8 +67,9 @@ extension MCPServiceToolCatalog {
       + "Model and effort fields are applied only when model_override is true. "
       + "Set provider_id to route the task to another registered agent provider (for example "
       + "opencode); provider tasks are read-only in this version, so permission_mode must be "
-      + "read-only and network_access false. OpenCode model and effort overrides follow the same "
-      + "model_override rule as Codex; supervisor, skill and thread fields must be omitted.",
+      + "read-only and network_access false. OpenCode supports model override through the same "
+      + "model_override rule as Codex, but execution_effort is not an OpenCode ACP option and "
+      + "must be omitted; supervisor, skill and thread fields must also be omitted.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -93,7 +94,7 @@ extension MCPServiceToolCatalog {
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the Codex Bridge default effort. Set only with an explicit user-requested per-task override."
+            "Omit to use the Codex Bridge default effort. Set only with an explicit user-requested Codex override; OpenCode does not accept this field."
         ),
         "model_override": [
           "type": ["boolean", "null"],

@@ -215,6 +215,33 @@ public actor ServiceAgentRegistry {
     try await store.agentInstallations(providerID: providerID)
   }
 
+  public func models(
+    installationID: AgentInstallationID,
+    projectRoot: String? = nil
+  ) async throws -> [AgentModelDescriptor] {
+    guard let record = try await store.agentInstallation(id: installationID),
+      record.isSelectable
+    else {
+      throw ServiceAgentRegistryError.installationUnavailable(installationID)
+    }
+    let provider = try provider(for: record.providerID)
+    guard provider.descriptor.adapterRevision == record.adapterRevision else {
+      throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+    }
+    let currentIdentity = try captureIdentity(record.executablePath)
+    guard currentIdentity == record.executableIdentity else {
+      throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+    }
+    let installation = try AgentInstallation(
+      id: record.id,
+      providerID: record.providerID,
+      executablePath: record.executableIdentity.canonicalPath,
+      version: record.version,
+      protocolRevision: record.protocolRevision
+    )
+    return try await provider.models(installation: installation, projectRoot: projectRoot)
+  }
+
   @discardableResult
   public func refreshInstallationStates() async throws -> [ServiceAgentInstallationRecord] {
     let records = try await store.agentInstallations()

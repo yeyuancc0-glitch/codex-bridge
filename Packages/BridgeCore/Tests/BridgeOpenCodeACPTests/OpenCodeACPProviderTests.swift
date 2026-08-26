@@ -75,7 +75,10 @@ final class OpenCodeACPProviderTests: XCTestCase {
         try await transport.emit(
           ACPWireMessage(
             id: id,
-            result: .object(["sessionId": .string("session-provider")])
+            result: Self.sessionResult(
+              id: "session-provider",
+              models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+            )
           )
         )
         return
@@ -139,7 +142,6 @@ final class OpenCodeACPProviderTests: XCTestCase {
       projectRoot: projectRoot,
       prompt: "Inspect this project without changing it.",
       model: "openai/gpt-5.6-sol",
-      effort: "high",
       profileID: OpenCodeACPProfiles.controlledReadOnly,
       mutationIntent: .readOnly,
       workspaceStrategy: .sharedProject,
@@ -195,14 +197,167 @@ final class OpenCodeACPProviderTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
     let sent = await transport.sentMessages()
     let configMessages = sent.filter { $0.method == "session/set_config_option" }
-    XCTAssertEqual(configMessages.count, 2)
+    XCTAssertEqual(configMessages.count, 1)
     let configIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/set_config_option" })
     let promptIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/prompt" })
     XCTAssertLessThan(configIndex, promptIndex)
     XCTAssertEqual(configMessages[0].params?["configId"], .string("model"))
     XCTAssertEqual(configMessages[0].params?["value"], .string("openai/gpt-5.6-sol"))
-    XCTAssertEqual(configMessages[1].params?["configId"], .string("effort"))
-    XCTAssertEqual(configMessages[1].params?["value"], .string("high"))
+  }
+
+  func testLegacyOxAlphaModelUsesCurrentACPIdentifier() async throws {
+    let transport = ScriptedACPTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: Self.sessionResult(
+              id: "session-legacy-model",
+              models: [("opencode/x-preview-f-free", "OpenCode Zen/Ox Alpha Free")]
+            )
+          )
+        )
+      case "session/set_config_option":
+        try await transport.emit(ACPWireMessage(id: id, result: .object([:])))
+      case "session/prompt":
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
+        )
+      default:
+        break
+      }
+    }
+    let runtimeBase = temporaryPath(prefix: "legacy-model-runtime")
+    let projectRoot = try makeTemporaryDirectory(prefix: "legacy-model-project")
+    let sourceHome = try makeTemporaryDirectory(prefix: "legacy-model-home")
+    addTeardownBlock {
+      for path in [runtimeBase, projectRoot, sourceHome] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        runtimeBaseDirectory: runtimeBase,
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { _ in transport }
+      )
+    )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "task-legacy-model"),
+      projectID: ProjectID(rawValue: "project-legacy-model"),
+      projectRoot: projectRoot,
+      prompt: "Reply with OK.",
+      model: "opencode-go/ox-alpha-free",
+      mutationIntent: .readOnly,
+      workspaceStrategy: .sharedProject,
+      networkAccessRequested: false
+    )
+
+    let handle = try await provider.start(
+      request,
+      installation: try makeInstallation(id: "legacy-model-installation")
+    )
+    for try await _ in handle.events {}
+
+    let sent = await transport.sentMessages()
+    let message = try XCTUnwrap(sent.first { $0.method == "session/set_config_option" })
+    XCTAssertEqual(message.params?["value"], .string("opencode/x-preview-f-free"))
+  }
+
+  func testModelsComeFromSessionConfiguration() async throws {
+    let transport = ScriptedACPTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: Self.sessionResult(
+              id: "session-model-list",
+              models: [
+                ("opencode/x-preview-f-free", "OpenCode Zen/Ox Alpha Free"),
+                ("opencode/big-pickle", "Big Pickle"),
+              ]
+            )
+          )
+        )
+      default:
+        break
+      }
+    }
+    let runtimeBase = temporaryPath(prefix: "model-list-runtime")
+    let sourceHome = try makeTemporaryDirectory(prefix: "model-list-home")
+    addTeardownBlock {
+      for path in [runtimeBase, sourceHome] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        runtimeBaseDirectory: runtimeBase,
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { _ in transport }
+      )
+    )
+
+    let models = try await provider.models(
+      installation: makeInstallation(id: "model-list-installation"),
+      projectRoot: nil
+    )
+
+    XCTAssertEqual(models.map(\.id), ["opencode/x-preview-f-free", "opencode/big-pickle"])
+    XCTAssertEqual(models.first?.displayName, "OpenCode Zen/Ox Alpha Free")
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: runtimeBase).isEmpty)
+  }
+
+  func testRejectsEffortBeforeLaunchingProvider() async throws {
+    let transport = ScriptedACPTransport()
+    let captured = LockedValue<OpenCodeACPLaunchConfiguration>()
+    let projectRoot = try makeTemporaryDirectory(prefix: "effort-project")
+    let sourceHome = try makeTemporaryDirectory(prefix: "effort-home")
+    addTeardownBlock {
+      for path in [projectRoot, sourceHome] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { launch in
+          captured.set(launch)
+          return transport
+        }
+      )
+    )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "task-effort-rejected"),
+      projectID: ProjectID(rawValue: "project-effort-rejected"),
+      projectRoot: projectRoot,
+      prompt: "Inspect.",
+      effort: "high",
+      mutationIntent: .readOnly,
+      workspaceStrategy: .sharedProject,
+      networkAccessRequested: false
+    )
+
+    do {
+      _ = try await provider.start(
+        request,
+        installation: makeInstallation(id: "effort-installation")
+      )
+      XCTFail("Expected effort to be rejected")
+    } catch {
+      XCTAssertEqual(error as? AgentRuntimeError, .capabilityUnavailable(.effortSelection))
+    }
+    XCTAssertNil(captured.get())
   }
 
   func testRejectsWorkspaceWriteBeforeLaunchingProvider() async throws {
@@ -423,6 +578,31 @@ final class OpenCodeACPProviderTests: XCTestCase {
         "name": .string("OpenCode"),
         "title": .string("OpenCode"),
         "version": .string("1.18.22"),
+      ]),
+    ])
+  }
+
+  private static func sessionResult(
+    id: String,
+    models: [(String, String)]
+  ) -> ACPJSONValue {
+    .object([
+      "sessionId": .string(id),
+      "configOptions": .array([
+        .object([
+          "id": .string("model"),
+          "name": .string("Model"),
+          "type": .string("select"),
+          "currentValue": .string(models.first?.0 ?? ""),
+          "options": .array(
+            models.map { model in
+              .object([
+                "value": .string(model.0),
+                "name": .string(model.1),
+              ])
+            }
+          ),
+        ])
       ]),
     ])
   }

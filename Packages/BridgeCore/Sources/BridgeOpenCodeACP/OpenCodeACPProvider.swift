@@ -128,6 +128,46 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     }
   }
 
+  public func models(
+    installation: AgentInstallation,
+    projectRoot: String?
+  ) async throws -> [AgentModelDescriptor] {
+    guard installation.providerID == .openCode else {
+      throw AgentRuntimeError.providerUnavailable(installation.providerID)
+    }
+    let probeRoot = try makeProbeRoot(projectRoot)
+    let runDirectory: String
+    do {
+      runDirectory = try makeRunDirectory(prefix: "models-run")
+    } catch {
+      cleanup(runDirectory: nil, probeRoot: probeRoot)
+      throw error
+    }
+    var client: OpenCodeACPClient?
+    do {
+      let launch = try configuration.launchBuilder.make(
+        installation: installation,
+        projectRoot: probeRoot.path,
+        runDirectory: runDirectory,
+        networkAllowed: false,
+        sourceEnvironment: configuration.sourceEnvironment
+      )
+      let connected = makeClient(transport: try configuration.transportFactory(launch))
+      client = connected
+      let initialization = try await connected.initialize()
+      _ = try validate(initialization)
+      let session = try await connected.newSession(cwd: launch.process.workingDirectory)
+      let models = try Self.modelDescriptors(from: session)
+      await connected.shutdown()
+      cleanup(runDirectory: launch.runDirectory, probeRoot: probeRoot)
+      return models
+    } catch {
+      await client?.shutdown()
+      cleanup(runDirectory: runDirectory, probeRoot: probeRoot)
+      throw Self.runtimeError(for: error)
+    }
+  }
+
   public func start(
     _ request: AgentExecutionRequest,
     installation: AgentInstallation
@@ -151,30 +191,24 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       let capabilities = capabilities(initialization)
       try require(request.requiredCapabilities, from: capabilities)
 
-      let sessionID = try await sessionID(
+      let session = try await session(
         for: request,
         projectRoot: launch.process.workingDirectory,
         initialization: initialization,
         client: connected
       )
-      if let model = request.model {
+      if let requestedModel = request.model {
+        let model = try Self.resolveModel(requestedModel, from: session)
         try await connected.setSessionConfigOption(
-          sessionID: sessionID,
+          sessionID: session.id,
           configID: "model",
           value: model
-        )
-      }
-      if let effort = request.effort {
-        try await connected.setSessionConfigOption(
-          sessionID: sessionID,
-          configID: "effort",
-          value: effort
         )
       }
       let binding = try AgentBinding(
         providerID: .openCode,
         installationID: installation.id,
-        providerSessionID: sessionID,
+        providerSessionID: session.id,
         providerRunID: UUID().uuidString.lowercased()
       )
       let normalizer = OpenCodeACPEventNormalizer(taskID: request.taskID, binding: binding)
@@ -182,7 +216,7 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       let execution = OpenCodeACPExecution(
         client: connected,
         normalizer: normalizer,
-        sessionID: sessionID,
+        sessionID: session.id,
         prompt: request.prompt,
         initialClientEventSequence: initialSequence,
         inactivityTimeout: configuration.inactivityTimeout,
@@ -244,13 +278,8 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         throw AgentRuntimeError.invalidRequest("request.model")
       }
     }
-    if let effort = request.effort {
-      guard !effort.isEmpty, effort.utf8.count <= 64,
-        !effort.contains("\0"),
-        effort.rangeOfCharacter(from: .controlCharacters) == nil
-      else {
-        throw AgentRuntimeError.invalidRequest("request.effort")
-      }
+    if request.effort != nil {
+      throw AgentRuntimeError.capabilityUnavailable(.effortSelection)
     }
   }
 
@@ -271,22 +300,22 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     return version
   }
 
-  private func sessionID(
+  private func session(
     for request: AgentExecutionRequest,
     projectRoot: String,
     initialization: OpenCodeACPInitialization,
     client: OpenCodeACPClient
-  ) async throws -> String {
+  ) async throws -> OpenCodeACPSession {
     guard let requestedSessionID = request.requestedSessionID else {
-      return try await client.newSession(cwd: projectRoot).id
+      return try await client.newSession(cwd: projectRoot)
     }
     if initialization.supportsResumeSession {
       try await client.resumeSession(id: requestedSessionID, cwd: projectRoot)
-      return requestedSessionID
+      return OpenCodeACPSession(id: requestedSessionID)
     }
     if initialization.supportsLoadSession {
       try await client.loadSession(id: requestedSessionID, cwd: projectRoot)
-      return requestedSessionID
+      return OpenCodeACPSession(id: requestedSessionID)
     }
     throw AgentRuntimeError.capabilityUnavailable(.sessionContinue)
   }
@@ -319,7 +348,6 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       .workspaceRead,
       .profileSelection,
       .modelSelection,
-      .effortSelection,
     ]
     if initialization.supportsLoadSession || initialization.supportsResumeSession {
       supported.insert(.sessionContinue)
@@ -329,6 +357,32 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       observed: supported,
       enforced: supported
     )
+  }
+
+  private static func modelDescriptors(from session: OpenCodeACPSession) throws
+    -> [AgentModelDescriptor]
+  {
+    guard let option = session.configOptions.first(where: { $0.id == "model" }) else {
+      throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
+    }
+    return try option.values.map {
+      try AgentModelDescriptor(id: $0.value, displayName: $0.name)
+    }
+  }
+
+  private static func resolveModel(
+    _ requested: String,
+    from session: OpenCodeACPSession
+  ) throws -> String {
+    let models = try modelDescriptors(from: session)
+    if models.contains(where: { $0.id == requested }) { return requested }
+    let aliases = [
+      "opencode-go/ox-alpha-free": "opencode/x-preview-f-free"
+    ]
+    if let replacement = aliases[requested], models.contains(where: { $0.id == replacement }) {
+      return replacement
+    }
+    throw AgentRuntimeError.modelUnavailable(requested)
   }
 
   private func require(
@@ -441,6 +495,8 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       base = "OpenCode executable is unavailable or unsafe."
     case AgentRuntimeError.processUnavailable:
       base = "The required local process or read-only sandbox is unavailable."
+    case AgentRuntimeError.modelUnavailable(let model):
+      base = "The selected OpenCode model is unavailable: \(model)."
     case OpenCodeACPError.requestTimedOut:
       base = "OpenCode ACP initialization timed out."
     case OpenCodeACPError.processExited(let code):
@@ -485,7 +541,12 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       return .sessionMismatch
     case .invalidMessage, .malformedResponse:
       return .malformedEvent("opencode-acp")
-    case .remote, .transportClosed:
+    case .remote(let code, let message):
+      if code == -32602, message.localizedCaseInsensitiveContains("model") {
+        return .modelUnavailable(String(message.prefix(256)))
+      }
+      return .malformedEvent("opencode-acp-remote-\(code)")
+    case .transportClosed:
       return .processUnavailable
     }
   }

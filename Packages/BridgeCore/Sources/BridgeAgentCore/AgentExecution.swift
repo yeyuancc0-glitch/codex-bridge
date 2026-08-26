@@ -7,6 +7,7 @@ public enum AgentRuntimeError: Error, Equatable, Sendable {
   case installationUnavailable(AgentInstallationID)
   case unsupportedProtocol(String)
   case capabilityUnavailable(AgentCapability)
+  case modelUnavailable(String)
   case sessionMismatch
   case runMismatch
   case malformedEvent(String)
