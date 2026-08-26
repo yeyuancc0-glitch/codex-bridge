@@ -5,6 +5,79 @@ import XCTest
 @testable import BridgeOpenCodeACP
 
 final class OpenCodeACPClientTests: XCTestCase {
+  func testSetSessionConfigOptionReturnsUpdatedConfigOptions() async throws {
+    let transport = ScriptedACPTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(Self.initializationResponse(id: id))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: .object(["sessionId": .string("session-config")])
+          )
+        )
+      case "session/set_config_option":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: .object([
+              "configOptions": .array([
+                .object([
+                  "id": .string("model"),
+                  "currentValue": .string("opencode/x-preview-f-free"),
+                  "options": .array([
+                    .object([
+                      "value": .string("opencode/x-preview-f-free"),
+                      "name": .string("Ox Alpha Free"),
+                    ])
+                  ]),
+                ]),
+                .object([
+                  "id": .string("effort"),
+                  "currentValue": .string("high"),
+                  "options": .array([
+                    .object([
+                      "value": .string("low"),
+                      "name": .string("Low"),
+                    ]),
+                    .object([
+                      "value": .string("high"),
+                      "name": .string("High"),
+                    ]),
+                  ]),
+                ]),
+              ])
+            ])
+          )
+        )
+      default:
+        break
+      }
+    }
+    let client = OpenCodeACPClient(
+      transport: transport,
+      clientInfo: OpenCodeACPClientInfo(name: "test", title: "Test", version: "1")
+    )
+    addTeardownBlock { await client.shutdown() }
+
+    _ = try await client.initialize()
+    let session = try await client.newSession(
+      cwd: FileManager.default.temporaryDirectory.path
+    )
+    let options = try await client.setSessionConfigOption(
+      sessionID: session.id,
+      configID: "model",
+      value: "opencode/x-preview-f-free"
+    )
+
+    XCTAssertEqual(options.map(\.id), ["model", "effort"])
+    XCTAssertEqual(options[1].currentValue, "high")
+    XCTAssertEqual(options[1].values.map(\.value), ["low", "high"])
+  }
+
   func testNegotiatesSessionStreamsEventsAndResolvesPermission() async throws {
     let transport = ScriptedACPTransport()
     let state = ACPPromptScenarioState()
@@ -335,7 +408,7 @@ final class OpenCodeACPClientTests: XCTestCase {
     XCTAssertEqual(session.configOptions.first?.id, "model")
     XCTAssertEqual(session.configOptions.first?.currentValue, "openai/gpt-5.6-sol")
     XCTAssertEqual(session.configOptions.first?.values.first?.name, "GPT-5.6 Sol")
-    try await client.setSessionConfigOption(
+    _ = try await client.setSessionConfigOption(
       sessionID: session.id,
       configID: "model",
       value: "openai/gpt-5.6-sol"

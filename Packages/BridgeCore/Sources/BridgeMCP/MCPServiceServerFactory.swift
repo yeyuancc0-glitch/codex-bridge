@@ -77,8 +77,9 @@ public struct MCPServiceServerFactory: Sendable {
       + "the user explicitly requested a per-task override; Codex Bridge owns those defaults. "
       + "Set model_override to true only for such an explicit request. For OpenCode, "
       + "permission_mode selects native ACP Plan or Build, network access follows native "
-      + "permissions and network_access does not override it, and thread_id, skill_name, supervisor_model, supervisor_effort "
-      + "and execution_effort must be omitted."
+      + "permissions and network_access does not override it. If permission_mode is omitted, "
+      + "Bridge uses the saved OpenCode default mode; thread_id, skill_name, supervisor_model and supervisor_effort "
+      + "must be omitted. OpenCode execution_effort is optional and must match a value advertised for the selected model."
     guard !customInstructions.isEmpty else { return base }
     return "The user's global custom instructions follow. Read and follow them before "
       + "calling any Codex Bridge tool, subject to the service's security and approval "

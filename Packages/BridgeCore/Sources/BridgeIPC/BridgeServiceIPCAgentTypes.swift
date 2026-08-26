@@ -166,6 +166,7 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
   public let providerID: String
   public let installationID: String?
   public let model: String?
+  public let effort: String?
   public let permissionMode: String?
   public let prompt: String
 
@@ -174,6 +175,7 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     providerID: String,
     installationID: String? = nil,
     model: String? = nil,
+    effort: String? = nil,
     permissionMode: String? = nil,
     prompt: String
   ) {
@@ -181,6 +183,7 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     self.providerID = providerID
     self.installationID = installationID
     self.model = model
+    self.effort = effort
     self.permissionMode = permissionMode
     self.prompt = prompt
   }
@@ -190,6 +193,7 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     case providerID = "provider_id"
     case installationID = "installation_id"
     case model
+    case effort
     case permissionMode = "permission_mode"
     case prompt
   }
@@ -212,28 +216,65 @@ public struct IPCAgentSubmitResponse: Codable, Equatable, Sendable {
 
 public struct IPCAgentModelsRequest: Codable, Equatable, Sendable {
   public let installationID: String
+  public let projectID: String?
+  public let modelID: String?
 
-  public init(installationID: String) {
+  public init(
+    installationID: String,
+    projectID: String? = nil,
+    modelID: String? = nil
+  ) {
     self.installationID = installationID
+    self.projectID = projectID
+    self.modelID = modelID
   }
 
   private enum CodingKeys: String, CodingKey {
     case installationID = "installation_id"
+    case projectID = "project_id"
+    case modelID = "model_id"
   }
 }
 
 public struct IPCAgentModelSummary: Codable, Equatable, Sendable {
   public let modelID: String
   public let displayName: String
+  public let supportedReasoningEfforts: [String]
+  public let defaultReasoningEffort: String?
 
-  public init(modelID: String, displayName: String) {
+  public init(
+    modelID: String,
+    displayName: String,
+    supportedReasoningEfforts: [String] = [],
+    defaultReasoningEffort: String? = nil
+  ) {
     self.modelID = modelID
     self.displayName = displayName
+    self.supportedReasoningEfforts = supportedReasoningEfforts
+    self.defaultReasoningEffort = defaultReasoningEffort
   }
 
   private enum CodingKeys: String, CodingKey {
     case modelID = "model_id"
     case displayName = "display_name"
+    case supportedReasoningEfforts = "supported_reasoning_efforts"
+    case defaultReasoningEffort = "default_reasoning_effort"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      modelID: try container.decode(String.self, forKey: .modelID),
+      displayName: try container.decode(String.self, forKey: .displayName),
+      supportedReasoningEfforts: try container.decodeIfPresent(
+        [String].self,
+        forKey: .supportedReasoningEfforts
+      ) ?? [],
+      defaultReasoningEffort: try container.decodeIfPresent(
+        String.self,
+        forKey: .defaultReasoningEffort
+      )
+    )
   }
 }
 
@@ -247,20 +288,54 @@ public struct IPCAgentModelsResponse: Codable, Equatable, Sendable {
 
 public struct IPCAgentModelDefaultResponse: Codable, Equatable, Sendable {
   public let model: String?
+  public let permissionMode: String
+  public let effort: String?
 
-  public init(model: String?) {
+  public init(
+    model: String?,
+    permissionMode: String = "build",
+    effort: String? = nil
+  ) {
     self.model = model
+    self.permissionMode = permissionMode
+    self.effort = effort
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case model
+    case permissionMode = "permission_mode"
+    case effort
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      model: try container.decodeIfPresent(String.self, forKey: .model),
+      permissionMode: try container.decodeIfPresent(String.self, forKey: .permissionMode)
+        ?? "build",
+      effort: try container.decodeIfPresent(String.self, forKey: .effort)
+    )
   }
 }
 
 public struct IPCAgentModelDefaultRequest: Codable, Equatable, Sendable {
   public let model: String?
+  public let permissionMode: String?
+  public let effort: String?
 
-  public init(model: String?) {
+  public init(
+    model: String?,
+    permissionMode: String? = nil,
+    effort: String? = nil
+  ) {
     self.model = model
+    self.permissionMode = permissionMode
+    self.effort = effort
   }
 
   private enum CodingKeys: String, CodingKey {
     case model
+    case permissionMode = "permission_mode"
+    case effort
   }
 }

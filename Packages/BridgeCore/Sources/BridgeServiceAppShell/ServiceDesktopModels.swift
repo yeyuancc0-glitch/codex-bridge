@@ -101,6 +101,16 @@ enum AgentProviderPresentation {
   }
 }
 
+enum WorkbenchApprovalResolutionKey {
+  static func task(_ approvalID: String) -> String {
+    "codex:\(approvalID)"
+  }
+
+  static func direct(_ approvalID: String) -> String {
+    "direct:\(approvalID)"
+  }
+}
+
 struct CodexActivityPresentation: Equatable {
   let statusText: String
   let detailText: String?

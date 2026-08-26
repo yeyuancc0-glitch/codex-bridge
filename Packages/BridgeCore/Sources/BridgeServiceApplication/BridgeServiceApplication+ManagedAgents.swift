@@ -79,6 +79,7 @@ extension BridgeServiceApplication {
     providerID: String,
     installationID: String?,
     model: String?,
+    effort: String? = nil,
     permissionMode: String? = nil,
     networkAccess: Bool = false,
     prompt: String,
@@ -91,7 +92,8 @@ extension BridgeServiceApplication {
       providerID: providerID,
       installationID: installationID,
       executionModel: model,
-      modelOverride: model == nil ? nil : true,
+      executionEffort: effort,
+      modelOverride: model != nil || effort != nil ? true : nil,
       permissionMode: permissionMode,
       networkAccess: networkAccess,
       clientRequestID: "app-\(UUID().uuidString.lowercased())"
@@ -108,10 +110,19 @@ extension BridgeServiceApplication {
 public struct ServiceAgentModelListItem: Codable, Equatable, Sendable {
   public let modelID: String
   public let displayName: String
+  public let supportedReasoningEfforts: [String]
+  public let defaultReasoningEffort: String?
 
-  public init(modelID: String, displayName: String) {
+  public init(
+    modelID: String,
+    displayName: String,
+    supportedReasoningEfforts: [String] = [],
+    defaultReasoningEffort: String? = nil
+  ) {
     self.modelID = modelID
     self.displayName = displayName
+    self.supportedReasoningEfforts = supportedReasoningEfforts
+    self.defaultReasoningEffort = defaultReasoningEffort
   }
 }
 
@@ -120,15 +131,52 @@ extension BridgeServiceApplication {
   /// (config providers plus subscription catalogs such as Go/Zen).
   public func serviceListAgentModels(
     installationID: AgentInstallationID,
+    projectID: String? = nil,
+    modelID: String? = nil,
     deadline: ContinuousClock.Instant
   ) async throws -> [ServiceAgentModelListItem] {
     try Self.checkDeadline(deadline)
     let registry = try requiredAgentRegistry()
-    let models = try await registry.models(installationID: installationID)
+    let projectRoot = try await agentModelProjectRoot(
+      projectID: projectID,
+      deadline: deadline
+    )
+    try Self.checkDeadline(deadline)
+    let selectedModelID: String?
+    if let modelID {
+      selectedModelID = modelID
+    } else {
+      selectedModelID = try await settings.string(for: .openCodeDefaultModel)
+    }
+    let models = try await registry.models(
+      installationID: installationID,
+      projectRoot: projectRoot,
+      selectedModelID: selectedModelID
+    )
     try Self.checkDeadline(deadline)
     return models.map {
-      ServiceAgentModelListItem(modelID: $0.id, displayName: $0.displayName)
+      ServiceAgentModelListItem(
+        modelID: $0.id,
+        displayName: $0.displayName,
+        supportedReasoningEfforts: $0.supportedReasoningEfforts,
+        defaultReasoningEffort: $0.defaultReasoningEffort
+      )
     }
+  }
+
+  private func agentModelProjectRoot(
+    projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws -> String? {
+    let selectedID: String?
+    if let projectID {
+      selectedID = projectID
+    } else {
+      selectedID = try await serviceWorkbenchProjectID(deadline: deadline)
+    }
+    guard let selectedID, !selectedID.isEmpty else { return nil }
+    try Self.checkDeadline(deadline)
+    return try await readableProject(selectedID).root.canonicalPath
   }
 }
 
@@ -147,5 +195,35 @@ extension BridgeServiceApplication {
     try Self.checkDeadline(deadline)
     let validated = try Self.validatedAgentModel(model)
     try await settings.set(validated, for: .openCodeDefaultModel)
+  }
+
+  public func serviceOpenCodeDefaultPermissionMode(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String {
+    try Self.checkDeadline(deadline)
+    return try await settings.openCodeDefaultPermissionMode()
+  }
+
+  public func serviceSetOpenCodeDefaultPermissionMode(
+    _ mode: String,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setOpenCodeDefaultPermissionMode(mode)
+  }
+
+  public func serviceOpenCodeDefaultEffort(
+    deadline: ContinuousClock.Instant
+  ) async throws -> String? {
+    try Self.checkDeadline(deadline)
+    return try await settings.openCodeDefaultEffort()
+  }
+
+  public func serviceSetOpenCodeDefaultEffort(
+    _ effort: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setOpenCodeDefaultEffort(effort)
   }
 }

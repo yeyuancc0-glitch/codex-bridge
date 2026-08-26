@@ -106,6 +106,7 @@ extension BridgeServiceAppModel {
     providerID: String,
     installationID: String?,
     model: String?,
+    effort: String? = nil,
     permissionMode: String? = nil,
     prompt: String
   ) {
@@ -125,6 +126,7 @@ extension BridgeServiceAppModel {
             model: (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
               $0.isEmpty ? nil : $0
             },
+            effort: effort,
             permissionMode: permissionMode,
             prompt: prompt
           )
@@ -161,14 +163,17 @@ extension BridgeServiceAppModel {
     let defaultRevision = agentModelDefaultRevision
     guard let client = try? currentClient() else { return }
 
-    async let defaultResponse = try? await client.agentModelDefault()
+    let persistedDefault = try? await client.agentModelDefault()
     let modelResponse: IPCAgentModelsResponse?
     if let installationID, !installationID.isEmpty {
-      modelResponse = try? await client.agentModels(installationID: installationID)
+      modelResponse = try? await client.agentModels(
+        installationID: installationID,
+        projectID: selectedProjectID,
+        modelID: persistedDefault?.model
+      )
     } else {
       modelResponse = nil
     }
-    let persistedDefault = await defaultResponse
 
     guard !Task.isCancelled else { return }
     if catalogGeneration == agentModelCatalogGeneration, let modelResponse {
@@ -179,13 +184,49 @@ extension BridgeServiceAppModel {
       let persistedDefault
     else { return }
     openCodeDefaultModel = persistedDefault.model
+    openCodeDefaultPermissionMode = persistedDefault.permissionMode
+    openCodeDefaultEffort = persistedDefault.effort
   }
 
   func saveAgentModelDefault(_ model: String?) {
+    saveOpenCodeDefaults(
+      model: model,
+      permissionMode: openCodeDefaultPermissionMode,
+      effort: nil
+    )
+  }
+
+  func saveOpenCodePermissionMode(_ mode: String) {
+    saveOpenCodeDefaults(
+      model: openCodeDefaultModel,
+      permissionMode: mode,
+      effort: openCodeDefaultEffort
+    )
+  }
+
+  func saveOpenCodeEffort(_ effort: String?) {
+    saveOpenCodeDefaults(
+      model: openCodeDefaultModel,
+      permissionMode: openCodeDefaultPermissionMode,
+      effort: effort
+    )
+  }
+
+  private func saveOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) {
     let previous = openCodeDefaultModel
+    let previousPermissionMode = openCodeDefaultPermissionMode
+    let previousEffort = openCodeDefaultEffort
     agentModelDefaultRevision &+= 1
     let revision = agentModelDefaultRevision
     openCodeDefaultModel = model
+    if let permissionMode {
+      openCodeDefaultPermissionMode = permissionMode
+    }
+    openCodeDefaultEffort = effort
     let previousMutation = agentModelDefaultMutationTask
     let task = Task { [weak self, previousMutation] in
       await previousMutation?.value
@@ -197,15 +238,23 @@ extension BridgeServiceAppModel {
       }
       do {
         let client = try self.currentClient()
-        try await client.setAgentModelDefault(model)
+        _ = try await client.setOpenCodeDefaults(
+          model: model,
+          permissionMode: permissionMode,
+          effort: effort
+        )
         guard self.agentModelDefaultRevision == revision else { return }
         let persisted = try await client.agentModelDefault()
         guard self.agentModelDefaultRevision == revision else { return }
         self.openCodeDefaultModel = persisted.model
-        self.postToast("OpenCode 默认模型已保存", symbol: "checkmark.circle.fill", tone: .success)
+        self.openCodeDefaultPermissionMode = persisted.permissionMode
+        self.openCodeDefaultEffort = persisted.effort
+        self.postToast("OpenCode 默认设置已保存", symbol: "checkmark.circle.fill", tone: .success)
       } catch {
         guard self.agentModelDefaultRevision == revision else { return }
         self.openCodeDefaultModel = previous
+        self.openCodeDefaultPermissionMode = previousPermissionMode
+        self.openCodeDefaultEffort = previousEffort
         self.errorMessage = Self.message(error)
       }
     }

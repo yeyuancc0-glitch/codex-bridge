@@ -7,7 +7,6 @@ struct BridgeServiceAgentSettingsSection: View {
   @State private var installationPendingRemoval: IPCAgentInstallationSummary?
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
   @State private var submitProviderID = "opencode"
-  @State private var submitPermissionMode = "workspace-write"
   @State private var submitPrompt = ""
 
   var body: some View {
@@ -232,14 +231,12 @@ struct BridgeServiceAgentSettingsSection: View {
       }
       .pickerStyle(.menu)
 
-      HStack(spacing: 12) {
-        Picker("权限模式", selection: $submitPermissionMode) {
-          Text("OpenCode 原生 Build（工作区可写）").tag("workspace-write")
-          Text("OpenCode 原生 Plan（只读）").tag("read-only")
-        }
-        .pickerStyle(.menu)
-        .help("使用 OpenCode ACP 原生 Build 或 Plan 模式")
+      Picker("默认执行模式", selection: openCodeDefaultPermissionModeBinding) {
+        Text("OpenCode 原生 Build（工作区可写）").tag("build")
+        Text("OpenCode 原生 Plan（只读）").tag("plan")
       }
+      .pickerStyle(.menu)
+      .help("仅当任务没有显式 permission_mode 时使用；项目权限仍会限制写入")
 
       if selectable.isEmpty {
         Text("该 Provider 暂无已启用的可用安装")
@@ -259,8 +256,32 @@ struct BridgeServiceAgentSettingsSection: View {
         }
       }
       .pickerStyle(.menu)
-      .task(id: selectable.first?.installationID) {
+      .task(
+        id: AgentModelHydrationID(
+          installationID: selectable.first?.installationID,
+          projectID: model.selectedProjectID,
+          modelID: model.openCodeDefaultModel
+        )
+      ) {
         await model.hydrateAgentModelState(installationID: selectable.first?.installationID)
+      }
+
+      Picker("默认推理强度", selection: openCodeDefaultEffortBinding) {
+        Text("Provider 默认").tag("")
+        if let current = selectedAgentModel,
+          !current.supportedReasoningEfforts.isEmpty
+        {
+          ForEach(current.supportedReasoningEfforts, id: \.self) { effort in
+            Text(effort).tag(effort)
+          }
+        }
+      }
+      .pickerStyle(.menu)
+      .help("OpenCode 通过 ACP 的 effort 选项提供模型支持的推理强度")
+      if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
+        Text("当前模型不提供可选推理强度，使用 Provider 默认")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       TextField("任务描述", text: $submitPrompt, axis: .vertical)
@@ -275,7 +296,7 @@ struct BridgeServiceAgentSettingsSection: View {
             providerID: submitProviderID,
             installationID: selectable.first?.installationID,
             model: model.openCodeDefaultModel,
-            permissionMode: submitPermissionMode,
+            effort: model.openCodeDefaultEffort,
             prompt: submitPrompt
           )
           submitPrompt = ""
@@ -302,6 +323,36 @@ struct BridgeServiceAgentSettingsSection: View {
         model.saveAgentModelDefault(selected)
       }
     )
+  }
+
+  private var openCodeDefaultPermissionModeBinding: Binding<String> {
+    Binding(
+      get: { model.openCodeDefaultPermissionMode },
+      set: { value in
+        guard value == "build" || value == "plan",
+          value != model.openCodeDefaultPermissionMode
+        else { return }
+        model.saveOpenCodePermissionMode(value)
+      }
+    )
+  }
+
+  private var openCodeDefaultEffortBinding: Binding<String> {
+    Binding(
+      get: { model.openCodeDefaultEffort ?? "" },
+      set: { value in
+        let selected = value.isEmpty ? nil : value
+        guard selected != model.openCodeDefaultEffort else { return }
+        model.saveOpenCodeEffort(selected)
+      }
+    )
+  }
+
+  private var selectedAgentModel: IPCAgentModelSummary? {
+    if let modelID = model.openCodeDefaultModel {
+      return model.agentModelOptions.first(where: { $0.modelID == modelID })
+    }
+    return model.agentModelOptions.first(where: { !$0.supportedReasoningEfforts.isEmpty })
   }
 
   private func availabilityTitle(_ value: String) -> String {
@@ -335,4 +386,10 @@ struct BridgeServiceAgentSettingsSection: View {
     default: .red
     }
   }
+}
+
+private struct AgentModelHydrationID: Equatable {
+  let installationID: String?
+  let projectID: String?
+  let modelID: String?
 }

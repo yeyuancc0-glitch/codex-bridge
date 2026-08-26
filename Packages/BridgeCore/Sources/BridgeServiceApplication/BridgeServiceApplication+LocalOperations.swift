@@ -5,6 +5,22 @@ import BridgeProjects
 import BridgeServiceCore
 import Foundation
 
+public struct ServiceConversationPage: Sendable {
+  public let taskStatus: ServiceTaskStatus
+  public let messages: [ServiceTaskMessageRecord]
+  public let liveEntries: [TaskConversationBuffer.Entry]
+
+  public init(
+    taskStatus: ServiceTaskStatus,
+    messages: [ServiceTaskMessageRecord],
+    liveEntries: [TaskConversationBuffer.Entry] = []
+  ) {
+    self.taskStatus = taskStatus
+    self.messages = messages
+    self.liveEntries = liveEntries
+  }
+}
+
 extension BridgeServiceApplication {
   public func serviceWorkbenchProjectID(
     deadline: ContinuousClock.Instant
@@ -150,15 +166,31 @@ extension BridgeServiceApplication {
     beforeMessageID: Int64?,
     limit: Int,
     deadline: ContinuousClock.Instant
-  ) async throws -> [ServiceTaskMessageRecord] {
+  ) async throws -> ServiceConversationPage {
     try Self.checkDeadline(deadline)
     guard (1...500).contains(limit) else {
       throw ServiceStoreError.invalidArgument("conversation.limit")
     }
-    return try await coordinator.conversationPage(
+    let records = try await coordinator.conversationPage(
       taskID: TaskID(rawValue: taskID),
       beforeMessageID: beforeMessageID,
       limit: limit
+    )
+    guard let task = try await tasks.task(id: TaskID(rawValue: taskID)) else {
+      throw ServiceStoreError.unknownTask(TaskID(rawValue: taskID))
+    }
+    let liveEntries: [TaskConversationBuffer.Entry]
+    if beforeMessageID == nil {
+      liveEntries = try await coordinator.liveConversationEntries(
+        taskID: TaskID(rawValue: taskID)
+      )
+    } else {
+      liveEntries = []
+    }
+    return ServiceConversationPage(
+      taskStatus: task.state.status,
+      messages: records,
+      liveEntries: liveEntries
     )
   }
 

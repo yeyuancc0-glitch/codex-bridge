@@ -67,7 +67,18 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private var hasAppliedPage = false
   private var streamingTask: Task<Void, Never>?
   private var pushFlushTask: Task<Void, Never>?
+  private var resyncTask: Task<Void, Never>?
   private var pendingPushes: [IPCTaskConversationPush] = []
+  private var pendingResyncPushes: [IPCTaskConversationPush] = []
+
+  private static let maximumPendingPushes = 256
+  private static let resyncRetryDelays: [Duration] = [
+    .milliseconds(100),
+    .milliseconds(250),
+    .milliseconds(500),
+    .seconds(1),
+    .seconds(1),
+  ]
 
   public init(taskID: String, client: any BridgeTaskConversationClient) {
     self.taskID = taskID
@@ -112,7 +123,10 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     streamingTask = nil
     pushFlushTask?.cancel()
     pushFlushTask = nil
+    resyncTask?.cancel()
+    resyncTask = nil
     pendingPushes.removeAll(keepingCapacity: false)
+    pendingResyncPushes.removeAll(keepingCapacity: false)
   }
 
   func loadEarlier() async {
@@ -143,6 +157,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     pushFlushTask?.cancel()
     pushFlushTask = nil
     pendingPushes.removeAll(keepingCapacity: false)
+    pendingResyncPushes.removeAll(keepingCapacity: false)
     entries = page.messages.map { Entry($0, isFinal: $0.final) }
     rebuildIndex()
     refreshStreamingState()
@@ -150,6 +165,10 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   }
 
   private func enqueuePush(_ push: IPCTaskConversationPush) {
+    if pendingPushes.count >= Self.maximumPendingPushes {
+      pendingPushes.removeFirst()
+      scheduleConversationResync()
+    }
     pendingPushes.append(push)
     guard pushFlushTask == nil else { return }
     pushFlushTask = Task { [weak self] in
@@ -175,6 +194,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     var updatedEntries = entries
     var updatedIndex = index
     var changed = false
+    var requiresResync = false
 
     for push in pushes {
       if let position = updatedIndex[push.key] {
@@ -183,6 +203,11 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
           entry.content = fullContent
         } else if let delta = push.delta, entry.content.count == push.baseContentLength {
           entry.content += delta
+        } else if push.delta != nil {
+          guard !entry.isFinal else { continue }
+          deferPushForResync(push)
+          requiresResync = true
+          continue
         }
         if let toolName = push.toolName {
           entry.toolName = toolName
@@ -202,7 +227,13 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         guard
           let content = push.fullContent
             ?? (push.baseContentLength == 0 ? push.delta : nil)
-        else { continue }
+        else {
+          if push.delta != nil {
+            deferPushForResync(push)
+            requiresResync = true
+          }
+          continue
+        }
         var entry = Entry(
           key: push.key,
           role: push.role,
@@ -219,9 +250,92 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       }
     }
 
+    if requiresResync {
+      scheduleConversationResync()
+    }
     guard changed else { return }
     entries = updatedEntries
     index = updatedIndex
+    refreshStreamingState()
+    if autoScroll {
+      scrollAnchor = entries.last?.key
+    }
+  }
+
+  private func scheduleConversationResync() {
+    guard resyncTask == nil, hasAppliedPage else { return }
+    resyncTask = Task { [weak self] in
+      for delay in Self.resyncRetryDelays {
+        do {
+          try await Task.sleep(for: delay)
+          guard let self, !Task.isCancelled else { return }
+          let page = try await self.client.taskConversation(
+            IPCTaskConversationRequest(taskID: self.taskID, limit: 200)
+          )
+          guard !Task.isCancelled else { return }
+          self.mergeResyncPage(page)
+          let deferred = self.pendingResyncPushes
+          self.pendingResyncPushes.removeAll(keepingCapacity: true)
+          self.applyPushBatch(deferred)
+          if self.pendingResyncPushes.isEmpty { break }
+        } catch {
+          continue
+        }
+      }
+      self?.resyncTask = nil
+    }
+  }
+
+  private func deferPushForResync(_ push: IPCTaskConversationPush) {
+    if pendingResyncPushes.count >= Self.maximumPendingPushes {
+      pendingResyncPushes.removeFirst()
+    }
+    pendingResyncPushes.append(push)
+  }
+
+  private func mergeResyncPage(_ page: IPCTaskConversationPage) {
+    guard page.taskID == taskID else { return }
+    var refreshedEntries = entries
+    var refreshedIndex = index
+    var changed = false
+
+    for message in page.messages {
+      if let position = refreshedIndex[message.key] {
+        var entry = refreshedEntries[position]
+        guard message.final || message.content.count > entry.content.count else {
+          continue
+        }
+        if entry.content != message.content {
+          entry.content = message.content
+          changed = true
+        }
+        if entry.toolName != message.toolName, let toolName = message.toolName {
+          entry.toolName = toolName
+          changed = true
+        }
+        if entry.toolStatus != message.toolStatus, let toolStatus = message.toolStatus {
+          entry.toolStatus = toolStatus
+          changed = true
+        }
+        if entry.toolArguments != message.toolArguments, let toolArguments = message.toolArguments {
+          entry.toolArguments = toolArguments
+          changed = true
+        }
+        if message.final && !entry.isFinal {
+          entry.isFinal = true
+          changed = true
+        }
+        refreshedEntries[position] = entry
+      } else {
+        refreshedIndex[message.key] = refreshedEntries.count
+        refreshedEntries.append(Entry(message, isFinal: message.final))
+        changed = true
+      }
+    }
+
+    guard changed else { return }
+    entries = refreshedEntries
+    index = refreshedIndex
     refreshStreamingState()
     if autoScroll {
       scrollAnchor = entries.last?.key

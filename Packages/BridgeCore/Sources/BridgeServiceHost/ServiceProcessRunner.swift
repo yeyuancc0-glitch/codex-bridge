@@ -100,14 +100,19 @@ public enum ServiceProcessRunner {
   }
 }
 
-private enum ServiceTerminationSignal {
+enum ServiceTerminationSignal {
   static func wait() async {
-    await withCheckedContinuation { continuation in
-      let state = SignalState(continuation: continuation)
-      signal(SIGINT, SIG_IGN)
-      signal(SIGTERM, SIG_IGN)
-      state.install(signal: SIGINT)
-      state.install(signal: SIGTERM)
+    await wait(for: [SIGINT, SIGTERM])
+  }
+
+  static func wait(for signals: [Int32]) async {
+    let state = SignalState()
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        state.start(continuation: continuation, signals: signals)
+      }
+    } onCancel: {
+      state.finish()
     }
   }
 }
@@ -116,28 +121,65 @@ private final class SignalState: @unchecked Sendable {
   private let lock = NSLock()
   private var continuation: CheckedContinuation<Void, Never>?
   private var sources: [DispatchSourceSignal] = []
+  private var previousHandlers: [(signal: Int32, handler: (@convention(c) (Int32) -> Void)?)] = []
+  private var finished = false
 
-  init(continuation: CheckedContinuation<Void, Never>) {
+  func start(
+    continuation: CheckedContinuation<Void, Never>,
+    signals: [Int32]
+  ) {
+    lock.lock()
+    if finished {
+      lock.unlock()
+      continuation.resume()
+      return
+    }
     self.continuation = continuation
+    lock.unlock()
+
+    var installedSignals: [Int32] = []
+    for signal in signals where !installedSignals.contains(signal) {
+      installedSignals.append(signal)
+      install(signal: signal)
+    }
+    if Task.isCancelled {
+      finish()
+    }
   }
 
   func install(signal: Int32) {
-    let source = DispatchSource.makeSignalSource(signal: signal, queue: .global())
-    source.setEventHandler { [weak self] in self?.finish() }
     lock.lock()
+    guard !finished else {
+      lock.unlock()
+      return
+    }
+    let previousHandler = Darwin.signal(signal, SIG_IGN)
+    previousHandlers.append((signal: signal, handler: previousHandler))
+    let source = DispatchSource.makeSignalSource(signal: signal, queue: .global())
+    source.setEventHandler { [self] in self.finish() }
     sources.append(source)
-    lock.unlock()
     source.resume()
+    lock.unlock()
   }
 
-  private func finish() {
+  func finish() {
     lock.lock()
+    guard !finished else {
+      lock.unlock()
+      return
+    }
+    finished = true
     let continuation = continuation
     self.continuation = nil
     let activeSources = sources
     sources.removeAll(keepingCapacity: false)
+    let handlers = previousHandlers
+    previousHandlers.removeAll(keepingCapacity: false)
     lock.unlock()
     for source in activeSources { source.cancel() }
+    for handler in handlers {
+      _ = Darwin.signal(handler.signal, handler.handler)
+    }
     continuation?.resume()
   }
 }

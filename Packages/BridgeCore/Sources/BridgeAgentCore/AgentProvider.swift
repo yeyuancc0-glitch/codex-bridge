@@ -107,12 +107,62 @@ public struct AgentProbeResult: Equatable, Sendable {
 public struct AgentModelDescriptor: Codable, Equatable, Sendable {
   public let id: String
   public let displayName: String
+  public let supportedReasoningEfforts: [String]
+  public let defaultReasoningEffort: String?
 
-  public init(id: String, displayName: String) throws {
+  public init(
+    id: String,
+    displayName: String,
+    supportedReasoningEfforts: [String] = [],
+    defaultReasoningEffort: String? = nil
+  ) throws {
     try AgentValidation.identifier(id, field: "model.id", maximumBytes: 256)
     try AgentValidation.text(displayName, field: "model.displayName", maximumBytes: 512)
+    guard supportedReasoningEfforts.count <= 64,
+      Set(supportedReasoningEfforts).count == supportedReasoningEfforts.count
+    else {
+      throw AgentRuntimeError.invalidRequest("model.reasoningEfforts")
+    }
+    for effort in supportedReasoningEfforts {
+      try AgentValidation.identifier(effort, field: "model.reasoningEffort", maximumBytes: 64)
+    }
+    if let defaultReasoningEffort {
+      try AgentValidation.identifier(
+        defaultReasoningEffort,
+        field: "model.defaultReasoningEffort",
+        maximumBytes: 64
+      )
+      guard supportedReasoningEfforts.contains(defaultReasoningEffort) else {
+        throw AgentRuntimeError.invalidRequest("model.defaultReasoningEffort")
+      }
+    }
     self.id = id
     self.displayName = displayName
+    self.supportedReasoningEfforts = supportedReasoningEfforts
+    self.defaultReasoningEffort = defaultReasoningEffort
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case displayName
+    case supportedReasoningEfforts
+    case defaultReasoningEffort
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    try self.init(
+      id: container.decode(String.self, forKey: .id),
+      displayName: container.decode(String.self, forKey: .displayName),
+      supportedReasoningEfforts: container.decodeIfPresent(
+        [String].self,
+        forKey: .supportedReasoningEfforts
+      ) ?? [],
+      defaultReasoningEffort: container.decodeIfPresent(
+        String.self,
+        forKey: .defaultReasoningEffort
+      )
+    )
   }
 }
 
@@ -124,6 +174,12 @@ public protocol AgentProvider: Sendable {
   func models(
     installation: AgentInstallation,
     projectRoot: String?
+  ) async throws -> [AgentModelDescriptor]
+
+  func models(
+    installation: AgentInstallation,
+    projectRoot: String?,
+    selectedModelID: String?
   ) async throws -> [AgentModelDescriptor]
 
   func start(
@@ -138,5 +194,13 @@ extension AgentProvider {
     projectRoot _: String?
   ) async throws -> [AgentModelDescriptor] {
     throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
+  }
+
+  public func models(
+    installation: AgentInstallation,
+    projectRoot: String?,
+    selectedModelID _: String?
+  ) async throws -> [AgentModelDescriptor] {
+    try await models(installation: installation, projectRoot: projectRoot)
   }
 }

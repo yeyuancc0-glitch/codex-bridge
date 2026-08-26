@@ -41,8 +41,22 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func removeAgentInstallation(installationID: String) async throws
   func submitAgentTask(_ request: IPCAgentSubmitRequest) async throws -> IPCAgentSubmitResponse
   func agentModels(installationID: String) async throws -> IPCAgentModelsResponse
+  func agentModels(
+    installationID: String,
+    projectID: String?
+  ) async throws -> IPCAgentModelsResponse
+  func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?
+  ) async throws -> IPCAgentModelsResponse
   func agentModelDefault() async throws -> IPCAgentModelDefaultResponse
   func setAgentModelDefault(_ model: String?) async throws
+  func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse
   func customInstructions() async throws -> String
   func setCustomInstructions(_ instructions: String) async throws
   func removeProject(projectID: String) async throws
@@ -124,12 +138,40 @@ extension BridgeServiceClientProtocol {
     throw BridgeServiceClientError.unavailable
   }
 
+  public func agentModels(
+    installationID: String,
+    projectID _: String?
+  ) async throws -> IPCAgentModelsResponse {
+    try await agentModels(installationID: installationID)
+  }
+
+  public func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID _: String?
+  ) async throws -> IPCAgentModelsResponse {
+    try await agentModels(installationID: installationID, projectID: projectID)
+  }
+
   public func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
     throw BridgeServiceClientError.unavailable
   }
 
   public func setAgentModelDefault(_: String?) async throws {
     throw BridgeServiceClientError.unavailable
+  }
+
+  public func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
+    try await setAgentModelDefault(model)
+    return IPCAgentModelDefaultResponse(
+      model: model,
+      permissionMode: permissionMode ?? "build",
+      effort: effort
+    )
   }
 
   public func customInstructions() async throws -> String {

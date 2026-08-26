@@ -294,7 +294,11 @@ final class TaskConversationBufferTests: XCTestCase {
       initial.createdAt.timeIntervalSince1970,
       accuracy: 0.000_001
     )
-    XCTAssertGreaterThanOrEqual(persisted.updatedAt, updated.updatedAt)
+    XCTAssertEqual(
+      persisted.updatedAt.timeIntervalSince1970,
+      updated.updatedAt.timeIntervalSince1970,
+      accuracy: 0.000_001
+    )
   }
 
   func testPurgeStopsDeliveringChanges() async throws {

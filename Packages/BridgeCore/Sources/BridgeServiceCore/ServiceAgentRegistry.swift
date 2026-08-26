@@ -217,7 +217,8 @@ public actor ServiceAgentRegistry {
 
   public func models(
     installationID: AgentInstallationID,
-    projectRoot: String? = nil
+    projectRoot: String? = nil,
+    selectedModelID: String? = nil
   ) async throws -> [AgentModelDescriptor] {
     guard let record = try await store.agentInstallation(id: installationID),
       record.isSelectable
@@ -239,7 +240,11 @@ public actor ServiceAgentRegistry {
       version: record.version,
       protocolRevision: record.protocolRevision
     )
-    return try await provider.models(installation: installation, projectRoot: projectRoot)
+    return try await provider.models(
+      installation: installation,
+      projectRoot: projectRoot,
+      selectedModelID: selectedModelID
+    )
   }
 
   @discardableResult

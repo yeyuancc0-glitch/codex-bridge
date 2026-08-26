@@ -309,6 +309,126 @@ final class ConversationStreamingHostTests: XCTestCase {
     collect.cancel()
   }
 
+  func testPersistedConversationPageUsesTaskStateForFinality() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let projectRoot = fixture.root.appending(
+      path: "Persisted Conversation Project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let project = try await fixture.composition.projects.register(
+      name: "Persisted Conversation Project",
+      rootURL: projectRoot,
+      accessPolicy: ProjectAccessPolicy(
+        read: .allowed,
+        write: .allowed,
+        network: .denied
+      )
+    )
+    let submitted = try await fixture.composition.tasks.submit(
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .macOSApp,
+        clientRequestID: "request-persisted-conversation",
+        prompt: "Exercise persisted conversation finality.",
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .workspaceWrite
+      )
+    )
+    let taskID = submitted.task.id
+    _ = try await fixture.composition.tasks.begin(taskID: taskID)
+    _ = try await fixture.composition.tasks.markExecutionStarted(
+      taskID: taskID,
+      threadID: "thread-persisted-conversation",
+      turnID: "turn-persisted-conversation"
+    )
+    try await fixture.composition.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "user:prompt",
+      role: .user,
+      content: "Exercise persisted conversation finality.",
+      kind: .user
+    )
+    try await fixture.composition.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "agent:partial",
+      role: .agent,
+      content: "Partial response",
+      kind: .agent
+    )
+    try await fixture.composition.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "reasoning:partial",
+      role: .agent,
+      content: "Partial reasoning",
+      kind: .reasoning
+    )
+    try await fixture.composition.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "tool:completed",
+      role: .agent,
+      content: "Completed tool",
+      kind: .toolCall,
+      toolName: "read",
+      toolStatus: "completed"
+    )
+    try await fixture.composition.tasks.upsertTaskMessage(
+      taskID: taskID,
+      key: "tool:active",
+      role: .agent,
+      content: "Active tool",
+      kind: .toolCall,
+      toolName: "write",
+      toolStatus: "inProgress"
+    )
+
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let runningPage = try await client.taskConversation(
+      IPCTaskConversationRequest(taskID: taskID.rawValue, limit: 200)
+    )
+    let runningFinality = Dictionary(
+      uniqueKeysWithValues: runningPage.messages.map { ($0.key, $0.final) }
+    )
+    XCTAssertEqual(runningFinality["user:prompt"], true)
+    XCTAssertEqual(runningFinality["agent:partial"], false)
+    XCTAssertEqual(runningFinality["reasoning:partial"], false)
+    XCTAssertEqual(runningFinality["tool:completed"], true)
+    XCTAssertEqual(runningFinality["tool:active"], false)
+
+    let (subscription, _) = try await client.subscribeTaskConversation(
+      taskID: taskID.rawValue,
+      limit: 200
+    )
+    let subscriptionFinality = Dictionary(
+      uniqueKeysWithValues: subscription.page.messages.map { ($0.key, $0.final) }
+    )
+    XCTAssertEqual(subscriptionFinality["user:prompt"], true)
+    XCTAssertEqual(subscriptionFinality["agent:partial"], false)
+    XCTAssertEqual(subscriptionFinality["reasoning:partial"], false)
+    XCTAssertEqual(subscriptionFinality["tool:completed"], true)
+    XCTAssertEqual(subscriptionFinality["tool:active"], false)
+    try await client.unsubscribeTaskConversation(
+      taskID: taskID.rawValue,
+      subscriptionID: subscription.subscriptionID
+    )
+
+    _ = try await fixture.composition.tasks.complete(
+      taskID: taskID,
+      resultSummary: "Persisted conversation finalized.",
+      changedFiles: []
+    )
+    let completedPage = try await client.taskConversation(
+      IPCTaskConversationRequest(taskID: taskID.rawValue, limit: 200)
+    )
+    XCTAssertTrue(completedPage.messages.allSatisfy(\.final))
+  }
+
   func testConversationSubscriptionStreamsReasoningAndToolCalls() async throws {
     let root = FileManager.default.temporaryDirectory.appending(
       path: "bridge-conversation-rich-\(UUID().uuidString)",

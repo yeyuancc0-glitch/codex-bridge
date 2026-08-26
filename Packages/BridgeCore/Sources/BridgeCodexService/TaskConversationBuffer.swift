@@ -163,7 +163,7 @@ public actor TaskConversationBuffer {
         toolArguments: entry.toolArguments,
         isFinal: true,
         createdAt: entry.createdAt,
-        updatedAt: Date()
+        updatedAt: entry.updatedAt
       )
       markDirty(taskID: taskID, key: entry.key, in: state)
       notify(

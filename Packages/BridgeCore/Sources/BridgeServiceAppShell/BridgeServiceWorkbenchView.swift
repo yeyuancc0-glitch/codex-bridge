@@ -157,14 +157,19 @@ struct BridgeServiceWorkbenchView: View {
   private var dockedInspectorPane: some View {
     VStack(spacing: 0) {
       inspectorHeader
+        .fixedSize(horizontal: false, vertical: true)
       Divider()
       if !pendingApprovalIDs.isEmpty {
         approvalTray
+          .fixedSize(horizontal: false, vertical: true)
+          .layoutPriority(2)
         Divider()
       }
       inspectorBody
+        .frame(minHeight: 0, maxHeight: .infinity)
       Divider()
       inspectorFooter
+        .fixedSize(horizontal: false, vertical: true)
     }
     .background(Color(nsColor: .controlBackgroundColor))
   }
@@ -368,9 +373,10 @@ struct BridgeServiceWorkbenchView: View {
           }
         }
       }
-      .frame(maxHeight: 300)
+      .frame(height: 220)
     }
     .padding(12)
+    .frame(maxWidth: .infinity)
     .background(Color.orange.opacity(0.06))
   }
 
@@ -587,6 +593,7 @@ private struct ApprovalCard: View {
   let approval: IPCApprovalSummary
 
   var body: some View {
+    let isResolving = model.isResolvingApproval(approval)
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .firstTextBaseline) {
         Label(approval.title, systemImage: "shield.lefthalf.filled")
@@ -636,15 +643,27 @@ private struct ApprovalCard: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+        .disabled(isResolving)
 
         Spacer()
 
         if approval.kind == "task_start" {
-          Button("批准启动") {
+          Button {
             model.resolveApproval(approval, decision: "allow")
+          } label: {
+            if isResolving {
+              HStack(spacing: 4) {
+                ProgressView()
+                  .controlSize(.small)
+                Text("正在提交…")
+              }
+            } else {
+              Text("批准启动")
+            }
           }
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
+          .disabled(isResolving)
         } else {
           Menu {
             ForEach(allowDecisions, id: \.self) { decision in
@@ -653,10 +672,15 @@ private struct ApprovalCard: View {
               }
             }
           } label: {
-            Label("选择允许范围", systemImage: "chevron.down")
+            if isResolving {
+              Label("正在提交…", systemImage: "hourglass")
+            } else {
+              Label("选择允许范围", systemImage: "chevron.down")
+            }
           }
           .menuStyle(.borderlessButton)
           .fixedSize()
+          .disabled(isResolving)
         }
       }
     }
@@ -687,6 +711,7 @@ private struct DirectApprovalCard: View {
   let approval: IPCPendingDirectApproval
 
   var body: some View {
+    let isResolving = model.isResolvingDirectApproval(approval)
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
         Image(systemName: "terminal.fill")
@@ -721,14 +746,26 @@ private struct DirectApprovalCard: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+        .disabled(isResolving)
 
         Spacer()
 
-        Button("仅本次允许") {
+        Button {
           model.resolveDirectApproval(approval, allow: true)
+        } label: {
+          if isResolving {
+            HStack(spacing: 4) {
+              ProgressView()
+                .controlSize(.small)
+              Text("正在提交…")
+            }
+          } else {
+            Text("仅本次允许")
+          }
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
+        .disabled(isResolving)
       }
     }
     .padding(10)

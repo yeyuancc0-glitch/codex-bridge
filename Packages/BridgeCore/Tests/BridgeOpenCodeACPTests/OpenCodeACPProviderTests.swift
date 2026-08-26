@@ -309,6 +309,18 @@ final class OpenCodeACPProviderTests: XCTestCase {
             )
           )
         )
+      case "session/set_config_option":
+        let result =
+          Self.sessionResult(
+            id: "session-model-list",
+            models: [
+              ("opencode/x-preview-f-free", "OpenCode Zen/Ox Alpha Free"),
+              ("opencode/big-pickle", "Big Pickle"),
+            ]
+          )["configOptions"] ?? .array([])
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["configOptions": result]))
+        )
       default:
         break
       }
@@ -338,7 +350,55 @@ final class OpenCodeACPProviderTests: XCTestCase {
     XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: runtimeBase).isEmpty)
   }
 
-  func testRejectsEffortBeforeLaunchingProvider() async throws {
+  func testModelsExposeDynamicEffortForProviderDefaultModel() async throws {
+    let transport = ScriptedACPTransport()
+    let sourceHome = try makeTemporaryDirectory(prefix: "default-effort-home")
+    addTeardownBlock { try? FileManager.default.removeItem(atPath: sourceHome) }
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: Self.sessionResult(
+              id: "session-default-effort",
+              models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+            )
+          )
+        )
+      case "session/set_config_option":
+        let result =
+          Self.sessionResultWithEffort(
+            id: "session-default-effort",
+            models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+          )["configOptions"] ?? .array([])
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["configOptions": result]))
+        )
+      default:
+        break
+      }
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { _ in transport }
+      )
+    )
+
+    let models = try await provider.models(
+      installation: makeInstallation(id: "default-effort-installation"),
+      projectRoot: nil
+    )
+
+    XCTAssertEqual(models.first?.supportedReasoningEfforts, ["low", "high"])
+    XCTAssertEqual(models.first?.defaultReasoningEffort, "high")
+  }
+
+  func testAppliesDynamicEffortForProviderDefaultModel() async throws {
     let transport = ScriptedACPTransport()
     let captured = LockedValue<OpenCodeACPLaunchConfiguration>()
     let projectRoot = try makeTemporaryDirectory(prefix: "effort-project")
@@ -346,6 +406,44 @@ final class OpenCodeACPProviderTests: XCTestCase {
     addTeardownBlock {
       for path in [projectRoot, sourceHome] {
         try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: Self.sessionResult(
+              id: "session-effort",
+              models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+            )
+          )
+        )
+      case "session/set_config_option":
+        let configID = message.params?["configId"]?.stringValue
+        let result =
+          configID == "model"
+          ? Self.sessionResultWithEffort(
+            id: "session-effort",
+            models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+          )["configOptions"] ?? .array([])
+          : .array([])
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: .object(["configOptions": result])
+          )
+        )
+      case "session/prompt":
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
+        )
+      default:
+        break
       }
     }
     let provider = try OpenCodeACPProvider(
@@ -368,16 +466,20 @@ final class OpenCodeACPProviderTests: XCTestCase {
       networkAccessRequested: false
     )
 
-    do {
-      _ = try await provider.start(
-        request,
-        installation: makeInstallation(id: "effort-installation")
-      )
-      XCTFail("Expected effort to be rejected")
-    } catch {
-      XCTAssertEqual(error as? AgentRuntimeError, .capabilityUnavailable(.effortSelection))
-    }
-    XCTAssertNil(captured.get())
+    let handle = try await provider.start(
+      request,
+      installation: makeInstallation(id: "effort-installation")
+    )
+    for try await _ in handle.events {}
+    XCTAssertTrue(handle.capabilities.effective.contains(.effortSelection))
+    let sent = await transport.sentMessages()
+    let effortMessage = try XCTUnwrap(
+      sent.first {
+        $0.method == "session/set_config_option" && $0.params?["configId"] == .string("effort")
+      }
+    )
+    XCTAssertEqual(effortMessage.params?["value"], .string("high"))
+    XCTAssertNotNil(captured.get())
   }
 
   func testStartsWorkspaceWriteWithNativeBuildMode() async throws {
@@ -676,6 +778,37 @@ final class OpenCodeACPProviderTests: XCTestCase {
         ]),
       ]),
     ])
+  }
+
+  private static func sessionResultWithEffort(
+    id: String,
+    models: [(String, String)]
+  ) -> ACPJSONValue {
+    guard var object = sessionResult(id: id, models: models).objectValue,
+      var options = object["configOptions"]?.arrayValue,
+      var model = options.first?.objectValue
+    else {
+      return .object([:])
+    }
+    model["currentValue"] = .string("openai/gpt-5.6-sol")
+    model["options"] = .array([
+      .object(["value": .string("openai/gpt-5.6-sol"), "name": .string("GPT-5.6 Sol")])
+    ])
+    options[0] = .object(model)
+    options.append(
+      .object([
+        "id": .string("effort"),
+        "name": .string("Effort"),
+        "type": .string("select"),
+        "currentValue": .string("high"),
+        "options": .array([
+          .object(["value": .string("low"), "name": .string("Low")]),
+          .object(["value": .string("high"), "name": .string("High")]),
+        ]),
+      ])
+    )
+    object["configOptions"] = .array(options)
+    return .object(object)
   }
 
   private static func messageUpdate(text: String) -> ACPJSONValue {

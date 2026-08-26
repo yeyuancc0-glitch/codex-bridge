@@ -88,6 +88,9 @@ extension BridgeServiceAppModel {
       isManagingAgents = false
       tasks = []
       approvals = []
+      resolvingApprovalKeys = []
+      resolvedTaskApprovalKeys = []
+      resolvedDirectApprovalKeys = []
       mcpClients = []
       models = []
       modelPreferences = nil
@@ -277,10 +280,10 @@ extension BridgeServiceAppModel {
     }
 
     if let value = await approvalResult {
-      approvals = value
+      applyApprovalSnapshot(value)
     }
     if let value = await directApprovalResult {
-      directApprovals = value
+      applyDirectApprovalSnapshot(value)
     }
     if let value = await directApprovalModeResult {
       directApprovalMode = value
@@ -322,6 +325,28 @@ extension BridgeServiceAppModel {
       }
       self.selectedTaskID = nil
       return
+    }
+  }
+
+  func applyApprovalSnapshot(_ value: [IPCApprovalSummary]) {
+    let incomingKeys = Set(value.map { WorkbenchApprovalResolutionKey.task($0.approvalID) })
+    if resolvedTaskApprovalKeys.count > 512 {
+      resolvedTaskApprovalKeys.formIntersection(incomingKeys)
+    }
+    let hiddenKeys = resolvingApprovalKeys.union(resolvedTaskApprovalKeys)
+    approvals = value.filter {
+      !hiddenKeys.contains(WorkbenchApprovalResolutionKey.task($0.approvalID))
+    }
+  }
+
+  func applyDirectApprovalSnapshot(_ value: [IPCPendingDirectApproval]) {
+    let incomingKeys = Set(value.map { WorkbenchApprovalResolutionKey.direct($0.approvalID) })
+    if resolvedDirectApprovalKeys.count > 512 {
+      resolvedDirectApprovalKeys.formIntersection(incomingKeys)
+    }
+    let hiddenKeys = resolvingApprovalKeys.union(resolvedDirectApprovalKeys)
+    directApprovals = value.filter {
+      !hiddenKeys.contains(WorkbenchApprovalResolutionKey.direct($0.approvalID))
     }
   }
 

@@ -150,6 +150,22 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
     self.createdAt = createdAt
     self.updatedAt = effectiveUpdatedAt
   }
+
+  /// A persisted message does not store its own finality. The task state is
+  /// the authority for provider text, while user messages and completed tool
+  /// calls remain independently complete during a running task.
+  public func isFinal(for taskStatus: ServiceTaskStatus) -> Bool {
+    if taskStatus.isTerminal || role == .user || kind == .user {
+      return true
+    }
+    guard kind == .toolCall else { return false }
+    switch toolStatus {
+    case "completed", "failed", "declined", "cancelled":
+      return true
+    default:
+      return false
+    }
+  }
 }
 
 public struct ServiceTaskEventRecord: Codable, Equatable, Sendable {

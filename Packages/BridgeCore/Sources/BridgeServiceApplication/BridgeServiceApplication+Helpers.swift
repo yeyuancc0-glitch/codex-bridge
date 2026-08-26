@@ -161,7 +161,8 @@ extension BridgeServiceApplication {
 
   static func permissionMode(
     _ rawValue: String?,
-    project: ServiceProjectRecord
+    project: ServiceProjectRecord,
+    defaultMode: ServicePermissionMode? = nil
   ) throws -> ServicePermissionMode {
     if let rawValue {
       guard let mode = ServicePermissionMode(rawValue: rawValue) else {
@@ -172,7 +173,13 @@ extension BridgeServiceApplication {
       }
       return mode
     }
-    return project.accessPolicy.write == .denied ? .readOnly : .workspaceWrite
+    guard let defaultMode else {
+      return project.accessPolicy.write == .denied ? .readOnly : .workspaceWrite
+    }
+    if defaultMode == .workspaceWrite, project.accessPolicy.write == .denied {
+      return .readOnly
+    }
+    return defaultMode
   }
 
   static func prompt(_ prompt: String, acceptanceCriteria: [String]) -> String {

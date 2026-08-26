@@ -271,7 +271,7 @@ public actor OpenCodeACPClient {
     sessionID: String,
     configID: String,
     value: String
-  ) async throws {
+  ) async throws -> [OpenCodeACPConfigOption] {
     try requireInitialized()
     try validateIdentifier(sessionID)
     try requireSession(sessionID)
@@ -285,7 +285,7 @@ public actor OpenCodeACPClient {
     try beginSessionOperation()
     defer { endSessionOperation() }
 
-    _ = try await request(
+    let response = try await request(
       method: "session/set_config_option",
       params: .object([
         "sessionId": .string(sessionID),
@@ -293,6 +293,7 @@ public actor OpenCodeACPClient {
         "value": .string(value),
       ])
     )
+    return try Self.parseConfigOptions(response.value["configOptions"])
   }
 
   public func prompt(sessionID: String, text: String) async throws -> OpenCodeACPPromptResult {

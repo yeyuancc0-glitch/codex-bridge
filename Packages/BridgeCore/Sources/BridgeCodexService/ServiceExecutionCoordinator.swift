@@ -161,7 +161,7 @@ public actor ServiceExecutionCoordinator {
     taskID: TaskID,
     limit: Int = 200
   ) async throws -> ConversationSubscription {
-    guard try await tasks.task(id: taskID) != nil else {
+    guard let task = try await tasks.task(id: taskID) else {
       throw ServiceStoreError.unknownTask(taskID)
     }
     let inMemory = await conversation.entries(taskID: taskID)
@@ -185,7 +185,7 @@ public actor ServiceExecutionCoordinator {
           toolName: $0.toolName,
           toolStatus: $0.toolStatus,
           toolArguments: $0.toolArguments,
-          isFinal: true
+          isFinal: $0.isFinal(for: task.state.status)
         )
       }
     page.append(contentsOf: inMemory)
@@ -220,6 +220,15 @@ public actor ServiceExecutionCoordinator {
       beforeMessageID: beforeMessageID,
       limit: limit
     )
+  }
+
+  public func liveConversationEntries(
+    taskID: TaskID
+  ) async throws -> [TaskConversationBuffer.Entry] {
+    guard try await tasks.task(id: taskID) != nil else {
+      throw ServiceStoreError.unknownTask(taskID)
+    }
+    return await conversation.entries(taskID: taskID)
   }
 
   public func purgeConversation(taskID: TaskID) async {

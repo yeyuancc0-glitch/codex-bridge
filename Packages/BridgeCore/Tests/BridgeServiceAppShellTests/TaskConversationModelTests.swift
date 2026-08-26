@@ -127,6 +127,187 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(model.entries[1].content, "Authoritative text")
   }
 
+  func testMismatchedDeltaTriggersConversationSnapshotResync() async throws {
+    let client = TestBridgeServiceClient()
+    await client.setConversationPages([
+      TestBridgeServiceClient.TaskConversationQuery(
+        IPCTaskConversationRequest(taskID: "task-1", limit: 200)
+      ): IPCTaskConversationPage(
+        taskID: "task-1",
+        messages: [
+          IPCTaskConversationMessage(messageID: 1, key: "user:1", role: "user", content: "hello"),
+          IPCTaskConversationMessage(
+            messageID: 2,
+            key: "agent:item-1",
+            role: "agent",
+            content: "Final"
+          ),
+        ]
+      )
+    ])
+    let model = TaskConversationModel(taskID: "task-1", client: client)
+    await model.start()
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "agent:item-1",
+        role: "agent",
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: "Recovered",
+        final: false
+      )
+    )
+    try await waitUntil { model.entries.count == 2 }
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "agent:item-1",
+        role: "agent",
+        delta: " output",
+        baseContentLength: 999,
+        fullContent: nil,
+        final: false
+      )
+    )
+
+    try await waitUntil { model.entries[1].content == "Final" }
+    XCTAssertTrue(model.entries[1].isFinal)
+    XCTAssertFalse(model.isStreaming)
+  }
+
+  func testMismatchedDeltaRetriesUntilPersistedSnapshotCatchesUp() async throws {
+    let client = TestBridgeServiceClient()
+    let query = TestBridgeServiceClient.TaskConversationQuery(
+      IPCTaskConversationRequest(taskID: "task-1", limit: 200)
+    )
+    await client.setConversationPages([
+      query: IPCTaskConversationPage(
+        taskID: "task-1",
+        messages: [
+          IPCTaskConversationMessage(
+            messageID: 2,
+            key: "agent:item-1",
+            role: "agent",
+            content: "A",
+            final: false
+          )
+        ]
+      )
+    ])
+    let model = TaskConversationModel(taskID: "task-1", client: client)
+    await model.start()
+
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "agent:item-1",
+        role: "agent",
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: "A",
+        final: false
+      )
+    )
+    try await waitUntil { model.entries.count == 2 }
+    await client.pushConversation(
+      IPCTaskConversationPush(
+        taskID: "task-1",
+        key: "agent:item-1",
+        role: "agent",
+        delta: "C",
+        baseContentLength: 2,
+        fullContent: nil,
+        final: false
+      )
+    )
+
+    _ = Task {
+      try? await Task.sleep(for: .milliseconds(250))
+      await client.setConversationPages([
+        query: IPCTaskConversationPage(
+          taskID: "task-1",
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 2,
+              key: "agent:item-1",
+              role: "agent",
+              content: "AB",
+              final: false
+            )
+          ]
+        )
+      ])
+    }
+
+    try await waitUntil(timeout: .seconds(2)) { model.entries[1].content == "ABC" }
+    XCTAssertTrue(model.isStreaming)
+  }
+
+  func testRunningConversationSnapshotKeepsPersistedProviderEntriesActive() async throws {
+    let client = TestBridgeServiceClient()
+    await client.setSubscriptionPage(
+      IPCTaskConversationPage(
+        taskID: "task-1",
+        messages: [
+          IPCTaskConversationMessage(
+            messageID: 1,
+            key: "user:1",
+            role: "user",
+            kind: "user",
+            content: "Build the project",
+            final: true
+          ),
+          IPCTaskConversationMessage(
+            messageID: 2,
+            key: "agent:partial",
+            role: "agent",
+            kind: "agent",
+            content: "Partial response",
+            final: false
+          ),
+          IPCTaskConversationMessage(
+            messageID: 3,
+            key: "reasoning:partial",
+            role: "agent",
+            kind: "reasoning",
+            content: "Partial reasoning",
+            final: false
+          ),
+          IPCTaskConversationMessage(
+            messageID: 4,
+            key: "tool:completed",
+            role: "agent",
+            kind: "tool_call",
+            content: "Completed tool",
+            toolName: "read",
+            toolStatus: "completed",
+            final: true
+          ),
+          IPCTaskConversationMessage(
+            messageID: 5,
+            key: "tool:active",
+            role: "agent",
+            kind: "tool_call",
+            content: "Active tool",
+            toolName: "write",
+            toolStatus: "inProgress",
+            final: false
+          ),
+        ]
+      )
+    )
+    let model = TaskConversationModel(taskID: "task-1", client: client)
+
+    await model.start()
+
+    XCTAssertEqual(model.entries.map(\.isFinal), [true, false, false, true, false])
+    XCTAssertEqual(model.activity, .executing("write"))
+    XCTAssertTrue(model.isStreaming)
+  }
+
   func testActivityTracksReasoningAndToolsUntilEveryEntryIsFinal() async throws {
     let client = TestBridgeServiceClient()
     let model = TaskConversationModel(taskID: "task-1", client: client)

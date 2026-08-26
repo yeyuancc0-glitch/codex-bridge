@@ -53,6 +53,18 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
   private var workbenchProjectSelections: [String?] = []
   private var taskSnapshotsValue: [MCPServiceTaskSnapshot]?
+  private var approvalsValue: [IPCApprovalSummary] = [
+    IPCApprovalSummary(
+      approvalID: "approval-1",
+      taskID: "task-1",
+      threadID: "thread-1",
+      turnID: "turn-1",
+      itemID: "item-1",
+      kind: "command",
+      title: "Run command",
+      summary: "Run a bounded command."
+    )
+  ]
   private var agentInstallationsValue: [IPCAgentInstallationSummary] = []
   private var agentActions: [String] = []
   private var agentModelOptionsValue: [IPCAgentModelSummary] = []
@@ -61,6 +73,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentModelDefaultReadDelay: Duration = .zero
   private var failAgentModels = false
   private var submittedAgentRequestValue: IPCAgentSubmitRequest?
+  private var approvalResolutionDelay: Duration = .zero
+  private var failApprovalReplyAfterResolution = false
   private let agentProvidersValue = [
     IPCAgentProviderSummary(
       providerID: "opencode",
@@ -130,6 +144,14 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setAgentModelsFailure(_ fail: Bool) {
     failAgentModels = fail
+  }
+
+  func setApprovalResolutionDelay(_ delay: Duration) {
+    approvalResolutionDelay = delay
+  }
+
+  func setFailApprovalReplyAfterResolution(_ fail: Bool) {
+    failApprovalReplyAfterResolution = fail
   }
 
   func agentDefaultWrites() -> [String?] {
@@ -530,22 +552,18 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func approvals(taskID _: String?) async throws -> [IPCApprovalSummary] {
-    [
-      IPCApprovalSummary(
-        approvalID: "approval-1",
-        taskID: "task-1",
-        threadID: "thread-1",
-        turnID: "turn-1",
-        itemID: "item-1",
-        kind: "command",
-        title: "Run command",
-        summary: "Run a bounded command."
-      )
-    ]
+    approvalsValue
   }
 
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws {
+    if approvalResolutionDelay > .zero {
+      try await Task.sleep(for: approvalResolutionDelay)
+    }
     approvalDecisions.append("\(request.approvalID):\(request.decision)")
+    approvalsValue.removeAll { $0.approvalID == request.approvalID }
+    if failApprovalReplyAfterResolution {
+      throw BridgeServiceClientError.unavailable
+    }
   }
 
   private var directApprovalDecisions: [String] = []

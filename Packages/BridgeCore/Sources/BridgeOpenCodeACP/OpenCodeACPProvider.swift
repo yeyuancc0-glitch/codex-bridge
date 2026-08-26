@@ -132,6 +132,18 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     installation: AgentInstallation,
     projectRoot: String?
   ) async throws -> [AgentModelDescriptor] {
+    try await models(
+      installation: installation,
+      projectRoot: projectRoot,
+      selectedModelID: nil
+    )
+  }
+
+  public func models(
+    installation: AgentInstallation,
+    projectRoot: String?,
+    selectedModelID: String?
+  ) async throws -> [AgentModelDescriptor] {
     guard installation.providerID == .openCode else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
     }
@@ -157,7 +169,25 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       let initialization = try await connected.initialize()
       _ = try validate(initialization)
       let session = try await connected.newSession(cwd: launch.process.workingDirectory)
-      let models = try Self.modelDescriptors(from: session)
+      let options: [OpenCodeACPConfigOption]
+      let selectedModel: String?
+      let modelToSelect = selectedModelID ?? Self.currentModelID(in: session)
+      if let modelToSelect {
+        let model = try Self.resolveModel(modelToSelect, from: session)
+        options = try await connected.setSessionConfigOption(
+          sessionID: session.id,
+          configID: "model",
+          value: model
+        )
+        selectedModel = model
+      } else {
+        options = session.configOptions
+        selectedModel = nil
+      }
+      let models = try Self.modelDescriptors(
+        from: options,
+        selectedModelID: selectedModel
+      )
       await connected.shutdown()
       cleanup(runDirectory: launch.runDirectory, probeRoot: probeRoot)
       return models
@@ -201,17 +231,47 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         for: request.mutationIntent,
         in: session
       )
-      try await connected.setSessionConfigOption(
+      var configOptions = try await connected.setSessionConfigOption(
         sessionID: session.id,
         configID: "mode",
         value: mode
       )
       if let requestedModel = request.model {
         let model = try Self.resolveModel(requestedModel, from: session)
-        try await connected.setSessionConfigOption(
+        configOptions = try await connected.setSessionConfigOption(
           sessionID: session.id,
           configID: "model",
           value: model
+        )
+      } else if request.effort != nil, let model = Self.currentModelID(in: session) {
+        configOptions = try await connected.setSessionConfigOption(
+          sessionID: session.id,
+          configID: "model",
+          value: model
+        )
+      }
+      let hasEffortOption = configOptions.contains {
+        $0.id == "effort" && !$0.values.isEmpty
+      }
+      if let requestedEffort = request.effort {
+        guard let option = configOptions.first(where: { $0.id == "effort" }) else {
+          throw AgentRuntimeError.capabilityUnavailable(.effortSelection)
+        }
+        guard option.values.contains(where: { $0.value == requestedEffort }) else {
+          throw AgentRuntimeError.invalidRequest("request.effort")
+        }
+        configOptions = try await connected.setSessionConfigOption(
+          sessionID: session.id,
+          configID: "effort",
+          value: requestedEffort
+        )
+      }
+      var effectiveCapabilities = capabilities
+      if hasEffortOption {
+        effectiveCapabilities = AgentCapabilitySnapshot(
+          advertised: capabilities.advertised.union([.effortSelection]),
+          observed: capabilities.observed.union([.effortSelection]),
+          enforced: capabilities.enforced.union([.effortSelection])
         )
       }
       let binding = try AgentBinding(
@@ -243,7 +303,7 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       return AgentExecutionHandle(
         taskID: request.taskID,
         binding: binding,
-        capabilities: capabilities,
+        capabilities: effectiveCapabilities,
         events: execution.events,
         control: AgentExecutionControl(
           interrupt: { try await execution.interrupt() },
@@ -296,9 +356,6 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       else {
         throw AgentRuntimeError.invalidRequest("request.model")
       }
-    }
-    if request.effort != nil {
-      throw AgentRuntimeError.capabilityUnavailable(.effortSelection)
     }
   }
 
@@ -378,15 +435,34 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     )
   }
 
+  private static func modelDescriptors(
+    from options: [OpenCodeACPConfigOption],
+    selectedModelID: String? = nil
+  ) throws -> [AgentModelDescriptor] {
+    guard let option = options.first(where: { $0.id == "model" }) else {
+      throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
+    }
+    let selected = selectedModelID ?? option.currentValue
+    let effort = options.first(where: { $0.id == "effort" })
+    return try option.values.map {
+      try AgentModelDescriptor(
+        id: $0.value,
+        displayName: $0.name,
+        supportedReasoningEfforts: $0.value == selected
+          ? effort?.values.map(\.value) ?? [] : [],
+        defaultReasoningEffort: $0.value == selected ? effort?.currentValue : nil
+      )
+    }
+  }
+
   private static func modelDescriptors(from session: OpenCodeACPSession) throws
     -> [AgentModelDescriptor]
   {
-    guard let option = session.configOptions.first(where: { $0.id == "model" }) else {
-      throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
-    }
-    return try option.values.map {
-      try AgentModelDescriptor(id: $0.value, displayName: $0.name)
-    }
+    try modelDescriptors(from: session.configOptions)
+  }
+
+  private static func currentModelID(in session: OpenCodeACPSession) -> String? {
+    session.configOptions.first(where: { $0.id == "model" })?.currentValue
   }
 
   private static func modeValue(

@@ -138,6 +138,7 @@ extension BridgeServiceXPCController {
       providerID: payload.providerID,
       installationID: payload.installationID,
       model: payload.model,
+      effort: payload.effort,
       permissionMode: payload.permissionMode,
       prompt: payload.prompt,
       deadline: deadline
@@ -153,12 +154,21 @@ extension BridgeServiceXPCController {
     let deadline = ContinuousClock.now.advanced(by: .seconds(15))
     let items = try await composition.application.serviceListAgentModels(
       installationID: AgentInstallationID(rawValue: payload.installationID),
+      projectID: payload.projectID,
+      modelID: payload.modelID,
       deadline: deadline
     )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCAgentModelsResponse(
-        models: items.map { IPCAgentModelSummary(modelID: $0.modelID, displayName: $0.displayName) }
+        models: items.map {
+          IPCAgentModelSummary(
+            modelID: $0.modelID,
+            displayName: $0.displayName,
+            supportedReasoningEfforts: $0.supportedReasoningEfforts,
+            defaultReasoningEffort: $0.defaultReasoningEffort
+          )
+        }
       )
     )
   }
@@ -168,9 +178,17 @@ extension BridgeServiceXPCController {
   func handleGetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
     let model = try await composition.application.serviceOpenCodeDefaultModel(deadline: deadline)
+    let permissionMode = try await composition.application.serviceOpenCodeDefaultPermissionMode(
+      deadline: deadline
+    )
+    let effort = try await composition.application.serviceOpenCodeDefaultEffort(deadline: deadline)
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
-      payload: IPCAgentModelDefaultResponse(model: model)
+      payload: IPCAgentModelDefaultResponse(
+        model: model,
+        permissionMode: permissionMode,
+        effort: effort
+      )
     )
   }
 
@@ -181,9 +199,33 @@ extension BridgeServiceXPCController {
       payload.model,
       deadline: deadline
     )
+    if let permissionMode = payload.permissionMode {
+      try await composition.application.serviceSetOpenCodeDefaultPermissionMode(
+        permissionMode,
+        deadline: deadline
+      )
+    }
+    if let effort = payload.effort {
+      try await composition.application.serviceSetOpenCodeDefaultEffort(
+        effort.isEmpty ? nil : effort,
+        deadline: deadline
+      )
+    }
+    let persistedModel = try await composition.application.serviceOpenCodeDefaultModel(
+      deadline: deadline
+    )
+    let persistedPermissionMode = try await composition.application
+      .serviceOpenCodeDefaultPermissionMode(deadline: deadline)
+    let persistedEffort = try await composition.application.serviceOpenCodeDefaultEffort(
+      deadline: deadline
+    )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
-      payload: IPCAgentModelDefaultResponse(model: payload.model)
+      payload: IPCAgentModelDefaultResponse(
+        model: persistedModel,
+        permissionMode: persistedPermissionMode,
+        effort: persistedEffort
+      )
     )
   }
 }

@@ -380,6 +380,64 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
   }
 
+  func testApprovalResolutionIsSingleFlightAndRemovesCardAfterServiceSuccess() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    await client.setApprovalResolutionDelay(.milliseconds(100))
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    let approval = try XCTUnwrap(model.approvals.first)
+    model.resolveApproval(approval, decision: "allow")
+    XCTAssertTrue(model.isResolvingApproval(approval))
+
+    model.resolveApproval(approval, decision: "allow")
+
+    try await waitUntil {
+      !model.isResolvingApproval(approval)
+        && model.approvals.isEmpty
+        && model.toast?.tone == .success
+    }
+    let snapshot = await client.mutationSnapshot()
+    XCTAssertEqual(snapshot.approvalDecisions, ["approval-1:allow"])
+    XCTAssertNil(model.errorMessage)
+
+    model.applyApprovalSnapshot([approval])
+    XCTAssertTrue(model.approvals.isEmpty)
+  }
+
+  func testApprovalReplyLossRecoversFromAuthoritativePendingSnapshot() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    await client.setFailApprovalReplyAfterResolution(true)
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    let approval = try XCTUnwrap(model.approvals.first)
+    model.resolveApproval(approval, decision: "allow")
+
+    try await waitUntil {
+      !model.isResolvingApproval(approval)
+        && model.approvals.isEmpty
+        && model.toast?.tone == .success
+    }
+    let snapshot = await client.mutationSnapshot()
+    XCTAssertEqual(snapshot.approvalDecisions, ["approval-1:allow"])
+    XCTAssertNil(model.errorMessage)
+  }
+
   func testDeleteConversationRoutesItsTaskToTheServiceClient() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

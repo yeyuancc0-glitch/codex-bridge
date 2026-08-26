@@ -12,28 +12,34 @@ extension BridgeServiceXPCController {
       IPCTaskConversationRequest.self,
       from: request
     )
-    let records = try await composition.application.serviceConversationPage(
+    let page = try await composition.application.serviceConversationPage(
       taskID: payload.taskID,
       beforeMessageID: payload.beforeMessageID,
       limit: payload.limit,
       deadline: Self.deadline()
     )
+    let livePage = Self.conversationPage(taskID: payload.taskID, entries: page.liveEntries)
+    let liveKeys = Set(livePage.messages.map(\.key))
+    let persisted = page.messages
+      .filter { !liveKeys.contains($0.key) }
+      .map { message in
+        IPCTaskConversationMessage(
+          messageID: message.id,
+          key: message.key,
+          role: message.role.rawValue,
+          kind: message.kind.rawValue,
+          content: message.content,
+          toolName: message.toolName,
+          toolStatus: message.toolStatus,
+          toolArguments: message.toolArguments,
+          final: message.isFinal(for: page.taskStatus)
+        )
+      }
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCTaskConversationPage(
         taskID: payload.taskID,
-        messages: records.map { message in
-          IPCTaskConversationMessage(
-            messageID: message.id,
-            key: message.key,
-            role: message.role.rawValue,
-            kind: message.kind.rawValue,
-            content: message.content,
-            toolName: message.toolName,
-            toolStatus: message.toolStatus,
-            toolArguments: message.toolArguments
-          )
-        }
+        messages: Array((persisted + livePage.messages).suffix(payload.limit))
       )
     )
   }

@@ -72,7 +72,9 @@ extension MCPServiceToolCatalog {
       + "opencode). For OpenCode, permission_mode selects its native ACP Plan (read-only) or "
       + "native ACP Build (workspace-write). OpenCode network access follows its native permissions; the "
       + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
-      + "Codex, but execution_effort is not an OpenCode ACP option and must be omitted; supervisor, "
+      + "Codex. For OpenCode, execution_effort accepts only the selected model's ACP effort values; "
+      + "when omitted, Bridge uses the saved OpenCode default when supported and otherwise the Provider default. "
+      + "If permission_mode is omitted, Bridge uses the saved OpenCode default mode; supervisor, "
       + "skill and thread fields must also be omitted.",
     inputSchema: objectSchema(
       properties: [
@@ -98,7 +100,7 @@ extension MCPServiceToolCatalog {
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the Codex Bridge default effort. Set only with an explicit user-requested Codex override; OpenCode does not accept this field."
+            "Omit to use the Codex Bridge/OpenCode default effort. For OpenCode, set only to a value advertised for the selected model when the user explicitly requests a per-task override."
         ),
         "model_override": [
           "type": ["boolean", "null"],

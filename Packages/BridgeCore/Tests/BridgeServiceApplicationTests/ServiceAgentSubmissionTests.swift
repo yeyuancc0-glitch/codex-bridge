@@ -30,17 +30,21 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     private let returnedTaskID: TaskID?
     private let startError: AgentRuntimeError?
     private let supportsWorkspaceWrite: Bool
+    private let supportedReasoningEfforts: [String]
     private let resolveApprovalError: AgentRuntimeError?
+    private var modelProjectRoots: [String?] = []
 
     init(
       returnedTaskID: TaskID? = nil,
       startError: AgentRuntimeError? = nil,
       supportsWorkspaceWrite: Bool = false,
+      supportedReasoningEfforts: [String] = [],
       resolveApprovalError: AgentRuntimeError? = nil
     ) throws {
       self.returnedTaskID = returnedTaskID
       self.startError = startError
       self.supportsWorkspaceWrite = supportsWorkspaceWrite
+      self.supportedReasoningEfforts = supportedReasoningEfforts
       self.resolveApprovalError = resolveApprovalError
       descriptor = try AgentProviderDescriptor(
         providerID: .openCode,
@@ -88,14 +92,29 @@ final class ServiceAgentSubmissionTests: XCTestCase {
 
     func models(
       installation _: AgentInstallation,
-      projectRoot _: String?
+      projectRoot: String?
     ) async throws -> [AgentModelDescriptor] {
-      [
+      recordModelProjectRoot(projectRoot)
+      return [
         try AgentModelDescriptor(
           id: "opencode/x-preview-f-free",
-          displayName: "OpenCode Zen/Ox Alpha Free"
+          displayName: "OpenCode Zen/Ox Alpha Free",
+          supportedReasoningEfforts: supportedReasoningEfforts,
+          defaultReasoningEffort: supportedReasoningEfforts.first
         )
       ]
+    }
+
+    func modelProjectRootsValue() -> [String?] {
+      lock.lock()
+      defer { lock.unlock() }
+      return modelProjectRoots
+    }
+
+    private func recordModelProjectRoot(_ projectRoot: String?) {
+      lock.lock()
+      defer { lock.unlock() }
+      modelProjectRoots.append(projectRoot)
     }
 
     func start(
@@ -490,6 +509,82 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertFalse(snapshot.networkAccess)
   }
 
+  func testAgentModelCatalogUsesRequestedProjectRoot() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+
+    _ = try await application.serviceListAgentModels(
+      installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+      projectID: fixture.project.id.rawValue,
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+
+    XCTAssertEqual(
+      provider.modelProjectRootsValue(),
+      [fixture.project.root.canonicalPath]
+    )
+
+    try await fixture.settings.set(
+      fixture.project.id.rawValue,
+      for: .workbenchProjectID
+    )
+    _ = try await application.serviceListAgentModels(
+      installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    XCTAssertEqual(
+      provider.modelProjectRootsValue(),
+      [fixture.project.root.canonicalPath, fixture.project.root.canonicalPath]
+    )
+  }
+
+  func testOpenCodeSubmissionUsesSavedBuildModeAndSupportedEffortByDefault() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.set("opencode/x-preview-f-free", for: .openCodeDefaultModel)
+    try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
+    try await fixture.settings.setOpenCodeDefaultEffort("high")
+    let provider = try ScriptedAgentProvider(
+      supportsWorkspaceWrite: true,
+      supportedReasoningEfforts: ["low", "high"]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the saved OpenCode defaults.",
+        providerID: "opencode",
+        clientRequestID: "saved-opencode-defaults"
+      ),
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+
+    XCTAssertEqual(task.permissionMode, .workspaceWrite)
+    XCTAssertEqual(task.executionModel, "opencode/x-preview-f-free")
+    XCTAssertEqual(task.executionEffort, "high")
+  }
+
   func testAgentApprovalUsesExistingLocalApprovalResolution() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider()
@@ -818,17 +913,17 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       let stored = try await fixture2.tasks.task(id: TaskID(rawValue: receipt.taskID))
       XCTAssertEqual(stored?.executionModel, "openai/gpt-5.6-sol")
       XCTAssertEqual(stored?.executionEffort, serviceDefaultProviderExecutionEffort)
+      try await assertRejected(
+        app2,
+        submission: MCPServiceTaskSubmission(
+          projectID: fixture2.project.id.rawValue, prompt: "x",
+          providerID: "opencode", executionEffort: "high", modelOverride: true),
+        expected: .contractRejected,
+        reason: "effort is unavailable for the selected ACP model"
+      )
     } catch {
       XCTFail("Expected model override to be accepted, got \(error)")
     }
-    try await assertRejected(
-      application,
-      submission: MCPServiceTaskSubmission(
-        projectID: projectID, prompt: "x", providerID: "opencode",
-        executionEffort: "high", modelOverride: true),
-      expected: .contractRejected,
-      reason: "effort is not an ACP session option"
-    )
     try await assertRejected(
       application,
       submission: MCPServiceTaskSubmission(

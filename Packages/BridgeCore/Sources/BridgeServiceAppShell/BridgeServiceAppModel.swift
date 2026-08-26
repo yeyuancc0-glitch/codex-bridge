@@ -89,10 +89,13 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var agentInstallations: [IPCAgentInstallationSummary] = []
   @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = []
   @Published public internal(set) var openCodeDefaultModel: String?
+  @Published public internal(set) var openCodeDefaultPermissionMode = "build"
+  @Published public internal(set) var openCodeDefaultEffort: String?
   @Published public internal(set) var isManagingAgents = false
   @Published public internal(set) var tasks: [MCPServiceTaskSnapshot] = []
   @Published public internal(set) var approvals: [IPCApprovalSummary] = []
   @Published public internal(set) var directApprovals: [IPCPendingDirectApproval] = []
+  @Published public internal(set) var resolvingApprovalKeys: Set<String> = []
   @Published public internal(set) var directApprovalMode = "require"
   @Published public internal(set) var mcpClients: [IPCMCPClientStatus] = []
   @Published public internal(set) var models: [MCPModelSummary] = []
@@ -146,6 +149,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   var agentModelDefaultLoadGeneration: UInt64 = 0
   var agentModelDefaultRevision: UInt64 = 0
   var agentModelDefaultMutationTask: Task<Void, Never>?
+  var resolvedTaskApprovalKeys: Set<String> = []
+  var resolvedDirectApprovalKeys: Set<String> = []
   var chatBrowserResumeURL = URL(string: "https://chatgpt.com")!
   var lastThreadCatalogRefreshAt: Date?
   var started = false

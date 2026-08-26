@@ -340,10 +340,14 @@ extension BridgeServiceApplication {
       requestedModel ?? configuredModel
     )
     let requestedEffort = usesOverride ? submission.executionEffort : nil
-    guard requestedEffort == nil else {
-      throw BridgeMCPQueryError.contractRejected
-    }
-    let permission = try Self.permissionMode(submission.permissionMode, project: project)
+    let configuredEffort = try await settings.openCodeDefaultEffort()
+    let configuredMode = try await settings.openCodeDefaultPermissionMode()
+    let defaultMode: ServicePermissionMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
+    let permission = try Self.permissionMode(
+      submission.permissionMode,
+      project: project,
+      defaultMode: defaultMode
+    )
     guard !submission.networkAccess else {
       // OpenCode's ACP mode does not expose a per-task network sandbox. Do
       // not persist a requested network grant as though Bridge enforced it.
@@ -357,6 +361,41 @@ extension BridgeServiceApplication {
       .sorted { $0.id.rawValue < $1.id.rawValue }
     let record = try Self.selectAgentInstallation(
       requested: submission.installationID, from: selectable)
+    let modelCatalog = try? await registry.models(
+      installationID: record.id,
+      projectRoot: project.root.canonicalPath,
+      selectedModelID: resolvedModel
+    )
+    let selectedDescriptor: AgentModelDescriptor?
+    if let modelCatalog {
+      if let resolvedModel {
+        selectedDescriptor = modelCatalog.first(where: { descriptor in
+          if descriptor.id == resolvedModel { return true }
+          return resolvedModel == "opencode-go/ox-alpha-free"
+            && descriptor.id == "opencode/x-preview-f-free"
+        })
+      } else {
+        selectedDescriptor = modelCatalog.first(where: {
+          !$0.supportedReasoningEfforts.isEmpty
+        })
+      }
+    } else {
+      selectedDescriptor = nil
+    }
+    let executionEffort: String
+    if let requestedEffort {
+      guard modelCatalog != nil else { throw BridgeMCPQueryError.unavailable }
+      guard selectedDescriptor?.supportedReasoningEfforts.contains(requestedEffort) == true else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+      executionEffort = requestedEffort
+    } else if let configuredEffort,
+      selectedDescriptor?.supportedReasoningEfforts.contains(configuredEffort) == true
+    {
+      executionEffort = configuredEffort
+    } else {
+      executionEffort = serviceDefaultProviderExecutionEffort
+    }
     let prompt = Self.prompt(submission.prompt, acceptanceCriteria: submission.acceptanceCriteria)
     guard prompt.utf8.count <= 32 * 1_024 else {
       throw BridgeMCPQueryError.contractRejected
@@ -375,7 +414,7 @@ extension BridgeServiceApplication {
         installationID: record.id.rawValue,
         selectionMode: .explicit,
         executionModel: executionModel,
-        executionEffort: serviceDefaultProviderExecutionEffort,
+        executionEffort: executionEffort,
         permissionMode: permission,
         networkAllowed: false,
         accessMode: accessMode
