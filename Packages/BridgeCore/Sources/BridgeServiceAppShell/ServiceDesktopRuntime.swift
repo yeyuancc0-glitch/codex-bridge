@@ -83,8 +83,14 @@ extension BridgeServiceAppModel {
       connectionState = .idle
       serviceStatus = nil
       projects = []
+      agentProviders = []
+      agentInstallations = []
+      isManagingAgents = false
       tasks = []
       approvals = []
+      resolvingApprovalKeys = []
+      resolvedTaskApprovalKeys = []
+      resolvedDirectApprovalKeys = []
       mcpClients = []
       models = []
       modelPreferences = nil
@@ -93,6 +99,7 @@ extension BridgeServiceAppModel {
       threads = []
       skills = []
       selectedThread = nil
+      selectedTaskID = nil
       selectedProjectID = nil
     } catch {
       registrationStatus = registration.status
@@ -198,6 +205,7 @@ extension BridgeServiceAppModel {
     includeThreads: Bool
   ) async {
     async let projectResult = optional { try await client.projects() }
+    async let agentCatalogResult = optional { try await client.agentCatalog() }
     async let taskResult = optional {
       try await client.tasks(IPCTaskListRequest(limit: 200))
     }
@@ -216,6 +224,11 @@ extension BridgeServiceAppModel {
       }
     }
 
+    if let value = await agentCatalogResult {
+      agentProviders = value.providers
+      agentInstallations = value.installations
+    }
+
     if let projectID = selectedProjectID, projectDetails[projectID] == nil,
       let detail = await optional({ try await client.projectCommands(projectID: projectID) }),
       selectedProjectID == projectID
@@ -228,11 +241,23 @@ extension BridgeServiceAppModel {
       shouldRefreshThreads =
         shouldRefreshThreads || Self.taskCatalogChanged(from: tasks, to: value)
       tasks = value
-      if let activeTask = value.first(where: \.isRunning), let threadID = activeTask.threadID,
+      reconcileTaskSelection()
+      if let activeAgentTask = value.first(where: { $0.isExternalAgentTask && $0.isActive }),
+        selectedTaskID != activeAgentTask.taskID || conversation?.taskID != activeAgentTask.taskID
+      {
+        selectedProjectID = activeAgentTask.projectID
+        persistWorkbenchProjectSelection(activeAgentTask.projectID)
+        selectedTaskID = activeAgentTask.taskID
+        selectedThreadID = nil
+        selectedThread = nil
+        openConversation(taskID: activeAgentTask.taskID)
+      } else if let activeTask = value.first(where: \.isRunning),
+        let threadID = activeTask.threadID,
         selectedThreadID != threadID || conversation?.taskID != activeTask.taskID
       {
         selectedProjectID = activeTask.projectID
         persistWorkbenchProjectSelection(activeTask.projectID)
+        selectedTaskID = activeTask.taskID
         selectedThreadID = threadID
         selectedThread = nil
         openConversation(taskID: activeTask.taskID)
@@ -255,10 +280,10 @@ extension BridgeServiceAppModel {
     }
 
     if let value = await approvalResult {
-      approvals = value
+      applyApprovalSnapshot(value)
     }
     if let value = await directApprovalResult {
-      directApprovals = value
+      applyDirectApprovalSnapshot(value)
     }
     if let value = await directApprovalModeResult {
       directApprovalMode = value
@@ -290,6 +315,39 @@ extension BridgeServiceAppModel {
     guard !remainsVisible, !belongsToTask else { return }
     self.selectedThreadID = nil
     selectedThread = nil
+  }
+
+  func reconcileTaskSelection() {
+    guard let selectedTaskID else { return }
+    guard tasks.contains(where: { $0.taskID == selectedTaskID }) else {
+      if conversation?.taskID == selectedTaskID {
+        closeConversation()
+      }
+      self.selectedTaskID = nil
+      return
+    }
+  }
+
+  func applyApprovalSnapshot(_ value: [IPCApprovalSummary]) {
+    let incomingKeys = Set(value.map { WorkbenchApprovalResolutionKey.task($0.approvalID) })
+    if resolvedTaskApprovalKeys.count > 512 {
+      resolvedTaskApprovalKeys.formIntersection(incomingKeys)
+    }
+    let hiddenKeys = resolvingApprovalKeys.union(resolvedTaskApprovalKeys)
+    approvals = value.filter {
+      !hiddenKeys.contains(WorkbenchApprovalResolutionKey.task($0.approvalID))
+    }
+  }
+
+  func applyDirectApprovalSnapshot(_ value: [IPCPendingDirectApproval]) {
+    let incomingKeys = Set(value.map { WorkbenchApprovalResolutionKey.direct($0.approvalID) })
+    if resolvedDirectApprovalKeys.count > 512 {
+      resolvedDirectApprovalKeys.formIntersection(incomingKeys)
+    }
+    let hiddenKeys = resolvingApprovalKeys.union(resolvedDirectApprovalKeys)
+    directApprovals = value.filter {
+      !hiddenKeys.contains(WorkbenchApprovalResolutionKey.direct($0.approvalID))
+    }
   }
 
   func updateChatBrowserVisibility() {
@@ -428,6 +486,7 @@ extension BridgeServiceAppModel {
       !projects.contains(where: { $0.projectID == selectedProjectID })
     else { return }
     self.selectedProjectID = nil
+    selectedTaskID = nil
     threads = []
     selectedThread = nil
   }

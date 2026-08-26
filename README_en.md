@@ -13,6 +13,8 @@
 
 **Codex Bridge** is a **zero-cloud, personal self-hosted, local-first** macOS bridge. Through the standard Model Context Protocol (MCP), it connects **ChatGPT Web**, **Qwen Studio**, and other MCP clients directly to your local **Codex** execution engine—enabling world-class cloud AI models to safely power local development and environment automation.
 
+Version 0.3.0 keeps the Codex path compatible while adding an optional local **OpenCode Provider (ACP)** and improving task observability, remounted-project handling, global MCP instructions, Skill timeouts, Direct capability/credential checks, and workbench/XPC stability.
+
 ---
 
 ## 🌟 Key Highlights & Core Values
@@ -24,6 +26,7 @@
 - 🤖 **Dual Execution Pathways**:
   - **Codex Deep Mode (Recommended)**: Delegates tasks to the local Codex engine (supporting multi-turn discussions, tool execution, independent Supervisor critique, and typewriter live streaming).
   - **Direct Mutation Mode**: Direct file edits, patch applications, controlled Git commits, and sandboxed command execution (protected by desktop prompt approvals).
+- 🧩 **Optional Agent Provider**: Register and probe a local OpenCode installation in the app, then submit OpenCode ACP Plan/Build tasks through the workbench or MCP. Every task still requires local approval.
 - 🛡️ **Local-Only Approvals**: No matter how intelligent the AI is, any dangerous file write, command execution, or Git commit **must be explicitly approved by the local Mac user via a native desktop dialog**.
 - 🖥️ **Native macOS Experience (SwiftUI + AppKit)**: Standalone LaunchAgent daemon continues running when the UI is closed; the built-in workbench features real-time streaming, collapsible reasoning blocks, and structured tool-call cards.
 
@@ -42,6 +45,7 @@
             ┌──────────────────────────────────────────────┐
             │        CodexBridgeService (LaunchAgent)      │
             │  ├─ Unified MCP Gateway (Read-Only/Full)     │
+            │  ├─ Codex app-server + optional OpenCode ACP  │
             │  ├─ Direct Process & Session Management      │
             │  ├─ Single SQLite Store (Tasks, Projects)    │
             │  └─ Local Action Approval Center             │
@@ -79,6 +83,20 @@ ChatGPT / Qwen  ──[direct_write_file]──►  Desktop Approval Sheet (Payl
 ```
 - **Best for**: Fast configuration tweaks, small patch applications, repository inspection, and safe read-only commands.
 - **Features**: Single-use signed approval grants, cooldown flood protection, and controlled `direct_git_commit` (isolated temporary index, sensitive credential protection).
+
+### 3. OpenCode Provider Workflow (Optional)
+
+```text
+ChatGPT / Qwen / Workbench ──[provider_id=opencode]──► Local approval
+                                                         │
+                                                         ▼
+                                         OpenCode ACP (Plan / Build)
+```
+
+- Register and enable OpenCode under **Settings → Local Agent Providers** before submitting a task.
+- Models come from ACP `session/new.configOptions`; use the exact returned model IDs.
+- `read-only` maps to OpenCode Plan and `workspace-write` maps to OpenCode Build. Network behavior remains controlled by OpenCode's native permissions.
+- See the [OpenCode Connection Guide](./docs/OPENCODE_CONNECTION_GUIDE.md) for setup, MCP examples, and troubleshooting.
 
 ---
 
@@ -123,6 +141,11 @@ Open the app and click **Add Project** to register your authorized workspace dir
 2. Click **Copy MCP Config JSON**.
 3. Paste the configuration into Qwen Studio's MCP settings to start chatting immediately!
 
+#### Option C: Enable the OpenCode Provider
+1. Install and sign in to OpenCode as described in the [OpenCode Connection Guide](./docs/OPENCODE_CONNECTION_GUIDE.md).
+2. In Bridge, open **Settings → Local Agent Providers**, register the OpenCode executable, and enable it after a successful probe.
+3. Refresh the model catalog in the workbench and choose Plan or Build. ChatGPT/Qwen can then set `provider_id: "opencode"` in `submit_task`.
+
 ---
 
 ## 🛡️ Security & Privacy Boundaries
@@ -144,6 +167,8 @@ Open the app and click **Add Project** to register your authorized workspace dir
 App/                              Native macOS client entry point (SwiftUI + AppKit)
 CodexBridge.xcodeproj/            Xcode project containing App & Service LaunchAgent targets
 Packages/BridgeCore/
+  Sources/BridgeAgentCore/        Provider, installation, capability & execution contracts
+  Sources/BridgeOpenCodeACP/      OpenCode ACP stdio adapter, model catalog & event normalization
   Sources/BridgeServiceCore/      Single SQLite store (Projects, tasks, settings, events)
   Sources/BridgeCodexRPC/         Codex app-server protocol adapter & stdio process broker
   Sources/BridgeCodexService/     ExecutionManager, Supervisor, coordinator & live streams
@@ -156,41 +181,39 @@ Packages/BridgeCore/
   Sources/BridgeSkills/           Skill discovery, YAML frontmatter & action sandboxing
   Sources/BridgeTunnel/           Secure MCP Tunnel process lifecycle & health checks
   Sources/BridgeSecurity/         Path canonicalization, device/inode validation & secret filters
-Scripts/                          Build, signing, release & tunnel verification scripts
+Scripts/                          Build, lint, test, tunnel verification & release scripts
 docs/                             Detailed technical specifications & developer guides
 ```
 
 ---
 
-## 🛠️ Build from Source
+## 🧪 Development & Verification Baseline
 
-The project requires full Xcode and uses the repository wrapper to select the correct toolchain:
+This project adheres to rigorous engineering standards:
 
 ```bash
-# Build the Swift package
-Scripts/with-xcode.sh swift build --package-path Packages/BridgeCore
+# Run package unit and integration tests
+Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
 
 # Strict swift-format code style check
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive \
-  Packages/BridgeCore/Sources App Service
+  Packages/BridgeCore/Sources Packages/BridgeCore/Tests App
 
-# Build an unsigned Debug app
-Scripts/with-xcode.sh xcodebuild \
-  -project CodexBridge.xcodeproj \
-  -scheme CodexBridge \
-  -configuration Debug \
-  -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath .build/Xcode \
-  build CODE_SIGNING_ALLOWED=NO
+# Official MCP Inspector acceptance gate
+Scripts/verify-mcp-inspector.sh
+
+# Tunnel helper compatibility check
+Scripts/test-tunnel-helper-config.sh
 ```
 
-- Tests, fixtures, internal acceptance records, and locally generated data are not included in the public source snapshot.
+- **Verified Baseline**: Swift 6 strict-concurrency checks, the complete Package test suite, Universal 2 packaging, MCP Inspector 2.1.0, and tunnel-client gates are recorded against the current Release CI and release record.
 
 ---
 
 ## 📚 Documentation
 
 - [ChatGPT Developer Mode Setup Guide](./docs/CHATGPT_DEVELOPER_MODE.md)
+- [OpenCode Connection Guide](./docs/OPENCODE_CONNECTION_GUIDE.md)
 - [System & Environment Compatibility Matrix](./docs/COMPATIBILITY.md)
 - [Pinned Dependencies & Licensing Evidence](./docs/DEPENDENCIES.md)
 - [Secure Tunnel Helper Integration Contract](./docs/TUNNEL_CLIENT_INTEGRATION.md)

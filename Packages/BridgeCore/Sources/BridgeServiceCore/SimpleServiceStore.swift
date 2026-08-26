@@ -543,6 +543,37 @@ public actor SimpleServiceStore {
     }
   }
 
+  public func recentTaskMessageActivity(
+    taskID: TaskID,
+    limit: Int = 12
+  ) throws -> [ServiceTaskMessageRecord] {
+    guard (1...100).contains(limit) else {
+      throw ServiceStoreError.invalidArgument("taskMessageActivity.limit")
+    }
+    do {
+      return try database.read { db in
+        let rows = try Row.fetchAll(
+          db,
+          sql: """
+            SELECT * FROM (
+              SELECT * FROM bridge_service_task_messages
+              WHERE task_id = ? AND role = 'agent'
+              ORDER BY updated_at DESC, message_id DESC
+              LIMIT ?
+            )
+            ORDER BY updated_at ASC, message_id ASC
+            """,
+          arguments: [taskID.rawValue, limit]
+        )
+        return try rows.map(Self.decodeTaskMessage)
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
   public func removeTask(id: TaskID) throws {
     do {
       try database.write { db in
@@ -593,6 +624,8 @@ public actor SimpleServiceStore {
           let state = try ServiceTaskState(
             codexThreadID: task.state.codexThreadID,
             codexTurnID: task.state.codexTurnID,
+            providerSessionID: task.state.providerSessionID,
+            providerRunID: task.state.providerRunID,
             status: recoveredStatus,
             supervisorStatus: supervisorStatus,
             currentStep: task.state.currentStep,
@@ -608,8 +641,8 @@ public actor SimpleServiceStore {
             ServiceTaskEventDraft(
               kind: wasNotStarted ? .taskInterrupted : .taskMarkedUnknown,
               summary: wasNotStarted
-                ? "The service restarted before Codex execution began."
-                : "The service restarted without an attached Codex turn.",
+                ? "The service restarted before task execution began."
+                : "The service restarted without an attached provider run.",
               createdAt: date
             ),
             taskID: task.id,

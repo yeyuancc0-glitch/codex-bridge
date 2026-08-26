@@ -67,6 +67,13 @@ public final class DirectCommandOutputCollector: @unchecked Sendable {
     )
   }
 
+  public func completeData() -> Data? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !overflowed else { return nil }
+    return tailStorage
+  }
+
   public var isEmpty: Bool {
     lock.lock()
     defer { lock.unlock() }

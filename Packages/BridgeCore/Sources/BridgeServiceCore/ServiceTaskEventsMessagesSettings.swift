@@ -56,6 +56,7 @@ public struct ServiceTaskMessageDraft: Codable, Equatable, Sendable {
   public let toolStatus: String?
   public let toolArguments: String?
   public let createdAt: Date
+  public let updatedAt: Date
 
   public init(
     key: String,
@@ -65,7 +66,8 @@ public struct ServiceTaskMessageDraft: Codable, Equatable, Sendable {
     kind: ServiceTaskMessageKind = .agent,
     toolName: String? = nil,
     toolStatus: String? = nil,
-    toolArguments: String? = nil
+    toolArguments: String? = nil,
+    updatedAt: Date? = nil
   ) throws {
     try ServiceValidation.identifier(key, field: "taskMessage.key", maximumBytes: 256)
     try ServiceValidation.text(content, field: "taskMessage.content", maximumBytes: 256 * 1_024)
@@ -76,6 +78,11 @@ public struct ServiceTaskMessageDraft: Codable, Equatable, Sendable {
       maximumBytes: 64 * 1_024
     )
     try ServiceValidation.date(createdAt, field: "taskMessage.createdAt")
+    let effectiveUpdatedAt = updatedAt ?? createdAt
+    try ServiceValidation.date(effectiveUpdatedAt, field: "taskMessage.updatedAt")
+    guard effectiveUpdatedAt >= createdAt else {
+      throw ServiceStoreError.invalidArgument("taskMessage.updatedAt")
+    }
     self.key = key
     self.role = role
     self.kind = kind
@@ -84,6 +91,7 @@ public struct ServiceTaskMessageDraft: Codable, Equatable, Sendable {
     self.toolStatus = toolStatus
     self.toolArguments = toolArguments
     self.createdAt = createdAt
+    self.updatedAt = effectiveUpdatedAt
   }
 }
 
@@ -98,6 +106,7 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
   public let toolStatus: String?
   public let toolArguments: String?
   public let createdAt: Date
+  public let updatedAt: Date
 
   public init(
     id: Int64,
@@ -109,7 +118,8 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
     kind: ServiceTaskMessageKind = .agent,
     toolName: String? = nil,
     toolStatus: String? = nil,
-    toolArguments: String? = nil
+    toolArguments: String? = nil,
+    updatedAt: Date? = nil
   ) throws {
     guard id > 0 else { throw ServiceStoreError.invalidArgument("taskMessage.id") }
     try ServiceValidation.identifier(
@@ -123,6 +133,11 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
       maximumBytes: 64 * 1_024
     )
     try ServiceValidation.date(createdAt, field: "taskMessage.createdAt")
+    let effectiveUpdatedAt = updatedAt ?? createdAt
+    try ServiceValidation.date(effectiveUpdatedAt, field: "taskMessage.updatedAt")
+    guard effectiveUpdatedAt >= createdAt else {
+      throw ServiceStoreError.invalidArgument("taskMessage.updatedAt")
+    }
     self.id = id
     self.taskID = taskID
     self.key = key
@@ -133,6 +148,23 @@ public struct ServiceTaskMessageRecord: Codable, Equatable, Sendable {
     self.toolStatus = toolStatus
     self.toolArguments = toolArguments
     self.createdAt = createdAt
+    self.updatedAt = effectiveUpdatedAt
+  }
+
+  /// A persisted message does not store its own finality. The task state is
+  /// the authority for provider text, while user messages and completed tool
+  /// calls remain independently complete during a running task.
+  public func isFinal(for taskStatus: ServiceTaskStatus) -> Bool {
+    if taskStatus.isTerminal || role == .user || kind == .user {
+      return true
+    }
+    guard kind == .toolCall else { return false }
+    switch toolStatus {
+    case "completed", "failed", "declined", "cancelled":
+      return true
+    default:
+      return false
+    }
   }
 }
 

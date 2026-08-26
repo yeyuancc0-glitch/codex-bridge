@@ -25,6 +25,37 @@ extension MCPServiceToolCatalog {
     required: ["project_id", "name", "capabilities"]
   )
 
+  static let agentSummarySchema = objectSchema(
+    properties: [
+      "provider_id": stringSchema,
+      "installation_id": stringSchema,
+      "display_name": stringSchema,
+      "availability": [
+        "type": "string", "enum": ["available", "unavailable", "needs_review"],
+      ],
+      "enabled": boolSchema,
+      "task_submission_enabled": boolSchema,
+      "version": stringSchema,
+      "protocol_revision": stringSchema,
+      "adapter_revision": integerSchema(minimum: 1),
+      "effective_capabilities": arraySchema(stringSchema),
+      "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
+      "security_profile_id": stringSchema,
+      "workspace_enforcement": stringSchema,
+      "approval_enforcement": stringSchema,
+      "network_enforcement": stringSchema,
+      "models_summary": arraySchema(stringSchema),
+      "unavailable_reason": stringSchema,
+      "last_verified_at": stringSchema,
+    ],
+    required: [
+      "provider_id", "installation_id", "display_name", "availability", "enabled",
+      "task_submission_enabled", "adapter_revision", "effective_capabilities",
+      "trust_profile", "workspace_enforcement", "approval_enforcement",
+      "network_enforcement", "models_summary",
+    ]
+  )
+
   static let projectDetailSchema = objectSchema(
     properties: [
       "project_id": stringSchema,
@@ -146,7 +177,7 @@ extension MCPServiceToolCatalog {
 
   static let taskEventSchema = objectSchema(
     properties: [
-      "seq": integerSchema(minimum: 0),
+      "seq": integerSchema(minimum: 1),
       "kind": stringSchema,
       "summary": stringSchema,
       "occurred_at": stringSchema,
@@ -154,29 +185,76 @@ extension MCPServiceToolCatalog {
     required: ["seq", "kind", "summary", "occurred_at"]
   )
 
+  static let taskActivitySchema = objectSchema(
+    properties: [
+      "seq": integerSchema(minimum: 1),
+      "kind": stringSchema,
+      "summary": stringSchema,
+      "occurred_at": stringSchema,
+      "tool_name": stringSchema,
+      "tool_status": stringSchema,
+    ],
+    required: ["seq", "kind", "summary", "occurred_at"]
+  )
+
+  static let taskWaitPolicySchema = objectSchema(
+    properties: [
+      "wait_profile": [
+        "type": ["string", "null"],
+        "enum": ["fast", "standard", "deep", .null],
+      ],
+      "recommended_poll_after_seconds": integerSchema(minimum: 0, maximum: 600),
+      "diagnostic_after_quiet_seconds": integerSchema(minimum: 0, maximum: 3_600),
+      "terminal": boolSchema,
+      "next_action": [
+        "type": "string",
+        "enum": [
+          "await_local_approval", "poll_get_task", "read_final_report",
+          "inspect_terminal_state", "inspect_task",
+        ],
+      ],
+      "do_not_infer_failure": boolSchema,
+    ],
+    required: [
+      "wait_profile", "recommended_poll_after_seconds", "diagnostic_after_quiet_seconds",
+      "terminal", "next_action", "do_not_infer_failure",
+    ]
+  )
+
   static let taskSchema = objectSchema(
     properties: [
       "task_id": stringSchema,
       "project_id": stringSchema,
       "status": stringSchema,
+      "provider_id": stringSchema,
+      "installation_id": stringSchema,
       "execution_model": stringSchema,
       "execution_effort": stringSchema,
+      "permission_mode": stringSchema,
+      "network_access": boolSchema,
       "thread_id": stringSchema,
       "turn_id": stringSchema,
+      "provider_session_id": stringSchema,
+      "provider_run_id": stringSchema,
       "current_step": stringSchema,
       "changed_files": arraySchema(stringSchema),
       "recent_events": arraySchema(taskEventSchema),
+      "recent_activity": arraySchema(taskActivitySchema),
+      "recent_activity_available": boolSchema,
       "supervisor_status": stringSchema,
       "supervisor_summary": stringSchema,
       "local_approval_required": boolSchema,
       "result_summary": stringSchema,
       "failure_code": stringSchema,
       "updated_at": stringSchema,
+      "wait_policy": taskWaitPolicySchema,
     ],
     required: [
       "task_id", "project_id", "status", "changed_files", "recent_events",
-      "execution_model", "execution_effort", "supervisor_status",
-      "local_approval_required", "updated_at",
+      "recent_activity_available",
+      "execution_model", "execution_effort", "permission_mode", "network_access",
+      "supervisor_status",
+      "local_approval_required", "updated_at", "wait_policy",
     ]
   )
 

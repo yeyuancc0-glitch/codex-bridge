@@ -1,9 +1,11 @@
+import BridgeAgentCore
 import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDirectCommand
 import BridgeDomain
 import BridgeLegacyImport
 import BridgeMCP
+import BridgeOpenCodeACP
 import BridgeSecurity
 import BridgeServiceApplication
 import BridgeServiceCore
@@ -76,6 +78,7 @@ public actor ServiceComposition {
   public let projects: ServiceProjectService
   public let tasks: ServiceTaskManager
   public let settings: ServiceSettings
+  public let agentRegistry: ServiceAgentRegistry
   public let execution: ExecutionManager
   public let supervisor: SupervisorManager
   public let coordinator: ServiceExecutionCoordinator
@@ -114,6 +117,18 @@ public actor ServiceComposition {
     let projects = ServiceProjectService(store: store)
     let tasks = ServiceTaskManager(store: store)
     let settings = ServiceSettings(store: store)
+    let agentProviders: [any AgentProvider] = [try OpenCodeACPProvider()]
+    let agentRegistry = ServiceAgentRegistry(
+      store: store,
+      providers: agentProviders
+    )
+    _ = try await agentRegistry.refreshInstallationStates()
+    let agentRunner = ServiceAgentTaskRunner(
+      registry: agentRegistry,
+      providers: Dictionary(
+        uniqueKeysWithValues: agentProviders.map { ($0.descriptor.providerID, $0) }
+      )
+    )
     let execution = ExecutionManager(
       configuration: ExecutionManagerConfiguration(
         appServer: configuration.executionAppServer,
@@ -132,7 +147,8 @@ public actor ServiceComposition {
       tasks: tasks,
       projects: projects,
       execution: execution,
-      supervisor: supervisor
+      supervisor: supervisor,
+      agentRunner: agentRunner
     )
     let catalog = ServiceCodexCatalog(
       configuration: ServiceCodexCatalogConfiguration(
@@ -155,6 +171,7 @@ public actor ServiceComposition {
       coordinator: coordinator,
       catalog: catalog,
       runtimeStatus: runtimeStatus,
+      agentRegistry: agentRegistry,
       directCommands: DirectCommandSessionManager(
         orphanPIDFileURL: paths.supervisorScratchURL.appending(path: "direct-command-pids.txt")
       )
@@ -187,6 +204,7 @@ public actor ServiceComposition {
       projects: projects,
       tasks: tasks,
       settings: settings,
+      agentRegistry: agentRegistry,
       execution: execution,
       supervisor: supervisor,
       coordinator: coordinator,
@@ -206,6 +224,7 @@ public actor ServiceComposition {
     projects: ServiceProjectService,
     tasks: ServiceTaskManager,
     settings: ServiceSettings,
+    agentRegistry: ServiceAgentRegistry,
     execution: ExecutionManager,
     supervisor: SupervisorManager,
     coordinator: ServiceExecutionCoordinator,
@@ -222,6 +241,7 @@ public actor ServiceComposition {
     self.projects = projects
     self.tasks = tasks
     self.settings = settings
+    self.agentRegistry = agentRegistry
     self.execution = execution
     self.supervisor = supervisor
     self.coordinator = coordinator

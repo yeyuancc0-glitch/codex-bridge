@@ -16,9 +16,11 @@ extension SimpleServiceStore {
           codex_thread_id, codex_turn_id, status, supervisor_status, execution_model,
           execution_effort, supervisor_model, supervisor_effort, permission_mode,
           network_allowed, access_mode, fast_mode, current_step, changed_files_json,
-          result_summary, supervisor_summary, failure_code, created_at, updated_at
+          result_summary, supervisor_summary, failure_code, created_at, updated_at,
+          provider_id, installation_id, selection_mode, provider_session_id, provider_run_id
         ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?
         )
         """,
       arguments: Self.taskArguments(task, changedFiles: changedFiles)
@@ -35,7 +37,8 @@ extension SimpleServiceStore {
         UPDATE bridge_service_tasks
         SET codex_thread_id = ?, codex_turn_id = ?, status = ?, supervisor_status = ?,
             current_step = ?, changed_files_json = ?, result_summary = ?,
-            supervisor_summary = ?, failure_code = ?, updated_at = ?
+            supervisor_summary = ?, failure_code = ?, updated_at = ?,
+            provider_session_id = ?, provider_run_id = ?
         WHERE task_id = ?
         """,
       arguments: [
@@ -49,6 +52,8 @@ extension SimpleServiceStore {
         task.state.supervisorSummary,
         task.state.failureCode,
         task.updatedAt.timeIntervalSince1970,
+        task.state.providerSessionID,
+        task.state.providerRunID,
         task.id.rawValue,
       ]
     )
@@ -167,14 +172,14 @@ extension SimpleServiceStore {
       sql: """
         INSERT INTO bridge_service_task_messages (
           task_id, message_key, role, kind, content, tool_name, tool_status,
-          tool_arguments, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          tool_arguments, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id, message_key) DO UPDATE SET
           content = excluded.content,
           tool_name = excluded.tool_name,
           tool_status = excluded.tool_status,
           tool_arguments = excluded.tool_arguments,
-          created_at = excluded.created_at
+          updated_at = excluded.updated_at
         """,
       arguments: [
         taskID.rawValue,
@@ -186,6 +191,7 @@ extension SimpleServiceStore {
         message.toolStatus,
         message.toolArguments,
         message.createdAt.timeIntervalSince1970,
+        message.updatedAt.timeIntervalSince1970,
       ]
     )
   }
@@ -236,6 +242,11 @@ extension SimpleServiceStore {
       task.state.failureCode,
       task.createdAt.timeIntervalSince1970,
       task.updatedAt.timeIntervalSince1970,
+      task.providerID,
+      task.installationID,
+      task.selectionMode.rawValue,
+      task.state.providerSessionID,
+      task.state.providerRunID,
     ]
   }
 
@@ -368,6 +379,12 @@ extension SimpleServiceStore {
     else {
       throw ServiceStoreError.corruptRecord
     }
+    guard let providerID: String = row["provider_id"],
+      let selectionMode = ServiceAgentSelectionMode(rawValue: row["selection_mode"])
+    else {
+      throw ServiceStoreError.corruptRecord
+    }
+    let installationID: String? = row["installation_id"]
     let fastModeValue: Int = row["fast_mode"]
     guard fastModeValue == 0 || fastModeValue == 1 else {
       throw ServiceStoreError.corruptRecord
@@ -386,6 +403,8 @@ extension SimpleServiceStore {
     let state = try ServiceTaskState(
       codexThreadID: row["codex_thread_id"],
       codexTurnID: row["codex_turn_id"],
+      providerSessionID: row["provider_session_id"],
+      providerRunID: row["provider_run_id"],
       status: status,
       supervisorStatus: supervisorStatus,
       currentStep: row["current_step"],
@@ -402,6 +421,9 @@ extension SimpleServiceStore {
       clientRequestID: row["client_request_id"],
       prompt: row["prompt"],
       requestedThreadID: row["requested_thread_id"],
+      providerID: providerID,
+      installationID: installationID,
+      selectionMode: selectionMode,
       executionModel: row["execution_model"],
       executionEffort: row["execution_effort"],
       supervisorModel: row["supervisor_model"],
@@ -449,7 +471,8 @@ extension SimpleServiceStore {
       kind: kind,
       toolName: row["tool_name"],
       toolStatus: row["tool_status"],
-      toolArguments: row["tool_arguments"]
+      toolArguments: row["tool_arguments"],
+      updatedAt: Date(timeIntervalSince1970: row["updated_at"])
     )
   }
 

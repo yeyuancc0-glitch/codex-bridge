@@ -161,7 +161,8 @@ extension BridgeServiceApplication {
 
   static func permissionMode(
     _ rawValue: String?,
-    project: ServiceProjectRecord
+    project: ServiceProjectRecord,
+    defaultMode: ServicePermissionMode? = nil
   ) throws -> ServicePermissionMode {
     if let rawValue {
       guard let mode = ServicePermissionMode(rawValue: rawValue) else {
@@ -172,7 +173,13 @@ extension BridgeServiceApplication {
       }
       return mode
     }
-    return project.accessPolicy.write == .denied ? .readOnly : .workspaceWrite
+    guard let defaultMode else {
+      return project.accessPolicy.write == .denied ? .readOnly : .workspaceWrite
+    }
+    if defaultMode == .workspaceWrite, project.accessPolicy.write == .denied {
+      return .readOnly
+    }
+    return defaultMode
   }
 
   static func prompt(_ prompt: String, acceptanceCriteria: [String]) -> String {
@@ -333,7 +340,8 @@ extension BridgeServiceApplication {
       return .idempotencyConflict
     case .activeWriteTaskExists:
       return .busy
-    case .invalidArgument, .invalidTaskTransition, .immutableTaskChanged:
+    case .invalidArgument, .invalidTaskTransition, .immutableTaskChanged,
+      .duplicateAgentInstallation, .duplicateAgentExecutable, .unknownAgentInstallation:
       return .contractRejected
     case .corruptSchema, .corruptRecord, .unsupportedSchemaVersion,
       .duplicateProject, .duplicateProjectRoot, .storageFailure:
@@ -394,8 +402,12 @@ extension BridgeServiceApplication {
           relativePath: relativePath,
           currentSHA256: currentSHA256,
           changedSinceRevision: true,
-          removedLines: boundedDiff.removedLines,
-          addedLines: boundedDiff.addedLines,
+          removedLines: boundedDiff.removedLines.map {
+            safe($0, maximum: 64 * 1_024)
+          },
+          addedLines: boundedDiff.addedLines.map {
+            safe($0, maximum: 64 * 1_024)
+          },
           truncated: boundedDiff.truncated,
           byteCount: boundedDiff.byteCount
         )

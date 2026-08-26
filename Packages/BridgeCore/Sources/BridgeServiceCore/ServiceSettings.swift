@@ -25,6 +25,9 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case executionAccessMode = "execution.access_mode"
   case executionFastMode = "execution.fast_mode"
   case workbenchProjectID = "workbench.project_id"
+  case openCodeDefaultModel = "agent.opencode.default_model"
+  case openCodeDefaultPermissionMode = "agent.opencode.default_permission_mode"
+  case openCodeDefaultEffort = "agent.opencode.default_effort"
   case tunnelID = "tunnel.id"
   case tunnelEnabled = "tunnel.enabled"
 }
@@ -233,6 +236,38 @@ public actor ServiceSettings {
 
   public func setSupervisorEnabled(_ enabled: Bool) async throws {
     try await set(String(enabled), for: .supervisorEnabled)
+  }
+
+  public func openCodeDefaultPermissionMode() async throws -> String {
+    guard let value = try await string(for: .openCodeDefaultPermissionMode) else {
+      return "build"
+    }
+    guard value == "build" || value == "plan" else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return value
+  }
+
+  public func setOpenCodeDefaultPermissionMode(_ mode: String) async throws {
+    guard mode == "build" || mode == "plan" else {
+      throw ServiceStoreError.invalidArgument("agent.opencode.default_permission_mode")
+    }
+    try await set(mode, for: .openCodeDefaultPermissionMode)
+  }
+
+  public func openCodeDefaultEffort() async throws -> String? {
+    try await string(for: .openCodeDefaultEffort)
+  }
+
+  public func setOpenCodeDefaultEffort(_ effort: String?) async throws {
+    if let effort {
+      try ServiceValidation.identifier(
+        effort,
+        field: "agent.opencode.default_effort",
+        maximumBytes: 64
+      )
+    }
+    try await set(effort, for: .openCodeDefaultEffort)
   }
 
   public func set(_ value: String?, for key: ServiceSettingKey) async throws {

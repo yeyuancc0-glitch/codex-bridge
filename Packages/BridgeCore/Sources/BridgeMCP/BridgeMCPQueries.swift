@@ -43,6 +43,7 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case busy
   case timeout
   case unavailable
+  case internalFailure(correlationID: String)
   case projectBusy(WorkspaceBusyDetail)
   case fileRevisionConflict
   case pathForbidden

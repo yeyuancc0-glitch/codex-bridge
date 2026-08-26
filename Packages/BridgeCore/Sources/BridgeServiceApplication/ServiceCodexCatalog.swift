@@ -8,22 +8,39 @@ public struct ServiceCodexCatalogConfiguration: Sendable {
   public let clientInfo: CodexClientInfo
   public let requestTimeoutNanoseconds: UInt64
   public let eventBufferLimit: Int
+  public let modelsCacheTTL: Duration
 
   public init(
     appServer: AppServerConfiguration = .codex(),
     clientInfo: CodexClientInfo,
     requestTimeoutNanoseconds: UInt64 = 20_000_000_000,
-    eventBufferLimit: Int = 64
+    eventBufferLimit: Int = 64,
+    modelsCacheTTL: Duration = .seconds(300)
   ) {
     self.appServer = appServer
     self.clientInfo = clientInfo
     self.requestTimeoutNanoseconds = max(1, requestTimeoutNanoseconds)
     self.eventBufferLimit = max(1, eventBufferLimit)
+    self.modelsCacheTTL = modelsCacheTTL
   }
 }
 
 public actor ServiceCodexCatalog {
+  private struct ModelCacheEntry {
+    let models: MCPModelList
+    let fetchedAt: ContinuousClock.Instant
+  }
+
+  private struct InFlightModels {
+    let generation: UInt64
+    let task: Task<MCPModelList, any Error>
+  }
+
   private let configuration: ServiceCodexCatalogConfiguration
+  private let clock = ContinuousClock()
+  private var modelCache: ModelCacheEntry?
+  private var inFlightModels: InFlightModels?
+  private var modelsFetchGeneration: UInt64 = 0
 
   public init(configuration: ServiceCodexCatalogConfiguration) {
     self.configuration = configuration
@@ -155,11 +172,58 @@ public actor ServiceCodexCatalog {
   }
 
   public func listModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList {
-    try await withClient(deadline: deadline) { client in
+    try Self.checkDeadline(deadline)
+    if let cache = modelCache, clock.now < cache.fetchedAt + configuration.modelsCacheTTL {
+      return cache.models
+    }
+    // Single flight: concurrent callers share one app-server spawn instead of
+    // starting one cold process per request.
+    let inFlight: InFlightModels
+    if let existing = inFlightModels {
+      inFlight = existing
+    } else {
+      modelsFetchGeneration += 1
+      let created = InFlightModels(
+        generation: modelsFetchGeneration,
+        task: makeModelsFetchTask()
+      )
+      inFlightModels = created
+      inFlight = created
+    }
+    let result = await inFlight.task.result
+    if inFlightModels?.generation == inFlight.generation {
+      inFlightModels = nil
+    }
+    switch result {
+    case .success(let models):
+      modelCache = ModelCacheEntry(models: models, fetchedAt: clock.now)
+      try Self.checkDeadline(deadline)
+      return models
+    case .failure(let error):
+      try Self.checkDeadline(deadline)
+      throw error
+    }
+  }
+
+  private func makeModelsFetchTask() -> Task<MCPModelList, any Error> {
+    let configuration = self.configuration
+    let fetchDeadline =
+      clock.now
+      .advanced(by: .nanoseconds(Int64(clamping: configuration.requestTimeoutNanoseconds)))
+    return Task {
+      try await Self.fetchModels(configuration: configuration, deadline: fetchDeadline)
+    }
+  }
+
+  private static func fetchModels(
+    configuration: ServiceCodexCatalogConfiguration,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPModelList {
+    try await withClient(configuration: configuration, deadline: deadline) { client in
       var cursor: String?
       var models: [MCPModelSummary] = []
       for _ in 0..<8 {
-        try Self.checkDeadline(deadline)
+        try checkDeadline(deadline)
         let page = try await client.listModels(
           ModelListParams(cursor: cursor, limit: 100, includeHidden: false)
         )
@@ -180,7 +244,19 @@ public actor ServiceCodexCatalog {
     deadline: ContinuousClock.Instant,
     operation: @escaping @Sendable (CodexAppServerClient) async throws -> Output
   ) async throws -> Output {
-    try Self.checkDeadline(deadline)
+    try await Self.withClient(
+      configuration: configuration,
+      deadline: deadline,
+      operation: operation
+    )
+  }
+
+  private static func withClient<Output: Sendable>(
+    configuration: ServiceCodexCatalogConfiguration,
+    deadline: ContinuousClock.Instant,
+    operation: @escaping @Sendable (CodexAppServerClient) async throws -> Output
+  ) async throws -> Output {
+    try checkDeadline(deadline)
     let client = CodexAppServerClient(
       configuration: configuration.appServer,
       defaultTimeoutNanoseconds: configuration.requestTimeoutNanoseconds,
@@ -200,7 +276,7 @@ public actor ServiceCodexCatalog {
       try await client.start()
       _ = try await client.initialize(clientInfo: configuration.clientInfo)
       let output = try await operation(client)
-      try Self.checkDeadline(deadline)
+      try checkDeadline(deadline)
       drain.cancel()
       await client.stop()
       return output

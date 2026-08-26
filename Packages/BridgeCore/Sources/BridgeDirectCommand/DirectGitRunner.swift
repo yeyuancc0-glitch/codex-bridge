@@ -14,10 +14,16 @@ public enum DirectGitCommitError: Error, Equatable, Sendable {
 public struct DirectGitResult: Equatable, Sendable {
   public let exitCode: Int32
   public let output: DirectCommandOutputBuffer
+  public let completeOutput: Data?
 
-  public init(exitCode: Int32, output: DirectCommandOutputBuffer) {
+  public init(
+    exitCode: Int32,
+    output: DirectCommandOutputBuffer,
+    completeOutput: Data? = nil
+  ) {
     self.exitCode = exitCode
     self.output = output
+    self.completeOutput = completeOutput
   }
 }
 
@@ -37,9 +43,12 @@ public struct DirectGitRunner: Sendable {
     argv: [String],
     workingDirectory: String,
     timeout: Duration? = nil,
-    environment overrides: [String: String]? = nil
+    environment overrides: [String: String]? = nil,
+    maximumOutputBytes: Int = 256 * 1_024
   ) async throws -> DirectGitResult {
-    guard let executable = argv.first, !executable.isEmpty, argv.count <= 128 else {
+    guard let executable = argv.first, !executable.isEmpty, argv.count <= 128,
+      maximumOutputBytes > 0, maximumOutputBytes <= 20 * 1_024 * 1_024
+    else {
       throw DirectGitError.invalidArgument
     }
     return try await Task.detached(priority: .userInitiated) {
@@ -48,7 +57,7 @@ public struct DirectGitRunner: Sendable {
       if let overrides {
         environment.merge(overrides) { _, replacement in replacement }
       }
-      let collector = DirectCommandOutputCollector(maximumBytes: 256 * 1_024)
+      let collector = DirectCommandOutputCollector(maximumBytes: maximumOutputBytes)
       let process: DirectProcessLifetime
       do {
         process = try DirectProcessLifetime(
@@ -80,10 +89,19 @@ public struct DirectGitRunner: Sendable {
       }
       process.drainRemainingOutput()
       process.close()
+      let completeOutput = collector.completeData()
       guard case .exited(let exitCode) = termination else {
-        return DirectGitResult(exitCode: -1, output: collector.snapshot())
+        return DirectGitResult(
+          exitCode: -1,
+          output: collector.snapshot(),
+          completeOutput: completeOutput
+        )
       }
-      return DirectGitResult(exitCode: exitCode, output: collector.snapshot())
+      return DirectGitResult(
+        exitCode: exitCode,
+        output: collector.snapshot(),
+        completeOutput: completeOutput
+      )
     }.value
   }
 }

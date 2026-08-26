@@ -206,9 +206,11 @@ public struct SectionHeader: View {
 
 public struct TaskStatusLabel: View {
   public let status: String
+  public let providerID: String?
 
-  public init(status: String) {
+  public init(status: String, providerID: String? = nil) {
     self.status = status
+    self.providerID = providerID
   }
 
   public var body: some View {
@@ -221,7 +223,7 @@ public struct TaskStatusLabel: View {
     case "awaiting_local_approval": "等待本机批准"
     case "starting": "正在启动"
     case "running": "运行中"
-    case "waiting_for_codex_approval": "等待 Codex 审批"
+    case "waiting_for_codex_approval": "等待 \(providerDisplayName) 审批"
     case "completed": "已完成"
     case "failed": "失败"
     case "interrupted": "已中断"
@@ -250,6 +252,10 @@ public struct TaskStatusLabel: View {
     case "starting", "running": .running
     default: .neutral
     }
+  }
+
+  private var providerDisplayName: String {
+    AgentProviderPresentation.displayName(providerID)
   }
 }
 

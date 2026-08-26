@@ -117,6 +117,16 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleSetProjectCommandMode(request)
     case .setWorkbenchProject:
       return try await handleSetWorkbenchProject(request)
+    case .getAgentCatalog:
+      return try await handleGetAgentCatalog(request)
+    case .registerAgentInstallation:
+      return try await handleRegisterAgentInstallation(request)
+    case .reprobeAgentInstallation:
+      return try await handleReprobeAgentInstallation(request)
+    case .setAgentInstallationEnabled:
+      return try await handleSetAgentInstallationEnabled(request)
+    case .removeAgentInstallation:
+      return try await handleRemoveAgentInstallation(request)
     case .getCustomInstructions:
       return try await handleGetCustomInstructions(request)
     case .setCustomInstructions:
@@ -165,6 +175,14 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleGetDirectApprovalMode(request)
     case .setDirectApprovalMode:
       return try await handleSetDirectApprovalMode(request)
+    case .submitAgentTask:
+      return try await handleSubmitAgentTask(request)
+    case .listAgentModels:
+      return try await handleListAgentModels(request)
+    case .getAgentModelDefault:
+      return try await handleGetAgentModelDefault(request)
+    case .setAgentModelDefault:
+      return try await handleSetAgentModelDefault(request)
     case .setExposureMode:
       return try await handleSetExposureMode(request)
     case .listMCPClients:

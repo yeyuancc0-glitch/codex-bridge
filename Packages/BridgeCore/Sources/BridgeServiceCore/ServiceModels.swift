@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeDomain
 import BridgeSecurity
 import Foundation
@@ -12,6 +13,9 @@ public enum ServiceStoreError: Error, Equatable, LocalizedError, Sendable {
   case unknownProject(ProjectID)
   case duplicateTask(TaskID)
   case unknownTask(TaskID)
+  case duplicateAgentInstallation(AgentInstallationID)
+  case duplicateAgentExecutable(providerID: AgentProviderID, canonicalPath: String)
+  case unknownAgentInstallation(AgentInstallationID)
   case activeWriteTaskExists(ProjectID)
   case idempotencyConflict(source: ServiceTaskSource, clientRequestID: String)
   case immutableTaskChanged(TaskID)
@@ -38,6 +42,12 @@ public enum ServiceStoreError: Error, Equatable, LocalizedError, Sendable {
       "The task identifier is already in use."
     case .unknownTask:
       "The task does not exist."
+    case .duplicateAgentInstallation:
+      "The Agent installation identifier is already registered."
+    case .duplicateAgentExecutable:
+      "The Agent executable is already registered for this Provider."
+    case .unknownAgentInstallation:
+      "The Agent installation is not registered."
     case .activeWriteTaskExists:
       "The project already has an active write task."
     case .idempotencyConflict:

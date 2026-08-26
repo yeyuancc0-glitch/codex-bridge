@@ -69,9 +69,20 @@ public enum ServiceSupervisorStatus: String, Codable, CaseIterable, Sendable {
   case completed
 }
 
+public enum ServiceAgentSelectionMode: String, Codable, CaseIterable, Sendable {
+  case legacyCodex = "legacy_codex"
+  case explicit
+}
+
+public let serviceCodexProviderID = "codex"
+public let serviceDefaultProviderExecutionModel = "provider-default"
+public let serviceDefaultProviderExecutionEffort = "provider-default"
+
 public struct ServiceTaskState: Codable, Equatable, Sendable {
   public let codexThreadID: String?
   public let codexTurnID: String?
+  public let providerSessionID: String?
+  public let providerRunID: String?
   public let status: ServiceTaskStatus
   public let supervisorStatus: ServiceSupervisorStatus
   public let currentStep: String?
@@ -83,6 +94,8 @@ public struct ServiceTaskState: Codable, Equatable, Sendable {
   public init(
     codexThreadID: String? = nil,
     codexTurnID: String? = nil,
+    providerSessionID: String? = nil,
+    providerRunID: String? = nil,
     status: ServiceTaskStatus,
     supervisorStatus: ServiceSupervisorStatus = .disabled,
     currentStep: String? = nil,
@@ -106,6 +119,23 @@ public struct ServiceTaskState: Codable, Equatable, Sendable {
       )
       guard codexThreadID != nil else {
         throw ServiceStoreError.invalidArgument("task.codexBinding")
+      }
+    }
+    if let providerSessionID {
+      try ServiceValidation.identifier(
+        providerSessionID,
+        field: "task.providerSessionID",
+        maximumBytes: 1_024
+      )
+    }
+    if let providerRunID {
+      try ServiceValidation.identifier(
+        providerRunID,
+        field: "task.providerRunID",
+        maximumBytes: 1_024
+      )
+      guard providerSessionID != nil else {
+        throw ServiceStoreError.invalidArgument("task.providerBinding")
       }
     }
     try ServiceValidation.optionalText(
@@ -133,6 +163,8 @@ public struct ServiceTaskState: Codable, Equatable, Sendable {
     }
     self.codexThreadID = codexThreadID
     self.codexTurnID = codexTurnID
+    self.providerSessionID = providerSessionID
+    self.providerRunID = providerRunID
     self.status = status
     self.supervisorStatus = supervisorStatus
     self.currentStep = currentStep
@@ -151,6 +183,9 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
   public let clientRequestID: String?
   public let prompt: String
   public let requestedThreadID: String?
+  public let providerID: String
+  public let installationID: String?
+  public let selectionMode: ServiceAgentSelectionMode
   public let executionModel: String
   public let executionEffort: String
   public let supervisorModel: String?
@@ -167,6 +202,10 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     source.isRemoteMCPOrigin
   }
 
+  public var isLegacyCodexSubmission: Bool {
+    selectionMode == .legacyCodex && providerID == serviceCodexProviderID
+  }
+
   public init(
     id: TaskID,
     projectID: ProjectID,
@@ -175,6 +214,9 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     clientRequestID: String? = nil,
     prompt: String,
     requestedThreadID: String? = nil,
+    providerID: String = serviceCodexProviderID,
+    installationID: String? = nil,
+    selectionMode: ServiceAgentSelectionMode = .legacyCodex,
     executionModel: String,
     executionEffort: String,
     supervisorModel: String? = nil,
@@ -212,6 +254,22 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
         field: "task.requestedThreadID",
         maximumBytes: 1_024
       )
+    }
+    try ServiceValidation.identifier(providerID, field: "task.providerID", maximumBytes: 64)
+    if let installationID {
+      try ServiceValidation.identifier(
+        installationID,
+        field: "task.installationID",
+        maximumBytes: 256
+      )
+    }
+    switch selectionMode {
+    case .legacyCodex:
+      guard providerID == serviceCodexProviderID, installationID == nil else {
+        throw ServiceStoreError.invalidArgument("task.selectionMode")
+      }
+    case .explicit:
+      break
     }
     try ServiceValidation.identifier(
       executionModel,
@@ -253,6 +311,9 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
     self.clientRequestID = clientRequestID
     self.prompt = prompt
     self.requestedThreadID = requestedThreadID
+    self.providerID = providerID
+    self.installationID = installationID
+    self.selectionMode = selectionMode
     self.executionModel = executionModel
     self.executionEffort = executionEffort
     self.supervisorModel = supervisorModel
@@ -278,6 +339,9 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
       clientRequestID: clientRequestID,
       prompt: prompt,
       requestedThreadID: requestedThreadID,
+      providerID: providerID,
+      installationID: installationID,
+      selectionMode: selectionMode,
       executionModel: executionModel,
       executionEffort: executionEffort,
       supervisorModel: supervisorModel,
@@ -299,6 +363,9 @@ public struct ServiceTaskRecord: Codable, Equatable, Sendable {
       && clientRequestID == other.clientRequestID
       && prompt == other.prompt
       && requestedThreadID == other.requestedThreadID
+      && providerID == other.providerID
+      && installationID == other.installationID
+      && selectionMode == other.selectionMode
       && executionModel == other.executionModel
       && executionEffort == other.executionEffort
       && supervisorModel == other.supervisorModel

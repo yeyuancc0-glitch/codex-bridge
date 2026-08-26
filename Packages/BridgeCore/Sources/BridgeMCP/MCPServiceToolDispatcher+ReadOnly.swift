@@ -13,6 +13,8 @@ extension MCPServiceToolDispatcher {
       return try await callBridgeStatus(arguments)
     case .listProjects:
       return try await callListProjects(arguments)
+    case .listAgents:
+      return try await callListAgents(arguments)
     case .getProject:
       return try await callGetProject(arguments)
     case .searchProjectFiles:
@@ -59,6 +61,16 @@ extension MCPServiceToolDispatcher {
     }
     return try resultEncoder.encode(ListProjectsOutput(page: page))
 
+  }
+
+  private func callListAgents(_ arguments: [String: Value]?) async throws -> CallTool.Result {
+    let values = try StrictToolArguments(arguments, allowed: ["project_id"])
+    let projectID = try values.optionalIdentifier("project_id", maximumUTF8Bytes: 128)
+    let deadline = clock.now.advanced(by: deadlines.read)
+    let agents = try await withToolDeadline(until: deadline) {
+      try await service.serviceAgents(projectID: projectID, deadline: deadline)
+    }
+    return try resultEncoder.encode(ListAgentsOutput(list: agents))
   }
 
   private func callGetProject(_ arguments: [String: Value]?) async throws -> CallTool.Result {

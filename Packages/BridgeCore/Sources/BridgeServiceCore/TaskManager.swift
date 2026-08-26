@@ -32,6 +32,9 @@ public actor ServiceTaskManager {
       clientRequestID: request.clientRequestID,
       prompt: request.prompt,
       requestedThreadID: request.requestedThreadID,
+      providerID: request.providerID,
+      installationID: request.installationID,
+      selectionMode: request.selectionMode,
       executionModel: request.executionModel,
       executionEffort: request.executionEffort,
       supervisorModel: request.supervisorModel,
@@ -63,7 +66,7 @@ public actor ServiceTaskManager {
         supervisorStatus: try await supervisorStartStatus(taskID: taskID)
       ),
       eventKind: .executionStarting,
-      summary: "The task was accepted and Codex execution is starting."
+      summary: "The task was accepted and provider execution is starting."
     )
   }
 
@@ -76,7 +79,7 @@ public actor ServiceTaskManager {
         supervisorStatus: try await supervisorStartStatus(taskID: taskID)
       ),
       eventKind: .taskApproved,
-      summary: "The local user approved this Codex invocation.",
+      summary: "The local user approved this provider invocation.",
       expectedStatus: .awaitingLocalApproval
     )
   }
@@ -87,11 +90,11 @@ public actor ServiceTaskManager {
       taskID: taskID,
       patch: StatePatch(
         status: .failed,
-        resultSummary: .set("The local user denied this Codex invocation."),
+        resultSummary: .set("The local user denied this provider invocation."),
         failureCode: .set("local_approval_denied")
       ),
       eventKind: .taskFailed,
-      summary: "The local user denied this Codex invocation.",
+      summary: "The local user denied this provider invocation.",
       expectedStatus: .awaitingLocalApproval
     )
   }
@@ -115,6 +118,24 @@ public actor ServiceTaskManager {
   }
 
   @discardableResult
+  public func markAgentExecutionStarted(
+    taskID: TaskID,
+    providerSessionID: String,
+    providerRunID: String
+  ) async throws -> ServiceTaskRecord {
+    try await mutate(
+      taskID: taskID,
+      patch: StatePatch(
+        providerSessionID: .set(providerSessionID),
+        providerRunID: .set(providerRunID),
+        status: .running
+      ),
+      eventKind: .executionStarted,
+      summary: "The agent provider started the task run."
+    )
+  }
+
+  @discardableResult
   public func updatePlan(taskID: TaskID, currentStep: String) async throws
     -> ServiceTaskRecord
   {
@@ -122,7 +143,7 @@ public actor ServiceTaskManager {
       taskID: taskID,
       patch: StatePatch(currentStep: .set(currentStep)),
       eventKind: .planUpdated,
-      summary: "Codex updated the current task step."
+      summary: "The provider updated the current task step."
     )
   }
 
@@ -161,7 +182,7 @@ public actor ServiceTaskManager {
       taskID: taskID,
       patch: StatePatch(status: .waitingForCodexApproval),
       eventKind: .approvalRequested,
-      summary: "Codex is waiting for a local approval decision."
+      summary: "The provider is waiting for a local approval decision."
     )
   }
 
@@ -174,8 +195,8 @@ public actor ServiceTaskManager {
       patch: StatePatch(status: .running),
       eventKind: .approvalResolved,
       summary: approved
-        ? "The local user approved the Codex request."
-        : "The local user denied the Codex request; Codex may continue with a safer path."
+        ? "The local user approved the provider request."
+        : "The local user denied the provider request; it may continue with a safer path."
     )
   }
 
@@ -194,7 +215,7 @@ public actor ServiceTaskManager {
         failureCode: .set(nil)
       ),
       eventKind: .taskCompleted,
-      summary: "Codex completed the task."
+      summary: "The provider completed the task."
     )
   }
 
@@ -285,18 +306,23 @@ public actor ServiceTaskManager {
     kind: ServiceTaskMessageKind = .agent,
     toolName: String? = nil,
     toolStatus: String? = nil,
-    toolArguments: String? = nil
+    toolArguments: String? = nil,
+    createdAt: Date? = nil,
+    updatedAt: Date? = nil
   ) async throws {
+    let creationDate = createdAt ?? now()
+    let updateDate = updatedAt ?? creationDate
     try await store.upsertTaskMessage(
       ServiceTaskMessageDraft(
         key: key,
         role: role,
         content: content,
-        createdAt: now(),
+        createdAt: creationDate,
         kind: kind,
         toolName: toolName,
         toolStatus: toolStatus,
-        toolArguments: toolArguments
+        toolArguments: toolArguments,
+        updatedAt: updateDate
       ),
       taskID: taskID
     )
@@ -312,6 +338,13 @@ public actor ServiceTaskManager {
       beforeMessageID: beforeMessageID,
       limit: limit
     )
+  }
+
+  public func recentMessageActivity(
+    taskID: TaskID,
+    limit: Int = 12
+  ) async throws -> [ServiceTaskMessageRecord] {
+    try await store.recentTaskMessageActivity(taskID: taskID, limit: limit)
   }
 
   public func remove(taskID: TaskID) async throws {
@@ -370,6 +403,8 @@ public actor ServiceTaskManager {
     try ServiceTaskState(
       codexThreadID: patch.codexThreadID.applying(to: current.codexThreadID),
       codexTurnID: patch.codexTurnID.applying(to: current.codexTurnID),
+      providerSessionID: patch.providerSessionID.applying(to: current.providerSessionID),
+      providerRunID: patch.providerRunID.applying(to: current.providerRunID),
       status: patch.status ?? current.status,
       supervisorStatus: patch.supervisorStatus ?? current.supervisorStatus,
       currentStep: patch.currentStep.applying(to: current.currentStep),
@@ -385,6 +420,8 @@ public actor ServiceTaskManager {
 private struct StatePatch: Sendable {
   var codexThreadID: OptionalUpdate<String> = .keep
   var codexTurnID: OptionalUpdate<String> = .keep
+  var providerSessionID: OptionalUpdate<String> = .keep
+  var providerRunID: OptionalUpdate<String> = .keep
   var status: ServiceTaskStatus?
   var supervisorStatus: ServiceSupervisorStatus?
   var currentStep: OptionalUpdate<String> = .keep

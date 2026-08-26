@@ -71,8 +71,8 @@ struct BridgeServiceOverviewView: View {
 
     if !model.approvals.isEmpty {
       CalloutBanner(
-        title: "待处理 Codex 审批",
-        message: "当前有 \(model.approvals.count) 个远程任务或 Codex 操作等待你本机确认或拒绝。",
+        title: "待处理本机审批",
+        message: "当前有 \(model.approvals.count) 个远程任务或执行器操作等待你本机确认或拒绝。",
         symbol: "exclamationmark.shield.fill",
         tone: .warning,
         actionTitle: "立即处理"
@@ -197,13 +197,11 @@ struct BridgeServiceOverviewView: View {
       VStack(alignment: .leading, spacing: 4) {
         ForEach(Array(model.tasks.prefix(4)), id: \.taskID) { task in
           Button {
-            if let threadID = task.threadID {
-              model.openThread(threadID, inProject: task.projectID)
-            }
+            model.openTask(task.taskID)
             model.selection = .workbench
           } label: {
             HStack(alignment: .center, spacing: 12) {
-              TaskStatusLabel(status: task.status)
+              TaskStatusLabel(status: task.status, providerID: task.providerID)
                 .frame(width: 98, alignment: .leading)
 
               StatusBadge(task.sourceDisplayName, tone: .neutral)

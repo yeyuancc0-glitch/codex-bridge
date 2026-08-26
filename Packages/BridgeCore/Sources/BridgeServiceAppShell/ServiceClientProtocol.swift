@@ -26,6 +26,43 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func setProjectCommandMode(projectID: String, commandMode: String) async throws
     -> MCPProjectDetail
   func setWorkbenchProject(projectID: String?) async throws
+  func agentCatalog() async throws -> IPCAgentCatalogResponse
+  func registerAgentInstallation(
+    _ request: IPCAgentRegistrationRequest
+  ) async throws -> IPCAgentInstallationSummary
+  func reprobeAgentInstallation(
+    installationID: String,
+    acceptReplacement: Bool
+  ) async throws -> IPCAgentInstallationSummary
+  func setAgentInstallationEnabled(
+    installationID: String,
+    enabled: Bool
+  ) async throws -> IPCAgentInstallationSummary
+  func removeAgentInstallation(installationID: String) async throws
+  func submitAgentTask(_ request: IPCAgentSubmitRequest) async throws -> IPCAgentSubmitResponse
+  func agentModels(installationID: String) async throws -> IPCAgentModelsResponse
+  func agentModels(
+    installationID: String,
+    projectID: String?
+  ) async throws -> IPCAgentModelsResponse
+  func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?
+  ) async throws -> IPCAgentModelsResponse
+  func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?,
+    useStoredDefault: Bool
+  ) async throws -> IPCAgentModelsResponse
+  func agentModelDefault() async throws -> IPCAgentModelDefaultResponse
+  func setAgentModelDefault(_ model: String?) async throws
+  func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse
   func customInstructions() async throws -> String
   func setCustomInstructions(_ instructions: String) async throws
   func removeProject(projectID: String) async throws
@@ -69,6 +106,93 @@ extension BridgeServiceClient: BridgeServiceClientProtocol {
 }
 
 extension BridgeServiceClientProtocol {
+  public func agentCatalog() async throws -> IPCAgentCatalogResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func registerAgentInstallation(
+    _ request: IPCAgentRegistrationRequest
+  ) async throws -> IPCAgentInstallationSummary {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func reprobeAgentInstallation(
+    installationID: String,
+    acceptReplacement: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setAgentInstallationEnabled(
+    installationID: String,
+    enabled: Bool
+  ) async throws -> IPCAgentInstallationSummary {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func removeAgentInstallation(installationID: String) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func submitAgentTask(
+    _ request: IPCAgentSubmitRequest
+  ) async throws -> IPCAgentSubmitResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func agentModels(
+    installationID: String,
+    projectID _: String?
+  ) async throws -> IPCAgentModelsResponse {
+    try await agentModels(installationID: installationID)
+  }
+
+  public func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID _: String?
+  ) async throws -> IPCAgentModelsResponse {
+    try await agentModels(installationID: installationID, projectID: projectID)
+  }
+
+  public func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?,
+    useStoredDefault _: Bool
+  ) async throws -> IPCAgentModelsResponse {
+    try await agentModels(
+      installationID: installationID,
+      projectID: projectID,
+      modelID: modelID
+    )
+  }
+
+  public func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setAgentModelDefault(_: String?) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
+    try await setAgentModelDefault(model)
+    return IPCAgentModelDefaultResponse(
+      model: model,
+      permissionMode: permissionMode ?? "build",
+      effort: effort
+    )
+  }
+
   public func customInstructions() async throws -> String {
     throw BridgeServiceClientError.unavailable
   }

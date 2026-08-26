@@ -18,6 +18,9 @@ public struct ServiceTaskRequest: Equatable, Sendable {
   public let clientRequestID: String?
   public let prompt: String
   public let requestedThreadID: String?
+  public let providerID: String
+  public let installationID: String?
+  public let selectionMode: ServiceAgentSelectionMode
   public let executionModel: String
   public let executionEffort: String
   public let supervisorModel: String?
@@ -34,6 +37,9 @@ public struct ServiceTaskRequest: Equatable, Sendable {
     clientRequestID: String? = nil,
     prompt: String,
     requestedThreadID: String? = nil,
+    providerID: String = serviceCodexProviderID,
+    installationID: String? = nil,
+    selectionMode: ServiceAgentSelectionMode = .legacyCodex,
     executionModel: String,
     executionEffort: String,
     supervisorModel: String? = nil,
@@ -49,6 +55,9 @@ public struct ServiceTaskRequest: Equatable, Sendable {
     self.clientRequestID = clientRequestID
     self.prompt = prompt
     self.requestedThreadID = requestedThreadID
+    self.providerID = providerID
+    self.installationID = installationID
+    self.selectionMode = selectionMode
     self.executionModel = executionModel
     self.executionEffort = executionEffort
     self.supervisorModel = supervisorModel

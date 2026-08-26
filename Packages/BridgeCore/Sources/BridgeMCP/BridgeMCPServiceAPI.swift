@@ -22,6 +22,11 @@ public protocol BridgeMCPServiceAPI: Sendable {
     deadline: ContinuousClock.Instant
   ) async throws -> MCPProjectDetail
 
+  func serviceAgents(
+    projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPAgentList
+
   func serviceProjectCommands(
     projectID: String,
     deadline: ContinuousClock.Instant
@@ -166,6 +171,13 @@ public protocol BridgeMCPServiceAPI: Sendable {
 }
 
 extension BridgeMCPServiceAPI {
+  public func serviceAgents(
+    projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPAgentList {
+    MCPAgentList(agents: [])
+  }
+
   public func serviceCustomInstructions(
     deadline: ContinuousClock.Instant
   ) async throws -> String {

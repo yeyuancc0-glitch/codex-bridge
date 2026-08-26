@@ -18,6 +18,7 @@ struct BridgeServiceWorkbenchView: View {
           .frame(minWidth: 280, idealWidth: 400, maxWidth: .infinity)
       }
     }
+    .frame(minHeight: 0, maxHeight: .infinity)
     .navigationTitle("工作台")
     .toolbar {
       ToolbarItem(placement: .automatic) {
@@ -157,15 +158,22 @@ struct BridgeServiceWorkbenchView: View {
   private var dockedInspectorPane: some View {
     VStack(spacing: 0) {
       inspectorHeader
+        .fixedSize(horizontal: false, vertical: true)
       Divider()
       if !pendingApprovalIDs.isEmpty {
         approvalTray
+          .fixedSize(horizontal: false, vertical: true)
+          .layoutPriority(2)
         Divider()
       }
       inspectorBody
+        .frame(minHeight: 0, maxHeight: .infinity)
+        .layoutPriority(1)
       Divider()
       inspectorFooter
+        .fixedSize(horizontal: false, vertical: true)
     }
+    .frame(minHeight: 0, maxHeight: .infinity)
     .background(Color(nsColor: .controlBackgroundColor))
   }
 
@@ -198,8 +206,9 @@ struct BridgeServiceWorkbenchView: View {
         Spacer()
 
         if let task = currentTask {
+          StatusBadge(task.providerDisplayName, tone: .neutral)
           StatusBadge(task.sourceDisplayName, tone: .neutral)
-          TaskStatusLabel(status: task.status)
+          TaskStatusLabel(status: task.status, providerID: task.providerID)
         } else if model.runningTaskCount > 0 {
           StatusBadge("运行中", tone: .running)
         } else {
@@ -207,11 +216,11 @@ struct BridgeServiceWorkbenchView: View {
         }
       }
 
-      Text("GPT 调用 Codex 时，默认在当前选择的项目中执行")
+      Text(providerSubtitle)
         .font(.caption2)
         .foregroundStyle(.secondary)
 
-      if let task = currentTask,
+      if let task = currentTask, task.isCodexTask,
         let modelLabel = WorkbenchTaskModelPresentation.label(
           modelID: task.executionModel,
           effort: task.executionEffort,
@@ -232,62 +241,78 @@ struct BridgeServiceWorkbenchView: View {
         .accessibilityLabel("当前任务实际使用模型：\(modelLabel)")
       }
 
-      // Thread selector & status
-      HStack(spacing: 6) {
-        Image(systemName: "bubble.left.and.text.bubble.right")
-          .font(.caption2)
-          .foregroundStyle(.secondary)
+      if !externalAgentTasks.isEmpty {
+        HStack(spacing: 6) {
+          WorkbenchProviderTaskPicker(model: model, tasks: externalAgentTasks)
+          Spacer()
+          if let activeTask = currentActiveTask, activeTask.isExternalAgentTask {
+            Button("中断", role: .destructive) {
+              model.stopTask(activeTask.taskID)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+          }
+        }
+      }
 
-        if model.threads.isEmpty {
-          Text("暂无已保存会话")
-            .font(.caption)
+      if currentTask?.isExternalAgentTask != true {
+        // Codex thread selector & status
+        HStack(spacing: 6) {
+          Image(systemName: "bubble.left.and.text.bubble.right")
+            .font(.caption2)
             .foregroundStyle(.secondary)
-        } else {
-          Menu {
-            ForEach(model.threads, id: \.threadID) { thread in
-              let title = thread.title ?? thread.preview ?? thread.threadID
-              let compactTitle = WorkbenchThreadTitlePresentation.compact(
-                title,
-                maximumCharacters: 48
-              )
-              Button {
-                model.openThread(thread.threadID)
-              } label: {
-                if thread.threadID == model.selectedThreadID {
-                  Label(compactTitle, systemImage: "checkmark")
-                    .accessibilityLabel(title)
-                } else {
-                  Text(compactTitle)
-                    .accessibilityLabel(title)
+
+          if model.threads.isEmpty {
+            Text("暂无已保存会话")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          } else {
+            Menu {
+              ForEach(model.threads, id: \.threadID) { thread in
+                let title = thread.title ?? thread.preview ?? thread.threadID
+                let compactTitle = WorkbenchThreadTitlePresentation.compact(
+                  title,
+                  maximumCharacters: 48
+                )
+                Button {
+                  model.openThread(thread.threadID)
+                } label: {
+                  if thread.threadID == model.selectedThreadID {
+                    Label(compactTitle, systemImage: "checkmark")
+                      .accessibilityLabel(title)
+                  } else {
+                    Text(compactTitle)
+                      .accessibilityLabel(title)
+                  }
                 }
               }
-            }
-          } label: {
-            Text(
-              WorkbenchThreadTitlePresentation.compact(
-                currentSelectedThreadTitle,
-                maximumCharacters: 28
+            } label: {
+              Text(
+                WorkbenchThreadTitlePresentation.compact(
+                  currentSelectedThreadTitle,
+                  maximumCharacters: 28
+                )
               )
-            )
-            .font(.caption.weight(.medium))
-            .lineLimit(1)
-            .truncationMode(.tail)
+              .font(.caption.weight(.medium))
+              .lineLimit(1)
+              .truncationMode(.tail)
+              .frame(maxWidth: 220, alignment: .leading)
+            }
+            .menuStyle(.borderlessButton)
             .frame(maxWidth: 220, alignment: .leading)
+            .help(currentSelectedThreadTitle)
+            .accessibilityLabel("当前会话：\(currentSelectedThreadTitle)")
           }
-          .menuStyle(.borderlessButton)
-          .frame(maxWidth: 220, alignment: .leading)
-          .help(currentSelectedThreadTitle)
-          .accessibilityLabel("当前会话：\(currentSelectedThreadTitle)")
-        }
 
-        Spacer()
+          Spacer()
 
-        if let activeTask = currentActiveTask {
-          Button("中断", role: .destructive) {
-            model.stopTask(activeTask.taskID)
+          if let activeTask = currentActiveTask {
+            Button("中断", role: .destructive) {
+              model.stopTask(activeTask.taskID)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
           }
-          .buttonStyle(.bordered)
-          .controlSize(.mini)
         }
       }
     }
@@ -297,8 +322,16 @@ struct BridgeServiceWorkbenchView: View {
 
   private var inspectorBody: some View {
     ScrollViewReader { proxy in
-      ScrollView {
+      ScrollView(.vertical) {
         VStack(alignment: .leading, spacing: 12) {
+          if let task = currentTask, task.isExternalAgentTask {
+            WorkbenchExternalTaskCard(task: task)
+          }
+
+          if let message = model.conversation?.errorMessage {
+            WorkbenchConversationErrorCard(message: message)
+          }
+
           // Active Task Step if Running
           if let activeTask = currentActiveTask, let step = activeTask.currentStep {
             NativeCard {
@@ -318,6 +351,8 @@ struct BridgeServiceWorkbenchView: View {
         }
         .padding(12)
       }
+      .frame(minHeight: 0, maxHeight: .infinity)
+      .clipped()
       .onChange(of: model.conversation?.scrollAnchor) { _, anchor in
         guard let anchor else { return }
         withAnimation(.easeOut(duration: 0.15)) {
@@ -325,6 +360,8 @@ struct BridgeServiceWorkbenchView: View {
         }
       }
     }
+    .frame(minHeight: 0, maxHeight: .infinity)
+    .layoutPriority(1)
   }
 
   private var approvalTray: some View {
@@ -343,9 +380,10 @@ struct BridgeServiceWorkbenchView: View {
           }
         }
       }
-      .frame(maxHeight: 300)
+      .frame(height: 220)
     }
     .padding(12)
+    .frame(maxWidth: .infinity)
     .background(Color.orange.opacity(0.06))
   }
 
@@ -358,7 +396,7 @@ struct BridgeServiceWorkbenchView: View {
             .id(entry.key)
         }
 
-        if isWaitingForCodex {
+        if isWaitingForProvider {
           ThinkingBubbleView(
             statusText: activity.statusText,
             detailText: activity.detailText
@@ -373,7 +411,7 @@ struct BridgeServiceWorkbenchView: View {
           ThreadChatBubbleView(group: group)
         }
 
-        if isWaitingForCodex {
+        if isWaitingForProvider {
           ThinkingBubbleView(
             statusText: activity.statusText,
             detailText: activity.detailText
@@ -381,7 +419,7 @@ struct BridgeServiceWorkbenchView: View {
           .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }
       }
-    } else if isWaitingForCodex {
+    } else if isWaitingForProvider {
       VStack(alignment: .leading, spacing: 10) {
         ThinkingBubbleView(
           statusText: activity.statusText,
@@ -397,7 +435,7 @@ struct BridgeServiceWorkbenchView: View {
         Text("等待 ChatGPT 指令")
           .font(.subheadline.weight(.semibold))
           .foregroundStyle(.secondary)
-        Text("在左侧 ChatGPT 网页版发起提问并调用 MCP 工具，本面板将实时呈现任务流与 Codex 执行结果。")
+        Text("在左侧 ChatGPT 网页版发起提问并调用 MCP 工具，本面板将实时呈现任务流与所选 Provider 的执行结果。")
           .font(.caption)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -407,7 +445,7 @@ struct BridgeServiceWorkbenchView: View {
     }
   }
 
-  private var isWaitingForCodex: Bool {
+  private var isWaitingForProvider: Bool {
     activity.showsBubble
   }
 
@@ -445,15 +483,16 @@ struct BridgeServiceWorkbenchView: View {
   // MARK: - Helpers
 
   private var currentActiveTask: MCPServiceTaskSnapshot? {
-    if let taskID = model.conversation?.taskID,
-      let task = model.tasks.first(where: { $0.taskID == taskID && $0.isRunning })
-    {
-      return task
+    if let selectedTaskID = model.selectedTaskID {
+      return model.tasks.first(where: { $0.taskID == selectedTaskID && $0.isActive })
     }
-    if let selectedThreadID = model.selectedThreadID,
-      let task = model.tasks.first(where: { $0.threadID == selectedThreadID && $0.isRunning })
-    {
-      return task
+    if let taskID = model.conversation?.taskID {
+      return model.tasks.first(where: { $0.taskID == taskID && $0.isActive })
+    }
+    if let selectedThreadID = model.selectedThreadID {
+      return model.tasks.first(where: {
+        $0.threadID == selectedThreadID && $0.isCodexTask && $0.isRunning
+      })
     }
     return model.tasks.first(where: {
       $0.projectID == model.selectedProjectID && $0.isRunning
@@ -461,22 +500,44 @@ struct BridgeServiceWorkbenchView: View {
   }
 
   private var currentTask: MCPServiceTaskSnapshot? {
+    if let selectedTaskID = model.selectedTaskID,
+      let task = model.tasks.first(where: { $0.taskID == selectedTaskID })
+    {
+      return task
+    }
     if let taskID = model.conversation?.taskID,
       let task = model.tasks.first(where: { $0.taskID == taskID })
     {
       return task
     }
     if let selectedThreadID = model.selectedThreadID,
-      let task = model.tasks.first(where: { $0.threadID == selectedThreadID })
+      let task = model.tasks.first(where: {
+        $0.threadID == selectedThreadID && $0.isCodexTask
+      })
     {
       return task
     }
     return currentActiveTask
   }
 
+  private var externalAgentTasks: [MCPServiceTaskSnapshot] {
+    model.tasks.filter { task in
+      task.isExternalAgentTask
+        && (model.selectedProjectID == nil || task.projectID == model.selectedProjectID)
+    }
+  }
+
+  private var providerSubtitle: String {
+    guard let task = currentTask, task.isExternalAgentTask else {
+      return "GPT 调用 Codex 时，默认在当前选择的项目中执行"
+    }
+    let permission = WorkbenchAgentPermissionPresentation.title(task.permissionMode)
+    return "\(task.providerDisplayName) 原生 \(permission)，并在此处显示实时结果"
+  }
+
   private var activity: CodexActivityPresentation {
     CodexActivityPresentation(
-      task: currentActiveTask ?? currentTask,
+      task: currentTask ?? currentActiveTask,
       activity: model.conversation?.activity ?? .idle
     )
   }
@@ -523,11 +584,23 @@ package enum WorkbenchTaskModelPresentation {
   }
 }
 
+package enum WorkbenchAgentPermissionPresentation {
+  package static func title(_ value: String?) -> String {
+    switch value {
+    case "workspace-write": "Build（工作区可写）"
+    case "read-only": "Plan（只读）"
+    case let value? where !value.isEmpty: "权限：\(value)"
+    default: "权限未记录"
+    }
+  }
+}
+
 private struct ApprovalCard: View {
   @ObservedObject var model: BridgeServiceAppModel
   let approval: IPCApprovalSummary
 
   var body: some View {
+    let isResolving = model.isResolvingApproval(approval)
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .firstTextBaseline) {
         Label(approval.title, systemImage: "shield.lefthalf.filled")
@@ -577,15 +650,27 @@ private struct ApprovalCard: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+        .disabled(isResolving)
 
         Spacer()
 
         if approval.kind == "task_start" {
-          Button("批准并调用 Codex") {
+          Button {
             model.resolveApproval(approval, decision: "allow")
+          } label: {
+            if isResolving {
+              HStack(spacing: 4) {
+                ProgressView()
+                  .controlSize(.small)
+                Text("正在提交…")
+              }
+            } else {
+              Text("批准启动")
+            }
           }
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
+          .disabled(isResolving)
         } else {
           Menu {
             ForEach(allowDecisions, id: \.self) { decision in
@@ -594,10 +679,15 @@ private struct ApprovalCard: View {
               }
             }
           } label: {
-            Label("选择允许范围", systemImage: "chevron.down")
+            if isResolving {
+              Label("正在提交…", systemImage: "hourglass")
+            } else {
+              Label("选择允许范围", systemImage: "chevron.down")
+            }
           }
           .menuStyle(.borderlessButton)
           .fixedSize()
+          .disabled(isResolving)
         }
       }
     }
@@ -628,6 +718,7 @@ private struct DirectApprovalCard: View {
   let approval: IPCPendingDirectApproval
 
   var body: some View {
+    let isResolving = model.isResolvingDirectApproval(approval)
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
         Image(systemName: "terminal.fill")
@@ -662,14 +753,26 @@ private struct DirectApprovalCard: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
+        .disabled(isResolving)
 
         Spacer()
 
-        Button("仅本次允许") {
+        Button {
           model.resolveDirectApproval(approval, allow: true)
+        } label: {
+          if isResolving {
+            HStack(spacing: 4) {
+              ProgressView()
+                .controlSize(.small)
+              Text("正在提交…")
+            }
+          } else {
+            Text("仅本次允许")
+          }
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
+        .disabled(isResolving)
       }
     }
     .padding(10)

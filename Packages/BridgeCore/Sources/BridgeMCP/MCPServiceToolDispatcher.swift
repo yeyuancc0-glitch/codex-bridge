@@ -7,7 +7,9 @@ import MCP
 public struct MCPServiceToolDeadlines: Sendable {
   public static let production = MCPServiceToolDeadlines(
     read: .seconds(15),
-    submit: .seconds(5),
+    // Submission resolves the model catalog before persisting the task; a cold
+    // catalog fetch spawns codex app-server, so this needs read-level headroom.
+    submit: .seconds(15),
     mutation: .seconds(10),
     projectChanges: .seconds(20)
   )
@@ -91,12 +93,14 @@ public struct MCPServiceToolDispatcher: Sendable {
     } catch is CancellationError {
       throw CancellationError()
     } catch {
+      // Surface unknown failures as a structured tool error result instead of
+      // a JSON-RPC protocol error, so remote clients never see raw exceptions.
       let correlationID = UUID().uuidString.lowercased()
       logger.error(
         "Lightweight MCP service tool request failed. name=\(parameters.name) error=\(error) type=\(String(describing: type(of: error)))",
         metadata: ["correlation_id": .string(correlationID)]
       )
-      throw MCPError.internalError("The tool request failed.")
+      return try encodeQueryError(.internalFailure(correlationID: correlationID))
     }
   }
 

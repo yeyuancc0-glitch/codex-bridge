@@ -126,8 +126,12 @@ extension BridgeServiceAppModel {
   }
 
   public func selectProject(_ projectID: String?) {
+    if selectedProjectID != projectID {
+      closeConversation()
+    }
     selectedProjectID = projectID
     persistWorkbenchProjectSelection(projectID)
+    selectedTaskID = nil
     selectedThread = nil
     selectedThreadID = nil
     threads = []
@@ -169,9 +173,16 @@ extension BridgeServiceAppModel {
     }
     selectedThreadID = threadID
 
+    let relatedTask = tasks.first(where: { $0.threadID == threadID && $0.isCodexTask })
+    selectedTaskID = relatedTask?.taskID
+
     // Check if there is an active task on this thread to stream live conversation
-    if let activeTask = tasks.first(where: { $0.threadID == threadID && $0.isRunning }) {
+    if let activeTask = tasks.first(where: {
+      $0.threadID == threadID && $0.isCodexTask && $0.isRunning
+    }) {
       openConversation(taskID: activeTask.taskID)
+    } else {
+      closeConversation()
     }
 
     runMutation { [weak self] client in
@@ -189,6 +200,23 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func openTask(_ taskID: String) {
+    guard let task = tasks.first(where: { $0.taskID == taskID }) else { return }
+
+    if selectedProjectID != task.projectID {
+      selectProject(task.projectID)
+    }
+    selectedTaskID = task.taskID
+    selectedThread = nil
+    selectedThreadID = task.isCodexTask ? task.threadID : nil
+
+    if task.isCodexTask, let threadID = task.threadID {
+      openThread(threadID, inProject: task.projectID)
+    } else {
+      openConversation(taskID: task.taskID)
+    }
+  }
+
   public func stopTask(_ taskID: String) {
     runMutation { [weak self] client in
       guard let self else { return }
@@ -201,6 +229,13 @@ extension BridgeServiceAppModel {
     guard let client, connectionState == .connected else {
       errorMessage = "后台 Service 未连接，无法查看对话。"
       return
+    }
+    if let task = tasks.first(where: { $0.taskID == taskID }) {
+      selectedTaskID = task.taskID
+      if task.isExternalAgentTask {
+        selectedThread = nil
+        selectedThreadID = nil
+      }
     }
     closeConversation()
     let conversation = TaskConversationModel(taskID: taskID, client: client)
@@ -238,21 +273,45 @@ extension BridgeServiceAppModel {
   }
 
   public func resolveApproval(_ approval: IPCApprovalSummary, decision: String) {
-    runMutation { [weak self] client in
+    let resolutionKey = WorkbenchApprovalResolutionKey.task(approval.approvalID)
+    guard resolvingApprovalKeys.insert(resolutionKey).inserted else { return }
+    errorMessage = nil
+    let providerName =
+      tasks.first(where: { $0.taskID == approval.taskID })?.providerDisplayName
+      ?? "Codex"
+    Task { [weak self] in
       guard let self else { return }
-      try await client.resolveApproval(
-        IPCApprovalResolutionRequest(
-          taskID: approval.taskID,
-          approvalID: approval.approvalID,
-          decision: decision
+      do {
+        let client = try self.currentClient()
+        try await client.resolveApproval(
+          IPCApprovalResolutionRequest(
+            taskID: approval.taskID,
+            approvalID: approval.approvalID,
+            decision: decision
+          )
         )
-      )
-      await self.refresh(silent: true, includeCatalog: false)
-      self.postToast(
-        decision == "deny" ? "已拒绝 Codex 操作" : "已批准 Codex 操作",
-        symbol: decision == "deny" ? "xmark.shield.fill" : "checkmark.shield.fill",
-        tone: decision == "deny" ? .warning : .success
-      )
+        self.completeTaskApprovalResolution(
+          approval,
+          decision: decision,
+          providerName: providerName
+        )
+        await self.refresh(silent: true, includeCatalog: false)
+      } catch {
+        let pending = try? await self.currentClient().approvals(taskID: approval.taskID)
+        if let pending {
+          self.applyApprovalSnapshot(pending)
+        }
+        if pending?.contains(where: { $0.approvalID == approval.approvalID }) != false {
+          self.resolvingApprovalKeys.remove(resolutionKey)
+          self.errorMessage = Self.message(error)
+        } else {
+          self.completeTaskApprovalResolution(
+            approval,
+            decision: decision,
+            providerName: providerName
+          )
+        }
+      }
     }
   }
 
@@ -260,20 +319,78 @@ extension BridgeServiceAppModel {
     _ approval: IPCPendingDirectApproval,
     allow: Bool
   ) {
-    runMutation { [weak self] client in
+    let resolutionKey = WorkbenchApprovalResolutionKey.direct(approval.approvalID)
+    guard resolvingApprovalKeys.insert(resolutionKey).inserted else { return }
+    errorMessage = nil
+    Task { [weak self] in
       guard let self else { return }
-      if allow {
-        _ = try await client.approveDirectApproval(approvalID: approval.approvalID)
-      } else {
-        _ = try await client.denyDirectApproval(approvalID: approval.approvalID)
+      do {
+        let client = try self.currentClient()
+        let accepted: Bool
+        if allow {
+          accepted = try await client.approveDirectApproval(approvalID: approval.approvalID)
+        } else {
+          accepted = try await client.denyDirectApproval(approvalID: approval.approvalID)
+        }
+        guard accepted else {
+          self.resolvingApprovalKeys.remove(resolutionKey)
+          self.errorMessage = "Direct 审批已失效或已被处理，请刷新状态。"
+          return
+        }
+        self.completeDirectApprovalResolution(approval, allow: allow)
+        await self.refresh(silent: true, includeCatalog: false)
+      } catch {
+        let pending = try? await self.currentClient().pendingDirectApprovals()
+        if let pending {
+          self.applyDirectApprovalSnapshot(pending)
+        }
+        if pending?.contains(where: { $0.approvalID == approval.approvalID }) != false {
+          self.resolvingApprovalKeys.remove(resolutionKey)
+          self.errorMessage = Self.message(error)
+        } else {
+          self.completeDirectApprovalResolution(approval, allow: allow)
+        }
       }
-      await self.refresh(silent: true, includeCatalog: false)
-      self.postToast(
-        allow ? "已批准 Direct 操作" : "已拒绝 Direct 操作",
-        symbol: allow ? "checkmark.shield.fill" : "xmark.shield.fill",
-        tone: allow ? .success : .warning
-      )
     }
+  }
+
+  private func completeTaskApprovalResolution(
+    _ approval: IPCApprovalSummary,
+    decision: String,
+    providerName: String
+  ) {
+    let resolutionKey = WorkbenchApprovalResolutionKey.task(approval.approvalID)
+    resolvingApprovalKeys.remove(resolutionKey)
+    resolvedTaskApprovalKeys.insert(resolutionKey)
+    approvals.removeAll { $0.approvalID == approval.approvalID }
+    postToast(
+      decision == "deny" ? "已拒绝 \(providerName) 操作" : "已批准 \(providerName) 操作",
+      symbol: decision == "deny" ? "xmark.shield.fill" : "checkmark.shield.fill",
+      tone: decision == "deny" ? .warning : .success
+    )
+  }
+
+  private func completeDirectApprovalResolution(
+    _ approval: IPCPendingDirectApproval,
+    allow: Bool
+  ) {
+    let resolutionKey = WorkbenchApprovalResolutionKey.direct(approval.approvalID)
+    resolvingApprovalKeys.remove(resolutionKey)
+    resolvedDirectApprovalKeys.insert(resolutionKey)
+    directApprovals.removeAll { $0.approvalID == approval.approvalID }
+    postToast(
+      allow ? "已批准 Direct 操作" : "已拒绝 Direct 操作",
+      symbol: allow ? "checkmark.shield.fill" : "xmark.shield.fill",
+      tone: allow ? .success : .warning
+    )
+  }
+
+  func isResolvingApproval(_ approval: IPCApprovalSummary) -> Bool {
+    resolvingApprovalKeys.contains(WorkbenchApprovalResolutionKey.task(approval.approvalID))
+  }
+
+  func isResolvingDirectApproval(_ approval: IPCPendingDirectApproval) -> Bool {
+    resolvingApprovalKeys.contains(WorkbenchApprovalResolutionKey.direct(approval.approvalID))
   }
 
   public func setDirectApprovalMode(_ mode: String) {

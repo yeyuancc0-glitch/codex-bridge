@@ -20,7 +20,7 @@ public enum OutboundContentSecurity {
     #"(?i)-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----"#,
     #"(?i)\bBearer\s+[^\s,;]+"#,
     #"(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b"#,
-    #"(?i)["']?(?:authorization|cookie|client[_-]?secret|api[_-]?key|runtime[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret(?:[_-]?key)?)["']?\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,;]+)"#,
+    #"(?i)["']?(?:authorization|cookie|client[_-]?secret|api[_-]?key|runtime[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret(?:[_-]?key)?)["']?\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[A-Za-z0-9_./+=:@-]+(?=$|[\s,;]))"#,
     #"(?i)"?x-codex-bridge-token"?\s*[:=]\s*"[^"\r\n]*""#,
     #"(?i)\bx-codex-bridge-token\b(?:\s*[:=]\s*[^\s,;]+)?"#,
     #"(?i)\bx-codex-(?:token|auth|mcp-auth|runtime-key)\b(?:\s*[:=]\s*[^\s,;]+)?"#,

@@ -13,13 +13,22 @@ extension MCPServiceToolDispatcher {
     let values = try StrictToolArguments(
       arguments,
       allowed: [
-        "project_id", "prompt", "thread_id", "execution_model", "execution_effort",
+        "project_id", "prompt", "thread_id", "provider_id", "installation_id",
+        "execution_model", "execution_effort",
         "model_override", "skill_name",
-        "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
+        "supervisor_model", "supervisor_effort", "permission_mode", "permission_mode_override",
+        "network_access",
         "acceptance_criteria", "client_request_id",
       ],
       required: ["prompt"]
     )
+    let providerID = try values.optionalIdentifier("provider_id", maximumUTF8Bytes: 64)
+    let installationID = try values.optionalIdentifier("installation_id", maximumUTF8Bytes: 256)
+    guard installationID == nil || providerID != nil else {
+      throw MCPError.invalidParams(
+        "Argument 'installation_id' requires 'provider_id'."
+      )
+    }
     let prompt = try values.requiredText("prompt", maximumUTF8Bytes: 32 * 1_024)
     let criteria = try values.optionalStringArray(
       "acceptance_criteria",
@@ -33,6 +42,7 @@ extension MCPServiceToolDispatcher {
       "permission_mode",
       maximumUTF8Bytes: 32
     )
+    let permissionModeOverride = try values.optionalBoolean("permission_mode_override") ?? false
     if let permissionMode,
       permissionMode != "read-only" && permissionMode != "workspace-write"
     {
@@ -56,6 +66,8 @@ extension MCPServiceToolDispatcher {
       prompt: prompt,
       skillName: try values.optionalIdentifier("skill_name", maximumUTF8Bytes: 128),
       threadID: try values.optionalIdentifier("thread_id", maximumUTF8Bytes: 1_024),
+      providerID: providerID,
+      installationID: installationID,
       executionModel: try values.optionalIdentifier(
         "execution_model",
         maximumUTF8Bytes: 256
@@ -68,6 +80,7 @@ extension MCPServiceToolDispatcher {
       supervisorModel: supervisorModel,
       supervisorEffort: supervisorEffort,
       permissionMode: permissionMode,
+      permissionModeOverride: permissionModeOverride,
       networkAccess: try values.optionalBoolean("network_access") ?? false,
       acceptanceCriteria: criteria,
       clientRequestID: try values.optionalIdentifier(
@@ -126,9 +139,7 @@ extension MCPServiceToolDispatcher {
     )
     let oldText = try values.requiredText("old_text", maximumUTF8Bytes: 256 * 1_024)
     let newText = try values.requiredText("new_text", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafeSecrets(oldText),
-      OutboundContentSecurity.isSafeSecrets(newText)
-    else {
+    guard OutboundContentSecurity.isSafeSecrets(newText) else {
       throw BridgeMCPQueryError.unsafeContentDetected
     }
     let path = try values.requiredIdentifier("relative_path", maximumUTF8Bytes: 1_024)
@@ -157,7 +168,7 @@ extension MCPServiceToolDispatcher {
       required: ["project_id", "patch"]
     )
     let patch = try values.requiredText("patch", maximumUTF8Bytes: 256 * 1_024)
-    guard OutboundContentSecurity.isSafeSecrets(patch) else {
+    guard isSafePatchSecretChange(patch) else {
       throw MCPError.invalidParams("Patch text contains restricted local data.")
     }
     return MCPDirectPatchRequest(
@@ -165,6 +176,24 @@ extension MCPServiceToolDispatcher {
       patch: patch,
       clientRequestID: try values.optionalIdentifier("client_request_id", maximumUTF8Bytes: 512)
     )
+  }
+
+  private func isSafePatchSecretChange(_ patch: String) -> Bool {
+    guard let operations = try? ProjectPatchParser.parse(patch) else {
+      return OutboundContentSecurity.isSafeSecrets(patch)
+    }
+    return operations.allSatisfy { operation in
+      operation.hunks.allSatisfy { hunk in
+        var existing = Dictionary(hunk.removals.map { ($0, 1) }, uniquingKeysWith: +)
+        return hunk.additions.allSatisfy { line in
+          if let count = existing[line], count > 0 {
+            existing[line] = count - 1
+            return true
+          }
+          return OutboundContentSecurity.isSafeSecrets(line)
+        }
+      }
+    }
   }
 
   func parseDirectExec(_ arguments: [String: Value]?) throws -> MCPDirectExecRequest {

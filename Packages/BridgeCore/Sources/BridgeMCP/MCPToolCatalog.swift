@@ -103,10 +103,13 @@ public struct MCPToolCatalog: Sendable {
         "execution_environment": objectSchema(
           properties: [
             "bridge_sandbox": stringSchema,
+            "scope": stringSchema,
             "sandbox_exec": stringSchema,
             "nested_sandbox": stringSchema,
             "loopback": stringSchema,
             "child_network_policy": stringSchema,
+            "xcodebuild_nested_sandbox": stringSchema,
+            "loopback_bind": stringSchema,
             "limitations": arraySchema(items: stringSchema),
           ],
           required: [
