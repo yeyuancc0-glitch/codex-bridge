@@ -9,10 +9,12 @@ public actor OpenCodeACPExecution {
   private let sessionID: String
   private let prompt: String
   private let initialClientEventSequence: Int64
+  private let inactivityTimeout: Duration
   private let cleanup: @Sendable () -> Void
   private let continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation
   private var eventTask: Task<Void, Never>?
   private var promptTask: Task<Void, Never>?
+  private var watchdogTask: Task<Void, Never>?
   private var consumedClientEventBarrier: Int64
   private var interruptRequested = false
   private var terminal = false
@@ -23,6 +25,7 @@ public actor OpenCodeACPExecution {
     sessionID: String,
     prompt: String,
     initialClientEventSequence: Int64,
+    inactivityTimeout: Duration = .seconds(10 * 60),
     eventBufferLimit: Int = 256,
     cleanup: @escaping @Sendable () -> Void
   ) {
@@ -36,6 +39,7 @@ public actor OpenCodeACPExecution {
     self.sessionID = sessionID
     self.prompt = prompt
     self.initialClientEventSequence = max(0, initialClientEventSequence)
+    self.inactivityTimeout = inactivityTimeout
     consumedClientEventBarrier = max(0, initialClientEventSequence)
     self.cleanup = cleanup
     events = pair.stream
@@ -55,6 +59,7 @@ public actor OpenCodeACPExecution {
     promptTask = Task { [weak self] in
       await self?.runPrompt()
     }
+    armWatchdog()
   }
 
   public func interrupt() async throws {
@@ -75,6 +80,7 @@ public actor OpenCodeACPExecution {
 
   private func consume(_ envelope: OpenCodeACPClientEventEnvelope) async {
     guard !terminal else { return }
+    armWatchdog()
     defer {
       consumedClientEventBarrier = max(consumedClientEventBarrier, envelope.sequence + 1)
     }
@@ -172,9 +178,31 @@ public actor OpenCodeACPExecution {
     return true
   }
 
+  private func armWatchdog() {
+    watchdogTask?.cancel()
+    let timeout = inactivityTimeout
+    watchdogTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: timeout)
+      } catch {
+        return
+      }
+      await self?.inactivityTimedOut()
+    }
+  }
+
+  private func inactivityTimedOut() async {
+    try? await client.cancel(sessionID: sessionID)
+    await failExecution(
+      code: "opencode_inactivity_timeout",
+      summary: "OpenCode produced no task activity before the local timeout."
+    )
+  }
+
   private func closeStream(throwing error: (any Error)? = nil) async {
     eventTask?.cancel()
     promptTask?.cancel()
+    watchdogTask?.cancel()
     await client.shutdown()
     cleanup()
     if let error {

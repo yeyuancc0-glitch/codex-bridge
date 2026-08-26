@@ -269,6 +269,56 @@ final class OpenCodeACPClientTests: XCTestCase {
     XCTAssertEqual(result.stopReason, "cancelled")
   }
 
+  func testSetsModelThroughSessionConfigurationBeforePrompt() async throws {
+    let transport = ScriptedACPTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(Self.initializationResponse(id: id))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: .object(["sessionId": .string("session-config")])
+          )
+        )
+      case "session/set_config_option":
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["configOptions": .array([])]))
+        )
+      case "session/prompt":
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
+        )
+      default:
+        break
+      }
+    }
+    let client = OpenCodeACPClient(
+      transport: transport,
+      clientInfo: OpenCodeACPClientInfo(name: "test", title: "Test", version: "1")
+    )
+    addTeardownBlock { await client.shutdown() }
+
+    _ = try await client.initialize()
+    let session = try await client.newSession(cwd: FileManager.default.temporaryDirectory.path)
+    try await client.setSessionConfigOption(
+      sessionID: session.id,
+      configID: "model",
+      value: "openai/gpt-5.6-sol"
+    )
+    _ = try await client.prompt(sessionID: session.id, text: "Inspect")
+
+    let sent = await transport.sentMessages()
+    let configIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/set_config_option" })
+    let promptIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/prompt" })
+    XCTAssertLessThan(configIndex, promptIndex)
+    XCTAssertEqual(sent[configIndex].params?["configId"], .string("model"))
+    XCTAssertEqual(sent[configIndex].params?["value"], .string("openai/gpt-5.6-sol"))
+    XCTAssertNil(sent[promptIndex].params?["model"])
+  }
+
   private static func initializationResponse(id: ACPRequestID) -> ACPWireMessage {
     ACPWireMessage(
       id: id,

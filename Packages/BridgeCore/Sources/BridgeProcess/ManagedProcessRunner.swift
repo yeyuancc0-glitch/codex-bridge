@@ -51,4 +51,3 @@ public struct ManagedProcessRunner: Sendable {
     return ManagedProcessResult(termination: termination, timedOut: timedOut)
   }
 }
-

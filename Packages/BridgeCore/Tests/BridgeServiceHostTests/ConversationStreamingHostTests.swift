@@ -68,7 +68,7 @@ final class ConversationStreamingHostTests: XCTestCase {
     let denied = try XCTUnwrap(deniedValue)
     XCTAssertEqual(denied.state.status, .failed)
     XCTAssertEqual(denied.state.failureCode, "local_approval_denied")
-    XCTAssertEqual(denied.state.resultSummary, "The local user denied this Codex invocation.")
+    XCTAssertEqual(denied.state.resultSummary, "The local user denied this provider invocation.")
   }
 
   func testConcurrentConversationSubscriptionsReplaceWithoutExhaustingSlots() async throws {

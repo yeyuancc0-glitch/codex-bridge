@@ -210,6 +210,46 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(finished.statusText, "Codex 已完成")
   }
 
+  func testOpenCodeTaskPresentationUsesProviderStateWithoutCodexSemantics() {
+    let task = MCPServiceTaskSnapshot(
+      taskID: "opencode-task",
+      projectID: "project-1",
+      status: "failed",
+      providerID: "opencode",
+      installationID: "installation-1",
+      executionModel: "provider-model",
+      executionEffort: "high",
+      providerSessionID: "session-1",
+      providerRunID: "run-1",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      resultSummary: "ACP session ended",
+      failureCode: "provider_session_failed",
+      updatedAt: "2026-08-20T00:00:00Z"
+    )
+
+    XCTAssertEqual(task.providerIdentifier, "opencode")
+    XCTAssertEqual(task.providerDisplayName, "OpenCode")
+    XCTAssertTrue(task.isExternalAgentTask)
+    XCTAssertFalse(task.isCodexTask)
+    XCTAssertEqual(task.failureDescription, "provider_session_failed：ACP session ended")
+
+    let activity = CodexActivityPresentation(task: task, activity: .idle)
+    XCTAssertEqual(activity.statusText, "OpenCode 执行失败")
+    XCTAssertFalse(activity.statusText.contains("Codex"))
+    XCTAssertFalse(activity.isActive)
+  }
+
+  func testOpenCodeLocalApprovalIsAnActiveTask() {
+    let task = taskSnapshot(status: "awaiting_local_approval", providerID: "opencode")
+    let activity = CodexActivityPresentation(task: task, activity: .idle)
+
+    XCTAssertTrue(task.isActive)
+    XCTAssertTrue(activity.isActive)
+    XCTAssertTrue(activity.showsBubble)
+    XCTAssertEqual(activity.statusText, "等待本机批准 OpenCode 任务…")
+  }
+
   func testUnknownKeyDeltaWithNonzeroBaseIsIgnored() async throws {
     let client = TestBridgeServiceClient()
     let model = TaskConversationModel(taskID: "task-1", client: client)
@@ -372,7 +412,8 @@ final class TaskConversationModelTests: XCTestCase {
   private func taskSnapshot(
     status: String,
     source: String? = nil,
-    sourceClientID: String? = nil
+    sourceClientID: String? = nil,
+    providerID: String? = nil
   ) -> MCPServiceTaskSnapshot {
     MCPServiceTaskSnapshot(
       taskID: "task-1",
@@ -380,6 +421,7 @@ final class TaskConversationModelTests: XCTestCase {
       source: source,
       sourceClientID: sourceClientID,
       status: status,
+      providerID: providerID,
       supervisorStatus: "disabled",
       localApprovalRequired: false,
       updatedAt: "2026-08-20T00:00:00Z"

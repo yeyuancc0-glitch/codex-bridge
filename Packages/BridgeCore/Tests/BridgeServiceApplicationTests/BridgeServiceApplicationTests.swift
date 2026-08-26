@@ -58,6 +58,38 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertFalse(full.contains("resolve_approval"))
   }
 
+  func testConcurrentModelLookupsShareOneCatalogSpawnWithinTTL() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let spawnLog = fixture.root.appending(path: "catalog-spawns.txt").path
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceCountingModelCatalogScript(spawnLog: spawnLog)
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+
+    try await withThrowingTaskGroup(of: [String].self) { group in
+      for _ in 0..<4 {
+        group.addTask {
+          try await application.serviceModels(deadline: deadline).models
+            .map(\.modelID)
+        }
+      }
+      var firstResult: [String]?
+      for try await models in group {
+        if let first = firstResult {
+          XCTAssertEqual(models, first)
+        } else {
+          firstResult = models
+        }
+      }
+      XCTAssertEqual(firstResult?.isEmpty, false)
+    }
+
+    let spawns = try String(contentsOfFile: spawnLog, encoding: .utf8)
+      .split(separator: "\n").count
+    XCTAssertEqual(spawns, 1, "The model catalog must spawn codex app-server once per TTL.")
+  }
+
   func testChatGPTSubmissionWaitsForLocalApprovalBeforeStartingCodex() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(
@@ -189,7 +221,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     let task = try XCTUnwrap(taskValue)
     XCTAssertEqual(task.state.status, .failed)
     XCTAssertEqual(task.state.failureCode, "local_approval_denied")
-    XCTAssertEqual(task.state.resultSummary, "The local user denied this Codex invocation.")
+    XCTAssertEqual(task.state.resultSummary, "The local user denied this provider invocation.")
     XCTAssertNil(task.state.codexThreadID)
     XCTAssertNil(task.state.codexTurnID)
     let approvalsAfterDenial = try await application.pendingTaskStartApprovals()
@@ -201,7 +233,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
     XCTAssertEqual(snapshot.status, ServiceTaskStatus.failed.rawValue)
     XCTAssertEqual(snapshot.failureCode, "local_approval_denied")
-    XCTAssertEqual(snapshot.resultSummary, "The local user denied this Codex invocation.")
+    XCTAssertEqual(snapshot.resultSummary, "The local user denied this provider invocation.")
   }
 
   func testConcurrentTaskStartApprovalIsConsumedOnce() async throws {
@@ -365,7 +397,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(denied.status, ServiceTaskStatus.failed.rawValue)
     XCTAssertEqual(denied.sourceClientID, MCPClientID.qwenStudio.rawValue)
     XCTAssertEqual(denied.failureCode, "local_approval_denied")
-    XCTAssertEqual(denied.resultSummary, "The local user denied this Codex invocation.")
+    XCTAssertEqual(denied.resultSummary, "The local user denied this provider invocation.")
   }
 
   func testModelPreferencesArePersistedAndUsedForNewTasks() async throws {

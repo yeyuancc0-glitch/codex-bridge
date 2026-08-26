@@ -423,6 +423,104 @@ final class BridgeServiceAppModelTests: XCTestCase {
     await model.shutdownUI()
   }
 
+  func testOpenCodeTaskWithoutThreadIsSelectedAndStreamsSharedConversation() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let openCodeTask = MCPServiceTaskSnapshot(
+      taskID: "opencode-task",
+      projectID: "project-1",
+      source: "mcp.client",
+      sourceClientID: MCPClientID.chatGPT.rawValue,
+      status: "running",
+      providerID: "opencode",
+      installationID: "installation-1",
+      providerSessionID: "session-1",
+      providerRunID: "run-1",
+      currentStep: "Inspecting workspace",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-21T00:00:00Z"
+    )
+    await client.setTaskSnapshots([openCodeTask])
+    await client.setSubscriptionPage(
+      IPCTaskConversationPage(
+        taskID: openCodeTask.taskID,
+        messages: [
+          IPCTaskConversationMessage(
+            messageID: 1,
+            key: "user:1",
+            role: "user",
+            content: "Inspect this project"
+          ),
+          IPCTaskConversationMessage(
+            messageID: 2,
+            key: "agent:1",
+            role: "agent",
+            content: "I found the project files."
+          ),
+        ]
+      )
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+
+    try await waitUntil {
+      model.selectedTaskID == openCodeTask.taskID
+        && model.conversation?.taskID == openCodeTask.taskID
+        && model.conversation?.entries.count == 2
+    }
+    let calls = await client.threadCallCounts()
+    XCTAssertNil(model.selectedThreadID)
+    XCTAssertNil(model.selectedThread)
+    XCTAssertEqual(calls.read, 0)
+    XCTAssertEqual(model.tasks.first?.providerDisplayName, "OpenCode")
+    await model.shutdownUI()
+  }
+
+  func testOpeningCodexTaskStillReadsItsThreadCatalogEntry() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let codexTask = MCPServiceTaskSnapshot(
+      taskID: "codex-task",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "codex",
+      executionModel: "fixture-model",
+      executionEffort: "medium",
+      threadID: "thread-1",
+      turnID: "turn-1",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-21T00:00:00Z"
+    )
+    await client.setTaskSnapshots([codexTask])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+    model.openTask(codexTask.taskID)
+
+    try await waitUntil {
+      let calls = await client.threadCallCounts()
+      return model.selectedTaskID == codexTask.taskID && calls.read == 1
+    }
+    XCTAssertEqual(model.selectedThreadID, codexTask.threadID)
+    XCTAssertEqual(model.selectedThread?.thread.threadID, codexTask.threadID)
+    await model.shutdownUI()
+  }
+
   func testLowFrequencyCatalogRefreshReloadsInstalledSkills() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

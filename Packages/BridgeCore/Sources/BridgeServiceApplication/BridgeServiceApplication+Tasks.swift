@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeCodexService
 import BridgeDomain
 import BridgeMCP
@@ -11,6 +12,11 @@ extension BridgeServiceApplication {
     public let projectID: String
     public let clientID: String
     public let prompt: String
+    public let providerID: String
+
+    public var providerDisplayName: String {
+      providerID == AgentProviderID.openCode.rawValue ? "OpenCode" : "Codex"
+    }
 
     public init(task: ServiceTaskRecord) {
       approvalID = Self.approvalID(for: task.id)
@@ -18,6 +24,7 @@ extension BridgeServiceApplication {
       projectID = task.projectID.rawValue
       clientID = task.source == .chatGPT ? MCPClientID.chatGPT.rawValue : task.sourceClientID
       prompt = task.prompt
+      providerID = task.providerID
     }
 
     public static func approvalID(for taskID: TaskID) -> String {
@@ -47,16 +54,21 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.taskNotFound
     }
     let events = try await tasks.events(taskID: id, limit: recentEventLimit)
+    let isCodexProvider = task.providerID == serviceCodexProviderID
     return MCPServiceTaskSnapshot(
       taskID: task.id.rawValue,
       projectID: task.projectID.rawValue,
       source: task.source.rawValue,
       sourceClientID: task.sourceClientID.isEmpty ? nil : task.sourceClientID,
       status: task.state.status.rawValue,
+      providerID: task.providerID,
+      installationID: task.installationID,
       executionModel: task.executionModel,
       executionEffort: task.executionEffort,
-      threadID: task.state.codexThreadID,
-      turnID: task.state.codexTurnID,
+      threadID: isCodexProvider ? task.state.codexThreadID : nil,
+      turnID: isCodexProvider ? task.state.codexTurnID : nil,
+      providerSessionID: isCodexProvider ? nil : task.state.providerSessionID,
+      providerRunID: isCodexProvider ? nil : task.state.providerRunID,
       currentStep: task.state.currentStep,
       changedFiles: task.state.changedFiles,
       recentEvents: events.map {
@@ -162,6 +174,14 @@ extension BridgeServiceApplication {
   ) async throws -> PreparedTaskSubmission {
     let projectID = try await submissionProjectID(explicit: submission.projectID)
     let project = try await readableProject(projectID)
+    if let providerRaw = submission.providerID {
+      return try await prepareAgentSubmission(
+        submission,
+        providerRaw: providerRaw,
+        project: project,
+        sourceClientID: sourceClientID
+      )
+    }
     let models = try await catalog.listModels(deadline: deadline).models
     let selections = try await modelSelections(submission: submission, models: models)
     let permission = try Self.permissionMode(submission.permissionMode, project: project)
@@ -191,6 +211,93 @@ extension BridgeServiceApplication {
         networkAllowed: submission.networkAccess,
         accessMode: accessMode,
         fastMode: fastMode
+      )
+    )
+  }
+
+  /// Explicit non-Codex submissions resolve against the user-registered agent
+  /// installations. The provider owns defaults unless the caller explicitly
+  /// opts into a model/effort override; Bridge still enforces read-only posture.
+  private func prepareAgentSubmission(
+    _ submission: MCPServiceTaskSubmission,
+    providerRaw: String,
+    project: ServiceProjectRecord,
+    sourceClientID: String
+  ) async throws -> PreparedTaskSubmission {
+    guard providerRaw == AgentProviderID.openCode.rawValue else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    guard
+      submission.threadID == nil,
+      submission.supervisorModel == nil,
+      submission.supervisorEffort == nil,
+      submission.skillName == nil
+    else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    // Resolution order mirrors Codex: explicit override > Bridge default
+    // setting > provider default. Unmarked model fields stay ignored for
+    // compatibility with old clients.
+    let usesOverride = submission.modelOverride == true
+    let requestedModel = usesOverride ? submission.executionModel : nil
+    if let model = requestedModel {
+      guard !model.isEmpty, model.utf8.count <= 256,
+        model.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+    }
+    let configuredModel = try await settings.string(for: .openCodeDefaultModel)
+    let resolvedModel = try Self.validatedAgentModel(
+      requestedModel ?? configuredModel
+    )
+    let requestedEffort = usesOverride ? submission.executionEffort : nil
+    if let effort = requestedEffort {
+      guard !effort.isEmpty, effort.utf8.count <= 64,
+        effort.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+    }
+    guard submission.permissionMode == nil || submission.permissionMode == "read-only" else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    guard !submission.networkAccess else {
+      // Tool network cannot be separated from control-plane network for this
+      // provider yet, so remote network requests stay rejected.
+      throw BridgeMCPQueryError.unavailable
+    }
+    let registry = try requiredAgentRegistry()
+    let selectable =
+      try await registry
+      .installations(providerID: .openCode)
+      .filter { $0.isSelectable }
+      .sorted { $0.id.rawValue < $1.id.rawValue }
+    let record = try Self.selectAgentInstallation(
+      requested: submission.installationID, from: selectable)
+    let prompt = Self.prompt(submission.prompt, acceptanceCriteria: submission.acceptanceCriteria)
+    guard prompt.utf8.count <= 32 * 1_024 else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    let accessMode = try await settings.accessMode()
+    let executionModel = resolvedModel ?? serviceDefaultProviderExecutionModel
+    let executionEffort = requestedEffort ?? serviceDefaultProviderExecutionEffort
+    return PreparedTaskSubmission(
+      projectID: project.id,
+      request: ServiceTaskRequest(
+        projectID: project.id,
+        source: .mcpClient,
+        sourceClientID: sourceClientID,
+        clientRequestID: submission.clientRequestID,
+        prompt: prompt,
+        providerID: AgentProviderID.openCode.rawValue,
+        installationID: record.id.rawValue,
+        selectionMode: .explicit,
+        executionModel: executionModel,
+        executionEffort: executionEffort,
+        permissionMode: .readOnly,
+        networkAllowed: false,
+        accessMode: accessMode
       )
     )
   }
@@ -235,21 +342,59 @@ extension BridgeServiceApplication {
     return prompt
   }
 
+  static func validatedAgentModel(_ model: String?) throws -> String? {
+    guard let model else { return nil }
+    let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.utf8.count <= 256,
+      !trimmed.contains("\0"),
+      trimmed.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    return trimmed
+  }
+
+  static func selectAgentInstallation(
+    requested: String?,
+    from selectable: [ServiceAgentInstallationRecord]
+  ) throws -> ServiceAgentInstallationRecord {
+    if let requested {
+      guard let record = selectable.first(where: { $0.id.rawValue == requested }) else {
+        throw BridgeMCPQueryError.unavailable
+      }
+      return record
+    }
+    guard let record = selectable.first else {
+      throw BridgeMCPQueryError.unavailable
+    }
+    return record
+  }
+
   private func submitTaskWithAdmission(
     _ request: ServiceTaskRequest,
     projectID: ProjectID
   ) async throws -> ServiceTaskCreationResult {
+    // Read-only submissions never occupy the project write slot, so they do
+    // not take the Codex admission token.
+    if request.permissionMode == .readOnly {
+      do {
+        return try await tasks.submit(request)
+      } catch let storeError as ServiceStoreError {
+        throw Self.publicStoreError(storeError)
+      }
+    }
+    let admissionToken: String
     do {
-      try await workspaceGate.beginCodexAdmission(projectID: projectID)
+      admissionToken = try await workspaceGate.beginCodexAdmission(projectID: projectID)
     } catch {
       throw Self.publicWorkspaceBusyError(error)
     }
     do {
       let result = try await tasks.submit(request)
-      await workspaceGate.endCodexAdmission(projectID: projectID)
+      await workspaceGate.endCodexAdmission(projectID: projectID, token: admissionToken)
       return result
     } catch {
-      await workspaceGate.endCodexAdmission(projectID: projectID)
+      await workspaceGate.endCodexAdmission(projectID: projectID, token: admissionToken)
       if let storeError = error as? ServiceStoreError {
         throw Self.publicStoreError(storeError)
       }
@@ -286,6 +431,10 @@ extension BridgeServiceApplication {
     guard let task = try await tasks.task(id: id) else {
       throw BridgeMCPQueryError.taskNotFound
     }
+    guard task.providerID == serviceCodexProviderID else {
+      // Non-Codex providers do not advertise steer capability yet.
+      throw BridgeMCPQueryError.invalidTaskState
+    }
     guard task.state.status == .running, task.state.codexTurnID == expectedTurnID else {
       throw BridgeMCPQueryError.turnMismatch
     }
@@ -315,7 +464,25 @@ extension BridgeServiceApplication {
     guard let task = try await tasks.task(id: id) else {
       throw BridgeMCPQueryError.taskNotFound
     }
-    guard task.state.status == .running, task.state.codexTurnID == expectedTurnID else {
+    guard task.state.status == .running else {
+      throw BridgeMCPQueryError.turnMismatch
+    }
+    if task.providerID != serviceCodexProviderID {
+      guard let runID = task.state.providerRunID, runID == expectedTurnID else {
+        throw BridgeMCPQueryError.turnMismatch
+      }
+      do {
+        try await coordinator.interruptAgent(taskID: id, expectedRunID: expectedTurnID)
+      } catch {
+        throw Self.publicExecutionError(error)
+      }
+      return MCPServiceTaskMutationReceipt(
+        taskID: taskID,
+        status: task.state.status.rawValue,
+        accepted: true
+      )
+    }
+    guard task.state.codexTurnID == expectedTurnID else {
       throw BridgeMCPQueryError.turnMismatch
     }
     do {

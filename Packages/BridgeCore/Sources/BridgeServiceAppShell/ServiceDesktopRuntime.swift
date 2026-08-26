@@ -96,6 +96,7 @@ extension BridgeServiceAppModel {
       threads = []
       skills = []
       selectedThread = nil
+      selectedTaskID = nil
       selectedProjectID = nil
     } catch {
       registrationStatus = registration.status
@@ -237,11 +238,23 @@ extension BridgeServiceAppModel {
       shouldRefreshThreads =
         shouldRefreshThreads || Self.taskCatalogChanged(from: tasks, to: value)
       tasks = value
-      if let activeTask = value.first(where: \.isRunning), let threadID = activeTask.threadID,
+      reconcileTaskSelection()
+      if let activeAgentTask = value.first(where: { $0.isExternalAgentTask && $0.isActive }),
+        selectedTaskID != activeAgentTask.taskID || conversation?.taskID != activeAgentTask.taskID
+      {
+        selectedProjectID = activeAgentTask.projectID
+        persistWorkbenchProjectSelection(activeAgentTask.projectID)
+        selectedTaskID = activeAgentTask.taskID
+        selectedThreadID = nil
+        selectedThread = nil
+        openConversation(taskID: activeAgentTask.taskID)
+      } else if let activeTask = value.first(where: \.isRunning),
+        let threadID = activeTask.threadID,
         selectedThreadID != threadID || conversation?.taskID != activeTask.taskID
       {
         selectedProjectID = activeTask.projectID
         persistWorkbenchProjectSelection(activeTask.projectID)
+        selectedTaskID = activeTask.taskID
         selectedThreadID = threadID
         selectedThread = nil
         openConversation(taskID: activeTask.taskID)
@@ -299,6 +312,17 @@ extension BridgeServiceAppModel {
     guard !remainsVisible, !belongsToTask else { return }
     self.selectedThreadID = nil
     selectedThread = nil
+  }
+
+  func reconcileTaskSelection() {
+    guard let selectedTaskID else { return }
+    guard tasks.contains(where: { $0.taskID == selectedTaskID }) else {
+      if conversation?.taskID == selectedTaskID {
+        closeConversation()
+      }
+      self.selectedTaskID = nil
+      return
+    }
   }
 
   func updateChatBrowserVisibility() {
@@ -437,6 +461,7 @@ extension BridgeServiceAppModel {
       !projects.contains(where: { $0.projectID == selectedProjectID })
     else { return }
     self.selectedProjectID = nil
+    selectedTaskID = nil
     threads = []
     selectedThread = nil
   }

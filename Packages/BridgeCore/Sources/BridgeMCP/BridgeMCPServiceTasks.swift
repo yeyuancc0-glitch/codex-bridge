@@ -26,10 +26,14 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let source: String?
   public let sourceClientID: String?
   public let status: String
+  public let providerID: String?
+  public let installationID: String?
   public let executionModel: String?
   public let executionEffort: String?
   public let threadID: String?
   public let turnID: String?
+  public let providerSessionID: String?
+  public let providerRunID: String?
   public let currentStep: String?
   public let changedFiles: [String]
   public let recentEvents: [MCPServiceTaskEvent]
@@ -46,10 +50,14 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     source: String? = nil,
     sourceClientID: String? = nil,
     status: String,
+    providerID: String? = nil,
+    installationID: String? = nil,
     executionModel: String? = nil,
     executionEffort: String? = nil,
     threadID: String? = nil,
     turnID: String? = nil,
+    providerSessionID: String? = nil,
+    providerRunID: String? = nil,
     currentStep: String? = nil,
     changedFiles: [String] = [],
     recentEvents: [MCPServiceTaskEvent] = [],
@@ -65,10 +73,14 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     self.source = source
     self.sourceClientID = sourceClientID
     self.status = status
+    self.providerID = providerID
+    self.installationID = installationID
     self.executionModel = executionModel
     self.executionEffort = executionEffort
     self.threadID = threadID
     self.turnID = turnID
+    self.providerSessionID = providerSessionID
+    self.providerRunID = providerRunID
     self.currentStep = currentStep
     self.changedFiles = changedFiles
     self.recentEvents = recentEvents
@@ -86,10 +98,14 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     case source
     case sourceClientID = "source_client_id"
     case status
+    case providerID = "provider_id"
+    case installationID = "installation_id"
     case executionModel = "execution_model"
     case executionEffort = "execution_effort"
     case threadID = "thread_id"
     case turnID = "turn_id"
+    case providerSessionID = "provider_session_id"
+    case providerRunID = "provider_run_id"
     case currentStep = "current_step"
     case changedFiles = "changed_files"
     case recentEvents = "recent_events"
@@ -107,6 +123,8 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
   public let prompt: String
   public let skillName: String?
   public let threadID: String?
+  public let providerID: String?
+  public let installationID: String?
   public let executionModel: String?
   public let executionEffort: String?
   public let modelOverride: Bool?
@@ -122,6 +140,8 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     prompt: String,
     skillName: String? = nil,
     threadID: String? = nil,
+    providerID: String? = nil,
+    installationID: String? = nil,
     executionModel: String? = nil,
     executionEffort: String? = nil,
     modelOverride: Bool? = nil,
@@ -136,6 +156,8 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     self.prompt = prompt
     self.skillName = skillName
     self.threadID = threadID
+    self.providerID = providerID
+    self.installationID = installationID
     self.executionModel = executionModel
     self.executionEffort = executionEffort
     self.modelOverride = modelOverride
@@ -152,6 +174,8 @@ public struct MCPServiceTaskSubmission: Codable, Equatable, Sendable {
     case prompt
     case skillName = "skill_name"
     case threadID = "thread_id"
+    case providerID = "provider_id"
+    case installationID = "installation_id"
     case executionModel = "execution_model"
     case executionEffort = "execution_effort"
     case modelOverride = "model_override"

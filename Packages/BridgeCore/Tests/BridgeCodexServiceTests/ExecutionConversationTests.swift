@@ -21,7 +21,9 @@ final class ExecutionConversationTests: XCTestCase {
     let collector = ChangeCollector()
     let collect = Task { await collector.collect(subscription.updates) }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     XCTAssertEqual(binding.threadID, "thread-conversation")
     XCTAssertEqual(binding.turnID, "turn-conversation")
 

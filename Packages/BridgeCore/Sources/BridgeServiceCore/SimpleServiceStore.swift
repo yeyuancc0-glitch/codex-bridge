@@ -593,6 +593,8 @@ public actor SimpleServiceStore {
           let state = try ServiceTaskState(
             codexThreadID: task.state.codexThreadID,
             codexTurnID: task.state.codexTurnID,
+            providerSessionID: task.state.providerSessionID,
+            providerRunID: task.state.providerRunID,
             status: recoveredStatus,
             supervisorStatus: supervisorStatus,
             currentStep: task.state.currentStep,
@@ -608,8 +610,8 @@ public actor SimpleServiceStore {
             ServiceTaskEventDraft(
               kind: wasNotStarted ? .taskInterrupted : .taskMarkedUnknown,
               summary: wasNotStarted
-                ? "The service restarted before Codex execution began."
-                : "The service restarted without an attached Codex turn.",
+                ? "The service restarted before task execution began."
+                : "The service restarted without an attached provider run.",
               createdAt: date
             ),
             taskID: task.id,

@@ -99,3 +99,85 @@ extension BridgeServiceAppModel {
     }
   }
 }
+
+extension BridgeServiceAppModel {
+  func submitAgentTask(
+    projectID: String,
+    providerID: String,
+    installationID: String?,
+    model: String?,
+    prompt: String
+  ) {
+    guard !isManagingAgents else { return }
+    isManagingAgents = true
+    errorMessage = nil
+    Task { [weak self] in
+      guard let self else { return }
+      defer { self.isManagingAgents = false }
+      do {
+        let client = try self.currentClient()
+        let response = try await client.submitAgentTask(
+          IPCAgentSubmitRequest(
+            projectID: projectID,
+            providerID: providerID,
+            installationID: installationID,
+            model: (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+              $0.isEmpty ? nil : $0
+            },
+            prompt: prompt
+          )
+        )
+        self.postToast(
+          response.status == "awaiting_local_approval"
+            ? "任务已提交，请在工作台批准后执行"
+            : "任务状态：\(response.status)",
+          symbol: "paperplane.fill",
+          tone: .success
+        )
+      } catch {
+        self.errorMessage = Self.message(error)
+      }
+    }
+  }
+}
+
+extension BridgeServiceAppModel {
+  func loadAgentModels(installationID: String?) {
+    guard let installationID, !installationID.isEmpty else {
+      agentModelOptions = []
+      return
+    }
+    Task { [weak self] in
+      guard let self, let client = try? self.currentClient() else { return }
+      let response = try? await client.agentModels(installationID: installationID)
+      await MainActor.run {
+        self.agentModelOptions = response?.models ?? []
+      }
+    }
+  }
+}
+
+extension BridgeServiceAppModel {
+  func loadAgentModelDefault() {
+    Task { [weak self] in
+      guard let self, let client = try? self.currentClient() else { return }
+      let response = try? await client.agentModelDefault()
+      await MainActor.run { self.openCodeDefaultModel = response?.model }
+    }
+  }
+
+  func saveAgentModelDefault(_ model: String?) {
+    Task { [weak self] in
+      guard let self, let client = try? self.currentClient() else { return }
+      do {
+        try await client.setAgentModelDefault(model)
+        await MainActor.run {
+          self.openCodeDefaultModel = model
+          self.postToast("OpenCode 默认模型已保存", symbol: "checkmark.circle.fill", tone: .success)
+        }
+      } catch {
+        await MainActor.run { self.errorMessage = Self.message(error) }
+      }
+    }
+  }
+}

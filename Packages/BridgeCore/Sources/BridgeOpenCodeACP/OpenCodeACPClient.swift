@@ -236,6 +236,34 @@ public actor OpenCodeACPClient {
     try bindSession(id)
   }
 
+  public func setSessionConfigOption(
+    sessionID: String,
+    configID: String,
+    value: String
+  ) async throws {
+    try requireInitialized()
+    try validateIdentifier(sessionID)
+    try requireSession(sessionID)
+    try validateIdentifier(configID)
+    guard !value.isEmpty, value.utf8.count <= 256,
+      !value.contains("\0"),
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
+      throw AgentRuntimeError.invalidRequest("session.config.value")
+    }
+    try beginSessionOperation()
+    defer { endSessionOperation() }
+
+    _ = try await request(
+      method: "session/set_config_option",
+      params: .object([
+        "sessionId": .string(sessionID),
+        "configId": .string(configID),
+        "value": .string(value),
+      ])
+    )
+  }
+
   public func prompt(sessionID: String, text: String) async throws -> OpenCodeACPPromptResult {
     try requireInitialized()
     try validateIdentifier(sessionID)
@@ -249,6 +277,8 @@ public actor OpenCodeACPClient {
     try beginSessionOperation()
     defer { endSessionOperation() }
 
+    // ACP session/prompt resolves only when the whole turn finishes, so it
+    // runs under the long lifetime budget instead of the per-RPC timeout.
     let response = try await request(
       method: "session/prompt",
       params: .object([
@@ -259,7 +289,8 @@ public actor OpenCodeACPClient {
             "text": .string(text),
           ])
         ]),
-      ])
+      ]),
+      timeout: .seconds(24 * 60 * 60)
     )
     guard let stopReason = response.value["stopReason"]?.stringValue,
       !stopReason.isEmpty,
@@ -313,7 +344,11 @@ public actor OpenCodeACPClient {
     await transport.close()
   }
 
-  private func request(method: String, params: ACPJSONValue) async throws -> ACPClientResponse {
+  private func request(
+    method: String,
+    params: ACPJSONValue,
+    timeout override: Duration? = nil
+  ) async throws -> ACPClientResponse {
     guard started, !closed else { throw OpenCodeACPError.transportClosed }
     guard nextRequestID > 0, nextRequestID < Int64.max else {
       throw OpenCodeACPError.transportClosed
@@ -322,7 +357,7 @@ public actor OpenCodeACPClient {
     nextRequestID += 1
     let message = ACPWireMessage(id: id, method: method, params: params)
     let data = try JSONEncoder().encode(message)
-    let timeout = requestTimeout
+    let timeout = override ?? requestTimeout
 
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in

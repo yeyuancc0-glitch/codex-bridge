@@ -361,6 +361,39 @@ final class SimpleServiceStoreTests: XCTestCase {
     XCTAssertEqual(replacementResult.task.id, replacement.id)
   }
 
+  func testRestartPreservesAgentBindingWhenMarkingRunUnknown() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let project = try makeServiceProject(
+      id: "prj-agent-recovery",
+      rootURL: fixture.firstProjectURL
+    )
+    try await store.insertProject(project)
+    let running = try makeServiceTask(
+      id: "tsk-agent-before-restart",
+      projectID: project.id,
+      providerID: "opencode",
+      installationID: "ainst-opencode",
+      selectionMode: .explicit,
+      status: .running,
+      providerSessionID: "session-opencode",
+      providerRunID: "run-opencode",
+      permissionMode: .readOnly
+    )
+    _ = try await store.createTask(running, event: creationEvent(at: running.createdAt))
+
+    let recovered = try await store.markIncompleteTasksUnknown(
+      at: running.updatedAt.addingTimeInterval(10)
+    )
+
+    XCTAssertEqual(recovered.first?.state.status, .unknown)
+    XCTAssertEqual(recovered.first?.state.providerSessionID, "session-opencode")
+    XCTAssertEqual(recovered.first?.state.providerRunID, "run-opencode")
+    let events = try await store.events(taskID: running.id)
+    XCTAssertEqual(events.last?.summary, "The service restarted without an attached provider run.")
+  }
+
   func testRestartPreservesTaskAwaitingLocalApprovalAndWriteGate()
     async throws
   {

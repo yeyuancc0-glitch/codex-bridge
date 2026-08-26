@@ -34,7 +34,7 @@ extension MCPServiceToolCatalog {
     description:
       "Read task state, recent events, result and Supervisor state. After submit_task returns "
       + "awaiting_local_approval, poll this tool until the local user approves or denies the "
-      + "Codex invocation. A denial returns failed with failure_code local_approval_denied.",
+      + "provider invocation. A denial returns failed with failure_code local_approval_denied.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
@@ -53,8 +53,9 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.submitTask.rawValue,
     title: "Submit task",
     description:
-      "Create a Codex task. ChatGPT and Qwen submissions wait for the local user to approve the "
-      + "Codex invocation in Codex Bridge before execution starts. Return immediately with "
+      "Create a provider task; Codex remains the default provider. ChatGPT and Qwen submissions "
+      + "wait for the local user to approve the provider invocation in Codex Bridge before "
+      + "execution starts. Return immediately with "
       + "awaiting_local_approval and local_approval_required=true, then use get_task to observe "
       + "approval, execution, or an explicit local_approval_denied result. Risky Codex operations "
       + "can still require additional local approval after execution starts. "
@@ -63,13 +64,27 @@ extension MCPServiceToolCatalog {
       + "project currently selected in the Codex Bridge workbench; an explicit project_id overrides "
       + "that default. Omit all model and effort fields unless the user explicitly requests a "
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
-      + "Model and effort fields are applied only when model_override is true.",
+      + "Model and effort fields are applied only when model_override is true. "
+      + "Set provider_id to route the task to another registered agent provider (for example "
+      + "opencode); provider tasks are read-only in this version, so permission_mode must be "
+      + "read-only and network_access false. OpenCode model and effort overrides follow the same "
+      + "model_override rule as Codex; supervisor, skill and thread fields must be omitted.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
         "prompt": boundedStringSchema(maximum: 32 * 1_024),
         "skill_name": nullableStringSchema(maximum: 128),
         "thread_id": nullableStringSchema(maximum: 1_024),
+        "provider_id": nullableStringSchema(
+          maximum: 64,
+          description:
+            "Omit for Codex. Set to opencode to run the task with a locally registered OpenCode installation; list_agents shows availability."
+        ),
+        "installation_id": nullableStringSchema(
+          maximum: 256,
+          description:
+            "Optional exact registered installation for the chosen provider; omit to let Bridge pick its enabled installation."
+        ),
         "execution_model": nullableStringSchema(
           maximum: 256,
           description:
@@ -154,7 +169,8 @@ extension MCPServiceToolCatalog {
   static let interruptTask = Tool(
     name: MCPServiceToolName.interruptTask.rawValue,
     title: "Interrupt task",
-    description: "Request interruption of the exact active Codex Turn.",
+    description:
+      "Request interruption of the exact active provider run. For Codex, expected_turn_id is the active Turn ID; for OpenCode, use provider_run_id from get_task.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),

@@ -65,6 +65,14 @@ extension MCPServiceToolDispatcher {
         message: "A local component is unavailable.",
         retryable: true
       )
+    case .internalFailure(let correlationID):
+      dto = .init(
+        code: "internal_error",
+        message:
+          "The tool request failed unexpectedly. It is safe to retry; quote correlation "
+          + "\(correlationID) when asking the local user to inspect service logs.",
+        retryable: true
+      )
     case .fileRevisionConflict:
       dto = .init(
         code: "file_revision_conflict",

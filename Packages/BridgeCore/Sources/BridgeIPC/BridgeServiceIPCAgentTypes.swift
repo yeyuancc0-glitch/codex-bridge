@@ -160,3 +160,103 @@ public struct IPCAgentInstallationIDRequest: Codable, Equatable, Sendable {
     case installationID = "installation_id"
   }
 }
+
+public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
+  public let projectID: String
+  public let providerID: String
+  public let installationID: String?
+  public let model: String?
+  public let prompt: String
+
+  public init(
+    projectID: String,
+    providerID: String,
+    installationID: String? = nil,
+    model: String? = nil,
+    prompt: String
+  ) {
+    self.projectID = projectID
+    self.providerID = providerID
+    self.installationID = installationID
+    self.model = model
+    self.prompt = prompt
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case projectID = "project_id"
+    case providerID = "provider_id"
+    case installationID = "installation_id"
+    case model
+    case prompt
+  }
+}
+
+public struct IPCAgentSubmitResponse: Codable, Equatable, Sendable {
+  public let taskID: String
+  public let status: String
+
+  public init(taskID: String, status: String) {
+    self.taskID = taskID
+    self.status = status
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case taskID = "task_id"
+    case status
+  }
+}
+
+public struct IPCAgentModelsRequest: Codable, Equatable, Sendable {
+  public let installationID: String
+
+  public init(installationID: String) {
+    self.installationID = installationID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case installationID = "installation_id"
+  }
+}
+
+public struct IPCAgentModelSummary: Codable, Equatable, Sendable {
+  public let modelID: String
+  public let displayName: String
+
+  public init(modelID: String, displayName: String) {
+    self.modelID = modelID
+    self.displayName = displayName
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case modelID = "model_id"
+    case displayName = "display_name"
+  }
+}
+
+public struct IPCAgentModelsResponse: Codable, Equatable, Sendable {
+  public let models: [IPCAgentModelSummary]
+
+  public init(models: [IPCAgentModelSummary]) {
+    self.models = models
+  }
+}
+
+public struct IPCAgentModelDefaultResponse: Codable, Equatable, Sendable {
+  public let model: String?
+
+  public init(model: String?) {
+    self.model = model
+  }
+}
+
+public struct IPCAgentModelDefaultRequest: Codable, Equatable, Sendable {
+  public let model: String?
+
+  public init(model: String?) {
+    self.model = model
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case model
+  }
+}

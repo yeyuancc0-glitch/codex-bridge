@@ -43,10 +43,9 @@ public actor OpenCodeACPEventNormalizer {
     }
   }
 
-  public func completed(stopReason: String, summary: String = "OpenCode turn completed.") throws
-    -> AgentEventEnvelope
-  {
-    try envelope(.completed(summary: summary, stopReason: stopReason))
+  public func completed(stopReason: String, summary: String? = nil) throws -> AgentEventEnvelope {
+    let resolvedSummary = summary ?? latestAssistantSummary() ?? "OpenCode turn completed."
+    return try envelope(.completed(summary: resolvedSummary, stopReason: stopReason))
   }
 
   public func finalizeContent() throws -> [AgentEventEnvelope] {
@@ -224,6 +223,16 @@ public actor OpenCodeACPEventNormalizer {
     guard binding.providerSessionID == sessionID else {
       throw OpenCodeACPError.sessionMismatch
     }
+  }
+
+  private func latestAssistantSummary() -> String? {
+    for key in contentOrder.reversed() {
+      guard let state = contents[key], state.role == .assistant else { continue }
+      let trimmed = state.content.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !trimmed.isEmpty else { continue }
+      return String(decoding: trimmed.utf8.prefix(4 * 1_024), as: UTF8.self)
+    }
+    return nil
   }
 
   private func envelope(_ event: AgentEvent) throws -> AgentEventEnvelope {

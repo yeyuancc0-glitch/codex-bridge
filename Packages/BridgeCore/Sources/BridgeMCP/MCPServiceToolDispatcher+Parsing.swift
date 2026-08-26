@@ -13,13 +13,21 @@ extension MCPServiceToolDispatcher {
     let values = try StrictToolArguments(
       arguments,
       allowed: [
-        "project_id", "prompt", "thread_id", "execution_model", "execution_effort",
+        "project_id", "prompt", "thread_id", "provider_id", "installation_id",
+        "execution_model", "execution_effort",
         "model_override", "skill_name",
         "supervisor_model", "supervisor_effort", "permission_mode", "network_access",
         "acceptance_criteria", "client_request_id",
       ],
       required: ["prompt"]
     )
+    let providerID = try values.optionalIdentifier("provider_id", maximumUTF8Bytes: 64)
+    let installationID = try values.optionalIdentifier("installation_id", maximumUTF8Bytes: 256)
+    guard installationID == nil || providerID != nil else {
+      throw MCPError.invalidParams(
+        "Argument 'installation_id' requires 'provider_id'."
+      )
+    }
     let prompt = try values.requiredText("prompt", maximumUTF8Bytes: 32 * 1_024)
     let criteria = try values.optionalStringArray(
       "acceptance_criteria",
@@ -56,6 +64,8 @@ extension MCPServiceToolDispatcher {
       prompt: prompt,
       skillName: try values.optionalIdentifier("skill_name", maximumUTF8Bytes: 128),
       threadID: try values.optionalIdentifier("thread_id", maximumUTF8Bytes: 1_024),
+      providerID: providerID,
+      installationID: installationID,
       executionModel: try values.optionalIdentifier(
         "execution_model",
         maximumUTF8Bytes: 256

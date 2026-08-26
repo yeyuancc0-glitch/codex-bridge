@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDirectCommand
@@ -116,11 +117,18 @@ public actor ServiceComposition {
     let projects = ServiceProjectService(store: store)
     let tasks = ServiceTaskManager(store: store)
     let settings = ServiceSettings(store: store)
+    let agentProviders: [any AgentProvider] = [try OpenCodeACPProvider()]
     let agentRegistry = ServiceAgentRegistry(
       store: store,
-      providers: [try OpenCodeACPProvider()]
+      providers: agentProviders
     )
     _ = try await agentRegistry.refreshInstallationStates()
+    let agentRunner = ServiceAgentTaskRunner(
+      registry: agentRegistry,
+      providers: Dictionary(
+        uniqueKeysWithValues: agentProviders.map { ($0.descriptor.providerID, $0) }
+      )
+    )
     let execution = ExecutionManager(
       configuration: ExecutionManagerConfiguration(
         appServer: configuration.executionAppServer,
@@ -139,7 +147,8 @@ public actor ServiceComposition {
       tasks: tasks,
       projects: projects,
       execution: execution,
-      supervisor: supervisor
+      supervisor: supervisor,
+      agentRunner: agentRunner
     )
     let catalog = ServiceCodexCatalog(
       configuration: ServiceCodexCatalogConfiguration(

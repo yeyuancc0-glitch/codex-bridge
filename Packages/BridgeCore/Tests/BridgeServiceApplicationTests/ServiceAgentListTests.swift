@@ -8,7 +8,7 @@ import MCP
 import XCTest
 
 final class ServiceAgentListTests: XCTestCase {
-  func testListAgentsReturnsOnlyPersistedProbeFactsAndKeepsTaskSubmissionDisabled() async throws {
+  func testListAgentsReturnsOnlyPersistedProbeFactsAndEnablesReadOnlySubmission() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let executableURL = fixture.root.appending(path: "opencode-list-fixture")
     try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
@@ -48,16 +48,16 @@ final class ServiceAgentListTests: XCTestCase {
     XCTAssertEqual(agent.installationID, registered.id.rawValue)
     XCTAssertEqual(agent.availability, "available")
     XCTAssertTrue(agent.enabled)
-    XCTAssertFalse(agent.taskSubmissionEnabled)
+    XCTAssertTrue(agent.taskSubmissionEnabled)
     XCTAssertEqual(agent.version, "1.18.22")
     XCTAssertEqual(agent.protocolRevision, "1")
     XCTAssertEqual(agent.adapterRevision, 1)
     XCTAssertEqual(agent.effectiveCapabilities, [AgentCapability.workspaceRead.rawValue])
     XCTAssertEqual(agent.trustProfile, AgentTrustProfile.managed.rawValue)
     XCTAssertEqual(agent.securityProfileID, "controlled-readonly")
-    XCTAssertEqual(agent.workspaceEnforcement, "unavailable")
-    XCTAssertEqual(agent.approvalEnforcement, "unavailable")
-    XCTAssertEqual(agent.networkEnforcement, "unavailable")
+    XCTAssertEqual(agent.workspaceEnforcement, "os_sandbox")
+    XCTAssertEqual(agent.approvalEnforcement, "none")
+    XCTAssertEqual(agent.networkEnforcement, "provider")
     XCTAssertTrue(agent.modelsSummary.isEmpty)
     XCTAssertNil(agent.unavailableReason)
     XCTAssertNotNil(agent.lastVerifiedAt)
@@ -78,7 +78,7 @@ final class ServiceAgentListTests: XCTestCase {
     )
     XCTAssertEqual(
       dispatchedAgents[0].objectValue?["task_submission_enabled"],
-      .bool(false)
+      .bool(true)
     )
 
     let encoded = try JSONEncoder().encode(ListAgentsOutput(list: list))

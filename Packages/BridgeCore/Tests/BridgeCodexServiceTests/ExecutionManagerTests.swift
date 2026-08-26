@@ -1,9 +1,98 @@
+import BridgeAgentCore
 import BridgeCodexService
 import BridgeDomain
 import BridgeServiceCore
 import XCTest
 
 final class ExecutionManagerTests: XCTestCase {
+  private final class DelayedAgentRunner: AgentTaskRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: CheckedContinuation<AgentTaskRunHandle, Never>?
+    private var streamContinuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation?
+    private(set) var shutdownCount = 0
+
+    var isStartPending: Bool {
+      lock.withLock { pending != nil }
+    }
+
+    func start(_ brief: AgentTaskBrief) async throws -> AgentTaskRunHandle {
+      await withCheckedContinuation { continuation in
+        lock.withLock { pending = continuation }
+      }
+    }
+
+    func release(taskID: TaskID) {
+      let stream = AsyncThrowingStream<AgentEventEnvelope, any Error> { continuation in
+        lock.withLock { streamContinuation = continuation }
+      }
+      let handle = AgentTaskRunHandle(
+        sessionID: "session-(taskID.rawValue)",
+        runID: "run-(taskID.rawValue)",
+        events: stream,
+        interrupt: {},
+        shutdown: { [weak self] in self?.recordShutdown() }
+      )
+      let continuation = lock.withLock {
+        let value = pending
+        pending = nil
+        return value
+      }
+      continuation?.resume(returning: handle)
+    }
+
+    private func recordShutdown() {
+      lock.withLock {
+        shutdownCount += 1
+        streamContinuation?.finish()
+      }
+    }
+  }
+
+  func testShutdownReapsAgentHandleThatArrivesAfterShutdownSnapshot() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let taskID = TaskID(rawValue: "tsk-agent-late-handle")
+    let submitted = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .chatGPT,
+        prompt: "Inspect the repository.",
+        providerID: "opencode",
+        installationID: "ainst-opencode",
+        selectionMode: .explicit,
+        executionModel: serviceDefaultProviderExecutionModel,
+        executionEffort: serviceDefaultProviderExecutionEffort,
+        permissionMode: .readOnly
+      ),
+      taskID: taskID
+    )
+    _ = try await fixture.tasks.begin(taskID: submitted.task.id)
+    let runner = DelayedAgentRunner()
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: makeExecutionManager(script: "exit 0"),
+      agentRunner: runner
+    )
+    addTeardownBlock { await coordinator.shutdown() }
+
+    let start = Task { try await coordinator.start(taskID: taskID) }
+    for _ in 0..<100 where !runner.isStartPending {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(runner.isStartPending)
+
+    await coordinator.shutdown()
+    runner.release(taskID: taskID)
+    do {
+      _ = try await start.value
+      XCTFail("Expected the late start to be cancelled")
+    } catch is CancellationError {
+    } catch {
+      XCTFail("Unexpected error: \(error)")
+    }
+    XCTAssertEqual(runner.shutdownCount, 1)
+  }
+
   func testBurstOutputBackpressuresWithoutLosingContentOrCompletion() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(
@@ -84,7 +173,9 @@ final class ExecutionManagerTests: XCTestCase {
     )
     addTeardownBlock { await coordinator.shutdown() }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     XCTAssertEqual(binding.threadID, "thread-project-assigned")
     XCTAssertEqual(binding.turnID, "turn-project-assigned")
 
@@ -112,7 +203,9 @@ final class ExecutionManagerTests: XCTestCase {
     )
     addTeardownBlock { await coordinator.shutdown() }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     XCTAssertEqual(binding.threadID, "thread-project-resume")
     XCTAssertEqual(binding.turnID, "turn-project-resume")
 
@@ -136,7 +229,9 @@ final class ExecutionManagerTests: XCTestCase {
     )
     addTeardownBlock { await coordinator.shutdown() }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     XCTAssertEqual(binding.threadID, "thread-progress")
     XCTAssertEqual(binding.turnID, "turn-progress")
 
@@ -320,7 +415,9 @@ final class ExecutionManagerTests: XCTestCase {
     )
     addTeardownBlock { await coordinator.shutdown() }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     XCTAssertEqual(binding.threadID, "thread-primary")
     XCTAssertEqual(binding.turnID, "turn-primary")
 
@@ -369,7 +466,9 @@ final class ExecutionManagerTests: XCTestCase {
     )
     addTeardownBlock { await coordinator.shutdown() }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     do {
       try await coordinator.steer(
         taskID: task.id,
@@ -439,7 +538,9 @@ final class ExecutionManagerTests: XCTestCase {
     )
     addTeardownBlock { await coordinator.shutdown() }
 
-    let binding = try await coordinator.start(taskID: task.id)
+    let bindingResult = try await coordinator.start(taskID: task.id)
+
+    let binding = try XCTUnwrap(bindingResult)
     XCTAssertEqual(binding.threadID, "thread-conversation")
 
     let completed = try await waitForTask(fixture, taskID: task.id) {

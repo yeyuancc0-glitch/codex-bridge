@@ -17,6 +17,7 @@ public struct OpenCodeACPProviderConfiguration: Sendable {
   public let compatibility: OpenCodeACPCompatibility
   public let launchBuilder: OpenCodeACPLaunchBuilder
   public let requestTimeout: Duration
+  public let inactivityTimeout: Duration
   public let eventBufferLimit: Int
   public let runtimeBaseDirectory: String
   public let sourceEnvironment: [String: String]
@@ -31,6 +32,7 @@ public struct OpenCodeACPProviderConfiguration: Sendable {
     compatibility: OpenCodeACPCompatibility = .init(),
     launchBuilder: OpenCodeACPLaunchBuilder = .init(),
     requestTimeout: Duration = .seconds(30),
+    inactivityTimeout: Duration = .seconds(10 * 60),
     eventBufferLimit: Int = 256,
     runtimeBaseDirectory: String = FileManager.default.temporaryDirectory
       .appendingPathComponent("CodexBridge/OpenCodeACP", isDirectory: true).path,
@@ -43,6 +45,7 @@ public struct OpenCodeACPProviderConfiguration: Sendable {
     self.compatibility = compatibility
     self.launchBuilder = launchBuilder
     self.requestTimeout = requestTimeout
+    self.inactivityTimeout = inactivityTimeout
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.runtimeBaseDirectory = runtimeBaseDirectory
     self.sourceEnvironment = sourceEnvironment
@@ -154,6 +157,20 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         initialization: initialization,
         client: connected
       )
+      if let model = request.model {
+        try await connected.setSessionConfigOption(
+          sessionID: sessionID,
+          configID: "model",
+          value: model
+        )
+      }
+      if let effort = request.effort {
+        try await connected.setSessionConfigOption(
+          sessionID: sessionID,
+          configID: "effort",
+          value: effort
+        )
+      }
       let binding = try AgentBinding(
         providerID: .openCode,
         installationID: installation.id,
@@ -168,6 +185,7 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         sessionID: sessionID,
         prompt: request.prompt,
         initialClientEventSequence: initialSequence,
+        inactivityTimeout: configuration.inactivityTimeout,
         eventBufferLimit: configuration.eventBufferLimit,
         cleanup: {
           OpenCodeACPLaunchBuilder.removeRunDirectory(launch.runDirectory)
@@ -181,7 +199,8 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         capabilities: capabilities,
         events: execution.events,
         control: AgentExecutionControl(
-          interrupt: { try await execution.interrupt() }
+          interrupt: { try await execution.interrupt() },
+          shutdown: { await execution.shutdown() }
         )
       )
     } catch {
@@ -217,11 +236,21 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     else {
       throw AgentRuntimeError.invalidRequest("request.profileID")
     }
-    if request.model != nil {
-      throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
+    if let model = request.model {
+      guard !model.isEmpty, model.utf8.count <= 256,
+        !model.contains("\0"),
+        model.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw AgentRuntimeError.invalidRequest("request.model")
+      }
     }
-    if request.effort != nil {
-      throw AgentRuntimeError.capabilityUnavailable(.effortSelection)
+    if let effort = request.effort {
+      guard !effort.isEmpty, effort.utf8.count <= 64,
+        !effort.contains("\0"),
+        effort.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw AgentRuntimeError.invalidRequest("request.effort")
+      }
     }
   }
 
@@ -289,6 +318,8 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       .usage,
       .workspaceRead,
       .profileSelection,
+      .modelSelection,
+      .effortSelection,
     ]
     if initialization.supportsLoadSession || initialization.supportsResumeSession {
       supported.insert(.sessionContinue)
@@ -400,23 +431,28 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
   }
 
   private static func probeReason(_ error: any Error) -> String {
+    let base: String
     switch error {
     case OpenCodeACPError.unsupportedProtocol(let version):
-      return "OpenCode uses unsupported ACP protocol version \(version)."
+      base = "OpenCode uses unsupported ACP protocol version \(version)."
     case AgentRuntimeError.unsupportedProtocol(let value):
-      return "OpenCode version or identity is incompatible: \(value)."
+      base = "OpenCode version or identity is incompatible: \(value)."
     case AgentRuntimeError.installationUnavailable:
-      return "OpenCode executable is unavailable or unsafe."
+      base = "OpenCode executable is unavailable or unsafe."
     case AgentRuntimeError.processUnavailable:
-      return "The required local process or read-only sandbox is unavailable."
+      base = "The required local process or read-only sandbox is unavailable."
     case OpenCodeACPError.requestTimedOut:
-      return "OpenCode ACP initialization timed out."
+      base = "OpenCode ACP initialization timed out."
     case OpenCodeACPError.processExited(let code):
       let value = code.map { String($0) } ?? "unknown"
-      return "OpenCode ACP exited during initialization (code: \(value))."
+      base = "OpenCode ACP exited during initialization (code: \(value))."
     default:
-      return "OpenCode ACP probe failed."
+      base = "OpenCode ACP probe failed."
     }
+    let detail = String(describing: error)
+    if detail == base || detail.isEmpty { return base }
+    let truncated = detail.prefix(300)
+    return "\(base) (\(truncated))"
   }
 
   private static func requiresReview(_ error: any Error) -> Bool {

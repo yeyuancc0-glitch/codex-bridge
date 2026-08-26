@@ -80,6 +80,12 @@ final class OpenCodeACPProviderTests: XCTestCase {
         )
         return
       }
+      if message.method == "session/set_config_option", let id = message.id {
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["configOptions": .array([])]))
+        )
+        return
+      }
       if message.method == "session/prompt", let id = message.id {
         try await transport.emit(
           ACPWireMessage(
@@ -132,6 +138,8 @@ final class OpenCodeACPProviderTests: XCTestCase {
       projectID: ProjectID(rawValue: "project-provider"),
       projectRoot: projectRoot,
       prompt: "Inspect this project without changing it.",
+      model: "openai/gpt-5.6-sol",
+      effort: "high",
       profileID: OpenCodeACPProfiles.controlledReadOnly,
       mutationIntent: .readOnly,
       workspaceStrategy: .sharedProject,
@@ -176,16 +184,25 @@ final class OpenCodeACPProviderTests: XCTestCase {
       })
     XCTAssertTrue(
       events.contains { envelope in
-        guard case .completed(_, let stopReason) = envelope.event else { return false }
-        return stopReason == "end_turn"
+        guard case .completed(let summary, let stopReason) = envelope.event else { return false }
+        return summary == "Provider response" && stopReason == "end_turn"
       })
 
     let launch = try XCTUnwrap(captured.get())
     XCTAssertEqual(launch.process.workingDirectory, projectRoot)
     XCTAssertNil(launch.process.environment["UNRELATED_SETTING"])
-    XCTAssertTrue(launch.process.argv[2].contains("(deny file-write*)"))
-    XCTAssertTrue(launch.process.argv[2].contains("(deny network*)"))
+    XCTAssertTrue(launch.process.argv[2].contains("(deny file-write* "))
     XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
+    let sent = await transport.sentMessages()
+    let configMessages = sent.filter { $0.method == "session/set_config_option" }
+    XCTAssertEqual(configMessages.count, 2)
+    let configIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/set_config_option" })
+    let promptIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/prompt" })
+    XCTAssertLessThan(configIndex, promptIndex)
+    XCTAssertEqual(configMessages[0].params?["configId"], .string("model"))
+    XCTAssertEqual(configMessages[0].params?["value"], .string("openai/gpt-5.6-sol"))
+    XCTAssertEqual(configMessages[1].params?["configId"], .string("effort"))
+    XCTAssertEqual(configMessages[1].params?["value"], .string("high"))
   }
 
   func testRejectsWorkspaceWriteBeforeLaunchingProvider() async throws {
@@ -234,6 +251,76 @@ final class OpenCodeACPProviderTests: XCTestCase {
     }
     XCTAssertNil(captured.get())
     XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeBase))
+  }
+
+  func testInactivityTimeoutFailsRunAndCleansRuntime() async throws {
+    let transport = ScriptedACPTransport()
+    await transport.setHandler { message, transport in
+      if message.method == "initialize", let id = message.id {
+        try await transport.emit(
+          ACPWireMessage(id: id, result: Self.initializationResult())
+        )
+        return
+      }
+      if message.method == "session/new", let id = message.id {
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: .object(["sessionId": .string("session-timeout")])
+          )
+        )
+      }
+    }
+
+    let runtimeBase = temporaryPath(prefix: "timeout-runtime")
+    let projectRoot = try makeTemporaryDirectory(prefix: "timeout-project")
+    let sourceHome = try makeTemporaryDirectory(prefix: "timeout-home")
+    let captured = LockedValue<OpenCodeACPLaunchConfiguration>()
+    addTeardownBlock {
+      for path in [runtimeBase, projectRoot, sourceHome] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        inactivityTimeout: .milliseconds(50),
+        runtimeBaseDirectory: runtimeBase,
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { launch in
+          captured.set(launch)
+          return transport
+        }
+      )
+    )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "task-timeout"),
+      projectID: ProjectID(rawValue: "project-timeout"),
+      projectRoot: projectRoot,
+      prompt: "Inspect without producing events.",
+      mutationIntent: .readOnly,
+      workspaceStrategy: .sharedProject,
+      networkAccessRequested: false
+    )
+
+    let handle = try await provider.start(
+      request,
+      installation: try makeInstallation(id: "timeout-installation")
+    )
+    var events: [AgentEventEnvelope] = []
+    for try await event in handle.events {
+      events.append(event)
+    }
+
+    XCTAssertTrue(
+      events.contains { envelope in
+        guard case .failed(let code, _) = envelope.event else { return false }
+        return code == "opencode_inactivity_timeout"
+      }
+    )
+    let launch = try XCTUnwrap(captured.get())
+    XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
+    let sent = await transport.sentMessages()
+    XCTAssertTrue(sent.contains { $0.method == "session/cancel" })
   }
 
   func testProbeRejectsIncompatibleVersionAndCleansRuntime() async throws {

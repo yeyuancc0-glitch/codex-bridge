@@ -87,6 +87,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var projectDetails: [String: MCPProjectDetail] = [:]
   @Published public internal(set) var agentProviders: [IPCAgentProviderSummary] = []
   @Published public internal(set) var agentInstallations: [IPCAgentInstallationSummary] = []
+  @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = []
+  @Published public internal(set) var openCodeDefaultModel: String?
   @Published public internal(set) var isManagingAgents = false
   @Published public internal(set) var tasks: [MCPServiceTaskSnapshot] = []
   @Published public internal(set) var approvals: [IPCApprovalSummary] = []
@@ -102,6 +104,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var skills: [MCPServiceSkill] = []
   @Published public internal(set) var selectedThread: MCPThreadReadPage?
   @Published public internal(set) var selectedThreadID: String?
+  @Published public internal(set) var selectedTaskID: String?
   @Published public internal(set) var selectedProjectID: String?
   @Published public var chatWebView: WKWebView? {
     didSet {

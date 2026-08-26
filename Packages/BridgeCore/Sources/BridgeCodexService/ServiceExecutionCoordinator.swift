@@ -1,47 +1,77 @@
+import BridgeAgentCore
 import BridgeDomain
 import BridgeServiceCore
 import BridgeSupervisor
 import Foundation
 
 public actor ServiceExecutionCoordinator {
+  private struct ActiveAgentRun: Sendable {
+    let providerID: String
+    let providerSessionID: String?
+    let providerRunID: String?
+    let effectiveRunID: String
+    let interrupt: @Sendable () async throws -> Void
+    let shutdown: @Sendable () async -> Void
+    var lastSequence: Int64? = nil
+  }
+
   private let tasks: ServiceTaskManager
   private let projects: ServiceProjectService
   private let execution: ExecutionManager
   private let supervisor: SupervisorManager?
   private let conversation: TaskConversationBuffer
+  private let agentRunner: (any AgentTaskRunning)?
   private var collectors: [TaskID: Task<Void, Never>] = [:]
   private var supervisorCollectors: [TaskID: Task<Void, Never>] = [:]
+  private var activeAgentRuns: [TaskID: ActiveAgentRun] = [:]
+  private var finishedRuns: Set<TaskID> = []
+  private var startingTasks: Set<TaskID> = []
+  private var isShuttingDown = false
 
   public init(
     tasks: ServiceTaskManager,
     projects: ServiceProjectService,
     execution: ExecutionManager,
     supervisor: SupervisorManager? = nil,
-    conversation: TaskConversationBuffer? = nil
+    conversation: TaskConversationBuffer? = nil,
+    agentRunner: (any AgentTaskRunning)? = nil
   ) {
     self.tasks = tasks
     self.projects = projects
     self.execution = execution
     self.supervisor = supervisor
     self.conversation = conversation ?? TaskConversationBuffer(tasks: tasks)
+    self.agentRunner = agentRunner
   }
 
   @discardableResult
-  public func start(taskID: TaskID) async throws -> ExecutionBinding {
-    guard collectors[taskID] == nil else {
+  public func start(taskID: TaskID) async throws -> ExecutionBinding? {
+    guard !isShuttingDown else {
+      throw ExecutionServiceError.processUnavailable
+    }
+    guard collectors[taskID] == nil, activeAgentRuns[taskID] == nil,
+      startingTasks.insert(taskID).inserted
+    else {
       throw ExecutionServiceError.activeSession(taskID)
     }
+    defer { startingTasks.remove(taskID) }
     guard let task = try await tasks.task(id: taskID) else {
       throw ServiceStoreError.unknownTask(taskID)
     }
     guard let project = try await projects.project(id: task.projectID) else {
       throw ExecutionServiceError.projectUnavailable(task.projectID)
     }
+    guard task.providerID == serviceCodexProviderID else {
+      try await startAgentTask(task, project: project)
+      return nil
+    }
+    try ensureStartIsActive(taskID)
 
     await launchSupervisor(for: task)
     let handle: ExecutionHandle
     do {
       handle = try await execution.start(try ExecutionRequest(task: task, project: project))
+      try ensureStartIsActive(taskID)
       _ = try await tasks.markExecutionStarted(
         taskID: taskID,
         threadID: handle.binding.threadID,
@@ -92,6 +122,13 @@ public actor ServiceExecutionCoordinator {
     expectedTurnID: String? = nil
   ) async throws {
     try await execution.interrupt(taskID: taskID, expectedTurnID: expectedTurnID)
+  }
+
+  public func interruptAgent(taskID: TaskID, expectedRunID: String) async throws {
+    guard let run = activeAgentRuns[taskID], run.effectiveRunID == expectedRunID else {
+      throw ExecutionServiceError.threadMismatch(expectedRunID)
+    }
+    try await run.interrupt()
   }
 
   public func pendingApprovals(taskID: TaskID? = nil) async -> [ExecutionApprovalRequest] {
@@ -208,7 +245,10 @@ public actor ServiceExecutionCoordinator {
     taskID: TaskID,
     summary: String = "The local service stopped the task."
   ) async {
+    startingTasks.remove(taskID)
+    finishedRuns.insert(taskID)
     collectors.removeValue(forKey: taskID)?.cancel()
+    await stopAgentRun(taskID: taskID)
     await execution.stop(taskID: taskID)
     await stopSupervisor(taskID: taskID)
     if await conversation.close(taskID: taskID) {
@@ -223,12 +263,21 @@ public actor ServiceExecutionCoordinator {
   }
 
   public func shutdown() async {
+    isShuttingDown = true
+    finishedRuns.formUnion(startingTasks)
+    finishedRuns.formUnion(activeAgentRuns.keys)
+    startingTasks.removeAll(keepingCapacity: false)
     let executionTasks = collectors.values
     let supervisorTasks = supervisorCollectors.values
     collectors.removeAll(keepingCapacity: false)
     supervisorCollectors.removeAll(keepingCapacity: false)
     for task in executionTasks { task.cancel() }
     for task in supervisorTasks { task.cancel() }
+    let shutdowns = activeAgentRuns.values.map(\.shutdown)
+    activeAgentRuns.removeAll(keepingCapacity: false)
+    for shutdown in shutdowns {
+      await shutdown()
+    }
     await execution.shutdown()
     await supervisor?.shutdown()
     let failedConversationTasks = await conversation.closeAll()
@@ -238,6 +287,19 @@ public actor ServiceExecutionCoordinator {
         failureCode: "conversation_persistence_failed",
         summary: "The task conversation could not be persisted before service shutdown."
       )
+    }
+  }
+
+  private func stopAgentRun(taskID: TaskID) async {
+    finishedRuns.insert(taskID)
+    if let run = activeAgentRuns.removeValue(forKey: taskID) {
+      await run.shutdown()
+    }
+  }
+
+  private func ensureStartIsActive(_ taskID: TaskID) throws {
+    guard !isShuttingDown, startingTasks.contains(taskID), !finishedRuns.contains(taskID) else {
+      throw CancellationError()
     }
   }
 
@@ -349,13 +411,332 @@ public actor ServiceExecutionCoordinator {
     }
   }
 
+  private static func agentStartFailureSummary(_ error: Error, provider: String) -> String {
+    var detail = String(describing: error)
+    if detail.count > 300 { detail = String(detail.prefix(300)) }
+    detail =
+      detail
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+    return "The \(provider) agent could not start the task: \(detail)"
+  }
+
+  private func startAgentTask(
+    _ task: ServiceTaskRecord,
+    project: ServiceProjectRecord
+  ) async throws {
+    guard let runner = agentRunner else {
+      throw ExecutionServiceError.processUnavailable
+    }
+    guard let installationID = task.installationID else {
+      throw ExecutionServiceError.invalidRequest("installationID")
+    }
+    let brief = AgentTaskBrief(
+      taskID: task.id,
+      providerID: AgentProviderID(rawValue: task.providerID),
+      installationID: AgentInstallationID(rawValue: installationID),
+      projectID: task.projectID,
+      projectRoot: project.root.canonicalPath,
+      prompt: task.prompt,
+      requestedSessionID: task.requestedThreadID,
+      model: task.executionModel == serviceDefaultProviderExecutionModel
+        ? nil : task.executionModel,
+      effort: task.executionEffort == serviceDefaultProviderExecutionEffort
+        ? nil : task.executionEffort,
+      networkAllowed: task.networkAllowed
+    )
+    let handle: AgentTaskRunHandle
+    do {
+      handle = try await runner.start(brief)
+    } catch {
+      if !finishedRuns.contains(task.id), !isShuttingDown {
+        let conversationPersisted = await conversation.close(taskID: task.id)
+        _ = try? await tasks.fail(
+          taskID: task.id,
+          failureCode: conversationPersisted
+            ? "agent_start_failed" : "conversation_persistence_failed",
+          summary: conversationPersisted
+            ? Self.agentStartFailureSummary(error, provider: task.providerID)
+            : "The task conversation could not be persisted."
+        )
+      }
+      throw error
+    }
+
+    do {
+      try ensureStartIsActive(task.id)
+      let runID =
+        handle.runID.flatMap { $0.isEmpty ? nil : $0 }
+        ?? UUID().uuidString.lowercased()
+      // The state model pairs session/run; when the provider has no stable
+      // session concept the run identity doubles as the session reference.
+      let sessionID = handle.sessionID.flatMap { $0.isEmpty ? nil : $0 } ?? runID
+      _ = try await tasks.markAgentExecutionStarted(
+        taskID: task.id,
+        providerSessionID: sessionID,
+        providerRunID: runID
+      )
+      activeAgentRuns[task.id] = ActiveAgentRun(
+        providerID: task.providerID,
+        providerSessionID: handle.sessionID,
+        providerRunID: handle.runID,
+        effectiveRunID: runID,
+        interrupt: handle.interrupt,
+        shutdown: handle.shutdown
+      )
+      await conversation.appendUserMessage(taskID: task.id, content: task.prompt)
+      try ensureStartIsActive(task.id)
+    } catch {
+      activeAgentRuns.removeValue(forKey: task.id)
+      await handle.shutdown()
+      if !finishedRuns.contains(task.id), !isShuttingDown {
+        let conversationPersisted = await conversation.close(taskID: task.id)
+        _ = try? await tasks.fail(
+          taskID: task.id,
+          failureCode: conversationPersisted
+            ? "agent_start_failed" : "conversation_persistence_failed",
+          summary: conversationPersisted
+            ? Self.agentStartFailureSummary(error, provider: task.providerID)
+            : "The task conversation could not be persisted."
+        )
+      }
+      throw error
+    }
+
+    let events = handle.events
+    collectors[task.id] = Task { [weak self] in
+      do {
+        for try await envelope in events {
+          guard let self else { return }
+          await self.consumeAgent(envelope, taskID: task.id)
+        }
+        await self?.agentStreamFinished(task.id, failure: nil)
+      } catch {
+        await self?.agentStreamFinished(task.id, failure: error)
+      }
+    }
+  }
+
+  private func consumeAgent(_ envelope: AgentEventEnvelope, taskID: TaskID) async {
+    guard !finishedRuns.contains(taskID) else { return }
+    do {
+      try validateAgentEnvelope(envelope, taskID: taskID)
+      switch envelope.event {
+      case .content(let update):
+        guard update.role == .assistant else { return }
+        let kind: ServiceTaskMessageKind = update.kind == .reasoning ? .reasoning : .agent
+        let bufferKey = Self.conversationPrefix(kind) + Self.agentItemKey(update.key)
+        switch update.mode {
+        case .delta:
+          await conversation.appendDelta(
+            taskID: taskID,
+            itemID: Self.agentItemKey(update.key),
+            delta: update.content,
+            kind: kind
+          )
+        case .full:
+          await conversation.upsertAuthoritativeEntry(
+            taskID: taskID,
+            key: bufferKey,
+            kind: kind,
+            content: update.content,
+            isFinal: update.isFinal
+          )
+        }
+
+      case .tool(let update):
+        let itemID = Self.agentToolItemID(update.key)
+        await conversation.upsertToolCall(
+          taskID: taskID,
+          call: try ExecutionToolCall(
+            itemID: itemID,
+            tool: update.name.isEmpty ? "tool" : update.name,
+            arguments: update.arguments,
+            status: Self.toolStatus(update.status)
+          )
+        )
+        if update.status != .pending, update.status != .inProgress,
+          let output = update.output, !output.isEmpty
+        {
+          await conversation.appendToolCallProgress(
+            taskID: taskID,
+            itemID: itemID,
+            progress: output
+          )
+        }
+
+      case .plan(let entries):
+        let step =
+          entries.first(where: { $0.status == nil || $0.status == "pending" })?
+          .content ?? entries.last?.content
+        if let currentStep = step.map(Self.boundedPlanStep) {
+          _ = try await tasks.updatePlan(taskID: taskID, currentStep: currentStep)
+        }
+
+      case .usage:
+        break
+
+      case .approvalRequested(let approval):
+        throw AgentRuntimeError.approvalUnavailable(approval.approvalID)
+
+      case .approvalAutomaticallyDenied(let itemID):
+        await conversation.upsertAuthoritativeEntry(
+          taskID: taskID,
+          key: "tool:" + itemID,
+          kind: .toolCall,
+          content: "The requested operation was denied by local policy.",
+          toolStatus: ExecutionToolCallStatus.declined.rawValue,
+          isFinal: false
+        )
+
+      case .completed(let summary, _):
+        try await finishAgentRun(taskID: taskID) {
+          try await closeConversation(taskID: taskID)
+          let current = try await requiredTask(taskID)
+          return try await tasks.complete(
+            taskID: taskID,
+            resultSummary: summary.isEmpty ? "The agent run completed." : summary,
+            changedFiles: current.state.changedFiles
+          )
+        }
+
+      case .interrupted:
+        try await finishAgentRun(taskID: taskID) {
+          try await closeConversation(taskID: taskID)
+          return try await tasks.interrupt(
+            taskID: taskID,
+            summary: "The agent confirmed that the run was interrupted."
+          )
+        }
+
+      case .failed(let code, let summary):
+        try await finishAgentRun(taskID: taskID) {
+          await conversation.appendAgentMessage(taskID: taskID, content: summary)
+          try await closeConversation(taskID: taskID)
+          return try await tasks.fail(
+            taskID: taskID,
+            failureCode: code,
+            summary: summary
+          )
+        }
+      }
+    } catch {
+      finishedRuns.insert(taskID)
+      if let run = activeAgentRuns.removeValue(forKey: taskID) {
+        await run.shutdown()
+      }
+      _ = await conversation.close(taskID: taskID)
+      _ = try? await tasks.fail(
+        taskID: taskID,
+        failureCode: "agent_execution_failed",
+        summary: Self.persistenceFailureSummary(error, provider: envelope.providerID.rawValue)
+      )
+    }
+  }
+
+  private func finishAgentRun(
+    taskID: TaskID,
+    transition: () async throws -> ServiceTaskRecord?
+  ) async throws {
+    guard !finishedRuns.contains(taskID) else { return }
+    finishedRuns.insert(taskID)
+    let run = activeAgentRuns.removeValue(forKey: taskID)
+    do {
+      _ = try await transition()
+    } catch {
+      if let run { await run.shutdown() }
+      throw error
+    }
+    if let run { await run.shutdown() }
+  }
+
+  private func agentStreamFinished(_ taskID: TaskID, failure: (any Error)?) async {
+    collectors.removeValue(forKey: taskID)
+    guard finishedRuns.remove(taskID) == nil else { return }
+    if let run = activeAgentRuns.removeValue(forKey: taskID) {
+      await run.shutdown()
+    }
+    _ = await conversation.close(taskID: taskID)
+    let summary: String
+    let failureCode: String
+    if let failure {
+      failureCode = "agent_execution_failed"
+      summary = Self.persistenceFailureSummary(failure, provider: "agent")
+    } else {
+      failureCode = "agent_stream_ended"
+      summary = "The agent event stream ended before reporting a terminal result."
+    }
+    _ = try? await tasks.fail(
+      taskID: taskID,
+      failureCode: failureCode,
+      summary: summary
+    )
+  }
+
+  private func validateAgentEnvelope(
+    _ envelope: AgentEventEnvelope,
+    taskID: TaskID
+  ) throws {
+    guard var run = activeAgentRuns[taskID] else {
+      throw AgentRuntimeError.runMismatch
+    }
+    guard envelope.taskID == taskID,
+      envelope.providerID.rawValue == run.providerID,
+      envelope.providerSessionID == run.providerSessionID,
+      envelope.providerRunID == run.providerRunID,
+      run.lastSequence.map({ envelope.providerSequence > $0 }) ?? true
+    else {
+      throw AgentRuntimeError.malformedEvent("agent.binding")
+    }
+    run.lastSequence = envelope.providerSequence
+    activeAgentRuns[taskID] = run
+  }
+
+  static func conversationPrefix(_ kind: ServiceTaskMessageKind) -> String {
+    switch kind {
+    case .reasoning: "reasoning:"
+    default: "agent:"
+    }
+  }
+
+  /// Buffer delta keys are prefixed by kind; keep the provider stream key as a
+  /// stable suffix so deltas and the final authoritative snapshot share one key.
+  static func agentItemKey(_ key: String) -> String {
+    var trimmed = Substring(key)
+    for candidate in ["agent:", "reasoning:", "tool:", "user:"] where trimmed.hasPrefix(candidate) {
+      trimmed = trimmed.dropFirst(candidate.count)
+    }
+    return trimmed.count > 256 ? String(trimmed.prefix(256)) : String(trimmed)
+  }
+
+  static func agentToolItemID(_ key: String) -> String {
+    key.hasPrefix("tool:") ? String(key.dropFirst("tool:".count)) : key
+  }
+
+  static func toolStatus(_ status: AgentToolStatus) -> ExecutionToolCallStatus {
+    switch status {
+    case .pending, .inProgress: .inProgress
+    case .completed: .completed
+    case .failed: .failed
+    case .cancelled, .declined: .declined
+    }
+  }
+
+  static func boundedPlanStep(_ content: String) -> String {
+    let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.utf8.count > 512 else { return trimmed }
+    return String(decoding: trimmed.utf8.prefix(512), as: UTF8.self)
+  }
+
   private func closeConversation(taskID: TaskID) async throws {
     guard await conversation.close(taskID: taskID) else {
       throw ExecutionServiceError.conversationPersistenceFailed
     }
   }
 
-  private static func persistenceFailureSummary(_ error: Error) -> String {
+  private static func persistenceFailureSummary(_ error: Error, provider: String = "Codex")
+    -> String
+  {
     let source = String(describing: error)
     let characters = source.unicodeScalars.map { scalar -> Character in
       switch scalar.value {
@@ -372,9 +753,9 @@ public actor ServiceExecutionCoordinator {
       .joined(separator: " ")
     let detail = sanitized.prefix(512)
     guard !detail.isEmpty else {
-      return "The service could not persist Codex task progress."
+      return "The service could not persist \(provider) task progress."
     }
-    return "The service could not persist Codex task progress: \(detail)"
+    return "The service could not persist \(provider) task progress: \(detail)"
   }
 
   private func launchSupervisor(for task: ServiceTaskRecord) async {

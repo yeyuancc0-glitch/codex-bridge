@@ -172,14 +172,14 @@ extension BridgeServiceXPCController {
     _ approval: BridgeServiceApplication.PendingTaskStartApproval
   ) -> IPCApprovalSummary {
     let prompt = String(decoding: approval.prompt.utf8.prefix(4 * 1_024), as: UTF8.self)
-    let title: String
+    let clientLabel: String
     switch approval.clientID {
     case MCPClientID.chatGPT.rawValue:
-      title = "ChatGPT 请求调用 Codex"
+      clientLabel = "ChatGPT"
     case MCPClientID.qwenStudio.rawValue:
-      title = "Qwen 请求调用 Codex"
+      clientLabel = "Qwen"
     default:
-      title = "远程客户端请求调用 Codex"
+      clientLabel = "远程客户端"
     }
     return IPCApprovalSummary(
       approvalID: approval.approvalID,
@@ -188,7 +188,7 @@ extension BridgeServiceXPCController {
       turnID: "",
       itemID: approval.taskID,
       kind: "task_start",
-      title: title,
+      title: "\(clientLabel)请求调用 \(approval.providerDisplayName)",
       summary: prompt,
       reason: "项目：\(approval.projectID)",
       decisionOptions: ["allow", "deny"]
@@ -324,6 +324,12 @@ extension BridgeServiceXPCController {
         return .init(
           code: "unavailable",
           message: "A local component is unavailable.",
+          retryable: true
+        )
+      case .internalFailure(let correlationID):
+        return .init(
+          code: "internal_error",
+          message: "The operation failed unexpectedly (correlation \(correlationID)).",
           retryable: true
         )
       case .idempotencyConflict, .eventSequenceMismatch, .invalidTaskState, .contractRejected:
@@ -476,7 +482,7 @@ extension BridgeServiceXPCController {
     if error is ExecutionServiceError {
       return .init(
         code: "execution_failed",
-        message: "The Codex operation failed.",
+        message: "The provider operation failed.",
         retryable: true
       )
     }

@@ -155,6 +155,55 @@ extension TaskConversationBuffer {
     }
   }
 
+  /// Authoritative full-content upsert used by agent providers whose events
+  /// carry complete snapshots instead of append-only deltas.
+  public func upsertAuthoritativeEntry(
+    taskID: TaskID,
+    key: String,
+    kind: ServiceTaskMessageKind,
+    content: String,
+    toolName: String? = nil,
+    toolStatus: String? = nil,
+    toolArguments: String? = nil,
+    isFinal: Bool
+  ) async {
+    guard kind == .agent || kind == .reasoning || kind == .toolCall else { return }
+    let cappedContent = Self.capped(content)
+    guard !cappedContent.isEmpty else { return }
+    let state = state(taskID: taskID)
+    let entry = Entry(
+      key: key,
+      role: .agent,
+      kind: kind,
+      content: cappedContent,
+      toolName: toolName.map(Self.cappedToolName),
+      toolStatus: toolStatus,
+      toolArguments: toolArguments,
+      isFinal: isFinal
+    )
+    guard apply(entry, in: state) else { return }
+    markDirty(key: key, in: state)
+    notify(
+      ConversationChange(
+        taskID: taskID,
+        key: key,
+        role: .agent,
+        kind: kind,
+        delta: nil,
+        baseContentLength: 0,
+        fullContent: cappedContent,
+        final: isFinal,
+        toolName: entry.toolName,
+        toolStatus: toolStatus,
+        toolArguments: toolArguments
+      ),
+      in: state
+    )
+    if await shouldFlush(state) {
+      _ = await flush(taskID: taskID)
+    }
+  }
+
   private func mergeDelta(
     taskID: TaskID,
     key: String,
@@ -328,6 +377,11 @@ extension TaskConversationBuffer {
   private static func capped(_ content: String) -> String {
     guard content.utf8.count > maximumMessageBytes else { return content }
     return String(decoding: content.utf8.prefix(maximumMessageBytes), as: UTF8.self)
+  }
+
+  private static func cappedToolName(_ name: String) -> String {
+    guard name.utf8.count > 256 else { return name }
+    return String(decoding: name.utf8.prefix(256), as: UTF8.self)
   }
 
   private static func cappedAppend(_ content: String, _ delta: String) -> String {

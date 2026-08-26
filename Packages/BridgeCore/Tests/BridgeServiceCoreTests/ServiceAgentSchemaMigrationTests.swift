@@ -50,7 +50,7 @@ final class ServiceAgentSchemaMigrationTests: XCTestCase {
       let exists = try db.tableExists("bridge_service_agent_installations")
       return (version, exists)
     }
-    XCTAssertEqual(schema.0, 10)
+    XCTAssertEqual(schema.0, 11)
     XCTAssertTrue(schema.1)
 
     let backupPath = databasePath + ".pre-v10"

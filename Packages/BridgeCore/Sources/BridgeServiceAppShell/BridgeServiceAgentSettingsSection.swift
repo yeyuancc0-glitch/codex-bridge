@@ -6,6 +6,9 @@ struct BridgeServiceAgentSettingsSection: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var installationPendingRemoval: IPCAgentInstallationSummary?
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
+  @State private var submitProviderID = "opencode"
+  @State private var selectedModel = ""
+  @State private var submitPrompt = ""
 
   var body: some View {
     Section {
@@ -30,6 +33,8 @@ struct BridgeServiceAgentSettingsSection: View {
           installationRow(installation)
         }
       }
+
+      agentSubmitCard
     } header: {
       Label("本机 Agent Provider", systemImage: "point.3.connected.trianglepath.dotted")
     }
@@ -203,6 +208,79 @@ struct BridgeServiceAgentSettingsSection: View {
       displayName: provider.displayName,
       executableURL: url
     )
+  }
+
+  @ViewBuilder
+  private var agentSubmitCard: some View {
+    let selectable = model.agentInstallations.filter {
+      $0.providerID == submitProviderID && $0.isEnabled && $0.availability == "available"
+    }
+    VStack(alignment: .leading, spacing: 8) {
+      Divider()
+      Text("本机 Agent 任务（只读）")
+        .font(.body.weight(.semibold))
+      Text("提交后进入工作台等待本机批准；此处选择即 GPT 提交的默认模型。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      Picker("Provider", selection: $submitProviderID) {
+        ForEach(
+          Array(Set(model.agentInstallations.map(\.providerID))).sorted(), id: \.self
+        ) { id in
+          Text(id).tag(id)
+        }
+      }
+      .pickerStyle(.menu)
+
+      if selectable.isEmpty {
+        Text("该 Provider 暂无已启用的可用安装")
+          .font(.caption)
+          .foregroundStyle(.orange)
+      }
+
+      Picker("默认模型", selection: $selectedModel) {
+        Text("Provider 默认").tag("")
+        ForEach(model.agentModelOptions, id: \.modelID) { item in
+          Text(item.displayName).tag(item.modelID)
+        }
+      }
+      .pickerStyle(.menu)
+      .onChange(of: selectedModel) { _, newValue in
+        model.saveAgentModelDefault(newValue.isEmpty ? nil : newValue)
+      }
+      .task(id: selectable.first?.installationID) {
+        model.loadAgentModels(installationID: selectable.first?.installationID)
+        model.loadAgentModelDefault()
+        selectedModel = model.openCodeDefaultModel ?? ""
+      }
+
+      TextField("任务描述", text: $submitPrompt, axis: .vertical)
+        .textFieldStyle(.roundedBorder)
+        .lineLimit(2...4)
+
+      HStack {
+        Spacer()
+        Button("提交任务") {
+          model.submitAgentTask(
+            projectID: model.selectedProjectID ?? (model.projects.first?.projectID ?? ""),
+            providerID: submitProviderID,
+            installationID: selectable.first?.installationID,
+            model: selectedModel.isEmpty ? nil : selectedModel,
+            prompt: submitPrompt
+          )
+          submitPrompt = ""
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(
+          submitPrompt
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || selectable.isEmpty
+            || model.selectedProjectID == nil && model.projects.isEmpty
+        )
+      }
+    }
+    .padding(.vertical, 6)
   }
 
   private func availabilityTitle(_ value: String) -> String {

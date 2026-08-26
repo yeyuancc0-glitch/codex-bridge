@@ -510,3 +510,34 @@ private final class XPCClientCompletion: @unchecked Sendable {
     body(continuation)
   }
 }
+
+extension BridgeServiceClient {
+  public func submitAgentTask(
+    _ request: IPCAgentSubmitRequest
+  ) async throws -> IPCAgentSubmitResponse {
+    try await call(operation: .submitAgentTask, payload: request)
+  }
+
+  public func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
+    try await call(
+      operation: .listAgentModels,
+      payload: IPCAgentModelsRequest(installationID: installationID)
+    )
+  }
+}
+
+extension BridgeServiceClient {
+  public func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
+    try await call(
+      operation: .getAgentModelDefault,
+      payload: Optional<IPCMutationResponse>.none
+    )
+  }
+
+  public func setAgentModelDefault(_ model: String?) async throws {
+    let _: IPCAgentModelDefaultResponse = try await call(
+      operation: .setAgentModelDefault,
+      payload: IPCAgentModelDefaultRequest(model: model)
+    )
+  }
+}

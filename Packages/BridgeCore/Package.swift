@@ -237,6 +237,7 @@ let package = Package(
     .target(
       name: "BridgeCodexService",
       dependencies: [
+        "BridgeAgentCore",
         "BridgeCodexRPC",
         "BridgeDomain",
         "BridgeProjects",

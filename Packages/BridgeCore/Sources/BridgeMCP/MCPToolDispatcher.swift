@@ -244,6 +244,12 @@ public struct MCPToolDispatcher: Sendable {
         message: "A required local Bridge component is unavailable.",
         retryable: true
       )
+    case .internalFailure(let correlationID):
+      description = .init(
+        code: "internal_error",
+        message: "The tool request failed unexpectedly (correlation \(correlationID)).",
+        retryable: true
+      )
     case .fileRevisionConflict:
       description = .init(
         code: "file_revision_conflict",

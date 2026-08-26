@@ -52,6 +52,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   )
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
   private var workbenchProjectSelections: [String?] = []
+  private var taskSnapshotsValue: [MCPServiceTaskSnapshot]?
   private var agentInstallationsValue: [IPCAgentInstallationSummary] = []
   private var agentActions: [String] = []
   private let agentProvidersValue = [
@@ -87,6 +88,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setConversationPages(_ pages: [TaskConversationQuery: IPCTaskConversationPage]) {
     conversationPages = pages
+  }
+
+  func setTaskSnapshots(_ snapshots: [MCPServiceTaskSnapshot]) {
+    taskSnapshotsValue = snapshots
   }
 
   func setSkills(_ names: [String]) {
@@ -325,6 +330,17 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     agentInstallationsValue.removeAll { $0.installationID == installationID }
   }
 
+  func submitAgentTask(
+    _ request: IPCAgentSubmitRequest
+  ) async throws -> IPCAgentSubmitResponse {
+    agentActions.append("submit:\(request.providerID):\(request.model ?? "default")")
+    return IPCAgentSubmitResponse(taskID: "tsk-test-agent", status: "awaiting_local_approval")
+  }
+
+  func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
+    IPCAgentModelsResponse(models: [])
+  }
+
   func agentActionsValue() -> [String] {
     agentActions
   }
@@ -407,7 +423,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot] {
     _ = request
-    return [taskSnapshot()]
+    return taskSnapshotsValue ?? [taskSnapshot()]
   }
 
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot {

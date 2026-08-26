@@ -108,16 +108,18 @@ public actor ServiceWorkspaceMutationGate {
     return DirectWorkspaceLease(projectID: projectID, owner: owner, gate: self, token: token)
   }
 
-  public func beginCodexAdmission(projectID: ProjectID) async throws {
+  @discardableResult
+  public func beginCodexAdmission(projectID: ProjectID) async throws -> String {
     if let direct = directReservations[projectID] {
       throw ProjectWorkspaceBusyError.busy(direct.owner.busyDetail)
     }
-    codexAdmissions[projectID, default: []].insert(UUID().uuidString)
+    let token = UUID().uuidString
+    codexAdmissions[projectID, default: []].insert(token)
+    return token
   }
 
-  public func endCodexAdmission(projectID: ProjectID) {
-    guard var tokens = codexAdmissions[projectID], let token = tokens.first else { return }
-    tokens.remove(token)
+  public func endCodexAdmission(projectID: ProjectID, token: String) {
+    guard var tokens = codexAdmissions[projectID], tokens.remove(token) != nil else { return }
     codexAdmissions[projectID] = tokens.isEmpty ? nil : tokens
   }
 

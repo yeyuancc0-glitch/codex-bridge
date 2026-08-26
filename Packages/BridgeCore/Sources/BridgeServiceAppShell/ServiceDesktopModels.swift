@@ -12,6 +12,54 @@ extension MCPServiceTaskSnapshot {
     ["starting", "running", "waiting_for_codex_approval"].contains(status)
   }
 
+  var isActive: Bool {
+    isRunning || status == "awaiting_local_approval"
+  }
+
+  var providerIdentifier: String {
+    AgentProviderPresentation.identifier(providerID)
+  }
+
+  var providerDisplayName: String {
+    AgentProviderPresentation.displayName(providerID)
+  }
+
+  var providerSystemImage: String {
+    AgentProviderPresentation.systemImage(providerID)
+  }
+
+  var isCodexTask: Bool {
+    providerIdentifier == "codex"
+  }
+
+  var isExternalAgentTask: Bool {
+    !isCodexTask
+  }
+
+  var workbenchTitle: String {
+    for value in [currentStep, resultSummary] {
+      if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return value
+      }
+    }
+    return "\(providerDisplayName) 任务"
+  }
+
+  var failureDescription: String? {
+    let code = failureCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let summary = resultSummary?.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch (code, summary) {
+    case (let code?, let summary?) where !code.isEmpty && !summary.isEmpty:
+      return "\(code)：\(summary)"
+    case (let code?, _) where !code.isEmpty:
+      return code
+    case (_, let summary?) where !summary.isEmpty && status == "failed":
+      return summary
+    default:
+      return nil
+    }
+  }
+
   var sourceDisplayName: String {
     if source == "chatgpt.mcp" || sourceClientID == MCPClientID.chatGPT.rawValue {
       return "ChatGPT"
@@ -23,6 +71,33 @@ extension MCPServiceTaskSnapshot {
       return sourceClientID
     }
     return source == "macos.app" ? "本机 App" : "本机任务"
+  }
+}
+
+enum AgentProviderPresentation {
+  static func identifier(_ providerID: String?) -> String {
+    guard let providerID else { return "codex" }
+    let normalized = providerID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized.isEmpty ? "codex" : normalized
+  }
+
+  static func displayName(_ providerID: String?) -> String {
+    guard let providerID else { return "Codex" }
+    switch identifier(providerID) {
+    case "codex": return "Codex"
+    case "opencode": return "OpenCode"
+    default:
+      let value = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
+      return value.isEmpty ? "Codex" : value
+    }
+  }
+
+  static func systemImage(_ providerID: String?) -> String {
+    switch identifier(providerID) {
+    case "codex": return "cpu.fill"
+    case "opencode": return "chevron.left.forwardslash.chevron.right"
+    default: return "point.3.connected.trianglepath.dotted"
+    }
   }
 }
 
@@ -40,52 +115,65 @@ struct CodexActivityPresentation: Equatable {
       showsBubble = false
       return
     }
+    let providerName = task.providerDisplayName
     detailText = task.currentStep
     switch task.status {
     case "starting":
-      statusText = "Codex 正在启动…"
+      statusText = "\(providerName) 正在启动…"
       isActive = true
       showsBubble = true
     case "running":
-      (statusText, showsBubble) = Self.runningPresentation(activity)
+      (statusText, showsBubble) = Self.runningPresentation(
+        activity,
+        providerName: providerName
+      )
       isActive = true
+    case "awaiting_local_approval":
+      statusText = "等待本机批准 \(providerName) 任务…"
+      isActive = true
+      showsBubble = true
     case "waiting_for_codex_approval":
-      statusText = "等待本机批准 Codex 操作…"
+      statusText = "等待本机批准 \(providerName) 操作…"
       isActive = true
       showsBubble = true
     case "completed":
-      statusText = "Codex 已完成"
+      statusText = "\(providerName) 已完成"
       isActive = false
       showsBubble = false
     case "failed":
-      statusText = "Codex 执行失败"
+      statusText = "\(providerName) 执行失败"
       isActive = false
       showsBubble = false
     case "interrupted":
-      statusText = "Codex 已中断"
+      statusText = "\(providerName) 已中断"
       isActive = false
       showsBubble = false
     case "unknown":
-      statusText = "Codex 状态未知"
+      statusText = "\(providerName) 状态未知"
       isActive = false
       showsBubble = false
     default:
-      statusText = "等待本机批准任务"
+      statusText = "等待本机批准 \(providerName) 任务"
       isActive = false
       showsBubble = false
     }
   }
 
   private static func runningPresentation(
-    _ activity: TaskConversationModel.Activity
+    _ activity: TaskConversationModel.Activity,
+    providerName: String
   ) -> (String, Bool) {
     switch activity {
     case .executing(let tool):
-      return (tool.map { "Codex 正在执行 \($0)…" } ?? "Codex 正在执行工具…", true)
+      return (
+        tool.map { "\(providerName) 正在执行 \($0)…" }
+          ?? "\(providerName) 正在执行工具…",
+        true
+      )
     case .responding:
-      return ("Codex 正在输出…", false)
+      return ("\(providerName) 正在输出…", false)
     case .idle, .thinking:
-      return ("Codex 正在思考…", true)
+      return ("\(providerName) 正在思考…", true)
     }
   }
 }

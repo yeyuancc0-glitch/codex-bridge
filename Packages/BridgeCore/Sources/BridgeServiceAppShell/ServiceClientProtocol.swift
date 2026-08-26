@@ -39,6 +39,10 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
     enabled: Bool
   ) async throws -> IPCAgentInstallationSummary
   func removeAgentInstallation(installationID: String) async throws
+  func submitAgentTask(_ request: IPCAgentSubmitRequest) async throws -> IPCAgentSubmitResponse
+  func agentModels(installationID: String) async throws -> IPCAgentModelsResponse
+  func agentModelDefault() async throws -> IPCAgentModelDefaultResponse
+  func setAgentModelDefault(_ model: String?) async throws
   func customInstructions() async throws -> String
   func setCustomInstructions(_ instructions: String) async throws
   func removeProject(projectID: String) async throws
@@ -107,6 +111,24 @@ extension BridgeServiceClientProtocol {
   }
 
   public func removeAgentInstallation(installationID: String) async throws {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func submitAgentTask(
+    _ request: IPCAgentSubmitRequest
+  ) async throws -> IPCAgentSubmitResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func setAgentModelDefault(_: String?) async throws {
     throw BridgeServiceClientError.unavailable
   }
 

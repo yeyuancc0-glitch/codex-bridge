@@ -128,3 +128,61 @@ extension BridgeServiceXPCController {
     )
   }
 }
+
+extension BridgeServiceXPCController {
+  func handleSubmitAgentTask(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(IPCAgentSubmitRequest.self, from: request)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+    let result = try await composition.application.serviceSubmitAgentTask(
+      projectID: payload.projectID,
+      providerID: payload.providerID,
+      installationID: payload.installationID,
+      model: payload.model,
+      prompt: payload.prompt,
+      deadline: deadline
+    )
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: IPCAgentSubmitResponse(taskID: result.taskID, status: result.status)
+    )
+  }
+
+  func handleListAgentModels(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(IPCAgentModelsRequest.self, from: request)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+    let items = try await composition.application.serviceListAgentModels(
+      installationID: AgentInstallationID(rawValue: payload.installationID),
+      deadline: deadline
+    )
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: IPCAgentModelsResponse(
+        models: items.map { IPCAgentModelSummary(modelID: $0.modelID, displayName: $0.displayName) }
+      )
+    )
+  }
+}
+
+extension BridgeServiceXPCController {
+  func handleGetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let model = try await composition.application.serviceOpenCodeDefaultModel(deadline: deadline)
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: IPCAgentModelDefaultResponse(model: model)
+    )
+  }
+
+  func handleSetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(IPCAgentModelDefaultRequest.self, from: request)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    try await composition.application.serviceSetOpenCodeDefaultModel(
+      payload.model,
+      deadline: deadline
+    )
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: IPCAgentModelDefaultResponse(model: payload.model)
+    )
+  }
+}

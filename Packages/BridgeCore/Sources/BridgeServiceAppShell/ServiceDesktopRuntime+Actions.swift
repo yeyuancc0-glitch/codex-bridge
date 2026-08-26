@@ -126,8 +126,12 @@ extension BridgeServiceAppModel {
   }
 
   public func selectProject(_ projectID: String?) {
+    if selectedProjectID != projectID {
+      closeConversation()
+    }
     selectedProjectID = projectID
     persistWorkbenchProjectSelection(projectID)
+    selectedTaskID = nil
     selectedThread = nil
     selectedThreadID = nil
     threads = []
@@ -169,9 +173,16 @@ extension BridgeServiceAppModel {
     }
     selectedThreadID = threadID
 
+    let relatedTask = tasks.first(where: { $0.threadID == threadID && $0.isCodexTask })
+    selectedTaskID = relatedTask?.taskID
+
     // Check if there is an active task on this thread to stream live conversation
-    if let activeTask = tasks.first(where: { $0.threadID == threadID && $0.isRunning }) {
+    if let activeTask = tasks.first(where: {
+      $0.threadID == threadID && $0.isCodexTask && $0.isRunning
+    }) {
       openConversation(taskID: activeTask.taskID)
+    } else {
+      closeConversation()
     }
 
     runMutation { [weak self] client in
@@ -189,6 +200,23 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func openTask(_ taskID: String) {
+    guard let task = tasks.first(where: { $0.taskID == taskID }) else { return }
+
+    if selectedProjectID != task.projectID {
+      selectProject(task.projectID)
+    }
+    selectedTaskID = task.taskID
+    selectedThread = nil
+    selectedThreadID = task.isCodexTask ? task.threadID : nil
+
+    if task.isCodexTask, let threadID = task.threadID {
+      openThread(threadID, inProject: task.projectID)
+    } else {
+      openConversation(taskID: task.taskID)
+    }
+  }
+
   public func stopTask(_ taskID: String) {
     runMutation { [weak self] client in
       guard let self else { return }
@@ -201,6 +229,13 @@ extension BridgeServiceAppModel {
     guard let client, connectionState == .connected else {
       errorMessage = "后台 Service 未连接，无法查看对话。"
       return
+    }
+    if let task = tasks.first(where: { $0.taskID == taskID }) {
+      selectedTaskID = task.taskID
+      if task.isExternalAgentTask {
+        selectedThread = nil
+        selectedThreadID = nil
+      }
     }
     closeConversation()
     let conversation = TaskConversationModel(taskID: taskID, client: client)
@@ -248,8 +283,11 @@ extension BridgeServiceAppModel {
         )
       )
       await self.refresh(silent: true, includeCatalog: false)
+      let providerName =
+        self.tasks.first(where: { $0.taskID == approval.taskID })?.providerDisplayName
+        ?? "Codex"
       self.postToast(
-        decision == "deny" ? "已拒绝 Codex 操作" : "已批准 Codex 操作",
+        decision == "deny" ? "已拒绝 \(providerName) 操作" : "已批准 \(providerName) 操作",
         symbol: decision == "deny" ? "xmark.shield.fill" : "checkmark.shield.fill",
         tone: decision == "deny" ? .warning : .success
       )

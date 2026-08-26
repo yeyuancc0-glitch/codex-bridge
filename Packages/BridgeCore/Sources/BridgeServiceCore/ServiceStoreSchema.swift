@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 10
+  static let version: Int64 = 11
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -32,9 +32,10 @@ enum ServiceStoreSchema {
   static let migrationV8 = "BridgeServiceCore.v8"
   static let migrationV9 = "BridgeServiceCore.v9"
   static let migrationV10 = "BridgeServiceCore.v10"
+  static let migrationV11 = "BridgeServiceCore.v11"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
-    migrationV8, migrationV9, migrationV10,
+    migrationV8, migrationV9, migrationV10, migrationV11,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -66,6 +67,7 @@ enum ServiceStoreSchema {
     case 7: backupSuffix = ".pre-v8"
     case 8: backupSuffix = ".pre-v9"
     case 9: backupSuffix = ".pre-v10"
+    case 10: backupSuffix = ".pre-v11"
     default: return
     }
     let backupPath = sourcePath + backupSuffix
@@ -130,6 +132,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV10) { db in
       try createVersionTen(in: db)
+    }
+    migrator.registerMigration(migrationV11) { db in
+      try createVersionEleven(in: db)
     }
     return migrator
   }
@@ -706,6 +711,36 @@ enum ServiceStoreSchema {
         """)
   }
 
+  static func createVersionEleven(in db: Database) throws {
+    try db.execute(
+      sql: """
+        ALTER TABLE bridge_service_tasks
+          ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'codex'
+            CHECK (length(CAST(provider_id AS BLOB)) BETWEEN 1 AND 64);
+
+        ALTER TABLE bridge_service_tasks
+          ADD COLUMN installation_id TEXT
+            CHECK (installation_id IS NULL OR
+              length(CAST(installation_id AS BLOB)) BETWEEN 1 AND 256);
+
+        ALTER TABLE bridge_service_tasks
+          ADD COLUMN selection_mode TEXT NOT NULL DEFAULT 'legacy_codex'
+            CHECK (selection_mode IN ('legacy_codex', 'explicit'));
+
+        ALTER TABLE bridge_service_tasks
+          ADD COLUMN provider_session_id TEXT
+            CHECK (provider_session_id IS NULL OR
+              length(CAST(provider_session_id AS BLOB)) BETWEEN 1 AND 1024);
+
+        ALTER TABLE bridge_service_tasks
+          ADD COLUMN provider_run_id TEXT
+            CHECK (provider_run_id IS NULL OR
+              length(CAST(provider_run_id AS BLOB)) BETWEEN 1 AND 1024);
+
+        UPDATE bridge_service_meta SET schema_version = 11 WHERE singleton = 1;
+        """)
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -886,6 +921,8 @@ enum ServiceStoreSchema {
           "fast_mode", "current_step",
           "changed_files_json", "result_summary", "supervisor_summary", "failure_code",
           "created_at", "updated_at",
+          "provider_id", "installation_id", "selection_mode",
+          "provider_session_id", "provider_run_id",
         ],
         "bridge_service_task_events": [
           "event_id", "task_id", "kind", "summary", "created_at",

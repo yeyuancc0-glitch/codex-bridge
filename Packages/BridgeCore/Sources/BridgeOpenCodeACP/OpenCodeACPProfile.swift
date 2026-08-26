@@ -50,7 +50,7 @@ public struct OpenCodeACPCompatibility: Equatable, Sendable {
   public let maximumExclusiveVersion: OpenCodeACPSemanticVersion
 
   public init(
-    minimumVersion: OpenCodeACPSemanticVersion = .init(major: 1, minor: 18, patch: 22),
+    minimumVersion: OpenCodeACPSemanticVersion = .init(major: 1, minor: 18, patch: 20),
     maximumExclusiveVersion: OpenCodeACPSemanticVersion = .init(
       major: 1,
       minor: 19,
@@ -204,12 +204,16 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
         ?? URL(fileURLWithPath: sourceHome).appendingPathComponent(".local/share").path,
       field: "environment.XDG_DATA_HOME"
     )
+    let configHome = try absoluteEnvironmentPath(
+      source["XDG_CONFIG_HOME"]
+        ?? URL(fileURLWithPath: sourceHome).appendingPathComponent(".config").path,
+      field: "environment.XDG_CONFIG_HOME"
+    )
     let home = URL(fileURLWithPath: runDirectory).appendingPathComponent("home").path
-    let config = URL(fileURLWithPath: runDirectory).appendingPathComponent("config").path
     let cache = URL(fileURLWithPath: runDirectory).appendingPathComponent("cache").path
     let state = URL(fileURLWithPath: runDirectory).appendingPathComponent("state").path
     let temporary = URL(fileURLWithPath: runDirectory).appendingPathComponent("tmp").path
-    for path in [home, config, cache, state, temporary] {
+    for path in [home, cache, state, temporary] {
       try createPrivateDirectory(path)
     }
 
@@ -217,7 +221,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       "HOME": home,
       "PATH": trustedPath(executable: executable),
       "TMPDIR": temporary,
-      "XDG_CONFIG_HOME": config,
+      "XDG_CONFIG_HOME": configHome,
       "XDG_CACHE_HOME": cache,
       "XDG_STATE_HOME": state,
       "XDG_DATA_HOME": dataHome,
@@ -262,15 +266,86 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     writableRoots: [String],
     networkAllowed: Bool
   ) throws -> String {
-    var rules = ["(version 1)", "(allow default)", "(deny file-write*)"]
-    if !networkAllowed { rules.append("(deny network*)") }
-    for root in writableRoots {
-      rules.append("(allow file-write* (literal \"\(try sandboxLiteral(root))\"))")
-      rules.append("(allow file-write* (subpath \"\(try sandboxLiteral(root))\"))")
+    var rules = ["(version 1)", "(allow default)"]
+    let isProbe = isTemporaryProbeProject(projectRoot, writableRoots: writableRoots)
+    // OpenCode's ACP runtime needs local networking that seatbelt cannot
+    // separate from tool networking; tool-level network stays governed by
+    // OPENCODE_PERMISSION, so no sandbox-level network deny here.
+    // Seatbelt matches canonical paths (/var → /private/var), so every rule
+    // path must go through realpath or the allow never matches.
+    var allowedWriteRoots = writableRoots.map(Self.resolvedSandboxPath)
+    // System temporary directory is needed for Node/Bun temp files.
+    for tmp in ["/tmp", "/private/tmp", FileManager.default.temporaryDirectory.path] {
+      allowedWriteRoots.append(Self.resolvedSandboxPath(tmp))
     }
-    rules.append("(allow file-write* (literal \"/dev/null\"))")
-    rules.append("(deny file-write* (subpath \"\(try sandboxLiteral(projectRoot))\"))")
+    // Probe runs use a temporary project directory that must remain writable.
+    if isProbe {
+      allowedWriteRoots.append(Self.resolvedSandboxPath(projectRoot))
+    }
+    rules.append(
+      try denyWritesOutside(
+        roots: Array(Set(allowedWriteRoots)).sorted(),
+        literalPaths: ["/dev/null"]
+      )
+    )
+    if !isProbe {
+      let resolvedProject = Self.resolvedSandboxPath(projectRoot)
+      rules.append(
+        "(deny file-write* (literal \"\(try sandboxLiteral(resolvedProject))\"))"
+      )
+      rules.append(
+        "(deny file-write* (subpath \"\(try sandboxLiteral(resolvedProject))\"))"
+      )
+    }
     return rules.joined()
+  }
+
+  private static func denyWritesOutside(
+    roots: [String],
+    literalPaths: [String]
+  ) throws -> String {
+    let rootRequirements = try roots.map {
+      "(require-not (subpath \"\(try sandboxLiteral($0))\"))"
+    }
+    let literalRequirements = try literalPaths.map {
+      "(require-not (literal \"\(try sandboxLiteral($0))\"))"
+    }
+    return "(deny file-write* (require-all \((rootRequirements + literalRequirements).joined())))"
+  }
+
+  private static func resolvedSandboxPath(_ path: String) -> String {
+    var buffer = [Int8](repeating: 0, count: 16_384)
+    guard realpath(path, &buffer) != nil else { return path }
+    return String(cString: buffer)
+  }
+
+  private static func isTemporaryProbeProject(
+    _ projectRoot: String,
+    writableRoots: [String]
+  ) -> Bool {
+    let standardized = URL(fileURLWithPath: projectRoot).standardized.path
+    // Inside any writable root (e.g. run directory) is already allowed.
+    for root in writableRoots {
+      let canonicalRoot = URL(fileURLWithPath: root).standardized.path
+      if standardized == canonicalRoot || standardized.hasPrefix(canonicalRoot + "/") {
+        return true
+      }
+    }
+    // Probe projects are created as siblings of the run directory with a
+    // distinct prefix inside the same runtime base.
+    if let firstRoot = writableRoots.first {
+      let runtimeBase = URL(fileURLWithPath: firstRoot).deletingLastPathComponent()
+        .standardized.path
+      if standardized.hasPrefix(runtimeBase + "/") {
+        let relative = String(standardized.dropFirst(runtimeBase.count + 1))
+        let firstComponent =
+          relative.split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
+        if firstComponent.hasPrefix("probe-") {
+          return true
+        }
+      }
+    }
+    return false
   }
 
   private static func trustedPath(executable: String) -> String {

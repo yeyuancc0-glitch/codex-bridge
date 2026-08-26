@@ -77,7 +77,7 @@ final class WorkspaceMutationGateTests: XCTestCase {
     }
     await lease.release()
 
-    try await gate.beginCodexAdmission(projectID: projectID("prj-gate"))
+    let admissionToken = try await gate.beginCodexAdmission(projectID: projectID("prj-gate"))
     do {
       _ = try await gate.acquireDirectLease(
         projectID: projectID("prj-gate"),
@@ -91,7 +91,7 @@ final class WorkspaceMutationGateTests: XCTestCase {
       }
       XCTAssertEqual(detail.owner, "codex_task")
     }
-    await gate.endCodexAdmission(projectID: projectID("prj-gate"))
+    await gate.endCodexAdmission(projectID: projectID("prj-gate"), token: admissionToken)
 
     let leaseAfter = try await gate.acquireDirectLease(
       projectID: projectID("prj-gate"),
@@ -247,9 +247,9 @@ final class WorkspaceMutationGateTests: XCTestCase {
     let gate = ServiceWorkspaceMutationGate()
     let project = projectID("prj-admission-tokens")
 
-    try await gate.beginCodexAdmission(projectID: project)
-    try await gate.beginCodexAdmission(projectID: project)
-    await gate.endCodexAdmission(projectID: project)
+    let firstToken = try await gate.beginCodexAdmission(projectID: project)
+    let secondToken = try await gate.beginCodexAdmission(projectID: project)
+    await gate.endCodexAdmission(projectID: project, token: firstToken)
 
     do {
       _ = try await gate.acquireDirectLease(
@@ -265,10 +265,40 @@ final class WorkspaceMutationGateTests: XCTestCase {
       XCTAssertEqual(detail.owner, "codex_task")
     }
 
-    await gate.endCodexAdmission(projectID: project)
+    await gate.endCodexAdmission(projectID: project, token: secondToken)
     let lease = try await gate.acquireDirectLease(
       projectID: project,
       owner: .directFileOperation(operationID: "op-after-admissions"),
+      activeCodexWriteTask: { nil }
+    )
+    await lease.release()
+  }
+
+  func testEndCodexAdmissionWithForeignTokenDoesNotReleaseAdmission() async throws {
+    let gate = ServiceWorkspaceMutationGate()
+    let project = projectID("prj-admission-foreign-token")
+
+    let token = try await gate.beginCodexAdmission(projectID: project)
+    await gate.endCodexAdmission(projectID: project, token: "foreign-token")
+
+    do {
+      _ = try await gate.acquireDirectLease(
+        projectID: project,
+        owner: .directFileOperation(operationID: "op-foreign"),
+        activeCodexWriteTask: { nil }
+      )
+      XCTFail("A foreign token must not release the pending Codex admission")
+    } catch let error as ProjectWorkspaceBusyError {
+      guard case .busy(let detail) = error else {
+        return XCTFail("Unexpected busy error")
+      }
+      XCTAssertEqual(detail.owner, "codex_task")
+    }
+
+    await gate.endCodexAdmission(projectID: project, token: token)
+    let lease = try await gate.acquireDirectLease(
+      projectID: project,
+      owner: .directFileOperation(operationID: "op-after-release"),
       activeCodexWriteTask: { nil }
     )
     await lease.release()

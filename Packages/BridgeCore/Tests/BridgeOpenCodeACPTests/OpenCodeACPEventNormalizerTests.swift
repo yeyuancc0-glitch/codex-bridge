@@ -61,7 +61,7 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
     guard case .completed(let summary, let stopReason) = completed.event else {
       return XCTFail("Expected completion")
     }
-    XCTAssertEqual(summary, "OpenCode turn completed.")
+    XCTAssertEqual(summary, "Hello world")
     XCTAssertEqual(stopReason, "end_turn")
   }
 

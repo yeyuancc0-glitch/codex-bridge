@@ -18,7 +18,8 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertNil(OpenCodeACPSemanticVersion("latest"))
 
     let compatibility = OpenCodeACPCompatibility()
-    XCTAssertFalse(compatibility.accepts(version: "1.18.21"))
+    XCTAssertFalse(compatibility.accepts(version: "1.18.19"))
+    XCTAssertTrue(compatibility.accepts(version: "1.18.20"))
     XCTAssertTrue(compatibility.accepts(version: "1.18.22"))
     XCTAssertTrue(compatibility.accepts(version: "1.18.99"))
     XCTAssertFalse(compatibility.accepts(version: "1.19.0"))
@@ -63,6 +64,10 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertEqual(launch.process.environment["USER"], "bridge-test")
     XCTAssertNil(launch.process.environment["UNRELATED_SETTING"])
     XCTAssertEqual(launch.process.environment["XDG_DATA_HOME"], dataHome)
+    XCTAssertEqual(
+      launch.process.environment["XDG_CONFIG_HOME"],
+      URL(fileURLWithPath: sourceHome).appendingPathComponent(".config").path
+    )
     XCTAssertTrue(launch.process.environment["HOME"]?.hasPrefix(runtime + "/") == true)
     XCTAssertFalse(
       launch.process.environment["PATH"]?.contains(sourceHome + "/.local/bin") == true
@@ -86,13 +91,12 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertEqual(permissionObject["websearch"], "deny")
 
     let sandbox = launch.process.argv[2]
-    XCTAssertTrue(sandbox.contains("(deny file-write*)"))
-    XCTAssertTrue(sandbox.contains("(deny network*)"))
-    XCTAssertTrue(sandbox.contains(root))
-    XCTAssertTrue(sandbox.contains(runtime))
+    XCTAssertTrue(sandbox.contains("(deny file-write* "))
+    XCTAssertTrue(sandbox.contains(launch.process.workingDirectory))
+    XCTAssertTrue(sandbox.contains(launch.runDirectory))
     XCTAssertEqual(try permissions(of: runtime), 0o700)
     XCTAssertEqual(try permissions(of: runtime + "/home"), 0o700)
-    XCTAssertEqual(try permissions(of: runtime + "/config"), 0o700)
+    XCTAssertEqual(try permissions(of: runtime + "/cache"), 0o700)
   }
 
   func testNetworkProfileOnlyEnablesExplicitWebTools() throws {
@@ -127,6 +131,38 @@ final class OpenCodeACPProfileTests: XCTestCase {
     XCTAssertEqual(object["websearch"], "allow")
     XCTAssertEqual(object["edit"], "deny")
     XCTAssertEqual(object["bash"], "deny")
+  }
+
+  func testSandboxAllowsRuntimeWritesAndDeniesProjectWrites() throws {
+    let root = try makeTemporaryDirectory(prefix: "sandbox-project")
+    let runtime = temporaryPath(prefix: "sandbox-runtime")
+    let sourceHome = try makeTemporaryDirectory(prefix: "sandbox-home")
+    addTeardownBlock {
+      for path in [root, runtime, sourceHome] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+
+    let installation = try AgentInstallation(
+      id: AgentInstallationID(rawValue: "opencode-sandbox"),
+      providerID: .openCode,
+      executablePath: "/bin/echo"
+    )
+    let launch = try OpenCodeACPLaunchBuilder().make(
+      installation: installation,
+      projectRoot: root,
+      runDirectory: runtime,
+      networkAllowed: false,
+      sourceEnvironment: ["HOME": sourceHome]
+    )
+    let profile = launch.process.argv[2]
+    let allowedPath = URL(fileURLWithPath: runtime).appendingPathComponent("allowed").path
+    let deniedPath = URL(fileURLWithPath: root).appendingPathComponent("denied").path
+
+    XCTAssertEqual(try runTouch(path: allowedPath, sandboxProfile: profile), 0)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: allowedPath))
+    XCTAssertNotEqual(try runTouch(path: deniedPath, sandboxProfile: profile), 0)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: deniedPath))
   }
 
   func testRejectsRuntimeDirectoryInsideProject() throws {
@@ -216,5 +252,16 @@ final class OpenCodeACPProfileTests: XCTestCase {
   private func permissions(of path: String) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: path)
     return try XCTUnwrap((attributes[.posixPermissions] as? NSNumber)?.intValue)
+  }
+
+  private func runTouch(path: String, sandboxProfile: String) throws -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+    process.arguments = ["-p", sandboxProfile, "--", "/usr/bin/touch", path]
+    process.standardOutput = Pipe()
+    process.standardError = Pipe()
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
   }
 }
