@@ -79,6 +79,8 @@ extension BridgeServiceApplication {
     providerID: String,
     installationID: String?,
     model: String?,
+    permissionMode: String? = nil,
+    networkAccess: Bool = false,
     prompt: String,
     deadline: ContinuousClock.Instant
   ) async throws -> (taskID: String, status: String) {
@@ -90,6 +92,8 @@ extension BridgeServiceApplication {
       installationID: installationID,
       executionModel: model,
       modelOverride: model == nil ? nil : true,
+      permissionMode: permissionMode,
+      networkAccess: networkAccess,
       clientRequestID: "app-\(UUID().uuidString.lowercased())"
     )
     let receipt = try await serviceSubmitTask(

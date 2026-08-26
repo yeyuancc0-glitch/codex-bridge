@@ -103,6 +103,7 @@ public actor OpenCodeACPClient {
   private var pending: [ACPRequestID: CheckedContinuation<ACPClientResponse, any Error>] = [:]
   private var nextEventSequence: Int64 = 0
   private var timeoutTasks: [ACPRequestID: Task<Void, Never>] = [:]
+  private var pendingPermissions: [String: OpenCodeACPPermissionRequest] = [:]
   private var started = false
   private var closed = false
   private var initializationStorage: OpenCodeACPInitialization?
@@ -222,7 +223,7 @@ public actor OpenCodeACPClient {
     return session
   }
 
-  public func loadSession(id: String, cwd: String) async throws {
+  public func loadSession(id: String, cwd: String) async throws -> OpenCodeACPSession {
     try requireInitialized()
     try validateIdentifier(id)
     try validateAbsolutePath(cwd)
@@ -230,7 +231,7 @@ public actor OpenCodeACPClient {
     try beginSessionOperation()
     defer { endSessionOperation() }
 
-    _ = try await request(
+    let response = try await request(
       method: "session/load",
       params: .object([
         "sessionId": .string(id),
@@ -238,10 +239,13 @@ public actor OpenCodeACPClient {
         "mcpServers": .array([]),
       ])
     )
-    try bindSession(id)
+    let session = try Self.parseSession(response.value, fallbackID: id)
+    guard session.id == id else { throw OpenCodeACPError.sessionMismatch }
+    try bindSession(session.id)
+    return session
   }
 
-  public func resumeSession(id: String, cwd: String) async throws {
+  public func resumeSession(id: String, cwd: String) async throws -> OpenCodeACPSession {
     try requireInitialized()
     try validateIdentifier(id)
     try validateAbsolutePath(cwd)
@@ -249,7 +253,7 @@ public actor OpenCodeACPClient {
     try beginSessionOperation()
     defer { endSessionOperation() }
 
-    _ = try await request(
+    let response = try await request(
       method: "session/resume",
       params: .object([
         "sessionId": .string(id),
@@ -257,7 +261,10 @@ public actor OpenCodeACPClient {
         "mcpServers": .array([]),
       ])
     )
-    try bindSession(id)
+    let session = try Self.parseSession(response.value, fallbackID: id)
+    guard session.id == id else { throw OpenCodeACPError.sessionMismatch }
+    try bindSession(session.id)
+    return session
   }
 
   public func setSessionConfigOption(
@@ -341,6 +348,34 @@ public actor OpenCodeACPClient {
     )
   }
 
+  public func resolvePermission(
+    approvalID: String,
+    optionID: String
+  ) async throws {
+    try requireInitialized()
+    try validateIdentifier(approvalID)
+    try validateIdentifier(optionID)
+    guard let request = pendingPermissions[approvalID] else {
+      throw AgentRuntimeError.approvalUnavailable(approvalID)
+    }
+    guard request.options.contains(where: { $0.id == optionID }) else {
+      throw AgentRuntimeError.approvalUnavailable(optionID)
+    }
+    try requireSession(request.sessionID)
+    pendingPermissions.removeValue(forKey: approvalID)
+    do {
+      try await send(
+        ACPWireMessage(
+          id: request.requestID,
+          result: Self.permissionSelection(optionID: optionID)
+        )
+      )
+    } catch {
+      await failConnection(error)
+      throw error
+    }
+  }
+
   public func closeSession(id: String) async throws {
     try requireInitialized()
     try validateIdentifier(id)
@@ -363,6 +398,7 @@ public actor OpenCodeACPClient {
     activeSessionID = nil
     readerTask?.cancel()
     readerTask = nil
+    pendingPermissions.removeAll()
     failPending(with: OpenCodeACPError.transportClosed)
     eventContinuation.finish()
     await transport.close()
@@ -499,11 +535,17 @@ public actor OpenCodeACPClient {
     }
 
     do {
-      let request = try Self.parsePermissionRequest(id: id, params: params)
+      let request = try Self.parsePermissionRequest(
+        approvalID: nextApprovalID(),
+        id: id,
+        params: params
+      )
       try requireSession(request.sessionID)
-      let rejection = Self.permissionRejection(options: request.options)
-      try await send(ACPWireMessage(id: id, result: rejection))
-      yield(.permissionDenied(request))
+      guard pendingPermissions[request.approvalID] == nil else {
+        throw AgentRuntimeError.approvalUnavailable(request.approvalID)
+      }
+      pendingPermissions[request.approvalID] = request
+      yield(.permissionRequested(request))
     } catch {
       try? await send(
         ACPWireMessage(
@@ -543,6 +585,7 @@ public actor OpenCodeACPClient {
     initializationTask?.cancel()
     initializationTask = nil
     activeSessionID = nil
+    pendingPermissions.removeAll()
     failPending(with: error ?? OpenCodeACPError.transportClosed)
     eventContinuation.finish()
   }
@@ -555,6 +598,7 @@ public actor OpenCodeACPClient {
     activeSessionID = nil
     readerTask?.cancel()
     readerTask = nil
+    pendingPermissions.removeAll()
     failPending(with: error)
     eventContinuation.finish()
     await transport.close()
@@ -637,8 +681,11 @@ public actor OpenCodeACPClient {
     )
   }
 
-  private static func parseSession(_ value: ACPJSONValue) throws -> OpenCodeACPSession {
-    guard let id = value["sessionId"]?.stringValue else {
+  private static func parseSession(
+    _ value: ACPJSONValue,
+    fallbackID: String? = nil
+  ) throws -> OpenCodeACPSession {
+    guard let id = value["sessionId"]?.stringValue ?? fallbackID else {
       throw OpenCodeACPError.malformedResponse
     }
     try validateIdentifier(id)
@@ -691,7 +738,16 @@ public actor OpenCodeACPClient {
     }
   }
 
+  private func nextApprovalID() throws -> String {
+    for _ in 0..<8 {
+      let value = "opencode-\(UUID().uuidString.lowercased())"
+      if pendingPermissions[value] == nil { return value }
+    }
+    throw AgentRuntimeError.approvalUnavailable("id")
+  }
+
   private static func parsePermissionRequest(
+    approvalID: String,
     id: ACPRequestID,
     params: ACPJSONValue?
   ) throws -> OpenCodeACPPermissionRequest {
@@ -720,7 +776,13 @@ public actor OpenCodeACPClient {
     }
     guard !options.isEmpty else { throw OpenCodeACPError.invalidMessage }
     let title = toolCall["title"]?.stringValue ?? "OpenCode tool request"
+    guard !title.isEmpty, title.utf8.count <= 1_024,
+      !title.contains("\0")
+    else {
+      throw OpenCodeACPError.invalidMessage
+    }
     return OpenCodeACPPermissionRequest(
+      approvalID: approvalID,
       requestID: id,
       sessionID: sessionID,
       toolCallID: toolCallID,
@@ -731,20 +793,12 @@ public actor OpenCodeACPClient {
     )
   }
 
-  private static func permissionRejection(options: [AgentApprovalOption]) -> ACPJSONValue {
-    let reject =
-      options.first(where: { $0.kind == "reject_once" })
-      ?? options.first(where: { $0.kind == "reject_always" })
-    if let reject {
-      return .object([
-        "outcome": .object([
-          "outcome": .string("selected"),
-          "optionId": .string(reject.id),
-        ])
-      ])
-    }
+  private static func permissionSelection(optionID: String) -> ACPJSONValue {
     return .object([
-      "outcome": .object(["outcome": .string("cancelled")])
+      "outcome": .object([
+        "outcome": .string("selected"),
+        "optionId": .string(optionID),
+      ])
     ])
   }
 

@@ -7,12 +7,19 @@ import Foundation
 public actor ServiceExecutionCoordinator {
   private struct ActiveAgentRun: Sendable {
     let providerID: String
+    let installationID: String
     let providerSessionID: String?
     let providerRunID: String?
     let effectiveRunID: String
     let interrupt: @Sendable () async throws -> Void
     let shutdown: @Sendable () async -> Void
+    let resolveApproval: (@Sendable (String, String) async throws -> Void)?
     var lastSequence: Int64? = nil
+  }
+
+  private struct PendingAgentApproval: Sendable {
+    let request: AgentApprovalRequest
+    let createdAt: Date
   }
 
   private let tasks: ServiceTaskManager
@@ -24,9 +31,11 @@ public actor ServiceExecutionCoordinator {
   private var collectors: [TaskID: Task<Void, Never>] = [:]
   private var supervisorCollectors: [TaskID: Task<Void, Never>] = [:]
   private var activeAgentRuns: [TaskID: ActiveAgentRun] = [:]
+  private var pendingAgentApprovals: [String: PendingAgentApproval] = [:]
   private var finishedRuns: Set<TaskID> = []
   private var startingTasks: Set<TaskID> = []
   private var isShuttingDown = false
+  private let agentApprovalLifetime: TimeInterval = 5 * 60
 
   public init(
     tasks: ServiceTaskManager,
@@ -132,7 +141,20 @@ public actor ServiceExecutionCoordinator {
   }
 
   public func pendingApprovals(taskID: TaskID? = nil) async -> [ExecutionApprovalRequest] {
-    await execution.pendingApprovals(taskID: taskID)
+    let expired = purgeExpiredAgentApprovals()
+    for approval in expired {
+      await failExpiredAgentApproval(approval)
+    }
+    let codex = await execution.pendingApprovals(taskID: taskID)
+    let agents = pendingAgentApprovals.values
+      .filter { taskID == nil || $0.request.taskID == taskID }
+      .compactMap { try? Self.executionApproval(from: $0.request) }
+    return (codex + agents).sorted { lhs, rhs in
+      if lhs.taskID.rawValue == rhs.taskID.rawValue {
+        return lhs.id < rhs.id
+      }
+      return lhs.taskID.rawValue < rhs.taskID.rawValue
+    }
   }
 
   public func subscribeConversation(
@@ -209,6 +231,13 @@ public actor ServiceExecutionCoordinator {
     approvalID: String,
     decision: LocalApprovalDecision
   ) async throws {
+    if let pending = pendingAgentApprovals[approvalID] {
+      guard pending.request.taskID == taskID else {
+        throw ExecutionServiceError.bindingMismatch
+      }
+      try await resolveAgentApproval(pending, taskID: taskID, decision: decision)
+      return
+    }
     try await execution.respondToApproval(
       taskID: taskID,
       approvalID: approvalID,
@@ -241,6 +270,104 @@ public actor ServiceExecutionCoordinator {
     }
   }
 
+  private func resolveAgentApproval(
+    _ pending: PendingAgentApproval,
+    taskID: TaskID,
+    decision: LocalApprovalDecision
+  ) async throws {
+    let approval = pending.request
+    guard Date().timeIntervalSince(pending.createdAt) <= agentApprovalLifetime else {
+      pendingAgentApprovals.removeValue(forKey: approval.approvalID)
+      await failExpiredAgentApproval(pending)
+      throw ExecutionServiceError.approvalUnavailable(approval.approvalID)
+    }
+    guard let run = activeAgentRuns[taskID],
+      run.providerID == approval.binding.providerID.rawValue,
+      run.installationID == approval.binding.installationID.rawValue,
+      run.providerSessionID == approval.binding.providerSessionID,
+      run.providerRunID == approval.binding.providerRunID,
+      let resolveApproval = run.resolveApproval
+    else {
+      pendingAgentApprovals.removeValue(forKey: approval.approvalID)
+      await failAgentApproval(
+        taskID: taskID,
+        code: "agent_approval_binding_mismatch",
+        summary: "The agent approval binding no longer matches the active run."
+      )
+      throw ExecutionServiceError.bindingMismatch
+    }
+    guard
+      let optionID = Self.agentApprovalOptionID(
+        for: decision,
+        options: approval.options
+      )
+    else {
+      throw ExecutionServiceError.approvalUnavailable(approval.approvalID)
+    }
+
+    pendingAgentApprovals.removeValue(forKey: approval.approvalID)
+    do {
+      let updated = try await tasks.resumeAfterCodexApproval(
+        taskID: taskID,
+        approved: decision.isApproval
+      )
+      await observeSupervisor(
+        task: updated,
+        kind: .progress,
+        summary: decision.isApproval
+          ? "The local user approved an agent operation."
+          : "The local user denied an agent operation."
+      )
+    } catch {
+      await failAgentApproval(
+        taskID: taskID,
+        code: "agent_approval_state_failed",
+        summary: "The agent approval state could not be persisted."
+      )
+      throw error
+    }
+    do {
+      try await resolveApproval(approval.approvalID, optionID)
+    } catch {
+      await failAgentApproval(
+        taskID: taskID,
+        code: "agent_approval_response_failed",
+        summary: "The agent approval response could not be delivered."
+      )
+      throw ExecutionServiceError.processUnavailable
+    }
+  }
+
+  private func failAgentApproval(taskID: TaskID, code: String, summary: String) async {
+    guard !finishedRuns.contains(taskID) else { return }
+    finishedRuns.insert(taskID)
+    pendingAgentApprovals = pendingAgentApprovals.filter { $0.value.request.taskID != taskID }
+    if let run = activeAgentRuns.removeValue(forKey: taskID) {
+      await run.shutdown()
+    }
+    _ = await conversation.close(taskID: taskID)
+    _ = try? await tasks.fail(taskID: taskID, failureCode: code, summary: summary)
+  }
+
+  private func failExpiredAgentApproval(_ pending: PendingAgentApproval) async {
+    await failAgentApproval(
+      taskID: pending.request.taskID,
+      code: "agent_approval_expired",
+      summary: "The agent approval expired before a local decision was made."
+    )
+  }
+
+  private func purgeExpiredAgentApprovals() -> [PendingAgentApproval] {
+    let now = Date()
+    let expired = pendingAgentApprovals.values.filter {
+      now.timeIntervalSince($0.createdAt) > agentApprovalLifetime
+    }
+    for approval in expired {
+      pendingAgentApprovals.removeValue(forKey: approval.request.approvalID)
+    }
+    return expired
+  }
+
   public func stop(
     taskID: TaskID,
     summary: String = "The local service stopped the task."
@@ -271,6 +398,7 @@ public actor ServiceExecutionCoordinator {
     let supervisorTasks = supervisorCollectors.values
     collectors.removeAll(keepingCapacity: false)
     supervisorCollectors.removeAll(keepingCapacity: false)
+    pendingAgentApprovals.removeAll(keepingCapacity: false)
     for task in executionTasks { task.cancel() }
     for task in supervisorTasks { task.cancel() }
     let shutdowns = activeAgentRuns.values.map(\.shutdown)
@@ -292,6 +420,7 @@ public actor ServiceExecutionCoordinator {
 
   private func stopAgentRun(taskID: TaskID) async {
     finishedRuns.insert(taskID)
+    pendingAgentApprovals = pendingAgentApprovals.filter { $0.value.request.taskID != taskID }
     if let run = activeAgentRuns.removeValue(forKey: taskID) {
       await run.shutdown()
     }
@@ -455,6 +584,7 @@ public actor ServiceExecutionCoordinator {
         ? nil : task.executionModel,
       effort: task.executionEffort == serviceDefaultProviderExecutionEffort
         ? nil : task.executionEffort,
+      permissionMode: task.permissionMode,
       networkAllowed: task.networkAllowed
     )
     let handle: AgentTaskRunHandle
@@ -490,11 +620,13 @@ public actor ServiceExecutionCoordinator {
       )
       activeAgentRuns[task.id] = ActiveAgentRun(
         providerID: task.providerID,
+        installationID: installationID,
         providerSessionID: handle.sessionID,
         providerRunID: handle.runID,
         effectiveRunID: runID,
         interrupt: handle.interrupt,
-        shutdown: handle.shutdown
+        shutdown: handle.shutdown,
+        resolveApproval: handle.resolveApproval
       )
       await conversation.appendUserMessage(taskID: task.id, content: task.prompt)
       try ensureStartIsActive(task.id)
@@ -576,6 +708,16 @@ public actor ServiceExecutionCoordinator {
             progress: output
           )
         }
+        if update.status == .completed, Self.isEditTool(update) {
+          let paths = try await agentChangedPaths(update.locations, taskID: taskID)
+          if !paths.isEmpty {
+            _ = try await tasks.recordChangedFiles(
+              taskID: taskID,
+              relativePaths: paths,
+              summary: "The agent completed file changes."
+            )
+          }
+        }
 
       case .plan(let entries):
         let step =
@@ -589,7 +731,7 @@ public actor ServiceExecutionCoordinator {
         break
 
       case .approvalRequested(let approval):
-        throw AgentRuntimeError.approvalUnavailable(approval.approvalID)
+        _ = try await registerAgentApproval(approval, taskID: taskID)
 
       case .approvalAutomaticallyDenied(let itemID):
         await conversation.upsertAuthoritativeEntry(
@@ -634,6 +776,7 @@ public actor ServiceExecutionCoordinator {
       }
     } catch {
       finishedRuns.insert(taskID)
+      pendingAgentApprovals = pendingAgentApprovals.filter { $0.value.request.taskID != taskID }
       if let run = activeAgentRuns.removeValue(forKey: taskID) {
         await run.shutdown()
       }
@@ -646,12 +789,68 @@ public actor ServiceExecutionCoordinator {
     }
   }
 
+  private func registerAgentApproval(
+    _ approval: AgentApprovalRequest,
+    taskID: TaskID
+  ) async throws -> ServiceTaskRecord {
+    guard approval.taskID == taskID,
+      let run = activeAgentRuns[taskID],
+      run.providerID == approval.binding.providerID.rawValue,
+      run.installationID == approval.binding.installationID.rawValue,
+      run.providerSessionID == approval.binding.providerSessionID,
+      run.providerRunID == approval.binding.providerRunID,
+      run.resolveApproval != nil
+    else {
+      throw ExecutionServiceError.bindingMismatch
+    }
+    guard pendingAgentApprovals[approval.approvalID] == nil else {
+      throw AgentRuntimeError.malformedEvent("agent.approval.duplicate")
+    }
+    _ = try Self.executionApproval(from: approval)
+    let updated = try await tasks.markWaitingForCodexApproval(taskID: taskID)
+    guard !finishedRuns.contains(taskID),
+      activeAgentRuns[taskID]?.effectiveRunID == run.effectiveRunID
+    else {
+      throw AgentRuntimeError.runMismatch
+    }
+    pendingAgentApprovals[approval.approvalID] = PendingAgentApproval(
+      request: approval,
+      createdAt: Date()
+    )
+    return updated
+  }
+
+  private static func isEditTool(_ update: AgentToolUpdate) -> Bool {
+    let values = [update.name, update.title, update.kind]
+      .compactMap { $0?.lowercased() }
+    return values.contains { value in
+      value == "file_change"
+        || value.contains("edit")
+        || value.contains("write")
+        || value.contains("patch")
+    }
+  }
+
+  private func agentChangedPaths(_ locations: [String], taskID: TaskID) async throws -> [String] {
+    guard !locations.isEmpty,
+      let task = try await tasks.task(id: taskID),
+      let project = try await projects.project(id: task.projectID)
+    else {
+      return []
+    }
+    let paths = locations.compactMap { location in
+      try? ExecutionValidation.relativePath(location, root: project.root.canonicalPath)
+    }
+    return Array(Set(paths)).sorted()
+  }
+
   private func finishAgentRun(
     taskID: TaskID,
     transition: () async throws -> ServiceTaskRecord?
   ) async throws {
     guard !finishedRuns.contains(taskID) else { return }
     finishedRuns.insert(taskID)
+    pendingAgentApprovals = pendingAgentApprovals.filter { $0.value.request.taskID != taskID }
     let run = activeAgentRuns.removeValue(forKey: taskID)
     do {
       _ = try await transition()
@@ -664,6 +863,7 @@ public actor ServiceExecutionCoordinator {
 
   private func agentStreamFinished(_ taskID: TaskID, failure: (any Error)?) async {
     collectors.removeValue(forKey: taskID)
+    pendingAgentApprovals = pendingAgentApprovals.filter { $0.value.request.taskID != taskID }
     guard finishedRuns.remove(taskID) == nil else { return }
     if let run = activeAgentRuns.removeValue(forKey: taskID) {
       await run.shutdown()
@@ -738,6 +938,114 @@ public actor ServiceExecutionCoordinator {
     let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.utf8.count > 512 else { return trimmed }
     return String(decoding: trimmed.utf8.prefix(512), as: UTF8.self)
+  }
+
+  private static func executionApproval(
+    from approval: AgentApprovalRequest
+  ) throws -> ExecutionApprovalRequest {
+    let sessionID = approval.binding.providerSessionID ?? approval.taskID.rawValue
+    let runID = approval.binding.providerRunID ?? approval.approvalID
+    let binding = try ExecutionBinding(
+      threadID: "agent:\(sessionID)",
+      turnID: "agent:\(runID)"
+    )
+    let title = String(decoding: approval.title.utf8.prefix(512), as: UTF8.self)
+    let summary: String
+    if let command = approval.normalizedCommand, !command.isEmpty {
+      summary = String(
+        decoding: "OpenCode requested permission for: \(command)".utf8.prefix(4 * 1_024),
+        as: UTF8.self
+      )
+    } else if let target = approval.networkTarget, !target.isEmpty {
+      summary = String(
+        decoding: "OpenCode requested network permission for: \(target)".utf8.prefix(4 * 1_024),
+        as: UTF8.self
+      )
+    } else {
+      summary = String(decoding: approval.title.utf8.prefix(4 * 1_024), as: UTF8.self)
+    }
+    let availableDecisions = try agentApprovalDecisions(options: approval.options)
+    return try ExecutionApprovalRequest(
+      id: approval.approvalID,
+      taskID: approval.taskID,
+      binding: binding,
+      itemID: approval.providerItemID,
+      kind: executionApprovalKind(approval.kind),
+      title: title,
+      summary: summary,
+      displayCommand: approval.normalizedCommand,
+      relativePaths: approval.relativePaths,
+      reason: approval.networkTarget.map { "Network target: \($0)" },
+      availableDecisions: availableDecisions
+    )
+  }
+
+  private static func executionApprovalKind(_ kind: AgentApprovalKind)
+    -> ExecutionApprovalKind
+  {
+    switch kind {
+    case .command:
+      .command
+    case .fileChange:
+      .fileChange
+    case .network, .tool, .unknown:
+      .permissions
+    }
+  }
+
+  private static func agentApprovalDecisions(
+    options: [AgentApprovalOption]
+  ) throws -> [LocalApprovalDecision] {
+    var decisions: [LocalApprovalDecision] = []
+    if options.contains(where: isAllowOnce) {
+      decisions.append(.allow)
+    }
+    if options.contains(where: isAllowForSession) {
+      decisions.append(.allowForSession)
+    }
+    guard options.contains(where: isDeny) else {
+      throw ExecutionServiceError.invalidRequest("approval.options")
+    }
+    decisions.append(.deny)
+    return decisions
+  }
+
+  private static func agentApprovalOptionID(
+    for decision: LocalApprovalDecision,
+    options: [AgentApprovalOption]
+  ) -> String? {
+    switch decision {
+    case .allow:
+      options.first(where: isAllowOnce)?.id
+    case .allowForSession:
+      options.first(where: isAllowForSession)?.id
+    case .deny:
+      options.first(where: isDeny)?.id
+    case .allowSimilarCommands:
+      nil
+    }
+  }
+
+  private static func normalizedApprovalKind(_ option: AgentApprovalOption) -> String {
+    option.kind
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+      .replacingOccurrences(of: "-", with: "_")
+      .replacingOccurrences(of: " ", with: "_")
+  }
+
+  private static func isAllowOnce(_ option: AgentApprovalOption) -> Bool {
+    ["allow_once", "approve_once", "allow"].contains(normalizedApprovalKind(option))
+  }
+
+  private static func isAllowForSession(_ option: AgentApprovalOption) -> Bool {
+    [
+      "allow_always", "approve_always", "allow_for_session", "approve_for_session",
+    ].contains(normalizedApprovalKind(option))
+  }
+
+  private static func isDeny(_ option: AgentApprovalOption) -> Bool {
+    ["reject_once", "reject_always", "deny"].contains(normalizedApprovalKind(option))
   }
 
   private func closeConversation(taskID: TaskID) async throws {

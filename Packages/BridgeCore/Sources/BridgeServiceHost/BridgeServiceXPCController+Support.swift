@@ -181,6 +181,14 @@ extension BridgeServiceXPCController {
     default:
       clientLabel = "远程客户端"
     }
+    let permission = taskPermissionDescription(
+      providerID: approval.providerID,
+      permissionMode: approval.permissionMode
+    )
+    let network = taskNetworkDescription(
+      providerID: approval.providerID,
+      networkAccess: approval.networkAllowed
+    )
     return IPCApprovalSummary(
       approvalID: approval.approvalID,
       taskID: approval.taskID,
@@ -190,9 +198,35 @@ extension BridgeServiceXPCController {
       kind: "task_start",
       title: "\(clientLabel)请求调用 \(approval.providerDisplayName)",
       summary: prompt,
-      reason: "项目：\(approval.projectID)",
+      reason: "项目：\(approval.projectID) · 权限：\(permission) · 网络：\(network)",
       decisionOptions: ["allow", "deny"]
     )
+  }
+
+  private static func taskPermissionDescription(
+    providerID: String,
+    permissionMode: String?
+  ) -> String {
+    guard let permissionMode, !permissionMode.isEmpty else { return "未记录" }
+    if providerID == "opencode" {
+      switch permissionMode {
+      case "workspace-write": return "OpenCode 原生 Build（工作区可写）"
+      case "read-only": return "OpenCode 原生 Plan（只读）"
+      default: return "OpenCode：\(permissionMode)"
+      }
+    }
+    return permissionMode
+  }
+
+  private static func taskNetworkDescription(
+    providerID: String,
+    networkAccess: Bool?
+  ) -> String {
+    if providerID == "opencode" {
+      return "OpenCode 原生 permissions（network_access 不覆盖）"
+    }
+    guard let networkAccess else { return "未记录" }
+    return networkAccess ? "已请求" : "未请求"
   }
 
   static func map(_ error: Error) -> BridgeServiceIPCError {

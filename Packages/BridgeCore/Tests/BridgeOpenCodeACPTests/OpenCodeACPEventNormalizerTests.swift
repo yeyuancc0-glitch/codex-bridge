@@ -23,8 +23,8 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
     let toolCompleted = try await normalizer.normalize(
       .notification(Self.toolNotification(status: "completed"))
     )
-    let denied = try await normalizer.normalize(
-      .permissionDenied(try Self.permissionRequest())
+    let approval = try await normalizer.normalize(
+      .permissionRequested(try Self.permissionRequest())
     )
 
     guard case .content(let firstUpdate)? = first?.event,
@@ -32,7 +32,7 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
       case .tool(let pendingUpdate)? = toolPending?.event,
       case .tool(let unknownUpdate)? = toolUnknown?.event,
       case .tool(let completedUpdate)? = toolCompleted?.event,
-      case .approvalAutomaticallyDenied(let toolCallID)? = denied?.event
+      case .approvalRequested(let request)? = approval?.event
     else {
       return XCTFail("Expected normalized OpenCode events")
     }
@@ -45,7 +45,10 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
     XCTAssertEqual(pendingUpdate.status, .pending)
     XCTAssertEqual(unknownUpdate.status, .pending)
     XCTAssertEqual(completedUpdate.status, .completed)
-    XCTAssertEqual(toolCallID, "tool-1")
+    XCTAssertEqual(request.providerItemID, "tool-1")
+    XCTAssertEqual(request.kind, .command)
+    XCTAssertEqual(request.normalizedCommand, "git status")
+    XCTAssertEqual(request.options.map(\.id), ["reject"])
 
     let finalized = try await normalizer.finalizeContent()
     XCTAssertEqual(finalized.count, 1)
@@ -131,7 +134,36 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
     }
   }
 
-  private func makeNormalizer() throws -> OpenCodeACPEventNormalizer {
+  func testPermissionPayloadKeepsSafeProjectAndNetworkDetails() async throws {
+    let root = try makeTemporaryDirectory(prefix: "approval-project")
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let normalizer = try makeNormalizer(projectRoot: root)
+    let request = OpenCodeACPPermissionRequest(
+      requestID: .string("permission-2"),
+      sessionID: "session-1",
+      toolCallID: "tool-2",
+      title: "Run command",
+      kind: "execute",
+      rawInput: .object([
+        "command": .string("git status"),
+        "filePath": .string(root + "/Sources/main.swift"),
+        "url": .string("https://example.test/api"),
+      ]),
+      options: [
+        try AgentApprovalOption(id: "once", name: "Allow once", kind: "allow_once")
+      ]
+    )
+
+    let envelope = try await normalizer.normalize(.permissionRequested(request))
+    guard case .approvalRequested(let approval)? = envelope?.event else {
+      return XCTFail("Expected an approval request")
+    }
+    XCTAssertEqual(approval.normalizedCommand, "git status")
+    XCTAssertEqual(approval.relativePaths, ["Sources/main.swift"])
+    XCTAssertEqual(approval.networkTarget, "https://example.test/api")
+  }
+
+  private func makeNormalizer(projectRoot: String? = nil) throws -> OpenCodeACPEventNormalizer {
     let binding = try AgentBinding(
       providerID: .openCode,
       installationID: AgentInstallationID(rawValue: "opencode-test"),
@@ -139,8 +171,20 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
     )
     return OpenCodeACPEventNormalizer(
       taskID: TaskID(rawValue: "task-1"),
-      binding: binding
+      binding: binding,
+      projectRoot: projectRoot
     )
+  }
+
+  private func makeTemporaryDirectory(prefix: String) throws -> String {
+    let path = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true).path
+    try FileManager.default.createDirectory(
+      atPath: path,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    return path
   }
 
   private static func messageNotification(

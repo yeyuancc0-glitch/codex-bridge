@@ -34,6 +34,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
   public let turnID: String?
   public let providerSessionID: String?
   public let providerRunID: String?
+  public let permissionMode: String?
+  public let networkAccess: Bool
   public let currentStep: String?
   public let changedFiles: [String]
   public let recentEvents: [MCPServiceTaskEvent]
@@ -58,6 +60,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     turnID: String? = nil,
     providerSessionID: String? = nil,
     providerRunID: String? = nil,
+    permissionMode: String? = nil,
+    networkAccess: Bool = false,
     currentStep: String? = nil,
     changedFiles: [String] = [],
     recentEvents: [MCPServiceTaskEvent] = [],
@@ -81,6 +85,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     self.turnID = turnID
     self.providerSessionID = providerSessionID
     self.providerRunID = providerRunID
+    self.permissionMode = permissionMode
+    self.networkAccess = networkAccess
     self.currentStep = currentStep
     self.changedFiles = changedFiles
     self.recentEvents = recentEvents
@@ -106,6 +112,8 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     case turnID = "turn_id"
     case providerSessionID = "provider_session_id"
     case providerRunID = "provider_run_id"
+    case permissionMode = "permission_mode"
+    case networkAccess = "network_access"
     case currentStep = "current_step"
     case changedFiles = "changed_files"
     case recentEvents = "recent_events"
@@ -115,6 +123,35 @@ public struct MCPServiceTaskSnapshot: Codable, Equatable, Sendable {
     case resultSummary = "result_summary"
     case failureCode = "failure_code"
     case updatedAt = "updated_at"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    taskID = try container.decode(String.self, forKey: .taskID)
+    projectID = try container.decode(String.self, forKey: .projectID)
+    source = try container.decodeIfPresent(String.self, forKey: .source)
+    sourceClientID = try container.decodeIfPresent(String.self, forKey: .sourceClientID)
+    status = try container.decode(String.self, forKey: .status)
+    providerID = try container.decodeIfPresent(String.self, forKey: .providerID)
+    installationID = try container.decodeIfPresent(String.self, forKey: .installationID)
+    executionModel = try container.decodeIfPresent(String.self, forKey: .executionModel)
+    executionEffort = try container.decodeIfPresent(String.self, forKey: .executionEffort)
+    threadID = try container.decodeIfPresent(String.self, forKey: .threadID)
+    turnID = try container.decodeIfPresent(String.self, forKey: .turnID)
+    providerSessionID = try container.decodeIfPresent(String.self, forKey: .providerSessionID)
+    providerRunID = try container.decodeIfPresent(String.self, forKey: .providerRunID)
+    permissionMode = try container.decodeIfPresent(String.self, forKey: .permissionMode)
+    networkAccess = try container.decodeIfPresent(Bool.self, forKey: .networkAccess) ?? false
+    currentStep = try container.decodeIfPresent(String.self, forKey: .currentStep)
+    changedFiles = try container.decodeIfPresent([String].self, forKey: .changedFiles) ?? []
+    recentEvents =
+      try container.decodeIfPresent([MCPServiceTaskEvent].self, forKey: .recentEvents) ?? []
+    supervisorStatus = try container.decode(String.self, forKey: .supervisorStatus)
+    supervisorSummary = try container.decodeIfPresent(String.self, forKey: .supervisorSummary)
+    localApprovalRequired = try container.decode(Bool.self, forKey: .localApprovalRequired)
+    resultSummary = try container.decodeIfPresent(String.self, forKey: .resultSummary)
+    failureCode = try container.decodeIfPresent(String.self, forKey: .failureCode)
+    updatedAt = try container.decode(String.self, forKey: .updatedAt)
   }
 }
 

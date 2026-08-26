@@ -54,12 +54,16 @@ final class OpenCodeACPProviderTests: XCTestCase {
     XCTAssertTrue(result.capabilities.effective.contains(.plan))
     XCTAssertTrue(result.capabilities.effective.contains(.usage))
     XCTAssertTrue(result.capabilities.effective.contains(.profileSelection))
+    XCTAssertTrue(result.capabilities.effective.contains(.workspaceWriteInPlace))
+    XCTAssertTrue(result.capabilities.effective.contains(.oneShotApproval))
 
     let launch = try XCTUnwrap(captured.get())
     XCTAssertFalse(FileManager.default.fileExists(atPath: launch.process.workingDirectory))
     XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
-    XCTAssertTrue(launch.process.argv.contains("--pure"))
-    XCTAssertTrue(launch.process.argv.contains("acp"))
+    XCTAssertEqual(
+      launch.process.argv,
+      [launch.resolvedExecutablePath, "acp", "--cwd", launch.process.workingDirectory]
+    )
   }
 
   func testStartsReadOnlyExecutionAndNormalizesFinalConversation() async throws {
@@ -193,16 +197,27 @@ final class OpenCodeACPProviderTests: XCTestCase {
     let launch = try XCTUnwrap(captured.get())
     XCTAssertEqual(launch.process.workingDirectory, projectRoot)
     XCTAssertNil(launch.process.environment["UNRELATED_SETTING"])
-    XCTAssertTrue(launch.process.argv[2].contains("(deny file-write* "))
+    XCTAssertEqual(
+      launch.process.argv,
+      [launch.resolvedExecutablePath, "acp", "--cwd", projectRoot]
+    )
     XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
     let sent = await transport.sentMessages()
     let configMessages = sent.filter { $0.method == "session/set_config_option" }
-    XCTAssertEqual(configMessages.count, 1)
-    let configIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/set_config_option" })
+    XCTAssertEqual(configMessages.count, 2)
+    let modeMessage = try XCTUnwrap(
+      configMessages.first { $0.params?["configId"] == .string("mode") }
+    )
+    XCTAssertEqual(modeMessage.params?["value"], .string("plan"))
+    let configIndex = try XCTUnwrap(
+      sent.firstIndex { $0.params?["configId"] == .string("mode") }
+    )
     let promptIndex = try XCTUnwrap(sent.firstIndex { $0.method == "session/prompt" })
     XCTAssertLessThan(configIndex, promptIndex)
-    XCTAssertEqual(configMessages[0].params?["configId"], .string("model"))
-    XCTAssertEqual(configMessages[0].params?["value"], .string("openai/gpt-5.6-sol"))
+    let modelMessage = try XCTUnwrap(
+      configMessages.first { $0.params?["configId"] == .string("model") }
+    )
+    XCTAssertEqual(modelMessage.params?["value"], .string("openai/gpt-5.6-sol"))
   }
 
   func testLegacyOxAlphaModelUsesCurrentACPIdentifier() async throws {
@@ -265,7 +280,12 @@ final class OpenCodeACPProviderTests: XCTestCase {
     for try await _ in handle.events {}
 
     let sent = await transport.sentMessages()
-    let message = try XCTUnwrap(sent.first { $0.method == "session/set_config_option" })
+    let message = try XCTUnwrap(
+      sent.first {
+        $0.method == "session/set_config_option"
+          && $0.params?["configId"] == .string("model")
+      }
+    )
     XCTAssertEqual(message.params?["value"], .string("opencode/x-preview-f-free"))
   }
 
@@ -360,7 +380,7 @@ final class OpenCodeACPProviderTests: XCTestCase {
     XCTAssertNil(captured.get())
   }
 
-  func testRejectsWorkspaceWriteBeforeLaunchingProvider() async throws {
+  func testStartsWorkspaceWriteWithNativeBuildMode() async throws {
     let transport = ScriptedACPTransport()
     let captured = LockedValue<OpenCodeACPLaunchConfiguration>()
     let runtimeBase = temporaryPath(prefix: "rejected-runtime")
@@ -369,6 +389,29 @@ final class OpenCodeACPProviderTests: XCTestCase {
     addTeardownBlock {
       for path in [runtimeBase, projectRoot, sourceHome] {
         try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/new":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: Self.sessionResult(id: "session-write", models: [])
+          )
+        )
+      case "session/set_config_option":
+        try await transport.emit(ACPWireMessage(id: id, result: .object([:])))
+      case "session/prompt":
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
+        )
+      default:
+        break
       }
     }
 
@@ -392,20 +435,25 @@ final class OpenCodeACPProviderTests: XCTestCase {
       networkAccessRequested: false
     )
 
-    do {
-      _ = try await provider.start(
-        request,
-        installation: try makeInstallation(id: "write-installation")
-      )
-      XCTFail("Expected workspace writes to be rejected")
-    } catch {
-      XCTAssertEqual(
-        error as? AgentRuntimeError,
-        .capabilityUnavailable(.workspaceWriteInPlace)
-      )
-    }
-    XCTAssertNil(captured.get())
-    XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeBase))
+    let handle = try await provider.start(
+      request,
+      installation: try makeInstallation(id: "write-installation")
+    )
+    for try await _ in handle.events {}
+    let launch = try XCTUnwrap(captured.get())
+    XCTAssertEqual(
+      launch.process.argv,
+      [launch.resolvedExecutablePath, "acp", "--cwd", projectRoot]
+    )
+    let sent = await transport.sentMessages()
+    let modeMessage = try XCTUnwrap(
+      sent.first {
+        $0.method == "session/set_config_option"
+          && $0.params?["configId"] == .string("mode")
+      }
+    )
+    XCTAssertEqual(modeMessage.params?["value"], .string("build"))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
   }
 
   func testInactivityTimeoutFailsRunAndCleansRuntime() async throws {
@@ -421,9 +469,13 @@ final class OpenCodeACPProviderTests: XCTestCase {
         try await transport.emit(
           ACPWireMessage(
             id: id,
-            result: .object(["sessionId": .string("session-timeout")])
+            result: Self.sessionResult(id: "session-timeout", models: [])
           )
         )
+        return
+      }
+      if message.method == "session/set_config_option", let id = message.id {
+        try await transport.emit(ACPWireMessage(id: id, result: .object([:])))
       }
     }
 
@@ -586,23 +638,42 @@ final class OpenCodeACPProviderTests: XCTestCase {
     id: String,
     models: [(String, String)]
   ) -> ACPJSONValue {
-    .object([
+    var modelOption: [String: ACPJSONValue] = [
+      "id": .string("model"),
+      "name": .string("Model"),
+      "type": .string("select"),
+      "options": .array(
+        models.map { model in
+          .object([
+            "value": .string(model.0),
+            "name": .string(model.1),
+          ])
+        }
+      ),
+    ]
+    if let firstModel = models.first {
+      modelOption["currentValue"] = .string(firstModel.0)
+    }
+    return .object([
       "sessionId": .string(id),
       "configOptions": .array([
+        .object(modelOption),
         .object([
-          "id": .string("model"),
-          "name": .string("Model"),
+          "id": .string("mode"),
+          "name": .string("Mode"),
           "type": .string("select"),
-          "currentValue": .string(models.first?.0 ?? ""),
-          "options": .array(
-            models.map { model in
-              .object([
-                "value": .string(model.0),
-                "name": .string(model.1),
-              ])
-            }
-          ),
-        ])
+          "currentValue": .string("plan"),
+          "options": .array([
+            .object([
+              "value": .string("plan"),
+              "name": .string("Plan"),
+            ]),
+            .object([
+              "value": .string("build"),
+              "name": .string("Build"),
+            ]),
+          ]),
+        ]),
       ]),
     ])
   }

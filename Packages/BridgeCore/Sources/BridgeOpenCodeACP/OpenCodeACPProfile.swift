@@ -84,18 +84,15 @@ public struct OpenCodeACPLaunchConfiguration: Sendable {
 }
 
 public struct OpenCodeACPLaunchBuilder: Sendable {
-  public let sandboxExecutablePath: String
   public let maximumFrameBytes: Int
   public let maximumStandardErrorBytes: Int
   public let maximumLifetime: Duration
 
   public init(
-    sandboxExecutablePath: String = "/usr/bin/sandbox-exec",
     maximumFrameBytes: Int = 1_048_576,
     maximumStandardErrorBytes: Int = 256 * 1_024,
     maximumLifetime: Duration = .seconds(24 * 60 * 60)
   ) {
-    self.sandboxExecutablePath = sandboxExecutablePath
     self.maximumFrameBytes = max(1, maximumFrameBytes)
     self.maximumStandardErrorBytes = max(1, maximumStandardErrorBytes)
     self.maximumLifetime = maximumLifetime
@@ -105,7 +102,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     installation: AgentInstallation,
     projectRoot: String,
     runDirectory: String,
-    networkAllowed: Bool,
+    networkAllowed _: Bool,
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> OpenCodeACPLaunchConfiguration {
     guard installation.providerID == .openCode else {
@@ -117,30 +114,13 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     let environment = try Self.environment(
       executable: executable,
       runDirectory: runtime,
-      networkAllowed: networkAllowed,
       source: sourceEnvironment
     )
-    let writableRoots = try Self.writableRoots(environment: environment, runDirectory: runtime)
-    guard !writableRoots.contains(where: { Self.pathsOverlap(project, $0) }) else {
-      throw AgentRuntimeError.invalidRequest("projectRoot.runtimeOverlap")
-    }
-    guard let sandboxExecutable = Self.safeExecutable(sandboxExecutablePath) else {
-      throw AgentRuntimeError.processUnavailable
-    }
-
-    let profile = try Self.sandboxProfile(
-      projectRoot: project,
-      writableRoots: writableRoots,
-      networkAllowed: networkAllowed
-    )
     let argv = [
-      sandboxExecutable,
-      "-p",
-      profile,
-      "--",
       executable,
-      "--pure",
       "acp",
+      "--cwd",
+      project,
     ]
     return OpenCodeACPLaunchConfiguration(
       process: OpenCodeACPProcessTransportConfiguration(
@@ -156,34 +136,6 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     )
   }
 
-  public static func readOnlyPermissionJSON(networkAllowed: Bool) -> String {
-    let policy: [String: Any] = [
-      "*": "ask",
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "list": "allow",
-      "edit": "deny",
-      "bash": "deny",
-      "task": "deny",
-      "external_directory": "deny",
-      "todowrite": "allow",
-      "question": "deny",
-      "webfetch": networkAllowed ? "allow" : "deny",
-      "websearch": networkAllowed ? "allow" : "deny",
-      "lsp": "deny",
-      "doom_loop": "deny",
-      "skill": "deny",
-    ]
-    guard JSONSerialization.isValidJSONObject(policy),
-      let data = try? JSONSerialization.data(withJSONObject: policy, options: [.sortedKeys]),
-      let value = String(data: data, encoding: .utf8)
-    else {
-      preconditionFailure("Static OpenCode permission policy must be valid JSON.")
-    }
-    return value
-  }
-
   static func removeRunDirectory(_ path: String) {
     guard !path.isEmpty else { return }
     try? FileManager.default.removeItem(atPath: path)
@@ -192,7 +144,6 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
   private static func environment(
     executable: String,
     runDirectory: String,
-    networkAllowed: Bool,
     source: [String: String]
   ) throws -> [String: String] {
     let sourceHome = try absoluteEnvironmentPath(
@@ -226,21 +177,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       "XDG_CACHE_HOME": cache,
       "XDG_STATE_HOME": state,
       "XDG_DATA_HOME": dataHome,
-      "OPENCODE_CLIENT": "codex-bridge",
-      "OPENCODE_AUTO_SHARE": "false",
-      "OPENCODE_DISABLE_AUTOUPDATE": "1",
-      "OPENCODE_DISABLE_CLAUDE_CODE": "1",
-      "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
-      "OPENCODE_DISABLE_LSP_DOWNLOAD": "1",
-      "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
-      "OPENCODE_DISABLE_TERMINAL_TITLE": "1",
       "OPENCODE_DB": database,
-      "OPENCODE_ENABLE_EXA": "false",
-      "OPENCODE_EXPERIMENTAL": "false",
-      "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER": "1",
-      "OPENCODE_PERMISSION": readOnlyPermissionJSON(networkAllowed: networkAllowed),
-      "GIT_OPTIONAL_LOCKS": "0",
-      "NO_COLOR": "1",
     ]
     for key in ["USER", "LOGNAME", "LANG", "LC_ALL", "SHELL"] {
       if let value = source[key], !value.isEmpty, !value.contains("\0") {
@@ -248,107 +185,6 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       }
     }
     return environment
-  }
-
-  private static func writableRoots(
-    environment: [String: String],
-    runDirectory: String
-  ) throws -> [String] {
-    guard let dataHome = environment["XDG_DATA_HOME"] else {
-      throw AgentRuntimeError.invalidRequest("environment.XDG_DATA_HOME")
-    }
-    let logDirectory = URL(fileURLWithPath: dataHome)
-      .appendingPathComponent("opencode/log", isDirectory: true).path
-    return try [runDirectory, logDirectory].map {
-      try canonicalPathAllowingMissingLeaf($0, field: "sandbox.writableRoot")
-    }
-  }
-
-  private static func sandboxProfile(
-    projectRoot: String,
-    writableRoots: [String],
-    networkAllowed: Bool
-  ) throws -> String {
-    var rules = ["(version 1)", "(allow default)"]
-    let isProbe = isTemporaryProbeProject(projectRoot, writableRoots: writableRoots)
-    // OpenCode's ACP runtime needs local networking that seatbelt cannot
-    // separate from tool networking; tool-level network stays governed by
-    // OPENCODE_PERMISSION, so no sandbox-level network deny here.
-    // Seatbelt matches canonical paths (/var → /private/var), so every rule
-    // path must go through realpath or the allow never matches.
-    var allowedWriteRoots = writableRoots.map(Self.resolvedSandboxPath)
-    // System temporary directory is needed for Node/Bun temp files.
-    for tmp in ["/tmp", "/private/tmp", FileManager.default.temporaryDirectory.path] {
-      allowedWriteRoots.append(Self.resolvedSandboxPath(tmp))
-    }
-    // Probe runs use a temporary project directory that must remain writable.
-    if isProbe {
-      allowedWriteRoots.append(Self.resolvedSandboxPath(projectRoot))
-    }
-    rules.append(
-      try denyWritesOutside(
-        roots: Array(Set(allowedWriteRoots)).sorted(),
-        literalPaths: ["/dev/null"]
-      )
-    )
-    if !isProbe {
-      let resolvedProject = Self.resolvedSandboxPath(projectRoot)
-      rules.append(
-        "(deny file-write* (literal \"\(try sandboxLiteral(resolvedProject))\"))"
-      )
-      rules.append(
-        "(deny file-write* (subpath \"\(try sandboxLiteral(resolvedProject))\"))"
-      )
-    }
-    return rules.joined()
-  }
-
-  private static func denyWritesOutside(
-    roots: [String],
-    literalPaths: [String]
-  ) throws -> String {
-    let rootRequirements = try roots.map {
-      "(require-not (subpath \"\(try sandboxLiteral($0))\"))"
-    }
-    let literalRequirements = try literalPaths.map {
-      "(require-not (literal \"\(try sandboxLiteral($0))\"))"
-    }
-    return "(deny file-write* (require-all \((rootRequirements + literalRequirements).joined())))"
-  }
-
-  private static func resolvedSandboxPath(_ path: String) -> String {
-    var buffer = [Int8](repeating: 0, count: 16_384)
-    guard realpath(path, &buffer) != nil else { return path }
-    return String(cString: buffer)
-  }
-
-  private static func isTemporaryProbeProject(
-    _ projectRoot: String,
-    writableRoots: [String]
-  ) -> Bool {
-    let standardized = URL(fileURLWithPath: projectRoot).standardized.path
-    // Inside any writable root (e.g. run directory) is already allowed.
-    for root in writableRoots {
-      let canonicalRoot = URL(fileURLWithPath: root).standardized.path
-      if standardized == canonicalRoot || standardized.hasPrefix(canonicalRoot + "/") {
-        return true
-      }
-    }
-    // Probe projects are created as siblings of the run directory with a
-    // distinct prefix inside the same runtime base.
-    if let firstRoot = writableRoots.first {
-      let runtimeBase = URL(fileURLWithPath: firstRoot).deletingLastPathComponent()
-        .standardized.path
-      if standardized.hasPrefix(runtimeBase + "/") {
-        let relative = String(standardized.dropFirst(runtimeBase.count + 1))
-        let firstComponent =
-          relative.split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
-        if firstComponent.hasPrefix("probe-") {
-          return true
-        }
-      }
-    }
-    return false
   }
 
   private static func trustedPath(executable: String) -> String {
@@ -451,21 +287,4 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
   }
 
-  private static func pathsOverlap(_ first: String, _ second: String) -> Bool {
-    contains(first, second) || contains(second, first)
-  }
-
-  private static func contains(_ root: String, _ candidate: String) -> Bool {
-    if root == candidate { return true }
-    let prefix = root == "/" ? "/" : root + "/"
-    return candidate.hasPrefix(prefix)
-  }
-
-  private static func sandboxLiteral(_ value: String) throws -> String {
-    guard !value.contains("\0"), !value.contains("\n"), !value.contains("\r") else {
-      throw AgentRuntimeError.invalidRequest("sandbox.path")
-    }
-    return value.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-  }
 }

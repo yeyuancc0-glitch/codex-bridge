@@ -7,7 +7,7 @@ struct BridgeServiceAgentSettingsSection: View {
   @State private var installationPendingRemoval: IPCAgentInstallationSummary?
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
   @State private var submitProviderID = "opencode"
-  @State private var selectedModel = ""
+  @State private var submitPermissionMode = "workspace-write"
   @State private var submitPrompt = ""
 
   var body: some View {
@@ -16,7 +16,7 @@ struct BridgeServiceAgentSettingsSection: View {
         VStack(alignment: .leading, spacing: 4) {
           Text("只有在这里明确登记并通过 Probe 的本机安装才会出现在 list_agents。")
             .font(.caption)
-          Text("当前阶段仍禁止通过 submit_task 启动外部 Provider；启用仅表示安装已获本机用户认可。")
+          Text("已启用且 Probe 通过的 OpenCode 安装可以通过 submit_task 提交任务；每个任务仍需本机批准。")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -217,9 +217,9 @@ struct BridgeServiceAgentSettingsSection: View {
     }
     VStack(alignment: .leading, spacing: 8) {
       Divider()
-      Text("本机 Agent 任务（只读）")
+      Text("本机 Agent 任务")
         .font(.body.weight(.semibold))
-      Text("提交后进入工作台等待本机批准；此处选择即 GPT 提交的默认模型。")
+      Text("提交后进入工作台等待本机批准；OpenCode 使用原生 Build/Plan，网络访问由原生 permissions 控制。")
         .font(.caption)
         .foregroundStyle(.secondary)
 
@@ -232,26 +232,35 @@ struct BridgeServiceAgentSettingsSection: View {
       }
       .pickerStyle(.menu)
 
+      HStack(spacing: 12) {
+        Picker("权限模式", selection: $submitPermissionMode) {
+          Text("OpenCode 原生 Build（工作区可写）").tag("workspace-write")
+          Text("OpenCode 原生 Plan（只读）").tag("read-only")
+        }
+        .pickerStyle(.menu)
+        .help("使用 OpenCode ACP 原生 Build 或 Plan 模式")
+      }
+
       if selectable.isEmpty {
         Text("该 Provider 暂无已启用的可用安装")
           .font(.caption)
           .foregroundStyle(.orange)
       }
 
-      Picker("默认模型", selection: $selectedModel) {
+      Picker("默认模型", selection: agentModelDefaultBinding) {
         Text("Provider 默认").tag("")
+        if let current = model.openCodeDefaultModel,
+          !model.agentModelOptions.contains(where: { $0.modelID == current })
+        {
+          Text("当前设置 · \(current)").tag(current)
+        }
         ForEach(model.agentModelOptions, id: \.modelID) { item in
           Text(item.displayName).tag(item.modelID)
         }
       }
       .pickerStyle(.menu)
-      .onChange(of: selectedModel) { _, newValue in
-        model.saveAgentModelDefault(newValue.isEmpty ? nil : newValue)
-      }
       .task(id: selectable.first?.installationID) {
-        model.loadAgentModels(installationID: selectable.first?.installationID)
-        model.loadAgentModelDefault()
-        selectedModel = model.openCodeDefaultModel ?? ""
+        await model.hydrateAgentModelState(installationID: selectable.first?.installationID)
       }
 
       TextField("任务描述", text: $submitPrompt, axis: .vertical)
@@ -265,7 +274,8 @@ struct BridgeServiceAgentSettingsSection: View {
             projectID: model.selectedProjectID ?? (model.projects.first?.projectID ?? ""),
             providerID: submitProviderID,
             installationID: selectable.first?.installationID,
-            model: selectedModel.isEmpty ? nil : selectedModel,
+            model: model.openCodeDefaultModel,
+            permissionMode: submitPermissionMode,
             prompt: submitPrompt
           )
           submitPrompt = ""
@@ -281,6 +291,17 @@ struct BridgeServiceAgentSettingsSection: View {
       }
     }
     .padding(.vertical, 6)
+  }
+
+  private var agentModelDefaultBinding: Binding<String> {
+    Binding(
+      get: { model.openCodeDefaultModel ?? "" },
+      set: { value in
+        let selected = value.isEmpty ? nil : value
+        guard selected != model.openCodeDefaultModel else { return }
+        model.saveAgentModelDefault(selected)
+      }
+    )
   }
 
   private func availabilityTitle(_ value: String) -> String {

@@ -68,6 +68,14 @@ public actor OpenCodeACPExecution {
     try await client.cancel(sessionID: sessionID)
   }
 
+  public func resolveApproval(
+    approvalID: String,
+    optionID: String
+  ) async throws {
+    guard !terminal else { throw AgentRuntimeError.approvalUnavailable(approvalID) }
+    try await client.resolvePermission(approvalID: approvalID, optionID: optionID)
+  }
+
   public func shutdown() async {
     guard claimTerminal() else { return }
     interruptRequested = true

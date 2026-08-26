@@ -194,6 +194,8 @@ extension MCPServiceToolCatalog {
       "installation_id": stringSchema,
       "execution_model": stringSchema,
       "execution_effort": stringSchema,
+      "permission_mode": stringSchema,
+      "network_access": boolSchema,
       "thread_id": stringSchema,
       "turn_id": stringSchema,
       "provider_session_id": stringSchema,
@@ -210,7 +212,8 @@ extension MCPServiceToolCatalog {
     ],
     required: [
       "task_id", "project_id", "status", "changed_files", "recent_events",
-      "execution_model", "execution_effort", "supervisor_status",
+      "execution_model", "execution_effort", "permission_mode", "network_access",
+      "supervisor_status",
       "local_approval_required", "updated_at",
     ]
   )

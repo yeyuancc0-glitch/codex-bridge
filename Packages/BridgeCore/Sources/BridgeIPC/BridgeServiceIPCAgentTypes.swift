@@ -166,6 +166,7 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
   public let providerID: String
   public let installationID: String?
   public let model: String?
+  public let permissionMode: String?
   public let prompt: String
 
   public init(
@@ -173,12 +174,14 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     providerID: String,
     installationID: String? = nil,
     model: String? = nil,
+    permissionMode: String? = nil,
     prompt: String
   ) {
     self.projectID = projectID
     self.providerID = providerID
     self.installationID = installationID
     self.model = model
+    self.permissionMode = permissionMode
     self.prompt = prompt
   }
 
@@ -187,6 +190,7 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     case providerID = "provider_id"
     case installationID = "installation_id"
     case model
+    case permissionMode = "permission_mode"
     case prompt
   }
 }

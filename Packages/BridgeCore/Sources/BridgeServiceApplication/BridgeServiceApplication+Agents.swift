@@ -34,18 +34,16 @@ extension BridgeServiceApplication {
       capabilities.remove(.workspaceWriteInPlace)
       capabilities.remove(.workspaceWriteIsolated)
     }
-    // Submission is enabled only for the read-only OpenCode slice: an
-    // explicitly selectable installation whose effective capabilities still
-    // include project reads under the managed sandbox.
+    // OpenCode uses its native ACP Plan/Build modes and permission requests.
+    // The persisted capability snapshot and project policy remain the public
+    // source of truth for whether the installation may receive tasks.
     let submissionEnabled =
       record.providerID == .openCode
       && record.isSelectable
       && capabilities.contains(.workspaceRead)
-    let workspaceEnforcement =
-      submissionEnabled ? "os_sandbox" : "unavailable"
-    // Tool network is governed by the provider permission policy, not the
-    // seatbelt profile; report that honestly.
-    let networkEnforcement = submissionEnabled ? "provider" : "unavailable"
+    let workspaceEnforcement = submissionEnabled ? "provider_native" : "unavailable"
+    let approvalEnforcement = submissionEnabled ? "local_app" : "unavailable"
+    let networkEnforcement = submissionEnabled ? "provider_native" : "unavailable"
     return MCPAgentSummary(
       providerID: record.providerID.rawValue,
       installationID: record.id.rawValue,
@@ -60,7 +58,7 @@ extension BridgeServiceApplication {
       trustProfile: record.trustProfile.rawValue,
       securityProfileID: record.securityProfileID?.rawValue,
       workspaceEnforcement: workspaceEnforcement,
-      approvalEnforcement: "none",
+      approvalEnforcement: approvalEnforcement,
       networkEnforcement: networkEnforcement,
       modelsSummary: [],
       unavailableReason: record.lastProbeError,

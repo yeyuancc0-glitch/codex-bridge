@@ -20,6 +20,7 @@ public actor OpenCodeACPEventNormalizer {
 
   private let taskID: TaskID
   private let binding: AgentBinding
+  private let projectRoot: String?
   private var sequence: Int64 = 0
   private var contentOrder: [String] = []
   private var contents: [String: ContentState] = [:]
@@ -28,16 +29,19 @@ public actor OpenCodeACPEventNormalizer {
   private static let maximumContentStreams = 64
   private static let maximumTools = 256
 
-  public init(taskID: TaskID, binding: AgentBinding) {
+  public init(taskID: TaskID, binding: AgentBinding, projectRoot: String? = nil) {
     self.taskID = taskID
     self.binding = binding
+    self.projectRoot = projectRoot.map {
+      URL(fileURLWithPath: $0).standardizedFileURL.path
+    }
   }
 
   public func normalize(_ event: OpenCodeACPClientEvent) throws -> AgentEventEnvelope? {
     switch event {
-    case .permissionDenied(let request):
+    case .permissionRequested(let request):
       try validateSession(request.sessionID)
-      return try envelope(.approvalAutomaticallyDenied(request.toolCallID))
+      return try approval(request)
     case .notification(let notification):
       return try normalize(notification)
     }
@@ -219,6 +223,32 @@ public actor OpenCodeACPEventNormalizer {
     return try envelope(.usage(payload))
   }
 
+  private func approval(
+    _ request: OpenCodeACPPermissionRequest
+  ) throws -> AgentEventEnvelope {
+    let title = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    let safeTitle = Self.safeText(title) ?? "OpenCode permission request"
+    let input = request.rawInput?.objectValue ?? [:]
+    let relativePaths = Self.relativePaths(from: input, projectRoot: projectRoot)
+    let approval = try AgentApprovalRequest(
+      approvalID: request.approvalID,
+      taskID: taskID,
+      binding: binding,
+      providerItemID: request.toolCallID,
+      kind: Self.approvalKind(request.kind),
+      title: safeTitle,
+      relativePaths: relativePaths,
+      normalizedCommand: Self.safeCommand(input["command"]?.stringValue),
+      networkTarget: Self.safeNetworkTarget(
+        input["url"]?.stringValue
+          ?? input["uri"]?.stringValue
+          ?? input["target"]?.stringValue
+      ),
+      options: request.options
+    )
+    return try envelope(.approvalRequested(approval))
+  }
+
   private func validateSession(_ sessionID: String) throws {
     guard binding.providerSessionID == sessionID else {
       throw OpenCodeACPError.sessionMismatch
@@ -258,6 +288,93 @@ public actor OpenCodeACPEventNormalizer {
     case "declined": .declined
     default: nil
     }
+  }
+
+  private static func approvalKind(_ value: String?) -> AgentApprovalKind {
+    switch value?.lowercased() {
+    case "execute", "command", "bash", "shell":
+      .command
+    case "edit", "file", "file_change", "create", "delete", "move", "write":
+      .fileChange
+    case "network", "webfetch", "websearch", "fetch":
+      .network
+    case "read", "glob", "grep", "list", "lsp", "tool":
+      .tool
+    default:
+      .unknown
+    }
+  }
+
+  private static func safeText(_ value: String) -> String? {
+    guard !value.isEmpty, value.utf8.count <= 8 * 1_024,
+      !value.contains("\0"), value.rangeOfCharacter(from: .controlCharacters) == nil,
+      !containsSensitiveMarker(value.lowercased())
+    else { return nil }
+    return value
+  }
+
+  private static func safeCommand(_ value: String?) -> String? {
+    guard let value else { return nil }
+    return safeText(value)
+  }
+
+  private static func relativePaths(
+    from input: [String: ACPJSONValue],
+    projectRoot: String?
+  ) -> [String] {
+    guard let projectRoot else { return [] }
+    let keys = ["path", "filePath", "filepath", "file", "source", "destination"]
+    let values = keys.compactMap { input[$0]?.stringValue }
+    var paths = Set<String>()
+    for value in values {
+      guard let path = relativePath(value, projectRoot: projectRoot) else { continue }
+      paths.insert(path)
+    }
+    return paths.sorted()
+  }
+
+  private static func relativePath(_ value: String, projectRoot: String) -> String? {
+    guard !value.isEmpty, value.utf8.count <= 1_024,
+      !value.contains("\0"), value.rangeOfCharacter(from: .controlCharacters) == nil
+    else { return nil }
+    let relative: String
+    if value.hasPrefix("/") {
+      let absolute = URL(fileURLWithPath: value).standardizedFileURL.path
+      guard absolute.hasPrefix(projectRoot + "/") else { return nil }
+      relative = String(absolute.dropFirst(projectRoot.count + 1))
+    } else {
+      relative = value
+    }
+    let components = relative.split(separator: "/", omittingEmptySubsequences: false)
+    guard !components.isEmpty,
+      components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+      !containsSensitiveMarker(relative.lowercased())
+    else { return nil }
+    return relative
+  }
+
+  private static func safeNetworkTarget(_ value: String?) -> String? {
+    guard let value, value.utf8.count <= 4 * 1_024,
+      !value.contains("\0"), value.rangeOfCharacter(from: .controlCharacters) == nil,
+      let url = URLComponents(string: value),
+      let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+      url.host != nil,
+      !containsSensitiveMarker(value.lowercased())
+    else { return nil }
+    var sanitized = url
+    sanitized.user = nil
+    sanitized.password = nil
+    sanitized.query = nil
+    sanitized.fragment = nil
+    guard let result = sanitized.string, result.utf8.count <= 4 * 1_024 else { return nil }
+    return result
+  }
+
+  private static func containsSensitiveMarker(_ value: String) -> Bool {
+    [
+      "token", "secret", "password", "passwd", "api_key", "apikey", "authorization",
+      "cookie", "private_key", ".env", ".ssh",
+    ].contains { value.contains($0) }
   }
 
   private static func toolOutput(_ value: ACPJSONValue?) -> String? {

@@ -12,6 +12,29 @@ import MCP
 import XCTest
 
 final class BridgeServiceHostTests: XCTestCase {
+  func testAgentSubmitRequestDecodesLegacyPayloadAndEncodesPermissionMode() throws {
+    let legacy = Data(
+      #"{"project_id":"project-1","provider_id":"opencode","installation_id":null,"model":null,"prompt":"Inspect the project."}"#
+        .utf8
+    )
+    let decoded = try JSONDecoder().decode(IPCAgentSubmitRequest.self, from: legacy)
+    XCTAssertEqual(decoded.projectID, "project-1")
+    XCTAssertEqual(decoded.providerID, "opencode")
+    XCTAssertNil(decoded.permissionMode)
+
+    let encoded = try JSONEncoder().encode(
+      IPCAgentSubmitRequest(
+        projectID: "project-1",
+        providerID: "opencode",
+        permissionMode: "workspace-write",
+        prompt: "Build the project."
+      )
+    )
+    let value = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    XCTAssertEqual(value["permission_mode"] as? String, "workspace-write")
+    XCTAssertNil(value["network_access"])
+  }
+
   func testDataPathsCreatePrivateRootAndRejectUnsafeExistingRoots() throws {
     let parent = FileManager.default.temporaryDirectory.appending(
       path: "bridge-service-path-tests-\(UUID().uuidString)",

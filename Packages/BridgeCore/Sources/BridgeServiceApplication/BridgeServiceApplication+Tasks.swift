@@ -13,6 +13,8 @@ extension BridgeServiceApplication {
     public let clientID: String
     public let prompt: String
     public let providerID: String
+    public let permissionMode: String
+    public let networkAllowed: Bool
 
     public var providerDisplayName: String {
       providerID == AgentProviderID.openCode.rawValue ? "OpenCode" : "Codex"
@@ -25,6 +27,8 @@ extension BridgeServiceApplication {
       clientID = task.source == .chatGPT ? MCPClientID.chatGPT.rawValue : task.sourceClientID
       prompt = task.prompt
       providerID = task.providerID
+      permissionMode = task.permissionMode.rawValue
+      networkAllowed = task.networkAllowed
     }
 
     public static func approvalID(for taskID: TaskID) -> String {
@@ -69,6 +73,8 @@ extension BridgeServiceApplication {
       turnID: isCodexProvider ? task.state.codexTurnID : nil,
       providerSessionID: isCodexProvider ? nil : task.state.providerSessionID,
       providerRunID: isCodexProvider ? nil : task.state.providerRunID,
+      permissionMode: task.permissionMode.rawValue,
+      networkAccess: task.networkAllowed,
       currentStep: task.state.currentStep,
       changedFiles: task.state.changedFiles,
       recentEvents: events.map {
@@ -217,7 +223,9 @@ extension BridgeServiceApplication {
 
   /// Explicit non-Codex submissions resolve against the user-registered agent
   /// installations. The provider owns defaults unless the caller explicitly
-  /// opts into a model override; Bridge still enforces read-only posture.
+  /// opts into a model override; permission follows the project policy used by
+  /// the Codex path, while network access remains governed by native ACP
+  /// permissions and is unavailable as a Bridge task option.
   private func prepareAgentSubmission(
     _ submission: MCPServiceTaskSubmission,
     providerRaw: String,
@@ -255,12 +263,10 @@ extension BridgeServiceApplication {
     guard requestedEffort == nil else {
       throw BridgeMCPQueryError.contractRejected
     }
-    guard submission.permissionMode == nil || submission.permissionMode == "read-only" else {
-      throw BridgeMCPQueryError.contractRejected
-    }
+    let permission = try Self.permissionMode(submission.permissionMode, project: project)
     guard !submission.networkAccess else {
-      // Tool network cannot be separated from control-plane network for this
-      // provider yet, so remote network requests stay rejected.
+      // OpenCode's ACP mode does not expose a per-task network sandbox. Do
+      // not persist a requested network grant as though Bridge enforced it.
       throw BridgeMCPQueryError.unavailable
     }
     let registry = try requiredAgentRegistry()
@@ -290,7 +296,7 @@ extension BridgeServiceApplication {
         selectionMode: .explicit,
         executionModel: executionModel,
         executionEffort: serviceDefaultProviderExecutionEffort,
-        permissionMode: .readOnly,
+        permissionMode: permission,
         networkAllowed: false,
         accessMode: accessMode
       )

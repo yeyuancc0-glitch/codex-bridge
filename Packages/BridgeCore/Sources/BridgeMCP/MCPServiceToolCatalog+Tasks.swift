@@ -66,10 +66,11 @@ extension MCPServiceToolCatalog {
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
       + "Model and effort fields are applied only when model_override is true. "
       + "Set provider_id to route the task to another registered agent provider (for example "
-      + "opencode); provider tasks are read-only in this version, so permission_mode must be "
-      + "read-only and network_access false. OpenCode supports model override through the same "
-      + "model_override rule as Codex, but execution_effort is not an OpenCode ACP option and "
-      + "must be omitted; supervisor, skill and thread fields must also be omitted.",
+      + "opencode). For OpenCode, permission_mode selects its native ACP Plan (read-only) or "
+      + "native ACP Build (workspace-write). OpenCode network access follows its native permissions; the "
+      + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
+      + "Codex, but execution_effort is not an OpenCode ACP option and must be omitted; supervisor, "
+      + "skill and thread fields must also be omitted.",
     inputSchema: objectSchema(
       properties: [
         "project_id": boundedStringSchema(maximum: 128),
@@ -115,9 +116,13 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "Selects the native Codex sandbox. Build and test tasks that generate artifacts or caches should request workspace-write even when source edits are not intended.",
+            "For Codex, selects the native sandbox. For OpenCode, read-only maps to native ACP Plan and workspace-write maps to native ACP Build.",
         ],
-        "network_access": boolSchema,
+        "network_access": [
+          "type": "boolean",
+          "description":
+            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them.",
+        ],
         "acceptance_criteria": [
           "type": "array",
           "maxItems": 32,

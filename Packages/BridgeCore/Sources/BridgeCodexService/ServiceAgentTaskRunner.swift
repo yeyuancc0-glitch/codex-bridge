@@ -13,6 +13,8 @@ public struct AgentTaskBrief: Sendable {
   public let requestedSessionID: String?
   public let model: String?
   public let effort: String?
+  public let permissionMode: ServicePermissionMode
+  public let profileID: AgentProfileID?
   public let networkAllowed: Bool
 
   public init(
@@ -25,6 +27,8 @@ public struct AgentTaskBrief: Sendable {
     requestedSessionID: String? = nil,
     model: String? = nil,
     effort: String? = nil,
+    permissionMode: ServicePermissionMode = .readOnly,
+    profileID: AgentProfileID? = nil,
     networkAllowed: Bool
   ) {
     self.taskID = taskID
@@ -36,6 +40,8 @@ public struct AgentTaskBrief: Sendable {
     self.requestedSessionID = requestedSessionID
     self.model = model
     self.effort = effort
+    self.permissionMode = permissionMode
+    self.profileID = profileID
     self.networkAllowed = networkAllowed
   }
 }
@@ -46,19 +52,22 @@ public struct AgentTaskRunHandle: Sendable {
   public let events: AsyncThrowingStream<AgentEventEnvelope, any Error>
   public let interrupt: @Sendable () async throws -> Void
   public let shutdown: @Sendable () async -> Void
+  public let resolveApproval: (@Sendable (String, String) async throws -> Void)?
 
   public init(
     sessionID: String?,
     runID: String?,
     events: AsyncThrowingStream<AgentEventEnvelope, any Error>,
     interrupt: @escaping @Sendable () async throws -> Void,
-    shutdown: @escaping @Sendable () async -> Void
+    shutdown: @escaping @Sendable () async -> Void,
+    resolveApproval: (@Sendable (String, String) async throws -> Void)? = nil
   ) {
     self.sessionID = sessionID
     self.runID = runID
     self.events = events
     self.interrupt = interrupt
     self.shutdown = shutdown
+    self.resolveApproval = resolveApproval
   }
 }
 
@@ -85,14 +94,41 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
     guard let registry else {
       throw AgentRuntimeError.providerUnavailable(brief.providerID)
     }
+    let record: ServiceAgentInstallationRecord
+    do {
+      record = try await registry.reprobe(
+        installationID: brief.installationID,
+        acceptReplacement: false,
+        projectRoot: brief.projectRoot
+      )
+    } catch ServiceAgentRegistryError.installationUnavailable {
+      throw AgentRuntimeError.installationUnavailable(brief.installationID)
+    } catch ServiceAgentRegistryError.installationNeedsReview {
+      throw AgentRuntimeError.installationUnavailable(brief.installationID)
+    } catch {
+      throw AgentRuntimeError.installationUnavailable(brief.installationID)
+    }
     guard let provider = providers[brief.providerID] else {
       throw AgentRuntimeError.providerUnavailable(brief.providerID)
     }
     guard
-      let record = try await registry.installation(id: brief.installationID),
       record.isSelectable, record.providerID == brief.providerID
     else {
       throw AgentRuntimeError.installationUnavailable(brief.installationID)
+    }
+    if let profileID = brief.profileID, record.securityProfileID != profileID {
+      throw AgentRuntimeError.invalidRequest("request.profileID")
+    }
+    let requiredCapabilities: Set<AgentCapability> =
+      brief.permissionMode == .workspaceWrite
+      ? [.workspaceRead, .workspaceWriteInPlace]
+      : [.workspaceRead]
+    guard record.capabilities.supports(requiredCapabilities) else {
+      let missing = requiredCapabilities.subtracting(record.capabilities.effective)
+      guard let capability = missing.sorted(by: { $0.rawValue < $1.rawValue }).first else {
+        throw AgentRuntimeError.capabilityUnavailable(.workspaceRead)
+      }
+      throw AgentRuntimeError.capabilityUnavailable(capability)
     }
     // The frozen canonical path from registration time is the only executable
     // identity this runner will launch.
@@ -111,10 +147,12 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       requestedSessionID: brief.requestedSessionID,
       model: brief.model,
       effort: brief.effort,
-      mutationIntent: .readOnly,
-      workspaceStrategy: .sharedProject,
+      profileID: brief.profileID ?? record.securityProfileID,
+      mutationIntent: brief.permissionMode == .workspaceWrite ? .workspaceWrite : .readOnly,
+      workspaceStrategy: brief.permissionMode == .workspaceWrite
+        ? .exclusiveProject : .sharedProject,
       networkAccessRequested: brief.networkAllowed,
-      requiredCapabilities: [.workspaceRead]
+      requiredCapabilities: requiredCapabilities
     )
     let handle = try await provider.start(request, installation: installation)
     guard handle.taskID == brief.taskID,
@@ -135,7 +173,8 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       interrupt: handle.control.interrupt,
       shutdown: handle.control.shutdown ?? {
         try? await handle.control.interrupt()
-      }
+      },
+      resolveApproval: handle.control.resolveApproval
     )
   }
 }

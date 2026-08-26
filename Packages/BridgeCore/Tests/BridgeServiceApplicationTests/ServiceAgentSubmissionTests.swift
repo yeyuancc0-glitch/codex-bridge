@@ -26,15 +26,22 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     private(set) var startedRequests: [AgentExecutionRequest] = []
     private(set) var interruptCount = 0
     private(set) var shutdownCount = 0
+    private(set) var approvalResponses: [(String, String)] = []
     private let returnedTaskID: TaskID?
     private let startError: AgentRuntimeError?
+    private let supportsWorkspaceWrite: Bool
+    private let resolveApprovalError: AgentRuntimeError?
 
     init(
       returnedTaskID: TaskID? = nil,
-      startError: AgentRuntimeError? = nil
+      startError: AgentRuntimeError? = nil,
+      supportsWorkspaceWrite: Bool = false,
+      resolveApprovalError: AgentRuntimeError? = nil
     ) throws {
       self.returnedTaskID = returnedTaskID
       self.startError = startError
+      self.supportsWorkspaceWrite = supportsWorkspaceWrite
+      self.resolveApprovalError = resolveApprovalError
       descriptor = try AgentProviderDescriptor(
         providerID: .openCode,
         displayName: "OpenCode",
@@ -47,6 +54,11 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         .sessionCreate, .interrupt, .textDelta, .reasoningDelta,
         .toolLifecycle, .plan, .usage, .workspaceRead, .profileSelection,
       ]
+
+      let effectiveCapabilities =
+        supportsWorkspaceWrite
+        ? capabilities.union([.workspaceWriteInPlace])
+        : capabilities
       guard
         let installation = try? AgentInstallation(
           id: request.installation.id,
@@ -67,9 +79,9 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         installation: installation,
         available: true,
         capabilities: AgentCapabilitySnapshot(
-          advertised: capabilities,
-          observed: capabilities,
-          enforced: capabilities
+          advertised: effectiveCapabilities,
+          observed: effectiveCapabilities,
+          enforced: effectiveCapabilities
         )
       )
     }
@@ -105,6 +117,9 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         },
         shutdown: { [weak self] in
           self?.performShutdown(request.taskID)
+        },
+        resolveApproval: { [weak self] approvalID, optionID in
+          try self?.performResolve(approvalID: approvalID, optionID: optionID)
         }
       )
       return AgentExecutionHandle(
@@ -175,6 +190,13 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       lock.unlock()
       run?.continuation.finish()
     }
+
+    private func performResolve(approvalID: String, optionID: String) throws {
+      lock.lock()
+      defer { lock.unlock() }
+      if let resolveApprovalError { throw resolveApprovalError }
+      approvalResponses.append((approvalID, optionID))
+    }
   }
 
   // MARK: - Tests
@@ -206,6 +228,82 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(provider.shutdownCount, 1)
   }
 
+  func testRunnerMapsWorkspaceWriteToExclusiveCapabilityRequest() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(supportsWorkspaceWrite: true)
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let runner = ServiceAgentTaskRunner(
+      registry: registry,
+      providers: [.openCode: provider]
+    )
+
+    let handle = try await runner.start(
+      AgentTaskBrief(
+        taskID: TaskID(rawValue: "tsk-workspace-write"),
+        providerID: .openCode,
+        installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+        projectID: fixture.project.id,
+        projectRoot: fixture.project.root.canonicalPath,
+        prompt: "Update the project.",
+        permissionMode: .workspaceWrite,
+        profileID: AgentProfileID(rawValue: "controlled-readonly"),
+        networkAllowed: false
+      ))
+
+    XCTAssertEqual(provider.startedRequests.count, 1)
+    XCTAssertEqual(provider.startedRequests[0].mutationIntent, .workspaceWrite)
+    XCTAssertEqual(provider.startedRequests[0].workspaceStrategy, .exclusiveProject)
+    XCTAssertTrue(provider.startedRequests[0].requiredCapabilities.contains(.workspaceWriteInPlace))
+    await handle.shutdown()
+  }
+
+  func testWorkspaceWriteAgentSubmissionUsesDatabaseWriteSlot() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Update the project.",
+        providerID: "opencode",
+        permissionMode: "workspace-write",
+        clientRequestID: "agent-workspace-write-slot"
+      ),
+      deadline: deadline
+    )
+    let taskID = TaskID(rawValue: receipt.taskID)
+    let pending = try await fixture.tasks.task(id: taskID)
+    let pendingTask = try XCTUnwrap(pending)
+    XCTAssertEqual(pendingTask.permissionMode, .workspaceWrite)
+    let activeWriteTask = try await fixture.tasks.activeWriteTask(projectID: fixture.project.id)
+    XCTAssertEqual(activeWriteTask?.id, taskID)
+
+    do {
+      try await application.resolveTaskStartApproval(
+        taskID: taskID,
+        approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+        approved: true,
+        deadline: deadline
+      )
+      XCTFail("Expected workspace capability rejection")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
+    let failed = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .failed
+    }
+    XCTAssertEqual(failed.state.failureCode, "agent_start_failed")
+    let releasedWriteTask = try await fixture.tasks.activeWriteTask(projectID: fixture.project.id)
+    XCTAssertNil(releasedWriteTask)
+  }
+
   func testOpenCodeSubmissionApprovesRunsAndStreamsIntoConversation() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider()
@@ -233,6 +331,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Inspect repository layout and report findings.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-request-1"
       ),
       deadline: deadline
@@ -263,6 +362,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Inspect repository layout and report findings.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-request-1"
       ),
       deadline: deadline
@@ -314,12 +414,25 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       provider,
       taskID: taskIDValue,
       sequence: 4,
-      event: .plan([AgentPlanEntry(content: "Summarize layout")])
+      event: .tool(
+        AgentToolUpdate(
+          key: "tool:edit-1",
+          name: "edit",
+          kind: "edit",
+          status: .completed,
+          locations: [fixture.project.root.canonicalPath + "/Sources/Changed.swift"]
+        ))
     )
     try emit(
       provider,
       taskID: taskIDValue,
       sequence: 5,
+      event: .plan([AgentPlanEntry(content: "Summarize layout")])
+    )
+    try emit(
+      provider,
+      taskID: taskIDValue,
+      sequence: 6,
       event: .content(
         AgentContentUpdate(
           key: "msg-1", role: .assistant, kind: .message, mode: .full,
@@ -330,7 +443,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     try emit(
       provider,
       taskID: taskIDValue,
-      sequence: 6,
+      sequence: 7,
       event: .completed(summary: "Layout report ready.", stopReason: nil)
     )
     provider.finish(taskID: taskIDValue)
@@ -339,11 +452,16 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       $0.state.status == .completed
     }
     XCTAssertEqual(completed.state.resultSummary, "Layout report ready.")
+    XCTAssertEqual(completed.state.changedFiles, ["Sources/Changed.swift"])
     XCTAssertEqual(completed.state.providerSessionID, sessionID)
     XCTAssertEqual(completed.state.providerRunID, runID)
     XCTAssertNil(completed.state.codexThreadID)
     XCTAssertEqual(provider.startedRequests.count, 1)
     XCTAssertEqual(provider.startedRequests[0].mutationIntent, .readOnly)
+    XCTAssertEqual(
+      provider.startedRequests[0].profileID,
+      AgentProfileID(rawValue: "controlled-readonly")
+    )
     XCTAssertEqual(provider.startedRequests[0].projectRoot, fixture.project.root.canonicalPath)
 
     let page = try await fixture.tasks.messages(taskID: taskIDValue, limit: 50)
@@ -368,6 +486,157 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertNil(snapshot.threadID)
     XCTAssertNil(snapshot.turnID)
     XCTAssertEqual(snapshot.executionModel, serviceDefaultProviderExecutionModel)
+    XCTAssertEqual(snapshot.permissionMode, "read-only")
+    XCTAssertFalse(snapshot.networkAccess)
+  }
+
+  func testAgentApprovalUsesExistingLocalApprovalResolution() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect the project.",
+        providerID: "opencode",
+        permissionMode: "read-only",
+        clientRequestID: "agent-approval"
+      ),
+      deadline: deadline
+    )
+    let taskID = TaskID(rawValue: receipt.taskID)
+    try await application.resolveTaskStartApproval(
+      taskID: taskID,
+      approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+      approved: true,
+      deadline: deadline
+    )
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .running
+    }
+    let binding = try AgentBinding(
+      providerID: .openCode,
+      installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+      providerSessionID: "sess-\(receipt.taskID)",
+      providerRunID: "run-\(receipt.taskID)"
+    )
+    let approval = try AgentApprovalRequest(
+      approvalID: "approval-agent-1",
+      taskID: taskID,
+      binding: binding,
+      providerItemID: "tool-call-approval",
+      kind: .fileChange,
+      title: "OpenCode wants to edit a file",
+      relativePaths: ["Sources/Changed.swift"],
+      options: [
+        try AgentApprovalOption(id: "allow-once", name: "Allow once", kind: "allow_once"),
+        try AgentApprovalOption(
+          id: "allow-always", name: "Allow for session", kind: "allow_always"
+        ),
+        try AgentApprovalOption(id: "reject-once", name: "Deny", kind: "reject_once"),
+      ]
+    )
+    try emit(provider, taskID: taskID, sequence: 1, event: .approvalRequested(approval))
+    let pending = try await waitForApproval(application, approvalID: approval.approvalID)
+    XCTAssertEqual(pending.availableDecisions, [.allow, .allowForSession, .deny])
+
+    try await application.resolveCodexApproval(
+      taskID: taskID,
+      approvalID: approval.approvalID,
+      decision: .allowForSession
+    )
+    XCTAssertEqual(provider.approvalResponses.map(\.0), [approval.approvalID])
+    XCTAssertEqual(provider.approvalResponses.map(\.1), ["allow-always"])
+    let resumed = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .running
+    }
+    XCTAssertEqual(resumed.state.status, .running)
+
+    try emit(
+      provider,
+      taskID: taskID,
+      sequence: 2,
+      event: .completed(summary: "Done", stopReason: nil)
+    )
+    provider.finish(taskID: taskID)
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .completed
+    }
+  }
+
+  func testAgentApprovalBindingMismatchFailsClosed() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect.",
+        providerID: "opencode",
+        permissionMode: "read-only",
+        clientRequestID: "agent-approval-mismatch"
+      ),
+      deadline: deadline
+    )
+    let taskID = TaskID(rawValue: receipt.taskID)
+    try await application.resolveTaskStartApproval(
+      taskID: taskID,
+      approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+      approved: true,
+      deadline: deadline
+    )
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .running
+    }
+    let binding = try AgentBinding(
+      providerID: .openCode,
+      installationID: AgentInstallationID(rawValue: "ainst-route-opencode"),
+      providerSessionID: "sess-\(receipt.taskID)",
+      providerRunID: "run-stale"
+    )
+    let approval = try AgentApprovalRequest(
+      approvalID: "approval-agent-mismatch",
+      taskID: taskID,
+      binding: binding,
+      providerItemID: "tool-call-mismatch",
+      kind: .command,
+      title: "Run a command",
+      options: [
+        try AgentApprovalOption(id: "allow-once", name: "Allow once", kind: "allow_once"),
+        try AgentApprovalOption(id: "reject-once", name: "Deny", kind: "reject_once"),
+      ]
+    )
+    try emit(provider, taskID: taskID, sequence: 1, event: .approvalRequested(approval))
+    let failed = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .failed
+    }
+    XCTAssertEqual(failed.state.failureCode, "agent_execution_failed")
+    XCTAssertTrue(provider.approvalResponses.isEmpty)
+  }
+
+  func testTaskSnapshotDecodesWithoutNewPermissionFields() throws {
+    let data = Data(
+      #"""
+      {"task_id":"tsk-legacy","project_id":"prj-legacy","status":"completed","changed_files":[],"recent_events":[],"supervisor_status":"disabled","local_approval_required":false,"updated_at":"2026-08-26T00:00:00Z"}
+      """#.utf8
+    )
+    let snapshot = try JSONDecoder().decode(MCPServiceTaskSnapshot.self, from: data)
+    XCTAssertNil(snapshot.permissionMode)
+    XCTAssertFalse(snapshot.networkAccess)
   }
 
   func testUnavailableModelKeepsItsOwnFailureCode() async throws {
@@ -391,6 +660,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Inspect.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-model-unavailable"
       ),
       deadline: deadline
@@ -437,6 +707,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Read the README.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-request-conflict"
       ),
       deadline: deadline
@@ -448,6 +719,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
           projectID: fixture.project.id.rawValue,
           prompt: "Read a different file.",
           providerID: "opencode",
+          permissionMode: "read-only",
           clientRequestID: "agent-request-conflict"
         ),
         deadline: deadline
@@ -462,6 +734,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         MCPServiceTaskSubmission(
           projectID: fixture.project.id.rawValue,
           prompt: "Read the README.",
+          permissionMode: "read-only",
           clientRequestID: "agent-request-conflict"
         ),
         deadline: deadline
@@ -499,8 +772,8 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       submission: MCPServiceTaskSubmission(
         projectID: projectID, prompt: "x", providerID: "opencode",
         permissionMode: "workspace-write"),
-      expected: .contractRejected,
-      reason: "write intent"
+      expected: .unavailable,
+      reason: "write intent with no selectable installation"
     )
     try await assertRejected(
       application,
@@ -584,6 +857,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Watch the build directory.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-request-interrupt"
       ),
       deadline: deadline
@@ -654,6 +928,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Inspect the repository.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-stream-ended"
       ),
       deadline: deadline
@@ -698,6 +973,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Inspect the repository.",
         providerID: "opencode",
+        permissionMode: "read-only",
         clientRequestID: "agent-sequence-regression"
       ),
       deadline: deadline
@@ -831,6 +1107,24 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(20))
     }
     XCTFail("Timed out waiting for task \(taskID).")
+    throw CancellationError()
+  }
+
+  private func waitForApproval(
+    _ application: BridgeServiceApplication,
+    approvalID: String,
+    timeout: TimeInterval = 10
+  ) async throws -> ExecutionApprovalRequest {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if let approval = await application.pendingCodexApprovals().first(where: {
+        $0.id == approvalID
+      }) {
+        return approval
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTFail("Timed out waiting for approval \(approvalID).")
     throw CancellationError()
   }
 

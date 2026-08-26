@@ -138,6 +138,7 @@ extension BridgeServiceXPCController {
       providerID: payload.providerID,
       installationID: payload.installationID,
       model: payload.model,
+      permissionMode: payload.permissionMode,
       prompt: payload.prompt,
       deadline: deadline
     )

@@ -55,6 +55,12 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var taskSnapshotsValue: [MCPServiceTaskSnapshot]?
   private var agentInstallationsValue: [IPCAgentInstallationSummary] = []
   private var agentActions: [String] = []
+  private var agentModelOptionsValue: [IPCAgentModelSummary] = []
+  private var agentModelDefaultValue: String?
+  private var agentModelDefaultWrites: [String?] = []
+  private var agentModelDefaultReadDelay: Duration = .zero
+  private var failAgentModels = false
+  private var submittedAgentRequestValue: IPCAgentSubmitRequest?
   private let agentProvidersValue = [
     IPCAgentProviderSummary(
       providerID: "opencode",
@@ -104,6 +110,34 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
           rootPath: "/fixture/\($0)"
         ))
     }
+  }
+
+  func configureAgentModels(
+    _ models: [IPCAgentModelSummary],
+    fail: Bool = false
+  ) {
+    agentModelOptionsValue = models
+    failAgentModels = fail
+  }
+
+  func configureAgentDefault(_ model: String?) {
+    agentModelDefaultValue = model
+  }
+
+  func setAgentDefaultReadDelay(_ delay: Duration) {
+    agentModelDefaultReadDelay = delay
+  }
+
+  func setAgentModelsFailure(_ fail: Bool) {
+    failAgentModels = fail
+  }
+
+  func agentDefaultWrites() -> [String?] {
+    agentModelDefaultWrites
+  }
+
+  func submittedAgentRequest() -> IPCAgentSubmitRequest? {
+    submittedAgentRequestValue
   }
 
   func status() async throws -> IPCServiceStatusResponse {
@@ -333,12 +367,27 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func submitAgentTask(
     _ request: IPCAgentSubmitRequest
   ) async throws -> IPCAgentSubmitResponse {
+    submittedAgentRequestValue = request
     agentActions.append("submit:\(request.providerID):\(request.model ?? "default")")
     return IPCAgentSubmitResponse(taskID: "tsk-test-agent", status: "awaiting_local_approval")
   }
 
-  func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
-    IPCAgentModelsResponse(models: [])
+  func agentModels(installationID _: String) async throws -> IPCAgentModelsResponse {
+    guard !failAgentModels else { throw BridgeServiceClientError.unavailable }
+    return IPCAgentModelsResponse(models: agentModelOptionsValue)
+  }
+
+  func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
+    let value = agentModelDefaultValue
+    if agentModelDefaultReadDelay > .zero {
+      try await Task.sleep(for: agentModelDefaultReadDelay)
+    }
+    return IPCAgentModelDefaultResponse(model: value)
+  }
+
+  func setAgentModelDefault(_ model: String?) async throws {
+    agentModelDefaultValue = model
+    agentModelDefaultWrites.append(model)
   }
 
   func agentActionsValue() -> [String] {

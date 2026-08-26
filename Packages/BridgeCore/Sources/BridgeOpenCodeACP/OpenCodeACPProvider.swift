@@ -197,6 +197,15 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         initialization: initialization,
         client: connected
       )
+      let mode = try Self.modeValue(
+        for: request.mutationIntent,
+        in: session
+      )
+      try await connected.setSessionConfigOption(
+        sessionID: session.id,
+        configID: "mode",
+        value: mode
+      )
       if let requestedModel = request.model {
         let model = try Self.resolveModel(requestedModel, from: session)
         try await connected.setSessionConfigOption(
@@ -211,7 +220,11 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         providerSessionID: session.id,
         providerRunID: UUID().uuidString.lowercased()
       )
-      let normalizer = OpenCodeACPEventNormalizer(taskID: request.taskID, binding: binding)
+      let normalizer = OpenCodeACPEventNormalizer(
+        taskID: request.taskID,
+        binding: binding,
+        projectRoot: launch.process.workingDirectory
+      )
       let initialSequence = await connected.eventSequence
       let execution = OpenCodeACPExecution(
         client: connected,
@@ -234,7 +247,13 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         events: execution.events,
         control: AgentExecutionControl(
           interrupt: { try await execution.interrupt() },
-          shutdown: { await execution.shutdown() }
+          shutdown: { await execution.shutdown() },
+          resolveApproval: { approvalID, optionID in
+            try await execution.resolveApproval(
+              approvalID: approvalID,
+              optionID: optionID
+            )
+          }
         )
       )
     } catch {
@@ -260,10 +279,10 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     guard installation.providerID == .openCode else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
     }
-    guard request.mutationIntent == .readOnly else {
-      throw AgentRuntimeError.capabilityUnavailable(.workspaceWriteInPlace)
-    }
-    guard request.workspaceStrategy == .sharedProject else {
+    guard
+      request.workspaceStrategy == .sharedProject
+        || request.workspaceStrategy == .exclusiveProject
+    else {
       throw AgentRuntimeError.invalidRequest("request.workspaceStrategy")
     }
     guard request.profileID == nil || request.profileID == OpenCodeACPProfiles.controlledReadOnly
@@ -310,12 +329,10 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       return try await client.newSession(cwd: projectRoot)
     }
     if initialization.supportsResumeSession {
-      try await client.resumeSession(id: requestedSessionID, cwd: projectRoot)
-      return OpenCodeACPSession(id: requestedSessionID)
+      return try await client.resumeSession(id: requestedSessionID, cwd: projectRoot)
     }
     if initialization.supportsLoadSession {
-      try await client.loadSession(id: requestedSessionID, cwd: projectRoot)
-      return OpenCodeACPSession(id: requestedSessionID)
+      return try await client.loadSession(id: requestedSessionID, cwd: projectRoot)
     }
     throw AgentRuntimeError.capabilityUnavailable(.sessionContinue)
   }
@@ -346,6 +363,8 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       .plan,
       .usage,
       .workspaceRead,
+      .workspaceWriteInPlace,
+      .oneShotApproval,
       .profileSelection,
       .modelSelection,
     ]
@@ -368,6 +387,21 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     return try option.values.map {
       try AgentModelDescriptor(id: $0.value, displayName: $0.name)
     }
+  }
+
+  private static func modeValue(
+    for mutationIntent: AgentMutationIntent,
+    in session: OpenCodeACPSession
+  ) throws -> String {
+    let expected = mutationIntent == .readOnly ? "plan" : "build"
+    guard let option = session.configOptions.first(where: { $0.id == "mode" }),
+      option.values.contains(where: { $0.value == expected })
+    else {
+      throw AgentRuntimeError.capabilityUnavailable(
+        mutationIntent == .readOnly ? .workspaceRead : .workspaceWriteInPlace
+      )
+    }
+    return expected
   }
 
   private static func resolveModel(

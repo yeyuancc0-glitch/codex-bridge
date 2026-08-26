@@ -80,6 +80,7 @@ public struct OpenCodeACPNotification: Equatable, Sendable {
 }
 
 public struct OpenCodeACPPermissionRequest: Equatable, Sendable {
+  public let approvalID: String
   public let requestID: ACPRequestID
   public let sessionID: String
   public let toolCallID: String
@@ -89,6 +90,7 @@ public struct OpenCodeACPPermissionRequest: Equatable, Sendable {
   public let options: [AgentApprovalOption]
 
   public init(
+    approvalID: String? = nil,
     requestID: ACPRequestID,
     sessionID: String,
     toolCallID: String,
@@ -97,6 +99,7 @@ public struct OpenCodeACPPermissionRequest: Equatable, Sendable {
     rawInput: ACPJSONValue?,
     options: [AgentApprovalOption]
   ) {
+    self.approvalID = approvalID ?? "opencode-\(UUID().uuidString.lowercased())"
     self.requestID = requestID
     self.sessionID = sessionID
     self.toolCallID = toolCallID
@@ -109,7 +112,7 @@ public struct OpenCodeACPPermissionRequest: Equatable, Sendable {
 
 public enum OpenCodeACPClientEvent: Equatable, Sendable {
   case notification(OpenCodeACPNotification)
-  case permissionDenied(OpenCodeACPPermissionRequest)
+  case permissionRequested(OpenCodeACPPermissionRequest)
 }
 public struct OpenCodeACPClientEventEnvelope: Equatable, Sendable {
   public let sequence: Int64

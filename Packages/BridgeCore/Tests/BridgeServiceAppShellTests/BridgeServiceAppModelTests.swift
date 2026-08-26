@@ -133,6 +133,114 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.modelPreferences?.executionEffort, "low")
   }
 
+  func testAgentTaskSubmissionCarriesNativePermissionMode() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.submitAgentTask(
+      projectID: "project-1",
+      providerID: "opencode",
+      installationID: "agent-installation-1",
+      model: "opencode/x-preview-f-free",
+      permissionMode: "workspace-write",
+      prompt: "Build the project."
+    )
+
+    try await waitUntil {
+      await client.submittedAgentRequest() != nil && !model.isManagingAgents
+    }
+    let requestValue = await client.submittedAgentRequest()
+    let request = try XCTUnwrap(requestValue)
+    XCTAssertEqual(request.providerID, "opencode")
+    XCTAssertEqual(request.permissionMode, "workspace-write")
+    XCTAssertEqual(request.model, "opencode/x-preview-f-free")
+  }
+
+  func testHydratingAgentDefaultUsesServiceValueWithoutWritingBack() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    await client.configureAgentDefault("opencode/x-preview-f-free")
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    await model.hydrateAgentModelState(installationID: nil)
+
+    XCTAssertEqual(model.openCodeDefaultModel, "opencode/x-preview-f-free")
+    let writes = await client.agentDefaultWrites()
+    XCTAssertTrue(writes.isEmpty)
+  }
+
+  func testStaleAgentDefaultLoadCannotOverwriteNewSave() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    await client.configureAgentDefault("opencode/old")
+    await client.setAgentDefaultReadDelay(.milliseconds(100))
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    let load = Task { @MainActor in
+      await model.hydrateAgentModelState(installationID: nil)
+    }
+    try await Task.sleep(for: .milliseconds(10))
+    model.saveAgentModelDefault("opencode/new")
+    await load.value
+
+    try await waitUntil {
+      let writes = await client.agentDefaultWrites()
+      return model.openCodeDefaultModel == "opencode/new"
+        && writes == ["opencode/new"]
+    }
+    XCTAssertEqual(model.openCodeDefaultModel, "opencode/new")
+    let writes = await client.agentDefaultWrites()
+    XCTAssertEqual(writes, ["opencode/new"])
+  }
+
+  func testAgentModelCatalogFailureKeepsExistingOptions() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let option = IPCAgentModelSummary(
+      modelID: "opencode/x-preview-f-free",
+      displayName: "OpenCode Free"
+    )
+    await client.configureAgentModels([option])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    await model.hydrateAgentModelState(installationID: "agent-installation")
+    XCTAssertEqual(model.agentModelOptions, [option])
+
+    await client.setAgentModelsFailure(true)
+    await model.hydrateAgentModelState(installationID: "agent-installation")
+
+    XCTAssertEqual(model.agentModelOptions, [option])
+  }
+
   func testModelCatalogFailureIsVisibleInsteadOfRemainingInLoadingState() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient(failModelCatalog: true)

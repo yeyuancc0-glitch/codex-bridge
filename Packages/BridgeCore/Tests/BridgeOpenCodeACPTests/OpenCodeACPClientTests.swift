@@ -5,7 +5,7 @@ import XCTest
 @testable import BridgeOpenCodeACP
 
 final class OpenCodeACPClientTests: XCTestCase {
-  func testNegotiatesSessionStreamsEventsAndRejectsPermission() async throws {
+  func testNegotiatesSessionStreamsEventsAndResolvesPermission() async throws {
     let transport = ScriptedACPTransport()
     let state = ACPPromptScenarioState()
     await transport.setHandler { message, transport in
@@ -110,9 +110,9 @@ final class OpenCodeACPClientTests: XCTestCase {
       case .notification(let first) = firstEnvelope.event,
       case .notification(let second) = secondEnvelope.event,
       case .notification(let third) = thirdEnvelope.event,
-      case .permissionDenied(let denied) = permissionEnvelope.event
+      case .permissionRequested(let requested) = permissionEnvelope.event
     else {
-      return XCTFail("Expected three updates followed by a denied permission request")
+      return XCTFail("Expected three updates followed by a permission request")
     }
     XCTAssertEqual(
       [
@@ -124,8 +124,23 @@ final class OpenCodeACPClientTests: XCTestCase {
     XCTAssertEqual(first.method, "session/update")
     XCTAssertEqual(second.method, "session/update")
     XCTAssertEqual(third.method, "session/update")
-    XCTAssertEqual(denied.sessionID, session.id)
-    XCTAssertEqual(denied.toolCallID, "tool-1")
+    XCTAssertEqual(requested.sessionID, session.id)
+    XCTAssertEqual(requested.toolCallID, "tool-1")
+    XCTAssertTrue(requested.approvalID.hasPrefix("opencode-"))
+
+    do {
+      try await client.resolvePermission(
+        approvalID: requested.approvalID,
+        optionID: "not-an-option"
+      )
+      XCTFail("Expected an unknown permission option to be rejected")
+    } catch {
+      XCTAssertEqual(error as? AgentRuntimeError, .approvalUnavailable("not-an-option"))
+    }
+    try await client.resolvePermission(
+      approvalID: requested.approvalID,
+      optionID: "reject"
+    )
 
     let result = try await prompt.value
     XCTAssertEqual(result.stopReason, "end_turn")

@@ -21,6 +21,8 @@ final class MCPServiceExposureTests: XCTestCase {
       )
       XCTAssertTrue(instructions.contains(custom))
       XCTAssertTrue(instructions.contains("before calling any Codex Bridge tool"))
+      XCTAssertTrue(instructions.contains("native ACP Plan or Build"))
+      XCTAssertTrue(instructions.contains("network_access does not override it"))
       XCTAssertFalse(instructions.contains("Project custom instructions"))
       let customRange = try XCTUnwrap(instructions.range(of: custom))
       XCTAssertLessThan(
@@ -159,6 +161,12 @@ final class MCPServiceExposureTests: XCTestCase {
     XCTAssertNil(agent["executable_path"])
     XCTAssertNil(agent["executable_sha256"])
 
+    let task = try XCTUnwrap(
+      outputProperties("get_task", in: definitions)["task"]?.objectValue?["properties"]?.objectValue
+    )
+    XCTAssertNotNil(task["permission_mode"])
+    XCTAssertNotNil(task["network_access"])
+
     let stdin = try outputProperties("direct_write_stdin", in: definitions)
     XCTAssertEqual(
       stdin.keys.sorted(),
@@ -240,6 +248,29 @@ final class MCPServiceExposureTests: XCTestCase {
       properties?["model_override"]?.objectValue?["description"]?.stringValue?
         .localizedCaseInsensitiveContains("explicitly requests") == true
     )
+    XCTAssertTrue(description.contains("native ACP Plan"))
+    XCTAssertTrue(description.contains("native ACP Build"))
+    XCTAssertTrue(description.contains("network_access field does not override"))
+    XCTAssertFalse(description.contains("read-only in this version"))
+    XCTAssertTrue(
+      properties?["permission_mode"]?.objectValue?["description"]?.stringValue?
+        .contains("native ACP Plan") == true
+    )
+    XCTAssertTrue(
+      properties?["network_access"]?.objectValue?["description"]?.stringValue?
+        .contains("does not override") == true
+    )
+  }
+
+  func testListAgentsDescriptionAllowsSelectableOpenCodeSubmission() {
+    let catalog = MCPServiceToolCatalog(exposureMode: .readOnly)
+    guard let listAgents = catalog.definitions.first(where: { $0.name == "list_agents" }) else {
+      return XCTFail("list_agents missing")
+    }
+    let description = listAgents.description ?? ""
+    XCTAssertTrue(description.contains("submit_task"))
+    XCTAssertFalse(description.contains("Gate 2"))
+    XCTAssertFalse(description.contains("does not enable external Provider task submission"))
   }
 
   private func outputProperties(

@@ -57,7 +57,8 @@ extension MCPServiceToolCatalog {
     title: "List registered Agent installations",
     description:
       "List user-registered Agent installations and their persisted Probe results. "
-      + "This Gate 2 catalog does not enable external Provider task submission.",
+      + "A selectable OpenCode installation can receive tasks through submit_task; the local "
+      + "user still approves each task before execution.",
     inputSchema: objectSchema(
       properties: ["project_id": nullableStringSchema(maximum: 128)]
     ),

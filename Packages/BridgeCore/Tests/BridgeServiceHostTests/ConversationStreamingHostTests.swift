@@ -47,6 +47,8 @@ final class ConversationStreamingHostTests: XCTestCase {
     XCTAssertEqual(approval.taskID, creation.task.id.rawValue)
     XCTAssertEqual(approval.kind, "task_start")
     XCTAssertEqual(approval.decisionOptions, ["allow", "deny"])
+    XCTAssertTrue(approval.reason?.contains("权限：workspace-write") == true)
+    XCTAssertTrue(approval.reason?.contains("网络：未请求") == true)
 
     let resolveRequestID = "deny-task-start-approval"
     let resolveRequest = try BridgeServiceIPCCodec.request(

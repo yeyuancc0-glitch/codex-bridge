@@ -518,7 +518,8 @@ struct BridgeServiceWorkbenchView: View {
     guard let task = currentTask, task.isExternalAgentTask else {
       return "GPT 调用 Codex 时，默认在当前选择的项目中执行"
     }
-    return "\(task.providerDisplayName) 任务使用受控只读执行，并在此处显示实时结果"
+    let permission = WorkbenchAgentPermissionPresentation.title(task.permissionMode)
+    return "\(task.providerDisplayName) 原生 \(permission)，并在此处显示实时结果"
   }
 
   private var activity: CodexActivityPresentation {
@@ -567,6 +568,17 @@ package enum WorkbenchTaskModelPresentation {
     guard let modelID, !modelID.isEmpty, let effort, !effort.isEmpty else { return nil }
     let model = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? modelID
     return "\(model) · \(effort.prefix(1).uppercased())\(effort.dropFirst())"
+  }
+}
+
+package enum WorkbenchAgentPermissionPresentation {
+  package static func title(_ value: String?) -> String {
+    switch value {
+    case "workspace-write": "Build（工作区可写）"
+    case "read-only": "Plan（只读）"
+    case let value? where !value.isEmpty: "权限：\(value)"
+    default: "权限未记录"
+    }
   }
 }
 

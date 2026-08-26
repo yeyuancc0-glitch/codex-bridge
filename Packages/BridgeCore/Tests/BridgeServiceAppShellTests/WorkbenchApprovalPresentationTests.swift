@@ -76,4 +76,19 @@ final class WorkbenchApprovalPresentationTests: XCTestCase {
       )
     )
   }
+
+  func testOpenCodePermissionPresentationUsesNativePlanAndBuild() {
+    XCTAssertEqual(
+      WorkbenchAgentPermissionPresentation.title("workspace-write"),
+      "Build（工作区可写）"
+    )
+    XCTAssertEqual(
+      WorkbenchAgentPermissionPresentation.title("read-only"),
+      "Plan（只读）"
+    )
+    XCTAssertEqual(
+      WorkbenchAgentPermissionPresentation.title(nil),
+      "权限未记录"
+    )
+  }
 }

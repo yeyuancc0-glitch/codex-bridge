@@ -182,7 +182,7 @@ public actor ServiceTaskManager {
       taskID: taskID,
       patch: StatePatch(status: .waitingForCodexApproval),
       eventKind: .approvalRequested,
-      summary: "Codex is waiting for a local approval decision."
+      summary: "The provider is waiting for a local approval decision."
     )
   }
 
@@ -195,8 +195,8 @@ public actor ServiceTaskManager {
       patch: StatePatch(status: .running),
       eventKind: .approvalResolved,
       summary: approved
-        ? "The local user approved the Codex request."
-        : "The local user denied the Codex request; Codex may continue with a safer path."
+        ? "The local user approved the provider request."
+        : "The local user denied the provider request; it may continue with a safer path."
     )
   }
 

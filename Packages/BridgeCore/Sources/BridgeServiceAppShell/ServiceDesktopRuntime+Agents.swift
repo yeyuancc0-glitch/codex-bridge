@@ -106,6 +106,7 @@ extension BridgeServiceAppModel {
     providerID: String,
     installationID: String?,
     model: String?,
+    permissionMode: String? = nil,
     prompt: String
   ) {
     guard !isManagingAgents else { return }
@@ -124,6 +125,7 @@ extension BridgeServiceAppModel {
             model: (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
               $0.isEmpty ? nil : $0
             },
+            permissionMode: permissionMode,
             prompt: prompt
           )
         )
@@ -142,42 +144,71 @@ extension BridgeServiceAppModel {
 }
 
 extension BridgeServiceAppModel {
-  func loadAgentModels(installationID: String?) {
-    guard let installationID, !installationID.isEmpty else {
-      agentModelOptions = []
-      return
-    }
-    Task { [weak self] in
-      guard let self, let client = try? self.currentClient() else { return }
-      let response = try? await client.agentModels(installationID: installationID)
-      await MainActor.run {
-        self.agentModelOptions = response?.models ?? []
-      }
-    }
-  }
-}
+  func hydrateAgentModelState(installationID: String?) async {
+    agentModelCatalogGeneration &+= 1
+    let catalogGeneration = agentModelCatalogGeneration
+    agentModelDefaultLoadGeneration &+= 1
+    let defaultLoadGeneration = agentModelDefaultLoadGeneration
 
-extension BridgeServiceAppModel {
-  func loadAgentModelDefault() {
-    Task { [weak self] in
-      guard let self, let client = try? self.currentClient() else { return }
-      let response = try? await client.agentModelDefault()
-      await MainActor.run { self.openCodeDefaultModel = response?.model }
+    if installationID == nil || installationID?.isEmpty == true {
+      agentModelOptions = []
     }
+
+    if let mutation = agentModelDefaultMutationTask {
+      await mutation.value
+    }
+    guard !Task.isCancelled else { return }
+    let defaultRevision = agentModelDefaultRevision
+    guard let client = try? currentClient() else { return }
+
+    async let defaultResponse = try? await client.agentModelDefault()
+    let modelResponse: IPCAgentModelsResponse?
+    if let installationID, !installationID.isEmpty {
+      modelResponse = try? await client.agentModels(installationID: installationID)
+    } else {
+      modelResponse = nil
+    }
+    let persistedDefault = await defaultResponse
+
+    guard !Task.isCancelled else { return }
+    if catalogGeneration == agentModelCatalogGeneration, let modelResponse {
+      agentModelOptions = modelResponse.models
+    }
+    guard defaultLoadGeneration == agentModelDefaultLoadGeneration,
+      defaultRevision == agentModelDefaultRevision,
+      let persistedDefault
+    else { return }
+    openCodeDefaultModel = persistedDefault.model
   }
 
   func saveAgentModelDefault(_ model: String?) {
-    Task { [weak self] in
-      guard let self, let client = try? self.currentClient() else { return }
-      do {
-        try await client.setAgentModelDefault(model)
-        await MainActor.run {
-          self.openCodeDefaultModel = model
-          self.postToast("OpenCode 默认模型已保存", symbol: "checkmark.circle.fill", tone: .success)
+    let previous = openCodeDefaultModel
+    agentModelDefaultRevision &+= 1
+    let revision = agentModelDefaultRevision
+    openCodeDefaultModel = model
+    let previousMutation = agentModelDefaultMutationTask
+    let task = Task { [weak self, previousMutation] in
+      await previousMutation?.value
+      guard let self, !Task.isCancelled else { return }
+      defer {
+        if self.agentModelDefaultRevision == revision {
+          self.agentModelDefaultMutationTask = nil
         }
+      }
+      do {
+        let client = try self.currentClient()
+        try await client.setAgentModelDefault(model)
+        guard self.agentModelDefaultRevision == revision else { return }
+        let persisted = try await client.agentModelDefault()
+        guard self.agentModelDefaultRevision == revision else { return }
+        self.openCodeDefaultModel = persisted.model
+        self.postToast("OpenCode 默认模型已保存", symbol: "checkmark.circle.fill", tone: .success)
       } catch {
-        await MainActor.run { self.errorMessage = Self.message(error) }
+        guard self.agentModelDefaultRevision == revision else { return }
+        self.openCodeDefaultModel = previous
+        self.errorMessage = Self.message(error)
       }
     }
+    agentModelDefaultMutationTask = task
   }
 }

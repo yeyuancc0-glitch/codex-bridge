@@ -62,6 +62,10 @@ struct WorkbenchExternalTaskCard: View {
           .font(.caption)
           .fixedSize(horizontal: false, vertical: true)
 
+        Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+
         if let failureDescription = task.failureDescription {
           Label {
             Text(failureDescription)

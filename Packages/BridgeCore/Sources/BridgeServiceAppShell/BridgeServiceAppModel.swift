@@ -142,6 +142,10 @@ public final class BridgeServiceAppModel: ObservableObject {
   var chatWebViewSleepTask: Task<Void, Never>?
   var toastDismissTask: Task<Void, Never>?
   var workbenchProjectSyncTask: Task<Void, Never>?
+  var agentModelCatalogGeneration: UInt64 = 0
+  var agentModelDefaultLoadGeneration: UInt64 = 0
+  var agentModelDefaultRevision: UInt64 = 0
+  var agentModelDefaultMutationTask: Task<Void, Never>?
   var chatBrowserResumeURL = URL(string: "https://chatgpt.com")!
   var lastThreadCatalogRefreshAt: Date?
   var started = false
@@ -182,6 +186,7 @@ public final class BridgeServiceAppModel: ObservableObject {
     chatWebViewSleepTask?.cancel()
     toastDismissTask?.cancel()
     workbenchProjectSyncTask?.cancel()
+    agentModelDefaultMutationTask?.cancel()
   }
 
   public func projectName(for projectID: String) -> String {
