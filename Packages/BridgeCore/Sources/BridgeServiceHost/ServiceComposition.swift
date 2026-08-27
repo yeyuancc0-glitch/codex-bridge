@@ -91,7 +91,7 @@ public actor ServiceComposition {
   public let application: BridgeServiceApplication
   public let tunnel: ServiceTunnelController
   public let mcpClients: ServiceMCPClientRegistry
-  public let legacyImportReport: LegacyImportReport?
+  public let legacyImportReport: ServiceLegacyImportReport?
 
   private let configuration: ServiceCompositionConfiguration
   private var mcpServer: MCPBridgeServer?
@@ -101,7 +101,11 @@ public actor ServiceComposition {
 
   public static func make(
     configuration: ServiceCompositionConfiguration,
+#if canImport(Darwin)
     secretStore: any SecretStore = KeychainSecretStore(),
+#else
+    secretStore: any SecretStore = WindowsCredentialSecretStore(),
+#endif
     randomBytes: (@Sendable (Int) throws -> Data)? = nil,
     tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
@@ -235,7 +239,7 @@ public actor ServiceComposition {
     application: BridgeServiceApplication,
     tunnel: ServiceTunnelController,
     mcpClients: ServiceMCPClientRegistry,
-    legacyImportReport: LegacyImportReport?
+    legacyImportReport: ServiceLegacyImportReport?
   ) {
     self.configuration = configuration
     self.paths = paths
@@ -522,6 +526,6 @@ private struct LegacyConfigurationImportBootstrap: Sendable {
     ]
   )
 
-  let report: LegacyImportReport?
+  let report: ServiceLegacyImportReport?
   let degradations: [String]
 }
