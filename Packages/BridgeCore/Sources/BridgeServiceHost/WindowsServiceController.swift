@@ -106,7 +106,7 @@
     }
   }
 
-  private final class WindowsConnectionStreamSink: BridgeServiceIPCStreamSink,
+  private final class WindowsConnectionStreamSink: CodexBridgeTaskStreamListener,
     @unchecked Sendable
   {
     private let connectionID: Foundation.UUID

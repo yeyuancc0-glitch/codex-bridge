@@ -64,6 +64,29 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
     }
   }
 
+  public func perform(_ request: Data) async -> Data {
+    let decoded: BridgeServiceIPCRequest
+    do {
+      decoded = try BridgeServiceIPCCodec.decodeRequest(request)
+    } catch {
+      return Self.fallbackFailure(
+        requestID: "invalid",
+        code: "invalid_request",
+        message: "The IPC request is invalid."
+      )
+    }
+    guard admission.acquire() else {
+      return Self.fallbackFailure(
+        requestID: decoded.requestID,
+        code: "busy",
+        message: "The service is busy.",
+        retryable: true
+      )
+    }
+    defer { admission.release() }
+    return await handle(decoded)
+  }
+
   public func stopStreaming() {
     Task { [self] in
       await stopStreamingAsync()
