@@ -1,3 +1,4 @@
+import BridgeACP
 import BridgeAgentCore
 import Foundation
 
@@ -95,14 +96,11 @@ public actor OpenCodeACPClient {
   public nonisolated let events: AsyncStream<OpenCodeACPClientEventEnvelope>
 
   private let transport: any OpenCodeACPTransport
+  private let requestBroker: BridgeACP.ACPRequestBroker
   private let clientInfo: OpenCodeACPClientInfo
-  private let requestTimeout: Duration
   private let eventContinuation: AsyncStream<OpenCodeACPClientEventEnvelope>.Continuation
   private var readerTask: Task<Void, Never>?
-  private var nextRequestID: Int64 = 1
-  private var pending: [ACPRequestID: CheckedContinuation<ACPClientResponse, any Error>] = [:]
   private var nextEventSequence: Int64 = 0
-  private var timeoutTasks: [ACPRequestID: Task<Void, Never>] = [:]
   private var pendingPermissions: [String: OpenCodeACPPermissionRequest] = [:]
   private var started = false
   private var closed = false
@@ -122,8 +120,11 @@ public actor OpenCodeACPClient {
       bufferingPolicy: .bufferingOldest(max(1, eventBufferLimit))
     )
     self.transport = transport
+    requestBroker = BridgeACP.ACPRequestBroker(
+      transport: transport,
+      requestTimeout: requestTimeout
+    )
     self.clientInfo = clientInfo
-    self.requestTimeout = requestTimeout
     events = pair.stream
     eventContinuation = pair.continuation
   }
@@ -394,15 +395,15 @@ public actor OpenCodeACPClient {
   public func shutdown() async {
     guard !closed else { return }
     closed = true
+    requestBroker.failAll(with: OpenCodeACPError.transportClosed)
     initializationTask?.cancel()
     initializationTask = nil
     activeSessionID = nil
     readerTask?.cancel()
     readerTask = nil
     pendingPermissions.removeAll()
-    failPending(with: OpenCodeACPError.transportClosed)
     eventContinuation.finish()
-    await transport.close()
+    await requestBroker.close()
   }
 
   private func request(
@@ -411,43 +412,28 @@ public actor OpenCodeACPClient {
     timeout override: Duration? = nil
   ) async throws -> ACPClientResponse {
     guard started, !closed else { throw OpenCodeACPError.transportClosed }
-    guard nextRequestID > 0, nextRequestID < Int64.max else {
-      throw OpenCodeACPError.transportClosed
-    }
-    let id = ACPRequestID.integer(nextRequestID)
-    nextRequestID += 1
-    let message = ACPWireMessage(id: id, method: method, params: params)
-    let data = try JSONEncoder().encode(message)
-    let timeout = override ?? requestTimeout
-
-    return try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        pending[id] = continuation
-        timeoutTasks[id] = Task { [weak self] in
-          do {
-            try await Task.sleep(for: timeout)
-          } catch {
-            return
-          }
-          await self?.timeout(id: id)
-        }
-        Task { [weak self] in
-          guard let self else { return }
-          do {
-            try await self.transport.send(data)
-          } catch {
-            await self.fail(id: id, error: error)
-          }
-        }
-      }
-    } onCancel: {
-      Task { [weak self] in await self?.fail(id: id, error: CancellationError()) }
+    do {
+      let response = try await requestBroker.request(
+        method: method,
+        params: params,
+        timeout: override
+      )
+      return ACPClientResponse(
+        value: response.value,
+        eventSequenceBarrier: response.eventSequenceBarrier
+      )
+    } catch {
+      throw Self.compatibilityError(for: error)
     }
   }
 
   private func send(_ message: ACPWireMessage) async throws {
     guard !closed else { throw OpenCodeACPError.transportClosed }
-    try await transport.send(JSONEncoder().encode(message))
+    do {
+      try await requestBroker.send(message)
+    } catch {
+      throw Self.compatibilityError(for: error)
+    }
   }
 
   private func receive(_ frame: Data) async {
@@ -458,65 +444,22 @@ public actor OpenCodeACPClient {
       await failConnection(OpenCodeACPError.invalidMessage)
       return
     }
-    guard message.jsonrpc == "2.0" else {
-      await failConnection(OpenCodeACPError.invalidMessage)
-      return
-    }
-
-    if let id = message.id, let method = message.method {
-      guard message.result == nil, message.error == nil,
-        Self.isValidRequestID(id), Self.isValidMethod(method)
-      else {
-        await failConnection(OpenCodeACPError.invalidMessage)
-        return
-      }
-      await handleServerRequest(id: id, method: method, params: message.params)
-      return
-    }
-    if let id = message.id {
-      guard message.method == nil, Self.isValidRequestID(id),
-        (message.result != nil) != (message.error != nil)
-      else {
-        await failConnection(OpenCodeACPError.invalidMessage)
-        return
-      }
-      handleResponse(id: id, result: message.result, error: message.error)
-      return
-    }
-    if let method = message.method {
-      guard message.result == nil, message.error == nil, Self.isValidMethod(method) else {
-        await failConnection(OpenCodeACPError.invalidMessage)
-        return
-      }
-      yield(.notification(OpenCodeACPNotification(method: method, params: message.params)))
-      return
-    }
-    await failConnection(OpenCodeACPError.invalidMessage)
-  }
-
-  private func handleResponse(
-    id: ACPRequestID,
-    result: ACPJSONValue?,
-    error: ACPWireError?
-  ) {
-    guard let continuation = pending.removeValue(forKey: id) else { return }
-    timeoutTasks.removeValue(forKey: id)?.cancel()
-    if let error {
-      guard error.message.utf8.count <= 4 * 1_024, !error.message.contains("\0") else {
-        continuation.resume(throwing: OpenCodeACPError.malformedResponse)
-        return
-      }
-      continuation.resume(
-        throwing: OpenCodeACPError.remote(code: error.code, message: error.message))
-    } else if let result {
-      continuation.resume(
-        returning: ACPClientResponse(
-          value: result,
+    do {
+      switch try BridgeACP.ACPMessageDispatcher.dispatch(message) {
+      case .serverRequest(let id, let method, let params):
+        await handleServerRequest(id: id, method: method, params: params)
+      case .response(let id, let result, let error):
+        requestBroker.resolve(
+          id: id,
+          result: result,
+          error: error,
           eventSequenceBarrier: nextEventSequence
         )
-      )
-    } else {
-      continuation.resume(throwing: OpenCodeACPError.malformedResponse)
+      case .notification(let method, let params):
+        yield(.notification(OpenCodeACPNotification(method: method, params: params)))
+      }
+    } catch {
+      await failConnection(Self.compatibilityError(for: error))
     }
   }
 
@@ -568,49 +511,29 @@ public actor OpenCodeACPClient {
     }
   }
 
-  private func timeout(id: ACPRequestID) {
-    guard let continuation = pending.removeValue(forKey: id) else { return }
-    timeoutTasks.removeValue(forKey: id)?.cancel()
-    continuation.resume(throwing: OpenCodeACPError.requestTimedOut)
-  }
-
-  private func fail(id: ACPRequestID, error: any Error) {
-    guard let continuation = pending.removeValue(forKey: id) else { return }
-    timeoutTasks.removeValue(forKey: id)?.cancel()
-    continuation.resume(throwing: error)
-  }
-
   private func transportEnded(error: (any Error)?) async {
     guard !closed else { return }
     closed = true
+    requestBroker.failAll(with: error ?? OpenCodeACPError.transportClosed)
     initializationTask?.cancel()
     initializationTask = nil
     activeSessionID = nil
     pendingPermissions.removeAll()
-    failPending(with: error ?? OpenCodeACPError.transportClosed)
     eventContinuation.finish()
   }
 
   private func failConnection(_ error: any Error) async {
     guard !closed else { return }
     closed = true
+    requestBroker.failAll(with: error)
     initializationTask?.cancel()
     initializationTask = nil
     activeSessionID = nil
     readerTask?.cancel()
     readerTask = nil
     pendingPermissions.removeAll()
-    failPending(with: error)
     eventContinuation.finish()
-    await transport.close()
-  }
-
-  private func failPending(with error: any Error) {
-    let continuations = Array(pending.values)
-    pending.removeAll()
-    for task in timeoutTasks.values { task.cancel() }
-    timeoutTasks.removeAll()
-    for continuation in continuations { continuation.resume(throwing: error) }
+    await requestBroker.close()
   }
 
   private func requireInitialized() throws {
@@ -803,19 +726,6 @@ public actor OpenCodeACPClient {
     ])
   }
 
-  private static func isValidRequestID(_ id: ACPRequestID) -> Bool {
-    switch id {
-    case .integer:
-      true
-    case .string(let value):
-      !value.isEmpty && value.utf8.count <= 256 && !value.contains("\0")
-    }
-  }
-
-  private static func isValidMethod(_ method: String) -> Bool {
-    !method.isEmpty && method.utf8.count <= 256 && !method.contains("\0")
-  }
-
   private static func validateIdentifier(_ value: String) throws {
     guard !value.isEmpty, value.utf8.count <= 1_024, !value.contains("\0") else {
       throw AgentRuntimeError.invalidRequest("identifier")
@@ -830,5 +740,21 @@ public actor OpenCodeACPClient {
     guard value.hasPrefix("/"), value.utf8.count <= 16 * 1_024, !value.contains("\0") else {
       throw AgentRuntimeError.invalidRequest("path")
     }
+  }
+
+  private static func compatibilityError(for error: any Error) -> OpenCodeACPError {
+    if let error = error as? OpenCodeACPError { return error }
+    if let error = error as? BridgeACP.ACPError {
+      switch error {
+      case .invalidMessage: return .invalidMessage
+      case .malformedResponse: return .malformedResponse
+      case .remote(let code, let message): return .remote(code: code, message: message)
+      case .requestTimedOut: return .requestTimedOut
+      case .transportClosed: return .transportClosed
+      case .processExited(let code): return .processExited(code)
+      case .oversizedFrame: return .oversizedFrame
+      }
+    }
+    return .transportClosed
   }
 }

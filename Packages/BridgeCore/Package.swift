@@ -251,8 +251,13 @@ let package = Package(
       dependencies: ["BridgeDomain"]
     ),
     .target(
+      name: "BridgeACP",
+      dependencies: ["BridgeProcess"]
+    ),
+    .target(
       name: "BridgeOpenCodeACP",
       dependencies: [
+        "BridgeACP",
         "BridgeAgentCore",
         "BridgeDomain",
         "BridgeProcess",
@@ -539,10 +544,15 @@ let package = Package(
     .testTarget(
       name: "BridgeOpenCodeACPTests",
       dependencies: [
+        "BridgeACP",
         "BridgeAgentCore",
         "BridgeDomain",
         "BridgeOpenCodeACP",
       ]
+    ),
+    .testTarget(
+      name: "BridgeACPTests",
+      dependencies: ["BridgeACP"]
     ),
     .testTarget(
       name: "BridgeServiceApplicationTests",
