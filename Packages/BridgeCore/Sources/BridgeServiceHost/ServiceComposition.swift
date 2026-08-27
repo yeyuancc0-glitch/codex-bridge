@@ -102,23 +102,29 @@ public actor ServiceComposition {
   public static func make(
     configuration: ServiceCompositionConfiguration,
     secretStore: any SecretStore = KeychainSecretStore(),
-#if canImport(Darwin)
-    randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
-      var bytes = [UInt8](repeating: 0, count: count)
-      guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
-        throw ServiceMCPSecretError.randomGenerationFailed
-      }
-      return Data(bytes)
-    },
-#else
-    randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
-      var bytes = [UInt8](repeating: 0, count: count)
-      for index in 0..<count { bytes[index] = UInt8.random(in: 0...255) }
-      return Data(bytes)
-    },
-#endif
+    randomBytes: (@Sendable (Int) throws -> Data)? = nil,
     tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
+    let effectiveRandomBytes: @Sendable (Int) throws -> Data
+    if let randomBytes {
+      effectiveRandomBytes = randomBytes
+    } else {
+#if canImport(Darwin)
+      effectiveRandomBytes = { count in
+        var bytes = [UInt8](repeating: 0, count: count)
+        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
+          throw ServiceMCPSecretError.randomGenerationFailed
+        }
+        return Data(bytes)
+      }
+#else
+      effectiveRandomBytes = { count in
+        var bytes = [UInt8](repeating: 0, count: count)
+        for index in 0..<count { bytes[index] = UInt8.random(in: 0...255) }
+        return Data(bytes)
+      }
+#endif
+    }
     let paths = try ServiceDataPaths.prepare(at: configuration.dataRootURL)
     let store = try SimpleServiceStore(path: paths.databaseURL.path)
     let legacyImport = await Self.importLegacyConfiguration(
@@ -189,7 +195,7 @@ public actor ServiceComposition {
     )
     let secretProvider = ServiceMCPSecretProvider(
       store: secretStore,
-      randomBytes: randomBytes
+      randomBytes: effectiveRandomBytes
     )
     let mcpClients = try await ServiceMCPClientRegistry.make(
       settings: settings,

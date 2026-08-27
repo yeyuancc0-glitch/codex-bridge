@@ -412,7 +412,7 @@ let sharedTestTargets: [Target] = [
     .target(
       name: "BridgeIPC",
       dependencies: ["BridgeMCP"],
-      exclude: ["BridgeServiceClient.swift", "BridgeServiceXPCProtocol.swift"]
+      exclude: ["BridgeServiceClient.swift"]
     ),
     .target(
       name: "BridgeServiceCore",
