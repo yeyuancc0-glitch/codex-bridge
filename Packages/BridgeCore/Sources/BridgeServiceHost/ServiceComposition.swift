@@ -2,13 +2,20 @@ import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDirectCommand
 import BridgeDomain
-import BridgeLegacyImport
 import BridgeMCP
 import BridgeSecurity
 import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
-import Security
+#if canImport(Darwin)
+  import BridgeAgentCore
+  import BridgeLegacyImport
+  import BridgeOpenCodeACP
+  import Security
+  public typealias ServiceLegacyImportReport = LegacyImportReport
+#else
+  public struct ServiceLegacyImportReport: Sendable {}
+#endif
 
 public enum ServiceLocalMCPError: Error, Equatable, Sendable {
   case localPortUnavailable(Int)
@@ -95,6 +102,7 @@ public actor ServiceComposition {
   public static func make(
     configuration: ServiceCompositionConfiguration,
     secretStore: any SecretStore = KeychainSecretStore(),
+#if canImport(Darwin)
     randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
       var bytes = [UInt8](repeating: 0, count: count)
       guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
@@ -102,6 +110,13 @@ public actor ServiceComposition {
       }
       return Data(bytes)
     },
+#else
+    randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
+      var bytes = [UInt8](repeating: 0, count: count)
+      for index in 0..<count { bytes[index] = UInt8.random(in: 0...255) }
+      return Data(bytes)
+    },
+#endif
     tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
     let paths = try ServiceDataPaths.prepare(at: configuration.dataRootURL)
