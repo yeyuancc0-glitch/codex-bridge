@@ -4,6 +4,7 @@ import XCTest
 final class ProductionArchitectureBoundaryTests: XCTestCase {
   private static let productionTargets = [
     "BridgeAgentCore",
+    "BridgeAntigravityCLI",
     "BridgeCodexRPC",
     "BridgeCodexService",
     "BridgeDirectCommand",

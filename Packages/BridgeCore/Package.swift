@@ -34,6 +34,7 @@ let package = Package(
     .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
     .library(name: "BridgeAgentCore", targets: ["BridgeAgentCore"]),
     .library(name: "BridgeOpenCodeACP", targets: ["BridgeOpenCodeACP"]),
+    .library(name: "BridgeAntigravityCLI", targets: ["BridgeAntigravityCLI"]),
     .library(name: "BridgeProcess", targets: ["BridgeProcess"]),
     .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
@@ -259,6 +260,15 @@ let package = Package(
       ]
     ),
     .target(
+      name: "BridgeAntigravityCLI",
+      dependencies: [
+        "BridgeAgentCore",
+        "BridgeDomain",
+        "BridgeProcess",
+        "BridgeSecurity",
+      ]
+    ),
+    .target(
       name: "BridgeServiceApplication",
       dependencies: [
         "BridgeAgentCore",
@@ -293,6 +303,8 @@ let package = Package(
     .target(
       name: "BridgeServiceHost",
       dependencies: [
+        "BridgeAgentCore",
+        "BridgeAntigravityCLI",
         "BridgeCodexRPC",
         "BridgeCodexService",
         "BridgeDirectCommand",
@@ -542,6 +554,15 @@ let package = Package(
         "BridgeAgentCore",
         "BridgeDomain",
         "BridgeOpenCodeACP",
+      ]
+    ),
+    .testTarget(
+      name: "BridgeAntigravityCLITests",
+      dependencies: [
+        "BridgeAgentCore",
+        "BridgeAntigravityCLI",
+        "BridgeDomain",
+        "BridgeProcess",
       ]
     ),
     .testTarget(

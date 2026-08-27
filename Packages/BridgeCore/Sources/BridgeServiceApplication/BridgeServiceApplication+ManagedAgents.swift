@@ -138,6 +138,12 @@ extension BridgeServiceApplication {
   ) async throws -> [ServiceAgentModelListItem] {
     try Self.checkDeadline(deadline)
     let registry = try requiredAgentRegistry()
+    guard let installation = try await registry.installation(id: installationID) else {
+      throw BridgeMCPQueryError.unavailable
+    }
+    guard installation.capabilities.effective.contains(.modelSelection) else {
+      return []
+    }
     let projectRoot = try await agentModelProjectRoot(
       projectID: projectID,
       deadline: deadline
@@ -146,7 +152,7 @@ extension BridgeServiceApplication {
     let selectedModelID: String?
     if let modelID {
       selectedModelID = modelID
-    } else if useStoredDefault {
+    } else if useStoredDefault, installation.providerID == .openCode {
       selectedModelID = try await settings.string(for: .openCodeDefaultModel)
     } else {
       selectedModelID = nil

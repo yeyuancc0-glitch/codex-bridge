@@ -1,4 +1,5 @@
 import BridgeAgentCore
+import BridgeAntigravityCLI
 import BridgeIPC
 import BridgeOpenCodeACP
 import BridgeServiceCore
@@ -28,14 +29,25 @@ extension BridgeServiceXPCController {
       from: request
     )
     let providerID = AgentProviderID(rawValue: payload.providerID)
-    let securityProfileID: AgentProfileID? =
-      providerID == .openCode ? OpenCodeACPProfiles.controlledReadOnly : nil
+    let trustProfile: AgentTrustProfile
+    let securityProfileID: AgentProfileID?
+    switch providerID {
+    case .openCode:
+      trustProfile = .managed
+      securityProfileID = OpenCodeACPProfiles.controlledReadOnly
+    case .antigravity:
+      trustProfile = .userTrusted
+      securityProfileID = AntigravityCLIProfiles.desktopShared
+    default:
+      trustProfile = .managed
+      securityProfileID = nil
+    }
     let record = try await composition.application.serviceRegisterManagedAgent(
       try ServiceAgentRegistrationRequest(
         providerID: providerID,
         displayName: payload.displayName,
         executablePath: payload.executablePath,
-        trustProfile: .managed,
+        trustProfile: trustProfile,
         securityProfileID: securityProfileID,
         enableOnSuccess: false
       ),

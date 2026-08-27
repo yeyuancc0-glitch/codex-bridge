@@ -57,8 +57,9 @@ extension MCPServiceToolCatalog {
     title: "List registered Agent installations",
     description:
       "List user-registered Agent installations and their persisted Probe results. "
-      + "A selectable OpenCode installation can receive tasks through submit_task; the local "
-      + "user still approves each task before execution.",
+      + "Selectable OpenCode and Antigravity installations can receive explicit provider tasks "
+      + "through submit_task. The response reports effective capabilities and enforcement; the "
+      + "local user still approves each task before execution.",
     inputSchema: objectSchema(
       properties: ["project_id": nullableStringSchema(maximum: 128)]
     ),

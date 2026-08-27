@@ -8,6 +8,8 @@ struct BridgeServiceAgentSettingsSection: View {
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
   @State private var submitProviderID = "opencode"
   @State private var submitPrompt = ""
+  @State private var antigravityModel = ""
+  @State private var antigravityEffort = ""
 
   var body: some View {
     Section {
@@ -15,7 +17,7 @@ struct BridgeServiceAgentSettingsSection: View {
         VStack(alignment: .leading, spacing: 4) {
           Text("只有在这里明确登记并通过 Probe 的本机安装才会出现在 list_agents。")
             .font(.caption)
-          Text("已启用且 Probe 通过的 OpenCode 安装可以通过 submit_task 提交任务；每个任务仍需本机批准。")
+          Text("已启用且 Probe 通过的 Provider 安装可以通过 submit_task 提交任务；每个任务仍需本机批准。")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -152,7 +154,7 @@ struct BridgeServiceAgentSettingsSection: View {
 
       HStack(spacing: 16) {
         LabeledContent("版本", value: installation.version ?? "未识别")
-        LabeledContent("ACP", value: installation.protocolRevision ?? "未协商")
+        LabeledContent("协议", value: installation.protocolRevision ?? "未协商")
         LabeledContent("Adapter", value: "r\(installation.adapterRevision)")
         LabeledContent("能力", value: "\(installation.effectiveCapabilities.count) 项")
       }
@@ -196,6 +198,9 @@ struct BridgeServiceAgentSettingsSection: View {
   private func chooseExecutable(for provider: IPCAgentProviderSummary) {
     let panel = NSOpenPanel()
     panel.title = "选择 \(provider.displayName) 可执行文件"
+    if provider.providerID == "antigravity" {
+      panel.message = "请选择官方 agy 可执行文件；macOS 默认安装位置为 ~/.local/bin/agy。"
+    }
     panel.prompt = "登记并 Probe"
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
@@ -214,11 +219,20 @@ struct BridgeServiceAgentSettingsSection: View {
     let selectable = model.agentInstallations.filter {
       $0.providerID == submitProviderID && $0.isEnabled && $0.availability == "available"
     }
+    let selectedInstallation = selectable.first
+    let canSelectModel = model.supportsAgentModelSelection(
+      providerID: submitProviderID,
+      installationID: selectedInstallation?.installationID
+    )
+    let canSelectEffort = model.supportsAgentEffortSelection(
+      providerID: submitProviderID,
+      installationID: selectedInstallation?.installationID
+    )
     VStack(alignment: .leading, spacing: 8) {
       Divider()
       Text("本机 Agent 任务")
         .font(.body.weight(.semibold))
-      Text("提交后进入工作台等待本机批准；OpenCode 使用原生 Build/Plan，网络访问由原生 permissions 控制。")
+      Text(submitProviderDescription)
         .font(.caption)
         .foregroundStyle(.secondary)
 
@@ -226,18 +240,23 @@ struct BridgeServiceAgentSettingsSection: View {
         ForEach(
           Array(Set(model.agentInstallations.map(\.providerID))).sorted(), id: \.self
         ) { id in
-          Text(id).tag(id)
+          Text(AgentProviderPresentation.displayName(id)).tag(id)
         }
       }
       .pickerStyle(.menu)
 
-      Picker("默认执行模式", selection: openCodeDefaultPermissionModeBinding) {
-        Text("OpenCode 原生 Build（工作区可写）").tag("build")
-        Text("OpenCode 原生 Plan（只读）").tag("plan")
+      if submitProviderID == "opencode" {
+        Picker("默认执行模式", selection: openCodeDefaultPermissionModeBinding) {
+          Text("OpenCode 原生 Build（工作区可写）").tag("build")
+          Text("OpenCode 原生 Plan（只读）").tag("plan")
+        }
+        .pickerStyle(.menu)
+        .disabled(model.isRefreshingAgentModels)
+        .help("仅当任务没有显式 permission_mode 时使用；项目权限仍会限制写入")
+      } else if submitProviderID == "antigravity" {
+        LabeledContent("执行模式", value: "只读（macOS 项目写入边界）")
+          .font(.caption)
       }
-      .pickerStyle(.menu)
-      .disabled(model.isRefreshingAgentModels)
-      .help("仅当任务没有显式 permission_mode 时使用；项目权限仍会限制写入")
 
       if selectable.isEmpty {
         Text("该 Provider 暂无已启用的可用安装")
@@ -245,88 +264,108 @@ struct BridgeServiceAgentSettingsSection: View {
           .foregroundStyle(.orange)
       }
 
-      Picker("默认模型", selection: agentModelDefaultBinding) {
-        Text("Provider 默认").tag("")
-        if let current = model.openCodeDefaultModel,
-          !model.agentModelOptions.contains(where: { $0.modelID == current })
-        {
-          Text("当前设置 · \(current)").tag(current)
-        }
-        ForEach(model.agentModelOptions, id: \.modelID) { item in
-          Text(item.displayName).tag(item.modelID)
-        }
-      }
-      .pickerStyle(.menu)
-      .disabled(model.isRefreshingAgentModels)
-      .task(
-        id: AgentModelHydrationID(
-          installationID: selectable.first?.installationID,
-          projectID: model.selectedProjectID,
-          modelID: model.openCodeDefaultModel
-        )
-      ) {
-        guard
-          !model.consumeAgentModelHydrationSuppression(
-            installationID: selectable.first?.installationID,
-            projectID: model.selectedProjectID,
-            modelID: model.openCodeDefaultModel
-          )
-        else { return }
-        await model.hydrateAgentModelState(installationID: selectable.first?.installationID)
-      }
-
-      HStack(spacing: 10) {
-        Button {
-          model.refreshAgentModelCatalog(installationID: selectable.first?.installationID)
-        } label: {
-          if model.isRefreshingAgentModels {
-            ProgressView()
-              .controlSize(.small)
-            Text("正在刷新模型列表…")
-          } else {
-            Label("刷新模型列表", systemImage: "arrow.clockwise")
+      if canSelectModel {
+        Picker(
+          submitProviderID == "opencode" ? "默认模型" : "任务模型",
+          selection: agentModelSelectionBinding
+        ) {
+          Text("Provider 默认").tag("")
+          if let current = selectedSubmitModel,
+            !model.agentModelOptions.contains(where: { $0.modelID == current })
+          {
+            Text("当前设置 · \(current)").tag(current)
+          }
+          ForEach(model.agentModelOptions, id: \.modelID) { item in
+            Text(item.displayName).tag(item.modelID)
           }
         }
-        .controlSize(.small)
-        .disabled(
-          selectable.isEmpty
-            || model.isRefreshingAgentModels
-            || model.isManagingAgents
-        )
-        .accessibilityLabel("刷新 OpenCode 模型列表")
-        .accessibilityHint("从当前 OpenCode ACP 安装重新读取模型目录")
+        .pickerStyle(.menu)
+        .disabled(model.isRefreshingAgentModels)
+        .task(
+          id: AgentModelHydrationID(
+            installationID: selectedInstallation?.installationID,
+            projectID: model.selectedProjectID,
+            modelID: selectedSubmitModel
+          )
+        ) {
+          if submitProviderID == "opencode" {
+            guard
+              !model.consumeAgentModelHydrationSuppression(
+                installationID: selectedInstallation?.installationID,
+                projectID: model.selectedProjectID,
+                modelID: selectedSubmitModel
+              )
+            else { return }
+          }
+          await model.hydrateAgentModelState(
+            installationID: selectedInstallation?.installationID,
+            providerID: submitProviderID,
+            modelID: selectedSubmitModel
+          )
+        }
 
-        if !model.agentModelOptions.isEmpty {
-          Text("\(model.agentModelOptions.count) 个模型")
+        HStack(spacing: 10) {
+          Button {
+            model.refreshAgentModelCatalog(
+              installationID: selectedInstallation?.installationID,
+              providerID: submitProviderID,
+              selectedModelID: selectedSubmitModel
+            )
+          } label: {
+            if model.isRefreshingAgentModels {
+              ProgressView()
+                .controlSize(.small)
+              Text("正在刷新模型列表…")
+            } else {
+              Label("刷新模型列表", systemImage: "arrow.clockwise")
+            }
+          }
+          .controlSize(.small)
+          .disabled(
+            selectable.isEmpty
+              || model.isRefreshingAgentModels
+              || model.isManagingAgents
+          )
+          .accessibilityLabel("刷新 Agent 模型列表")
+          .accessibilityHint("从当前 Provider 安装重新读取模型目录")
+
+          if !model.agentModelOptions.isEmpty {
+            Text("\(model.agentModelOptions.count) 个模型")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        if let refreshError = model.agentModelRefreshError {
+          Label(refreshError, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .textSelection(.enabled)
+        }
+      }
+
+      if canSelectEffort {
+        Picker(
+          submitProviderID == "opencode" ? "默认推理强度" : "任务推理强度",
+          selection: agentEffortSelectionBinding
+        ) {
+          Text("Provider 默认").tag("")
+          if let current = selectedAgentModel,
+            !current.supportedReasoningEfforts.isEmpty
+          {
+            ForEach(current.supportedReasoningEfforts, id: \.self) { effort in
+              Text(effort).tag(effort)
+            }
+          }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.isRefreshingAgentModels)
+        .help("仅展示当前 Provider 对所选模型实际声明的推理强度")
+        if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
+          Text("当前模型不提供可选推理强度，使用 Provider 默认")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-      }
-
-      if let refreshError = model.agentModelRefreshError {
-        Label(refreshError, systemImage: "exclamationmark.triangle.fill")
-          .font(.caption)
-          .foregroundStyle(.orange)
-          .textSelection(.enabled)
-      }
-
-      Picker("默认推理强度", selection: openCodeDefaultEffortBinding) {
-        Text("Provider 默认").tag("")
-        if let current = selectedAgentModel,
-          !current.supportedReasoningEfforts.isEmpty
-        {
-          ForEach(current.supportedReasoningEfforts, id: \.self) { effort in
-            Text(effort).tag(effort)
-          }
-        }
-      }
-      .pickerStyle(.menu)
-      .disabled(model.isRefreshingAgentModels)
-      .help("OpenCode 通过 ACP 的 effort 选项提供模型支持的推理强度")
-      if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
-        Text("当前模型不提供可选推理强度，使用 Provider 默认")
-          .font(.caption)
-          .foregroundStyle(.secondary)
       }
 
       TextField("任务描述", text: $submitPrompt, axis: .vertical)
@@ -340,8 +379,9 @@ struct BridgeServiceAgentSettingsSection: View {
             projectID: model.selectedProjectID ?? (model.projects.first?.projectID ?? ""),
             providerID: submitProviderID,
             installationID: selectable.first?.installationID,
-            model: model.openCodeDefaultModel,
-            effort: model.openCodeDefaultEffort,
+            model: selectedSubmitModel,
+            effort: selectedSubmitEffort,
+            permissionMode: submitProviderID == "antigravity" ? "read-only" : nil,
             prompt: submitPrompt
           )
           submitPrompt = ""
@@ -359,10 +399,27 @@ struct BridgeServiceAgentSettingsSection: View {
     .padding(.vertical, 6)
   }
 
-  private var agentModelDefaultBinding: Binding<String> {
+  private var agentModelSelectionBinding: Binding<String> {
     Binding(
-      get: { model.openCodeDefaultModel ?? "" },
+      get: {
+        selectedSubmitModel ?? ""
+      },
       set: { value in
+        if submitProviderID != "opencode" {
+          guard
+            model.supportsAgentModelSelection(
+              providerID: submitProviderID,
+              installationID: selectedSubmitInstallation?.installationID
+            )
+          else {
+            antigravityModel = ""
+            antigravityEffort = ""
+            return
+          }
+          antigravityModel = value
+          antigravityEffort = ""
+          return
+        }
         let selected = value.isEmpty ? nil : value
         guard selected != model.openCodeDefaultModel else { return }
         model.saveAgentModelDefault(selected)
@@ -382,10 +439,25 @@ struct BridgeServiceAgentSettingsSection: View {
     )
   }
 
-  private var openCodeDefaultEffortBinding: Binding<String> {
+  private var agentEffortSelectionBinding: Binding<String> {
     Binding(
-      get: { model.openCodeDefaultEffort ?? "" },
+      get: {
+        selectedSubmitEffort ?? ""
+      },
       set: { value in
+        if submitProviderID != "opencode" {
+          guard
+            model.supportsAgentEffortSelection(
+              providerID: submitProviderID,
+              installationID: selectedSubmitInstallation?.installationID
+            )
+          else {
+            antigravityEffort = ""
+            return
+          }
+          antigravityEffort = value
+          return
+        }
         let selected = value.isEmpty ? nil : value
         guard selected != model.openCodeDefaultEffort else { return }
         model.saveOpenCodeEffort(selected)
@@ -393,11 +465,62 @@ struct BridgeServiceAgentSettingsSection: View {
     )
   }
 
+  private var selectedSubmitInstallation: IPCAgentInstallationSummary? {
+    model.agentInstallations.first {
+      $0.providerID == submitProviderID
+        && $0.isEnabled
+        && $0.availability == "available"
+    }
+  }
+
+  private var selectedSubmitModel: String? {
+    guard
+      model.supportsAgentModelSelection(
+        providerID: submitProviderID,
+        installationID: selectedSubmitInstallation?.installationID
+      )
+    else {
+      return nil
+    }
+    let value =
+      submitProviderID == "opencode"
+      ? model.openCodeDefaultModel ?? ""
+      : antigravityModel
+    return value.isEmpty ? nil : value
+  }
+
+  private var selectedSubmitEffort: String? {
+    guard
+      model.supportsAgentEffortSelection(
+        providerID: submitProviderID,
+        installationID: selectedSubmitInstallation?.installationID
+      )
+    else {
+      return nil
+    }
+    let value =
+      submitProviderID == "opencode"
+      ? model.openCodeDefaultEffort ?? ""
+      : antigravityEffort
+    return value.isEmpty ? nil : value
+  }
+
   private var selectedAgentModel: IPCAgentModelSummary? {
-    if let modelID = model.openCodeDefaultModel {
+    if let modelID = selectedSubmitModel {
       return model.agentModelOptions.first(where: { $0.modelID == modelID })
     }
     return model.agentModelOptions.first(where: { !$0.supportedReasoningEfforts.isEmpty })
+  }
+
+  private var submitProviderDescription: String {
+    switch submitProviderID {
+    case "opencode":
+      "提交后进入工作台等待本机批准；OpenCode 使用原生 Build/Plan，网络访问由原生 permissions 控制。"
+    case "antigravity":
+      "通过官方 agy stream-json 和 CLI 缓存认证执行；可能需要与桌面版分开登录。V1 仅开放项目只读任务，无法交互批准的工具会被拒绝。"
+    default:
+      "提交后进入工作台等待本机批准；实际能力与安全保证以当前 Provider Probe 为准。"
+    }
   }
 
   private func availabilityTitle(_ value: String) -> String {

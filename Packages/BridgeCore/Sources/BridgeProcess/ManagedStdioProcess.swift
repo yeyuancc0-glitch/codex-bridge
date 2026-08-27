@@ -106,6 +106,49 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     }
   }
 
+  public func writeStdin(_ data: Data, timeout: Duration) throws {
+    inputLock.lock()
+    defer { inputLock.unlock() }
+    guard !inputClosed else { throw ManagedProcessError.stdinUnavailable }
+
+    let descriptor = standardInputHandle.fileDescriptor
+    let previousFlags = fcntl(descriptor, F_GETFL)
+    guard previousFlags >= 0,
+      fcntl(descriptor, F_SETFL, previousFlags | O_NONBLOCK) == 0
+    else {
+      throw ManagedProcessError.stdinUnavailable
+    }
+    defer { _ = fcntl(descriptor, F_SETFL, previousFlags) }
+
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    do {
+      try data.withUnsafeBytes { buffer in
+        guard let baseAddress = buffer.baseAddress else { return }
+        var offset = 0
+        while offset < buffer.count {
+          let written = systemWrite(
+            descriptor,
+            baseAddress.advanced(by: offset),
+            buffer.count - offset
+          )
+          if written > 0 {
+            offset += written
+            continue
+          }
+          if written == -1, errno == EINTR { continue }
+          guard written == -1, errno == EAGAIN || errno == EWOULDBLOCK,
+            ContinuousClock.now < deadline
+          else {
+            throw ManagedProcessError.stdinUnavailable
+          }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+      }
+    } catch {
+      throw ManagedProcessError.stdinUnavailable
+    }
+  }
+
   public func closeStdin() {
     inputLock.lock()
     defer { inputLock.unlock() }
@@ -117,6 +160,11 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   public func terminateGroup() {
     guard isRunning else { return }
     _ = systemKill(-pid, SIGTERM)
+  }
+
+  public func interruptGroup() {
+    guard isRunning else { return }
+    _ = systemKill(-pid, SIGINT)
   }
 
   public func killGroup() {
@@ -476,8 +524,10 @@ extension ManagedStdioProcess {
   private let systemKill = Darwin.kill
   private let systemWaitPID = Darwin.waitpid
   private let systemGetPGID = Darwin.getpgid
+  private let systemWrite = Darwin.write
 #else
   private let systemKill = Glibc.kill
   private let systemWaitPID = Glibc.waitpid
   private let systemGetPGID = Glibc.getpgid
+  private let systemWrite = Glibc.write
 #endif

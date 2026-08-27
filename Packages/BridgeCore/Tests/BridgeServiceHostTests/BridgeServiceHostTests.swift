@@ -263,7 +263,7 @@ final class BridgeServiceHostTests: XCTestCase {
     }
 
     let initial = try await client.agentCatalog()
-    XCTAssertEqual(initial.providers.map(\.providerID), ["opencode"])
+    XCTAssertEqual(initial.providers.map(\.providerID), ["antigravity", "opencode"])
     XCTAssertTrue(initial.installations.isEmpty)
 
     let registered = try await client.registerAgentInstallation(

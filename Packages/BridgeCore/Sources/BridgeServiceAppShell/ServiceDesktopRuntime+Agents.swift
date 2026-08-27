@@ -2,7 +2,19 @@ import BridgeIPC
 import Foundation
 
 extension BridgeServiceAppModel {
-  func refreshAgentModelCatalog(installationID: String?) {
+  func refreshAgentModelCatalog(
+    installationID: String?,
+    providerID: String = "opencode",
+    selectedModelID: String? = nil
+  ) {
+    guard providerID == "opencode" else {
+      refreshProviderModelCatalog(
+        installationID: installationID,
+        providerID: providerID,
+        selectedModelID: selectedModelID
+      )
+      return
+    }
     guard !isRefreshingAgentModels else { return }
     guard let installationID, !installationID.isEmpty else {
       agentModelRefreshError = "暂无已启用且可用的 OpenCode 安装。"
@@ -118,6 +130,71 @@ extension BridgeServiceAppModel {
           message = "OpenCode 模型列表已刷新：新增 \(addedCount) 个，移除 \(removedCount) 个"
         }
         self.postToast(message, symbol: "arrow.clockwise", tone: .success)
+      } catch {
+        guard catalogGeneration == self.agentModelCatalogGeneration,
+          refreshGeneration == self.agentModelRefreshGeneration
+        else { return }
+        self.agentModelRefreshError = Self.message(error)
+      }
+    }
+  }
+
+  private func refreshProviderModelCatalog(
+    installationID: String?,
+    providerID: String,
+    selectedModelID: String?
+  ) {
+    guard !isRefreshingAgentModels else { return }
+    guard let installationID, !installationID.isEmpty else {
+      agentModelRefreshError = "暂无已启用且可用的 Agent 安装。"
+      return
+    }
+    guard
+      supportsAgentModelSelection(
+        providerID: providerID,
+        installationID: installationID
+      )
+    else {
+      agentModelOptions = []
+      agentModelRefreshError = nil
+      return
+    }
+
+    agentModelCatalogGeneration &+= 1
+    let catalogGeneration = agentModelCatalogGeneration
+    agentModelRefreshGeneration &+= 1
+    let refreshGeneration = agentModelRefreshGeneration
+    agentModelDefaultLoadGeneration &+= 1
+    isRefreshingAgentModels = true
+    agentModelRefreshError = nil
+
+    Task { [weak self] in
+      guard let self else { return }
+      defer {
+        if self.agentModelRefreshGeneration == refreshGeneration {
+          self.isRefreshingAgentModels = false
+        }
+      }
+      do {
+        let client = try self.currentClient()
+        let response = try await client.agentModels(
+          installationID: installationID,
+          projectID: self.selectedProjectID,
+          modelID: selectedModelID,
+          useStoredDefault: false
+        )
+        guard !Task.isCancelled,
+          catalogGeneration == self.agentModelCatalogGeneration,
+          refreshGeneration == self.agentModelRefreshGeneration
+        else { return }
+        self.agentModelOptions = response.models
+        self.agentModelRefreshError = nil
+        let providerName = AgentProviderPresentation.displayName(providerID)
+        self.postToast(
+          "\(providerName) 模型列表已刷新（共 \(response.models.count) 个）",
+          symbol: "arrow.clockwise",
+          tone: .success
+        )
       } catch {
         guard catalogGeneration == self.agentModelCatalogGeneration,
           refreshGeneration == self.agentModelRefreshGeneration
@@ -243,15 +320,29 @@ extension BridgeServiceAppModel {
       defer { self.isManagingAgents = false }
       do {
         let client = try self.currentClient()
+        let submittedModel =
+          self.supportsAgentModelSelection(
+            providerID: providerID,
+            installationID: installationID
+          )
+          ? (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+            $0.isEmpty ? nil : $0
+          }
+          : nil
+        let submittedEffort =
+          self.supportsAgentEffortSelection(
+            providerID: providerID,
+            installationID: installationID
+          )
+          ? effort
+          : nil
         let response = try await client.submitAgentTask(
           IPCAgentSubmitRequest(
             projectID: projectID,
             providerID: providerID,
             installationID: installationID,
-            model: (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
-              $0.isEmpty ? nil : $0
-            },
-            effort: effort,
+            model: submittedModel,
+            effort: submittedEffort,
             permissionMode: permissionMode,
             prompt: prompt
           )
@@ -289,7 +380,19 @@ extension BridgeServiceAppModel {
     return true
   }
 
-  func hydrateAgentModelState(installationID: String?) async {
+  func hydrateAgentModelState(
+    installationID: String?,
+    providerID: String = "opencode",
+    modelID: String? = nil
+  ) async {
+    guard providerID == "opencode" else {
+      await hydrateProviderModelState(
+        installationID: installationID,
+        providerID: providerID,
+        modelID: modelID
+      )
+      return
+    }
     agentModelCatalogGeneration &+= 1
     let catalogGeneration = agentModelCatalogGeneration
     agentModelDefaultLoadGeneration &+= 1
@@ -329,6 +432,42 @@ extension BridgeServiceAppModel {
     openCodeDefaultModel = persistedDefault.model
     openCodeDefaultPermissionMode = persistedDefault.permissionMode
     openCodeDefaultEffort = persistedDefault.effort
+  }
+
+  private func hydrateProviderModelState(
+    installationID: String?,
+    providerID: String,
+    modelID: String?
+  ) async {
+    agentModelCatalogGeneration &+= 1
+    let catalogGeneration = agentModelCatalogGeneration
+    agentModelDefaultLoadGeneration &+= 1
+
+    guard let installationID, !installationID.isEmpty else {
+      agentModelOptions = []
+      return
+    }
+    guard
+      supportsAgentModelSelection(
+        providerID: providerID,
+        installationID: installationID
+      )
+    else {
+      agentModelOptions = []
+      return
+    }
+    guard !Task.isCancelled, let client = try? currentClient() else { return }
+    let response = try? await client.agentModels(
+      installationID: installationID,
+      projectID: selectedProjectID,
+      modelID: modelID,
+      useStoredDefault: false
+    )
+    guard !Task.isCancelled,
+      catalogGeneration == agentModelCatalogGeneration,
+      let response
+    else { return }
+    agentModelOptions = response.models
   }
 
   func saveAgentModelDefault(_ model: String?) {

@@ -2,20 +2,24 @@ import BridgeAgentCore
 import BridgeCodexService
 import BridgeDomain
 import BridgeMCP
+import BridgeProjects
 import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
 import XCTest
 
-/// End-to-end routing for the OpenCode read-only vertical slice: explicit
-/// provider submissions persist agent identity, wait for the local start
-/// approval, execute through the registered installation, and stream
-/// normalized events into the shared task conversation.
+/// End-to-end routing for registered agent providers: explicit submissions
+/// persist provider identity, wait for local start approval, execute through
+/// the registered installation, and stream normalized events into the shared
+/// task conversation.
 final class ServiceAgentSubmissionTests: XCTestCase {
   // MARK: - Scripted provider
 
   private final class ScriptedAgentProvider: AgentProvider, @unchecked Sendable {
     let descriptor: AgentProviderDescriptor
+    let providerID: AgentProviderID
+    let installationID: AgentInstallationID
+    private let modelID: String
 
     private struct Run {
       let continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation
@@ -31,35 +35,49 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     private let returnedTaskID: TaskID?
     private let startError: AgentRuntimeError?
     private let supportsWorkspaceWrite: Bool
+    private let baseCapabilities: Set<AgentCapability>?
     private let supportedReasoningEfforts: [String]
     private let resolveApprovalError: AgentRuntimeError?
     private var modelProjectRoots: [String?] = []
     private var modelSelections: [String?] = []
 
     init(
+      providerID: AgentProviderID = .openCode,
+      installationID: AgentInstallationID? = nil,
       returnedTaskID: TaskID? = nil,
       startError: AgentRuntimeError? = nil,
       supportsWorkspaceWrite: Bool = false,
+      capabilities: Set<AgentCapability>? = nil,
       supportedReasoningEfforts: [String] = [],
       resolveApprovalError: AgentRuntimeError? = nil
     ) throws {
+      self.providerID = providerID
+      self.installationID =
+        installationID ?? AgentInstallationID(rawValue: "ainst-route-\(providerID.rawValue)")
+      modelID =
+        providerID == .antigravity
+        ? "antigravity/test-model"
+        : "opencode/x-preview-f-free"
       self.returnedTaskID = returnedTaskID
       self.startError = startError
       self.supportsWorkspaceWrite = supportsWorkspaceWrite
+      self.baseCapabilities = capabilities
       self.supportedReasoningEfforts = supportedReasoningEfforts
       self.resolveApprovalError = resolveApprovalError
       descriptor = try AgentProviderDescriptor(
-        providerID: .openCode,
-        displayName: "OpenCode",
+        providerID: providerID,
+        displayName: providerID == .antigravity ? "Antigravity" : "OpenCode",
         adapterRevision: 1
       )
     }
 
     func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
-      let capabilities: Set<AgentCapability> = [
+      let defaultCapabilities: Set<AgentCapability> = [
         .sessionCreate, .sessionContinue, .interrupt, .steer, .textDelta, .reasoningDelta,
         .toolLifecycle, .plan, .usage, .workspaceRead, .profileSelection,
+        .modelSelection, .effortSelection,
       ]
+      let capabilities = baseCapabilities ?? defaultCapabilities
 
       let effectiveCapabilities =
         supportsWorkspaceWrite
@@ -110,13 +128,15 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     ) async throws -> [AgentModelDescriptor] {
       recordModelProjectRoot(projectRoot)
       recordModelSelection(selectedModelID)
-      if let selectedModelID, selectedModelID == "opencode/deleted" {
+      if let selectedModelID, selectedModelID == "\(providerID.rawValue)/deleted" {
         throw AgentRuntimeError.modelUnavailable(selectedModelID)
       }
       return [
         try AgentModelDescriptor(
-          id: "opencode/x-preview-f-free",
-          displayName: "OpenCode Zen/Ox Alpha Free",
+          id: modelID,
+          displayName: providerID == .antigravity
+            ? "Antigravity Test Model"
+            : "OpenCode Zen/Ox Alpha Free",
           supportedReasoningEfforts: supportedReasoningEfforts,
           defaultReasoningEffort: supportedReasoningEfforts.first
         )
@@ -155,7 +175,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       let stream = register(request.taskID)
       recordStarted(request)
       let binding = try AgentBinding(
-        providerID: .openCode,
+        providerID: providerID,
         installationID: installation.id,
         providerSessionID: "sess-\(request.taskID.rawValue)",
         providerRunID: "run-\(request.taskID.rawValue)"
@@ -227,7 +247,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       lock.unlock()
       let envelope = try? AgentEventEnvelope(
         taskID: taskID,
-        providerID: .openCode,
+        providerID: providerID,
         providerSessionID: "sess-\(taskID.rawValue)",
         providerRunID: "run-\(taskID.rawValue)",
         providerSequence: 9_001,
@@ -1335,6 +1355,380 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(provider.shutdownCount, 1)
   }
 
+  func testAntigravitySubmissionDefaultsToReadOnlySharedProject() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(providerID: .antigravity)
+    let registry = try await Self.makeRegistry(
+      fixture: fixture,
+      provider: provider,
+      enabled: true,
+      securityProfileID: AgentProfileID(rawValue: "desktop-shared")
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.antigravity: provider]
+      )
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Review the repository without changing files.",
+        providerID: "antigravity",
+        clientRequestID: "antigravity-read-only"
+      ),
+      deadline: deadline
+    )
+    XCTAssertEqual(receipt.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
+    XCTAssertTrue(receipt.localApprovalRequired)
+
+    let taskID = TaskID(rawValue: receipt.taskID)
+    let pendingRecord = try await fixture.tasks.task(id: taskID)
+    let pending = try XCTUnwrap(pendingRecord)
+    XCTAssertEqual(pending.providerID, AgentProviderID.antigravity.rawValue)
+    XCTAssertEqual(pending.installationID, "ainst-route-antigravity")
+    XCTAssertEqual(pending.permissionMode, .readOnly)
+    XCTAssertFalse(pending.networkAllowed)
+    XCTAssertEqual(pending.selectionMode, .explicit)
+
+    try await application.resolveTaskStartApproval(
+      taskID: taskID,
+      approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+      approved: true,
+      deadline: deadline
+    )
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .running
+    }
+
+    let request = try XCTUnwrap(provider.startedRequests.first)
+    XCTAssertEqual(request.mutationIntent, .readOnly)
+    XCTAssertEqual(request.workspaceStrategy, .sharedProject)
+    XCTAssertFalse(request.networkAccessRequested)
+    XCTAssertTrue(request.requiredCapabilities.contains(.workspaceRead))
+    XCTAssertFalse(request.requiredCapabilities.contains(.workspaceWriteInPlace))
+    XCTAssertEqual(request.profileID, AgentProfileID(rawValue: "desktop-shared"))
+
+    try emit(
+      provider,
+      taskID: taskID,
+      sequence: 1,
+      event: .completed(summary: "Review complete.", stopReason: nil)
+    )
+    provider.finish(taskID: taskID)
+    let completed = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.providerSessionID, "sess-\(receipt.taskID)")
+    XCTAssertEqual(completed.state.providerRunID, "run-\(receipt.taskID)")
+    XCTAssertNil(completed.state.codexThreadID)
+  }
+
+  func testAntigravityRejectsWorkspaceWriteAndNetworkAdmission() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(providerID: .antigravity)
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.antigravity: provider]
+      )
+    )
+    let projectID = fixture.project.id.rawValue
+
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: projectID,
+        prompt: "Modify the repository.",
+        providerID: "antigravity",
+        permissionMode: "workspace-write",
+        permissionModeOverride: true,
+        clientRequestID: "antigravity-write-rejected"
+      ),
+      expected: .contractRejected,
+      reason: "Antigravity V1 is read-only"
+    )
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: projectID,
+        prompt: "Use the network while reviewing.",
+        providerID: "antigravity",
+        permissionMode: "read-only",
+        networkAccess: true,
+        clientRequestID: "antigravity-network-rejected"
+      ),
+      expected: .unavailable,
+      reason: "Antigravity network overrides are unavailable"
+    )
+
+    let projectTasks = try await fixture.tasks.tasks(projectID: fixture.project.id)
+    XCTAssertTrue(projectTasks.isEmpty)
+    XCTAssertTrue(provider.startedRequests.isEmpty)
+  }
+
+  func testAntigravityRejectsUnobservedModelCapabilityBeforeCreatingTask() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(
+      providerID: .antigravity,
+      capabilities: [.workspaceRead]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.antigravity: provider]
+      )
+    )
+
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use an unobserved model override.",
+        providerID: "antigravity",
+        executionModel: "antigravity/test-model",
+        modelOverride: true,
+        clientRequestID: "antigravity-model-unobserved"
+      ),
+      expected: .unavailable,
+      reason: "Antigravity model selection requires installation-level observation"
+    )
+
+    let projectTasks = try await fixture.tasks.tasks(projectID: fixture.project.id)
+    XCTAssertTrue(projectTasks.isEmpty)
+    XCTAssertTrue(provider.startedRequests.isEmpty)
+  }
+
+  func testAntigravityModelCatalogRequiresEffectiveModelSelectionCapability() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(
+      providerID: .antigravity,
+      capabilities: [.workspaceRead]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry
+    )
+
+    let models = try await application.serviceListAgentModels(
+      installationID: provider.installationID,
+      projectID: fixture.project.id.rawValue,
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+
+    XCTAssertTrue(models.isEmpty)
+    XCTAssertTrue(provider.modelSelectionsValue().isEmpty)
+  }
+
+  func testAntigravityListAgentsProjectsReadOnlyEnforcementAndCapabilities() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(
+      providerID: .antigravity,
+      supportsWorkspaceWrite: true,
+      capabilities: [.workspaceRead, .workspaceWriteInPlace]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let deniedRoot = fixture.root.appending(path: "read-only-project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: deniedRoot, withIntermediateDirectories: false)
+    let deniedProject = try await fixture.projects.register(
+      name: "Read-only Project",
+      rootURL: deniedRoot,
+      accessPolicy: ProjectAccessPolicy(
+        read: .allowed,
+        write: .denied,
+        network: .denied
+      ),
+      id: ProjectID(rawValue: "prj-antigravity-read-only")
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry
+    )
+
+    let list = try await application.serviceAgents(
+      projectID: deniedProject.id.rawValue,
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let agent: MCPAgentSummary = try XCTUnwrap(list.agents.first)
+    XCTAssertEqual(agent.providerID, AgentProviderID.antigravity.rawValue)
+    XCTAssertEqual(agent.installationID, "ainst-route-antigravity")
+    XCTAssertTrue(agent.taskSubmissionEnabled)
+    XCTAssertEqual(agent.effectiveCapabilities, [AgentCapability.workspaceRead.rawValue])
+    XCTAssertEqual(agent.workspaceEnforcement, "os_sandbox_read_only")
+    XCTAssertEqual(agent.approvalEnforcement, "provider_soft_deny")
+    XCTAssertEqual(agent.networkEnforcement, "provider_native")
+  }
+
+  func testAntigravitySessionContinuationRequiresExactProviderProjectAndInstallation()
+    async throws
+  {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(providerID: .antigravity)
+    let installationID = AgentInstallationID(rawValue: "ainst-route-antigravity")
+    let registry = try await Self.makeRegistry(
+      fixture: fixture,
+      provider: provider,
+      enabled: true,
+      installationID: installationID
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.antigravity: provider]
+      )
+    )
+    let seedID = TaskID(rawValue: "tsk-antigravity-session-seed")
+    _ = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: MCPClientID.chatGPT.rawValue,
+        clientRequestID: "antigravity-session-seed",
+        prompt: "Seed the Antigravity conversation.",
+        requestedThreadID: nil,
+        providerID: AgentProviderID.antigravity.rawValue,
+        installationID: installationID.rawValue,
+        selectionMode: .explicit,
+        executionModel: serviceDefaultProviderExecutionModel,
+        executionEffort: serviceDefaultProviderExecutionEffort,
+        permissionMode: .readOnly
+      ),
+      taskID: seedID
+    )
+    _ = try await fixture.tasks.approveAndBegin(taskID: seedID)
+    _ = try await fixture.tasks.markAgentExecutionStarted(
+      taskID: seedID,
+      providerSessionID: "agy-session-1",
+      providerRunID: "agy-run-1"
+    )
+    _ = try await fixture.tasks.complete(
+      taskID: seedID,
+      resultSummary: "Seed complete.",
+      changedFiles: []
+    )
+
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let continued = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Continue the review.",
+        threadID: "agy-session-1",
+        providerID: AgentProviderID.antigravity.rawValue,
+        installationID: installationID.rawValue,
+        clientRequestID: "antigravity-session-continue"
+      ),
+      deadline: deadline
+    )
+    let continuedRecord = try await fixture.tasks.task(id: TaskID(rawValue: continued.taskID))
+    let continuedTask = try XCTUnwrap(continuedRecord)
+    XCTAssertEqual(continuedTask.requestedThreadID, "agy-session-1")
+    XCTAssertEqual(continuedTask.providerID, AgentProviderID.antigravity.rawValue)
+    XCTAssertEqual(continuedTask.installationID, installationID.rawValue)
+
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Continue an unknown session.",
+        threadID: "agy-missing-session",
+        providerID: AgentProviderID.antigravity.rawValue,
+        installationID: installationID.rawValue,
+        clientRequestID: "antigravity-session-missing"
+      ),
+      expected: .taskNotFound,
+      reason: "unknown Antigravity session"
+    )
+
+    let otherRoot = fixture.root.appending(path: "other-project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: false)
+    _ = try await fixture.projects.register(
+      name: "Other Project",
+      rootURL: otherRoot,
+      accessPolicy: ProjectAccessPolicy(
+        read: .allowed,
+        write: .requiresLocalApproval,
+        network: .denied
+      ),
+      id: ProjectID(rawValue: "prj-other")
+    )
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: "prj-other",
+        prompt: "Continue from another project.",
+        threadID: "agy-session-1",
+        providerID: AgentProviderID.antigravity.rawValue,
+        installationID: installationID.rawValue,
+        clientRequestID: "antigravity-session-project-mismatch"
+      ),
+      expected: .taskNotFound,
+      reason: "session is bound to its original project"
+    )
+
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Do not fall back to another provider.",
+        threadID: "agy-session-1",
+        providerID: AgentProviderID.openCode.rawValue,
+        installationID: installationID.rawValue,
+        clientRequestID: "antigravity-session-provider-mismatch"
+      ),
+      expected: .unavailable,
+      reason: "session cannot cross providers"
+    )
+  }
+
+  func testAntigravityRegistrationDoesNotReplaceLegacyCodexDefault() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(providerID: .antigravity)
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.antigravity: provider]
+      )
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the legacy default provider.",
+        clientRequestID: "legacy-codex-with-antigravity"
+      ),
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let taskRecord = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(taskRecord)
+    XCTAssertEqual(task.providerID, serviceCodexProviderID)
+    XCTAssertNil(task.installationID)
+    XCTAssertEqual(task.selectionMode, .legacyCodex)
+    XCTAssertTrue(provider.startedRequests.isEmpty)
+  }
+
   func testLegacyCodexStoreRoundTripKeepsProviderDefaults() async throws {
     let store = try SimpleServiceStore.inMemory()
     let projects = ServiceProjectService(store: store)
@@ -1368,23 +1762,32 @@ final class ServiceAgentSubmissionTests: XCTestCase {
   private static func makeRegistry(
     fixture: ServiceApplicationFixture,
     provider: ScriptedAgentProvider,
-    enabled: Bool
+    enabled: Bool,
+    providerID: AgentProviderID? = nil,
+    installationID: AgentInstallationID? = nil,
+    securityProfileID: AgentProfileID? = nil
   ) async throws -> ServiceAgentRegistry {
-    let executableURL = fixture.root.appending(path: "opencode-route-fixture")
+    let resolvedProviderID = providerID ?? provider.providerID
+    let resolvedInstallationID =
+      installationID ?? provider.installationID
+    let executableURL = fixture.root.appending(
+      path: "\(resolvedProviderID.rawValue)-route-fixture"
+    )
     try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
     XCTAssertEqual(chmod(executableURL.path, 0o700), 0)
     let registry = ServiceAgentRegistry(
       store: fixture.store,
       providers: [provider],
-      makeInstallationID: { AgentInstallationID(rawValue: "ainst-route-opencode") }
+      makeInstallationID: { resolvedInstallationID }
     )
     _ = try await registry.registerAndProbe(
       ServiceAgentRegistrationRequest(
-        providerID: .openCode,
-        displayName: "OpenCode",
+        providerID: resolvedProviderID,
+        displayName: resolvedProviderID == .antigravity ? "Antigravity" : "OpenCode",
         executablePath: executableURL.path,
         trustProfile: .managed,
-        securityProfileID: AgentProfileID(rawValue: "controlled-readonly"),
+        securityProfileID: securityProfileID
+          ?? AgentProfileID(rawValue: "controlled-readonly"),
         enableOnSuccess: enabled,
         projectRoot: fixture.project.root.canonicalPath
       )
@@ -1401,7 +1804,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     try provider.emit(
       AgentEventEnvelope(
         taskID: taskID,
-        providerID: .openCode,
+        providerID: provider.providerID,
         providerSessionID: "sess-\(taskID.rawValue)",
         providerRunID: "run-\(taskID.rawValue)",
         providerSequence: sequence,

@@ -1,4 +1,5 @@
 import BridgeAgentCore
+import BridgeProcess
 import Foundation
 
 public struct ACPWireError: Codable, Equatable, Sendable {
@@ -140,36 +141,26 @@ public enum OpenCodeACPError: Error, Equatable, Sendable {
 
 public struct ACPLineDecoder: Sendable {
   public let maximumFrameBytes: Int
-  private var buffer = Data()
+  private var decoder: BoundedLineDecoder
 
   public init(maximumFrameBytes: Int = 1_048_576) {
     self.maximumFrameBytes = max(1, maximumFrameBytes)
+    decoder = BoundedLineDecoder(maximumFrameBytes: self.maximumFrameBytes)
   }
 
   public mutating func append(_ data: Data) throws -> [Data] {
-    guard !data.isEmpty else { return [] }
-    buffer.append(data)
-    var frames: [Data] = []
-
-    while let newline = buffer.firstIndex(of: 0x0A) {
-      var frame = Data(buffer[..<newline])
-      buffer.removeSubrange(...newline)
-      if frame.last == 0x0D { frame.removeLast() }
-      if frame.isEmpty { continue }
-      guard frame.count <= maximumFrameBytes else { throw OpenCodeACPError.oversizedFrame }
-      frames.append(frame)
+    do {
+      return try decoder.append(data)
+    } catch BoundedLineDecoderError.oversizedFrame {
+      throw OpenCodeACPError.oversizedFrame
     }
-
-    guard buffer.count <= maximumFrameBytes else { throw OpenCodeACPError.oversizedFrame }
-    return frames
   }
 
   public mutating func finish() throws -> [Data] {
-    guard !buffer.isEmpty else { return [] }
-    var frame = buffer
-    buffer.removeAll(keepingCapacity: false)
-    if frame.last == 0x0D { frame.removeLast() }
-    guard frame.count <= maximumFrameBytes else { throw OpenCodeACPError.oversizedFrame }
-    return frame.isEmpty ? [] : [frame]
+    do {
+      return try decoder.finish()
+    } catch BoundedLineDecoderError.oversizedFrame {
+      throw OpenCodeACPError.oversizedFrame
+    }
   }
 }

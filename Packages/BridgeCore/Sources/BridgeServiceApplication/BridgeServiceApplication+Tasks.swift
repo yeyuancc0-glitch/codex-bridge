@@ -17,7 +17,16 @@ extension BridgeServiceApplication {
     public let networkAllowed: Bool
 
     public var providerDisplayName: String {
-      providerID == AgentProviderID.openCode.rawValue ? "OpenCode" : "Codex"
+      switch providerID {
+      case AgentProviderID.openCode.rawValue:
+        "OpenCode"
+      case AgentProviderID.antigravity.rawValue:
+        "Antigravity"
+      case serviceCodexProviderID:
+        "Codex"
+      default:
+        providerID
+      }
     }
 
     public init(task: ServiceTaskRecord) {
@@ -312,9 +321,8 @@ extension BridgeServiceApplication {
     project: ServiceProjectRecord,
     sourceClientID: String
   ) async throws -> PreparedTaskSubmission {
-    guard providerRaw == AgentProviderID.openCode.rawValue else {
-      throw BridgeMCPQueryError.contractRejected
-    }
+    let providerID = AgentProviderID(rawValue: providerRaw)
+    let policy = try await agentSubmissionPolicy(providerID: providerID)
     guard
       submission.supervisorModel == nil,
       submission.supervisorEffort == nil,
@@ -334,14 +342,10 @@ extension BridgeServiceApplication {
         throw BridgeMCPQueryError.contractRejected
       }
     }
-    let configuredModel = try await settings.string(for: .openCodeDefaultModel)
     let resolvedModel = try Self.validatedAgentModel(
-      requestedModel ?? configuredModel
+      requestedModel ?? policy.configuredModel
     )
     let requestedEffort = usesOverride ? submission.executionEffort : nil
-    let configuredEffort = try await settings.openCodeDefaultEffort()
-    let configuredMode = try await settings.openCodeDefaultPermissionMode()
-    let defaultMode: ServicePermissionMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
     // A remote MCP model can fill optional tool arguments from its own safety
     // preference. Only a submission explicitly marked as a user-requested
     // override may replace the persisted OpenCode default. The nil case keeps
@@ -352,26 +356,38 @@ extension BridgeServiceApplication {
     let permission = try Self.permissionMode(
       requestedPermissionMode,
       project: project,
-      defaultMode: defaultMode
+      defaultMode: policy.defaultPermissionMode
     )
+    guard !policy.readOnlyOnly || permission == .readOnly else {
+      throw BridgeMCPQueryError.contractRejected
+    }
     guard !submission.networkAccess else {
-      // OpenCode's ACP mode does not expose a per-task network sandbox. Do
-      // not persist a requested network grant as though Bridge enforced it.
+      // External providers own their model control-plane network. Bridge does
+      // not claim a per-task tool-network grant that it cannot enforce.
       throw BridgeMCPQueryError.unavailable
     }
     let registry = try requiredAgentRegistry()
     let selectable =
       try await registry
-      .installations(providerID: .openCode)
+      .installations(providerID: providerID)
       .filter { $0.isSelectable }
       .sorted { $0.id.rawValue < $1.id.rawValue }
     let record = try Self.selectAgentInstallation(
       requested: submission.installationID, from: selectable)
+    if policy.selectionsRequireObservedCapabilities {
+      var requiredCapabilities = Set<AgentCapability>()
+      if submission.threadID != nil { requiredCapabilities.insert(.sessionContinue) }
+      if resolvedModel != nil { requiredCapabilities.insert(.modelSelection) }
+      if requestedEffort != nil { requiredCapabilities.insert(.effortSelection) }
+      guard record.capabilities.supports(requiredCapabilities) else {
+        throw BridgeMCPQueryError.unavailable
+      }
+    }
     if let requestedSessionID = submission.threadID {
       guard
         let previous = try await tasks.task(
           providerSessionID: requestedSessionID,
-          providerID: AgentProviderID.openCode.rawValue,
+          providerID: providerID.rawValue,
           installationID: record.id.rawValue,
           projectID: project.id
         )
@@ -406,7 +422,7 @@ extension BridgeServiceApplication {
         throw BridgeMCPQueryError.contractRejected
       }
       executionEffort = requestedEffort
-    } else if let configuredEffort,
+    } else if let configuredEffort = policy.configuredEffort,
       selectedDescriptor?.supportedReasoningEfforts.contains(configuredEffort) == true
     {
       executionEffort = configuredEffort
@@ -428,7 +444,7 @@ extension BridgeServiceApplication {
         clientRequestID: submission.clientRequestID,
         prompt: prompt,
         requestedThreadID: submission.threadID,
-        providerID: AgentProviderID.openCode.rawValue,
+        providerID: providerID.rawValue,
         installationID: record.id.rawValue,
         selectionMode: .explicit,
         executionModel: executionModel,

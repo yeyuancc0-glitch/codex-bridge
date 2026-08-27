@@ -34,16 +34,29 @@ extension BridgeServiceApplication {
       capabilities.remove(.workspaceWriteInPlace)
       capabilities.remove(.workspaceWriteIsolated)
     }
-    // OpenCode uses its native ACP Plan/Build modes and permission requests.
     // The persisted capability snapshot and project policy remain the public
-    // source of truth for whether the installation may receive tasks.
+    // source of truth for whether an installation may receive tasks.
     let submissionEnabled =
-      record.providerID == .openCode
+      (record.providerID == .openCode || record.providerID == .antigravity)
       && record.isSelectable
       && capabilities.contains(.workspaceRead)
-    let workspaceEnforcement = submissionEnabled ? "provider_native" : "unavailable"
-    let approvalEnforcement = submissionEnabled ? "local_app" : "unavailable"
-    let networkEnforcement = submissionEnabled ? "provider_native" : "unavailable"
+    let workspaceEnforcement: String
+    let approvalEnforcement: String
+    let networkEnforcement: String
+    switch record.providerID {
+    case .openCode where submissionEnabled:
+      workspaceEnforcement = "provider_native"
+      approvalEnforcement = "local_app"
+      networkEnforcement = "provider_native"
+    case .antigravity where submissionEnabled:
+      workspaceEnforcement = "os_sandbox_read_only"
+      approvalEnforcement = "provider_soft_deny"
+      networkEnforcement = "provider_native"
+    default:
+      workspaceEnforcement = "unavailable"
+      approvalEnforcement = "unavailable"
+      networkEnforcement = "unavailable"
+    }
     return MCPAgentSummary(
       providerID: record.providerID.rawValue,
       installationID: record.id.rawValue,
