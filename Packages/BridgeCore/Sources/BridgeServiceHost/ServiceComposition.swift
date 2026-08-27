@@ -190,13 +190,24 @@ public actor ServiceComposition {
         orphanPIDFileURL: paths.supervisorScratchURL.appending(path: "direct-command-pids.txt")
       )
     )
-    let resolvedTunnelFactory =
-      tunnelFactory
-      ?? BundledServiceTunnelManagerFactory(
+    let resolvedTunnelFactory: any ServiceTunnelManagerBuilding
+    if let tunnelFactory {
+      resolvedTunnelFactory = tunnelFactory
+    } else {
+#if canImport(Darwin)
+      resolvedTunnelFactory = BundledServiceTunnelManagerFactory(
         appBundleURL: configuration.appBundleURL ?? URL(fileURLWithPath: "/"),
         runtimeDirectory: paths.tunnelRuntimeURL,
         secretStore: effectiveSecretStore
       )
+#else
+      resolvedTunnelFactory = DefaultServiceTunnelManagerFactory.make(
+        appBundleURL: configuration.appBundleURL,
+        runtimeDirectory: paths.tunnelRuntimeURL,
+        secretStore: effectiveSecretStore
+      )
+#endif
+    }
     let tunnel = ServiceTunnelController(
       settings: settings,
       runtimeStatus: runtimeStatus,
@@ -486,6 +497,7 @@ public actor ServiceComposition {
     from rootURL: URL?,
     into store: SimpleServiceStore
   ) async -> LegacyConfigurationImportBootstrap {
+#if canImport(Darwin)
     guard let rootURL else { return .disabled }
     do {
       let report = try await LegacyConfigurationImporter(
@@ -499,6 +511,9 @@ public actor ServiceComposition {
     } catch {
       return .failed
     }
+#else
+    return .disabled
+#endif
   }
 
   private static func mcpExposureMode(
