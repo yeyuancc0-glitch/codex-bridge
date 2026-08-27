@@ -25,6 +25,14 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(qwen.sourceDisplayName, "Qwen Studio")
   }
 
+  func testDeepSeekHarnessTaskUsesExperimentalReadOnlyPresentation() {
+    let task = taskSnapshot(status: "running", providerID: "deepseek-harness")
+
+    XCTAssertEqual(task.providerDisplayName, "DeepSeek Harness")
+    XCTAssertEqual(task.providerSystemImage, "lock.shield.fill")
+    XCTAssertTrue(task.isExternalAgentTask)
+  }
+
   func testStartAppliesSubscriptionPageThenAppliesStreamingPushes() async throws {
     let client = TestBridgeServiceClient()
     let model = TaskConversationModel(taskID: "task-1", client: client)

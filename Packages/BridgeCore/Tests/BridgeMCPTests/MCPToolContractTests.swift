@@ -5,6 +5,34 @@ import XCTest
 @testable import BridgeMCP
 
 final class MCPToolContractTests: XCTestCase {
+  func testServiceListAgentsSchemaDocumentsDeepSeekReadOnlyNetworkBoundary() throws {
+    let definitions = MCPServiceToolCatalog(exposureMode: .readOnly).definitions
+    let definition = try XCTUnwrap(
+      definitions.first(where: { $0.name == MCPServiceToolName.listAgents.rawValue })
+    )
+    let agentProperties = try XCTUnwrap(
+      definition.outputSchema?.objectValue?["properties"]?.objectValue?["agents"]?
+        .objectValue?["items"]?
+        .objectValue?["properties"]?.objectValue
+    )
+    let providerDescription = try XCTUnwrap(
+      agentProperties["provider_id"]?.objectValue?["description"])
+    let capabilityDescription = try XCTUnwrap(
+      agentProperties["effective_capabilities"]?.objectValue?["description"]
+    )
+    let networkDescription = try XCTUnwrap(
+      agentProperties["network_enforcement"]?.objectValue?["description"]
+    )
+    XCTAssertTrue(providerDescription.stringValue?.contains("deepseek-harness") == true)
+    XCTAssertTrue(capabilityDescription.stringValue?.contains("workspace.read") == true)
+    XCTAssertTrue(networkDescription.stringValue?.contains("does not guarantee") == true)
+
+    let instructions = MCPServiceServerFactory.instructions(customInstructions: "")
+    XCTAssertTrue(instructions.contains("provider_id=deepseek-harness"))
+    XCTAssertTrue(instructions.contains("automatically denied"))
+    XCTAssertTrue(instructions.contains("network_enforcement"))
+  }
+
   func testCatalogPublishesStrictClosedSchemasAndAccurateAnnotations() throws {
     let definitions = MCPToolCatalog(includeTaskTools: true).definitions
 

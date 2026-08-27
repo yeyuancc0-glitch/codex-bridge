@@ -972,15 +972,17 @@ public actor ServiceExecutionCoordinator {
       turnID: "agent:\(runID)"
     )
     let title = String(decoding: approval.title.utf8.prefix(512), as: UTF8.self)
+    let providerName = Self.providerDisplayName(approval.binding.providerID)
     let summary: String
     if let command = approval.normalizedCommand, !command.isEmpty {
       summary = String(
-        decoding: "OpenCode requested permission for: \(command)".utf8.prefix(4 * 1_024),
+        decoding: "\(providerName) requested permission for: \(command)".utf8.prefix(4 * 1_024),
         as: UTF8.self
       )
     } else if let target = approval.networkTarget, !target.isEmpty {
       summary = String(
-        decoding: "OpenCode requested network permission for: \(target)".utf8.prefix(4 * 1_024),
+        decoding: "\(providerName) requested network permission for: \(target)".utf8.prefix(
+          4 * 1_024),
         as: UTF8.self
       )
     } else {
@@ -1000,6 +1002,13 @@ public actor ServiceExecutionCoordinator {
       reason: approval.networkTarget.map { "Network target: \($0)" },
       availableDecisions: availableDecisions
     )
+  }
+
+  private static func providerDisplayName(_ providerID: AgentProviderID) -> String {
+    if providerID == .codex { return "Codex" }
+    if providerID == .openCode { return "OpenCode" }
+    if providerID == .deepSeekHarness { return "DeepSeek Harness" }
+    return providerID.rawValue
   }
 
   private static func executionApprovalKind(_ kind: AgentApprovalKind)

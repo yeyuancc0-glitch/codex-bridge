@@ -17,7 +17,9 @@ extension BridgeServiceApplication {
     public let networkAllowed: Bool
 
     public var providerDisplayName: String {
-      providerID == AgentProviderID.openCode.rawValue ? "OpenCode" : "Codex"
+      ServiceAgentProviderPolicyRegistry.displayName(
+        for: AgentProviderID(rawValue: providerID)
+      )
     }
 
     public init(task: ServiceTaskRecord) {
@@ -302,51 +304,71 @@ extension BridgeServiceApplication {
   }
 
   /// Explicit non-Codex submissions resolve against the user-registered agent
-  /// installations. The provider owns defaults unless the caller explicitly
-  /// opts into a model override; permission follows the project policy used by
-  /// the Codex path, while network access remains governed by native ACP
-  /// permissions and is unavailable as a Bridge task option.
+  /// installations. Provider-specific task constraints live in the shared
+  /// service policy registry; adapter capabilities are checked by the runner.
   private func prepareAgentSubmission(
     _ submission: MCPServiceTaskSubmission,
     providerRaw: String,
     project: ServiceProjectRecord,
     sourceClientID: String
   ) async throws -> PreparedTaskSubmission {
-    guard providerRaw == AgentProviderID.openCode.rawValue else {
-      throw BridgeMCPQueryError.contractRejected
-    }
-    guard
-      submission.supervisorModel == nil,
-      submission.supervisorEffort == nil,
-      submission.skillName == nil
+    let providerID = AgentProviderID(rawValue: providerRaw)
+    guard let policy = ServiceAgentProviderPolicyRegistry.policy(for: providerID),
+      policy.requiresInstallation
     else {
       throw BridgeMCPQueryError.contractRejected
     }
-    // Resolution order mirrors Codex: explicit override > Bridge default
-    // setting > provider default. Unmarked model fields stay ignored for
-    // compatibility with old clients.
+    guard
+      policy.supportsSupervisor
+        || (submission.supervisorModel == nil && submission.supervisorEffort == nil)
+    else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    guard policy.supportsSkillSelection || submission.skillName == nil else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    guard policy.supportsSessionContinuation || submission.threadID == nil else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+
     let usesOverride = submission.modelOverride == true
     let requestedModel = usesOverride ? submission.executionModel : nil
+    let requestedEffort = usesOverride ? submission.executionEffort : nil
+    if !policy.supportsModelSelection && requestedModel != nil {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    if !policy.supportsEffortSelection && requestedEffort != nil {
+      throw BridgeMCPQueryError.contractRejected
+    }
     if let model = requestedModel {
       guard !model.isEmpty, model.utf8.count <= 256,
         model.rangeOfCharacter(from: .controlCharacters) == nil
-      else {
-        throw BridgeMCPQueryError.contractRejected
-      }
+      else { throw BridgeMCPQueryError.contractRejected }
     }
-    let configuredModel = try await settings.string(for: .openCodeDefaultModel)
-    let resolvedModel = try Self.validatedAgentModel(
-      requestedModel ?? configuredModel
-    )
-    let requestedEffort = usesOverride ? submission.executionEffort : nil
-    let configuredEffort = try await settings.openCodeDefaultEffort()
-    let configuredMode = try await settings.openCodeDefaultPermissionMode()
-    let defaultMode: ServicePermissionMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
     // A remote MCP model can fill optional tool arguments from its own safety
     // preference. Only a submission explicitly marked as a user-requested
-    // override may replace the persisted OpenCode default. The nil case keeps
+    // override may replace persisted provider defaults. The nil case keeps
     // older in-process callers source-compatible; the MCP parser normalizes a
     // missing marker to false.
+    let configuredModel: String?
+    let configuredEffort: String?
+    let defaultMode: ServicePermissionMode
+    if policy.providerID == .openCode {
+      configuredModel = try await settings.string(for: .openCodeDefaultModel)
+      configuredEffort = try await settings.openCodeDefaultEffort()
+      let configuredMode = try await settings.openCodeDefaultPermissionMode()
+      defaultMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
+    } else {
+      configuredModel = nil
+      configuredEffort = nil
+      defaultMode = policy.defaultPermissionMode
+    }
+    let resolvedModel = try Self.validatedAgentModel(requestedModel ?? configuredModel)
+    if !policy.supportsWorkspaceWrite,
+      submission.permissionMode == ServicePermissionMode.workspaceWrite.rawValue
+    {
+      throw BridgeMCPQueryError.contractRejected
+    }
     let requestedPermissionMode =
       submission.permissionModeOverride == false ? nil : submission.permissionMode
     let permission = try Self.permissionMode(
@@ -354,24 +376,26 @@ extension BridgeServiceApplication {
       project: project,
       defaultMode: defaultMode
     )
-    guard !submission.networkAccess else {
-      // OpenCode's ACP mode does not expose a per-task network sandbox. Do
-      // not persist a requested network grant as though Bridge enforced it.
+    guard policy.supportsWorkspaceWrite || permission != .workspaceWrite else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    guard !submission.networkAccess || policy.allowsNetworkAccess else {
+      // Provider policies never persist a requested network grant as though
+      // the Bridge enforced it when the adapter has no task-level sandbox.
       throw BridgeMCPQueryError.unavailable
     }
     let registry = try requiredAgentRegistry()
     let selectable =
-      try await registry
-      .installations(providerID: .openCode)
+      try await registry.installations(providerID: providerID)
       .filter { $0.isSelectable }
       .sorted { $0.id.rawValue < $1.id.rawValue }
     let record = try Self.selectAgentInstallation(
       requested: submission.installationID, from: selectable)
-    if let requestedSessionID = submission.threadID {
+    if policy.supportsSessionContinuation, let requestedSessionID = submission.threadID {
       guard
         let previous = try await tasks.task(
           providerSessionID: requestedSessionID,
-          providerID: AgentProviderID.openCode.rawValue,
+          providerID: providerID.rawValue,
           installationID: record.id.rawValue,
           projectID: project.id
         )
@@ -382,11 +406,16 @@ extension BridgeServiceApplication {
         throw BridgeMCPQueryError.invalidTaskState
       }
     }
-    let modelCatalog = try? await registry.models(
-      installationID: record.id,
-      projectRoot: project.root.canonicalPath,
-      selectedModelID: resolvedModel
-    )
+    let modelCatalog: [AgentModelDescriptor]?
+    if policy.supportsModelSelection {
+      modelCatalog = try? await registry.models(
+        installationID: record.id,
+        projectRoot: project.root.canonicalPath,
+        selectedModelID: resolvedModel
+      )
+    } else {
+      modelCatalog = nil
+    }
     let selectedDescriptor: AgentModelDescriptor?
     if let modelCatalog {
       if let resolvedModel {
@@ -428,7 +457,7 @@ extension BridgeServiceApplication {
         clientRequestID: submission.clientRequestID,
         prompt: prompt,
         requestedThreadID: submission.threadID,
-        providerID: AgentProviderID.openCode.rawValue,
+        providerID: providerID.rawValue,
         installationID: record.id.rawValue,
         selectionMode: .explicit,
         executionModel: executionModel,
@@ -571,6 +600,15 @@ extension BridgeServiceApplication {
     }
     guard task.state.status == .running else {
       throw BridgeMCPQueryError.turnMismatch
+    }
+    if task.providerID != serviceCodexProviderID {
+      guard
+        ServiceAgentProviderPolicyRegistry.policy(
+          for: AgentProviderID(rawValue: task.providerID)
+        )?.supportsSteer == true
+      else {
+        throw BridgeMCPQueryError.unavailable
+      }
     }
     if task.providerID == serviceCodexProviderID {
       guard task.state.codexTurnID == expectedTurnID else {

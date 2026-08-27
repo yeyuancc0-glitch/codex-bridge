@@ -105,6 +105,43 @@ final class ServiceAgentListTests: XCTestCase {
       XCTAssertEqual(error as? BridgeMCPQueryError, .projectNotFound)
     }
   }
+
+  func testListAgentsDisablesSubmissionWhenExecutableIdentityChanges() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let executableURL = fixture.root.appending(path: "opencode-list-stale-fixture")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
+    XCTAssertEqual(chmod(executableURL.path, 0o700), 0)
+    let registry = ServiceAgentRegistry(
+      store: fixture.store,
+      providers: [try ServiceAgentListProvider()],
+      makeInstallationID: { AgentInstallationID(rawValue: "ainst-list-stale") }
+    )
+    _ = try await registry.registerAndProbe(
+      ServiceAgentRegistrationRequest(
+        providerID: .openCode,
+        displayName: "OpenCode",
+        executablePath: executableURL.path,
+        trustProfile: .managed,
+        enableOnSuccess: true
+      )
+    )
+    try Data("#!/bin/sh\nexit 1\n".utf8).write(to: executableURL)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry
+    )
+
+    let list = try await application.serviceAgents(
+      projectID: fixture.project.id.rawValue,
+      deadline: .now.advanced(by: .seconds(3))
+    )
+
+    let agent = try XCTUnwrap(list.agents.first)
+    XCTAssertEqual(agent.availability, "needs_review")
+    XCTAssertFalse(agent.taskSubmissionEnabled)
+    XCTAssertEqual(agent.workspaceEnforcement, "unavailable")
+  }
 }
 
 private struct ServiceAgentListProvider: AgentProvider, Sendable {

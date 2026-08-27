@@ -91,6 +91,33 @@ final class BridgeServiceAppModelTests: XCTestCase {
     )
   }
 
+  func testAgentInstallationRegistrationPreservesExternalConfigurationPath() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.registerAgentInstallation(
+      providerID: "deepseek-harness",
+      displayName: "DeepSeek Harness",
+      executableURL: URL(fileURLWithPath: "/tmp/dsh-acp-demo"),
+      configurationURL: URL(fileURLWithPath: "/tmp/deepseek-profile/cordis.yml")
+    )
+    try await waitUntil { !model.isManagingAgents }
+
+    let registrationRequest = await client.registrationRequest()
+    let request = try XCTUnwrap(registrationRequest)
+    XCTAssertEqual(request.providerID, "deepseek-harness")
+    XCTAssertEqual(request.configurationPath, "/tmp/deepseek-profile/cordis.yml")
+    await model.shutdownUI()
+  }
+
   func testGlobalCustomInstructionsReachServiceClient() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

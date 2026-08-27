@@ -34,6 +34,7 @@ let package = Package(
     .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
     .library(name: "BridgeAgentCore", targets: ["BridgeAgentCore"]),
     .library(name: "BridgeOpenCodeACP", targets: ["BridgeOpenCodeACP"]),
+    .library(name: "BridgeDeepSeekHarnessACP", targets: ["BridgeDeepSeekHarnessACP"]),
     .library(name: "BridgeProcess", targets: ["BridgeProcess"]),
     .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
@@ -264,6 +265,15 @@ let package = Package(
       ]
     ),
     .target(
+      name: "BridgeDeepSeekHarnessACP",
+      dependencies: [
+        "BridgeACP",
+        "BridgeAgentCore",
+        "BridgeDomain",
+      ],
+      resources: [.process("Resources")]
+    ),
+    .target(
       name: "BridgeServiceApplication",
       dependencies: [
         "BridgeAgentCore",
@@ -302,6 +312,7 @@ let package = Package(
         "BridgeCodexService",
         "BridgeDirectCommand",
         "BridgeDomain",
+        "BridgeDeepSeekHarnessACP",
         "BridgeLegacyImport",
         "BridgeIPC",
         "BridgeMCP",
@@ -553,6 +564,15 @@ let package = Package(
     .testTarget(
       name: "BridgeACPTests",
       dependencies: ["BridgeACP"]
+    ),
+    .testTarget(
+      name: "BridgeDeepSeekHarnessACPTests",
+      dependencies: [
+        "BridgeACP",
+        "BridgeAgentCore",
+        "BridgeDeepSeekHarnessACP",
+        "BridgeDomain",
+      ]
     ),
     .testTarget(
       name: "BridgeServiceApplicationTests",

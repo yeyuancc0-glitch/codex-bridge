@@ -23,6 +23,23 @@ extension BridgeServiceApplication {
     deadline: ContinuousClock.Instant
   ) async throws -> ServiceAgentInstallationRecord {
     try Self.checkDeadline(deadline)
+    if let policy = ServiceAgentProviderPolicyRegistry.policy(for: request.providerID),
+      policy.requiresConfiguration,
+      request.configurationPath == nil,
+      !request.artifacts.contains(where: { $0.role == .launchConfiguration })
+    {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    if let policy = ServiceAgentProviderPolicyRegistry.policy(for: request.providerID),
+      policy.requiresExactRegistrationProfile
+    {
+      guard request.trustProfile == policy.registrationTrustProfile,
+        request.securityProfileID == policy.registrationSecurityProfileID,
+        Set(request.artifactRequests.map(\.role)) == policy.requiredArtifactRoles
+      else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+    }
     let record = try await requiredAgentRegistry().registerAndProbe(request)
     try Self.checkDeadline(deadline)
     return record
