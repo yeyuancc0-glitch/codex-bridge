@@ -32,6 +32,10 @@ final class MCPServiceExposureTests: XCTestCase {
       XCTAssertTrue(instructions.contains("300 seconds"))
       XCTAssertTrue(instructions.contains("600 seconds"))
       XCTAssertTrue(instructions.contains("non-terminal status"))
+      XCTAssertTrue(instructions.contains("authoritative receipt"))
+      XCTAssertTrue(instructions.contains("provider_task receipt with task_id"))
+      XCTAssertTrue(instructions.contains("receipt-less action"))
+      XCTAssertTrue(instructions.contains("non-null commit_hash"))
       XCTAssertFalse(instructions.contains("Project custom instructions"))
       let customRange = try XCTUnwrap(instructions.range(of: custom))
       XCTAssertLessThan(
@@ -142,6 +146,10 @@ final class MCPServiceExposureTests: XCTestCase {
       exec["exit_code"]?.objectValue?["type"],
       "integer"
     )
+    XCTAssertNotNil(exec["receipt_type"])
+    XCTAssertEqual(exec["receipt_type"]?.objectValue?["const"], "direct_command")
+    let skill = try outputProperties("run_skill_action", in: definitions)
+    XCTAssertEqual(skill["receipt_type"]?.objectValue?["const"], "skill_action")
     let nestedOutput = try XCTUnwrap(exec["output"]?.objectValue?["properties"]?.objectValue)
     XCTAssertNil(nestedOutput["schema_version"])
     XCTAssertEqual(nestedOutput["exit_code"]?.objectValue?["type"], "integer")
@@ -153,6 +161,7 @@ final class MCPServiceExposureTests: XCTestCase {
     XCTAssertNotNil(read["command_timed_out"])
     XCTAssertNotNil(read["read_timeout"])
     XCTAssertNotNil(read["execution_environment"])
+    XCTAssertNotNil(read["receipt_type"])
 
     let readInput = try inputProperties("direct_read_command", in: definitions)
     XCTAssertEqual(readInput["wait_timeout_ms"]?.objectValue?["maximum"], .int(10_000))
@@ -195,11 +204,32 @@ final class MCPServiceExposureTests: XCTestCase {
     )
     XCTAssertEqual(submitWaitPolicy["type"], "object")
 
+    let submit = try outputProperties("submit_task", in: definitions)
+    XCTAssertNotNil(submit["receipt_type"])
+    let mutation = try outputProperties("steer_task", in: definitions)
+    XCTAssertNotNil(mutation["receipt_type"])
+
+    for name in [
+      "direct_write_project_file", "direct_edit_project_file",
+      "direct_apply_project_patch", "direct_manage_project_path", "direct_git_commit",
+    ] {
+      XCTAssertNotNil(try outputProperties(name, in: definitions)["receipt_type"], name)
+    }
+
     let stdin = try outputProperties("direct_write_stdin", in: definitions)
     XCTAssertEqual(
       stdin.keys.sorted(),
-      ["bytes_written", "error", "schema_version", "stdin_closed"]
+      [
+        "bytes_written", "error", "receipt_type", "schema_version", "session_id",
+        "stdin_closed",
+      ]
     )
+
+    let error = try XCTUnwrap(exec["error"]?.objectValue?["properties"]?.objectValue)
+    XCTAssertNotNil(error["category"])
+    XCTAssertNotNil(error["next_action"])
+    XCTAssertNotNil(error["operation_id"])
+    XCTAssertNotNil(error["data"])
 
     let git = try XCTUnwrap(definitions["direct_git_commit"]?.outputSchema?.objectValue)
     let success = try XCTUnwrap(git["oneOf"]?.arrayValue?.first?.objectValue)
@@ -224,6 +254,13 @@ final class MCPServiceExposureTests: XCTestCase {
     }
     let skillAction = catalog.definitions.first { $0.name == skillActionToolName }
     XCTAssertTrue(skillAction?.description?.localizedCaseInsensitiveContains("explicit") == true)
+    XCTAssertTrue(
+      skillAction?.description?.contains("not a general command execution tool") == true)
+    XCTAssertTrue(skillAction?.description?.contains("direct_exec_project_command") == true)
+
+    let directExec = catalog.definitions.first { $0.name == "direct_exec_project_command" }
+    XCTAssertTrue(directExec?.description?.contains("list_project_commands first") == true)
+    XCTAssertTrue(directExec?.description?.contains("command_not_registered") == true)
   }
 
   func testDirectPatchDescriptionPublishesExecutableGrammar() throws {
@@ -246,6 +283,27 @@ final class MCPServiceExposureTests: XCTestCase {
 
     XCTAssertEqual(stdin["close_stdin"]?.objectValue?["type"], "boolean")
     XCTAssertEqual(exec["tty"]?.objectValue?["const"], false)
+  }
+
+  func testProjectIDsAreDocumentedAsOpaqueListProjectsResults() throws {
+    let catalog = MCPServiceToolCatalog(exposureMode: .full)
+    for definition in catalog.definitions {
+      let properties = definition.inputSchema.objectValue?["properties"]?.objectValue ?? [:]
+      guard let projectID = properties["project_id"]?.objectValue else { continue }
+      let description = try XCTUnwrap(projectID["description"]?.stringValue)
+      XCTAssertTrue(description.contains("Opaque project ID returned by list_projects"))
+      XCTAssertTrue(description.contains("Never pass the display name"))
+    }
+  }
+
+  func testListProjectCommandsPublishesRecommendedUsage() throws {
+    let catalog = MCPServiceToolCatalog(exposureMode: .readOnly)
+    let definitions = Dictionary(uniqueKeysWithValues: catalog.definitions.map { ($0.name, $0) })
+    let output = try outputProperties("list_project_commands", in: definitions)
+    let recommended = try XCTUnwrap(output["recommended_usage"]?.objectValue)
+    XCTAssertEqual(recommended["type"], "object")
+    let usage = try XCTUnwrap(recommended["additionalProperties"]?.objectValue)
+    XCTAssertEqual(usage["required"]?.arrayValue, ["argv"])
   }
 
   func testSubmitTaskDescriptionNamesCodexAsDefault() {

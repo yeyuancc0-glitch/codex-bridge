@@ -311,7 +311,7 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
         ProjectApplyPatchRequest(projectID: fixture.projectID, operations: operations)
       )
     ) { error in
-      XCTAssertEqual(error, .invalidPatch)
+      XCTAssertEqual(error, .invalidPatchSyntax)
     }
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: fixture.root.appending(path: "duplicate.txt").path))
@@ -365,7 +365,7 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
         ProjectApplyPatchRequest(projectID: fixture.projectID, operations: [ambiguous])
       )
     ) { error in
-      XCTAssertEqual(error, .invalidPatch)
+      XCTAssertEqual(error, .patchContextNonUnique)
     }
     XCTAssertEqual(try String(contentsOf: path, encoding: .utf8), original)
 
@@ -384,6 +384,31 @@ final class RestrictedProjectMutationServiceTests: XCTestCase {
       try String(contentsOf: path, encoding: .utf8),
       "func first\ntarget\nfunc second\nchanged\n"
     )
+  }
+
+  func testApplyPatchReportsMissingExactContext() async throws {
+    let fixture = try await writeFixture(self)
+    let path = fixture.root.appending(path: "current.txt")
+    let original = "current value\n"
+    try Data(original.utf8).write(to: path)
+
+    let operation = ProjectPatchFileOperation(
+      action: "update",
+      relativePath: "current.txt",
+      expectedSHA256: sha256(of: Data(original.utf8)),
+      hunks: [
+        ProjectPatchHunk(context: "", removals: ["stale value"], additions: ["new value"])
+      ]
+    )
+
+    await assertMutationError(
+      try await fixture.service.applyPatch(
+        ProjectApplyPatchRequest(projectID: fixture.projectID, operations: [operation])
+      )
+    ) { error in
+      XCTAssertEqual(error, .patchContextNotFound)
+    }
+    XCTAssertEqual(try String(contentsOf: path, encoding: .utf8), original)
   }
 
   func testPatchParserRejectsDuplicatePaths() {

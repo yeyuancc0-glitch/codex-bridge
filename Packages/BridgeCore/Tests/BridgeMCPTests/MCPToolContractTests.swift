@@ -159,7 +159,7 @@ final class MCPToolContractTests: XCTestCase {
       (.pathDenied, "path_denied", false),
       (.taskNotFound, "task_not_found", false),
       (.idempotencyConflict, "idempotency_conflict", false),
-      (.turnMismatch, "turn_mismatch", false),
+      (.turnMismatch, "turn_mismatch", true),
       (.invalidTaskState, "invalid_task_state", false),
       (.contractRejected, "contract_rejected", false),
       (.busy, "busy", true),

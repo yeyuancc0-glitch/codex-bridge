@@ -108,6 +108,7 @@ final class MCPTaskToolContractTests: XCTestCase {
     )
 
     XCTAssertEqual(try object(first)["task_id"], "tsk_1")
+    XCTAssertEqual(try object(first)["receipt_type"], "provider_task")
     XCTAssertEqual(try object(first)["reused_existing_task"], false)
     XCTAssertEqual(try object(second)["task_id"], "tsk_1")
     XCTAssertEqual(try object(second)["reused_existing_task"], true)
@@ -145,6 +146,7 @@ final class MCPTaskToolContractTests: XCTestCase {
       )
     )
     XCTAssertEqual(try object(steer)["accepted"], true)
+    XCTAssertEqual(try object(steer)["receipt_type"], "task_mutation")
     let steerRequest = await operations.lastSteerRequest
     XCTAssertEqual(steerRequest?.expectedTurnID, "turn_9")
     XCTAssertEqual(steerRequest?.input, "Keep one state source.")

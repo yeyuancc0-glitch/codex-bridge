@@ -6,13 +6,15 @@ extension MCPServiceToolCatalog {
     title: "Run skill action",
     description:
       "Run a discovered Skill script through the project's existing Direct command policy. "
-      + "Use only when the user explicitly requests local Skill script execution.",
+      + "Use only when the user explicitly requests local Skill script execution. This is not "
+      + "a general command execution tool. Do not use it for pwd, git, swift, xcodebuild, or "
+      + "arbitrary scripts; use direct_exec_project_command instead.",
     inputSchema: objectSchema(
       properties: [
         "skill_name": boundedStringSchema(maximum: 128),
         "action_name": boundedStringSchema(maximum: 128),
         "arguments": arraySchema(boundedStringSchema(maximum: 4_096)),
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "yield_time_ms": integerSchema(minimum: 0, maximum: 60_000),
         "timeout_ms": integerSchema(minimum: 1, maximum: 3_600_000),
         "client_request_id": nullableStringSchema(maximum: 512),
@@ -25,7 +27,7 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: directExecOutputSchema
+    outputSchema: skillActionOutputSchema
   )
 
   static let getTask = Tool(
@@ -92,7 +94,7 @@ extension MCPServiceToolCatalog {
       + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": optionalOpaqueProjectIDSchema,
         "prompt": boundedStringSchema(maximum: 32 * 1_024),
         "skill_name": nullableStringSchema(maximum: 128),
         "thread_id": nullableStringSchema(maximum: 1_024),
@@ -164,6 +166,7 @@ extension MCPServiceToolCatalog {
     ),
     outputSchema: outputSchema(
       properties: [
+        "receipt_type": receiptTypeSchema(["provider_task"]),
         "task_id": stringSchema,
         "status": stringSchema,
         "reused_existing_task": boolSchema,
@@ -171,7 +174,8 @@ extension MCPServiceToolCatalog {
         "wait_policy": taskWaitPolicySchema,
       ],
       required: [
-        "task_id", "status", "reused_existing_task", "local_approval_required", "wait_policy",
+        "receipt_type", "task_id", "status", "reused_existing_task",
+        "local_approval_required", "wait_policy",
       ]
     )
   )
@@ -221,10 +225,11 @@ extension MCPServiceToolCatalog {
 
   static let mutationOutputSchema = outputSchema(
     properties: [
+      "receipt_type": receiptTypeSchema(["task_mutation"]),
       "task_id": stringSchema,
       "status": stringSchema,
       "accepted": boolSchema,
     ],
-    required: ["task_id", "status", "accepted"]
+    required: ["receipt_type", "task_id", "status", "accepted"]
   )
 }

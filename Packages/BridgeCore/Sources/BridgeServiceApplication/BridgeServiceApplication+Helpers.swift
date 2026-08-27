@@ -415,9 +415,13 @@ extension BridgeServiceApplication {
     case .pathChanged, .unsupportedHardLink, .unsafeFilesystemState:
       return .pathChanged
     case .binaryContent:
-      return .pathDenied
-    case .invalidPatch:
-      return .invalidPatch
+      return .binaryContentUnsupported
+    case .invalidPatch, .invalidPatchSyntax:
+      return .invalidPatchSyntax
+    case .patchContextNotFound:
+      return .patchContextNotFound
+    case .patchContextNonUnique:
+      return .patchContextNonUnique
     case .partialCommit:
       return .unavailable
     case .durabilityUncertain:

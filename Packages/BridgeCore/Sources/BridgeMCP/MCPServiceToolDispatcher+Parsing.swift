@@ -36,7 +36,7 @@ extension MCPServiceToolDispatcher {
       maximumElementUTF8Bytes: 4_096
     )
     guard ([prompt] + criteria).allSatisfy(OutboundContentSecurity.isSafe) else {
-      throw MCPError.invalidParams("Task text contains restricted local data.")
+      throw BridgeMCPQueryError.unsafeContentDetected
     }
     let permissionMode = try values.optionalIdentifier(
       "permission_mode",
@@ -169,7 +169,7 @@ extension MCPServiceToolDispatcher {
     )
     let patch = try values.requiredText("patch", maximumUTF8Bytes: 256 * 1_024)
     guard isSafePatchSecretChange(patch) else {
-      throw MCPError.invalidParams("Patch text contains restricted local data.")
+      throw BridgeMCPQueryError.unsafeContentDetected
     }
     return MCPDirectPatchRequest(
       projectID: try values.requiredIdentifier("project_id", maximumUTF8Bytes: 128),
@@ -263,7 +263,7 @@ extension MCPServiceToolDispatcher {
     let arguments = try values.optionalStringArray(
       "arguments", maximumCount: 128, maximumElementUTF8Bytes: 4_096)
     guard arguments.allSatisfy(OutboundContentSecurity.isSafe) else {
-      throw MCPError.invalidParams("Skill arguments contain restricted local data.")
+      throw BridgeMCPQueryError.unsafeContentDetected
     }
     return MCPRunSkillActionRequest(
       skillName: skillName,

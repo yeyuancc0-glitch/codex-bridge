@@ -2,9 +2,12 @@ import MCP
 
 extension MCPServiceToolCatalog {
   static let projectIDInput = objectSchema(
-    properties: ["project_id": boundedStringSchema(maximum: 128)],
+    properties: ["project_id": opaqueProjectIDSchema],
     required: ["project_id"]
   )
+
+  static let opaqueProjectIDSchema = MCPSharedToolSchemas.opaqueProjectID
+  static let optionalOpaqueProjectIDSchema = MCPSharedToolSchemas.optionalOpaqueProjectID
 
   static let capabilitiesSchema = objectSchema(
     properties: [
@@ -261,14 +264,36 @@ extension MCPServiceToolCatalog {
   static let errorSchema = objectSchema(
     properties: [
       "code": stringSchema,
+      "category": errorCategorySchema,
       "message": stringSchema,
       "retryable": boolSchema,
+      "next_action": stringSchema,
+      "owner": stringSchema,
+      "task_id": stringSchema,
+      "operation_id": stringSchema,
+      "session_id": stringSchema,
+      "data": MCPSharedToolSchemas.errorData,
     ],
-    required: ["code", "message", "retryable"]
+    required: ["code", "category", "message", "retryable", "next_action"]
   )
+
+  static let errorCategorySchema: Value = [
+    "type": "string",
+    "enum": [
+      "caller_error", "state_conflict", "policy_denied", "approval_required",
+      "capability_unavailable", "infrastructure_failure",
+    ],
+  ]
 
   static let stringSchema: Value = ["type": "string"]
   static let boolSchema: Value = ["type": "boolean"]
+
+  static func receiptTypeSchema(_ values: [String]) -> Value {
+    if values.count == 1, let value = values.first {
+      return ["type": "string", "const": .string(value)]
+    }
+    return ["type": "string", "enum": .array(values.map(Value.string))]
+  }
 
   static func boundedStringSchema(maximum: Int) -> Value {
     ["type": "string", "maxLength": .int(maximum)]

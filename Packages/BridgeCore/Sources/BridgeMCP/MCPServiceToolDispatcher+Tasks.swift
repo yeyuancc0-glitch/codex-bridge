@@ -35,7 +35,9 @@ extension MCPServiceToolDispatcher {
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceRunSkillAction(request, deadline: deadline)
     }
-    return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
+    return try resultEncoder.encode(
+      ServiceDirectExecOutput(receipt: receipt, receiptType: .skillAction)
+    )
   }
 
   private func callGetTask(_ arguments: [String: Value]?) async throws -> CallTool.Result {
@@ -90,7 +92,7 @@ extension MCPServiceToolDispatcher {
     let turnID = try values.requiredIdentifier("expected_turn_id", maximumUTF8Bytes: 1_024)
     let input = try values.requiredText("input", maximumUTF8Bytes: 32 * 1_024)
     guard OutboundContentSecurity.isSafe(input) else {
-      throw MCPError.invalidParams("Task input contains restricted local data.")
+      throw BridgeMCPQueryError.unsafeContentDetected
     }
     let deadline = clock.now.advanced(by: deadlines.mutation)
     let receipt = try await withToolDeadline(until: deadline) {

@@ -1085,6 +1085,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
       initial.builtInCommands.contains {
         $0.executable == "npm" && $0.argumentsPrefix == ["run", "build"]
       })
+    XCTAssertEqual(initial.recommendedUsage["swift_build"]?.argv, ["swift", "build"])
+    XCTAssertNil(initial.recommendedUsage["swift_build"]?.commandID)
 
     _ = try await fixture.projects.updateWorkspaceConfiguration(
       directCommandMode: .safe,
@@ -1117,6 +1119,16 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(commands.commands[0].name, "Codex Bridge Tests")
     XCTAssertEqual(commands.commands[1].risk, "elevated")
     XCTAssertTrue(commands.commands[1].requiresNetwork)
+    XCTAssertNotNil(commands.recommendedUsage["swift_build"])
+    XCTAssertNotNil(commands.recommendedUsage["swift_test"])
+    XCTAssertEqual(
+      commands.recommendedUsage["wcmd-tests"]?.argv,
+      [
+        "Scripts/with-xcode.sh", "swift", "test", "--package-path", "Packages/BridgeCore",
+      ]
+    )
+    XCTAssertEqual(commands.recommendedUsage["wcmd-tests"]?.commandID, "wcmd-tests")
+    XCTAssertNil(commands.recommendedUsage["wcmd-deploy"])
 
     let detail = try await application.serviceProject(
       projectID: fixture.project.id.rawValue,
@@ -1126,6 +1138,16 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(workspace.fileWritePermission, "requiresLocalApproval")
     XCTAssertEqual(workspace.commandMode, "safe")
     XCTAssertEqual(workspace.commands.count, 2)
+
+    _ = try await fixture.projects.updateAccessPolicy(
+      ProjectAccessPolicy(read: .allowed, write: .denied, network: .allowed),
+      projectID: fixture.project.id
+    )
+    let denied = try await application.serviceProjectCommands(
+      projectID: fixture.project.id.rawValue,
+      deadline: deadline
+    )
+    XCTAssertTrue(denied.recommendedUsage.isEmpty)
   }
 
   func testAdditiveDirectResponseFieldsDecodeLegacyPayloads() throws {
@@ -1209,6 +1231,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ))
 
     XCTAssertEqual(success.isError, false)
+    XCTAssertEqual(
+      success.structuredContent?.objectValue?["receipt_type"], .string("file_mutation"))
     XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "alpha\nnew\nomega\n")
 
     let invalid = try await dispatcher.call(
@@ -1221,8 +1245,66 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ))
     XCTAssertEqual(invalid.isError, true)
     let error = invalid.structuredContent?.objectValue?["error"]?.objectValue
-    XCTAssertEqual(error?["code"], .string("invalid_patch"))
+    XCTAssertEqual(error?["code"], .string("invalid_patch_syntax"))
+    XCTAssertEqual(error?["category"], .string("caller_error"))
+    XCTAssertEqual(error?["retryable"], .bool(false))
+    XCTAssertEqual(error?["next_action"], .string("fix_patch_syntax"))
     XCTAssertTrue(error?["message"]?.stringValue?.contains("standard ---/+++") == true)
+
+    let invalidArguments = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: ["patch": .string("not a patch")]
+      ))
+    XCTAssertEqual(invalidArguments.isError, true)
+    let argumentError = invalidArguments.structuredContent?.objectValue?["error"]?.objectValue
+    XCTAssertEqual(argumentError?["code"], .string("invalid_arguments"))
+    XCTAssertEqual(argumentError?["category"], .string("caller_error"))
+    XCTAssertEqual(argumentError?["next_action"], .string("fix_tool_arguments"))
+
+    let absolutePath = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "patch": .string("*** Add File: /tmp/outside.txt\n@@\n+blocked"),
+        ]
+      ))
+    let absolutePathError =
+      absolutePath.structuredContent?.objectValue?["error"]?.objectValue
+    XCTAssertEqual(absolutePathError?["code"], .string("path_forbidden"))
+    XCTAssertEqual(absolutePathError?["category"], .string("policy_denied"))
+
+    let missingContext = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "patch": .string(
+            "*** Update File: patch-target.txt\n@@\n-missing value\n+replacement"
+          ),
+        ]
+      ))
+    let missingError = missingContext.structuredContent?.objectValue?["error"]?.objectValue
+    XCTAssertEqual(missingError?["code"], .string("patch_context_not_found"))
+    XCTAssertEqual(missingError?["category"], .string("state_conflict"))
+    XCTAssertEqual(missingError?["retryable"], .bool(true))
+    XCTAssertEqual(
+      missingError?["next_action"], .string("read_file_and_retry_smaller_patch"))
+
+    try Data("repeat\nrepeat\n".utf8).write(to: target)
+    let nonUniqueContext = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "patch": .string("*** Update File: patch-target.txt\n@@\n-repeat\n+changed"),
+        ]
+      ))
+    let nonUniqueError =
+      nonUniqueContext.structuredContent?.objectValue?["error"]?.objectValue
+    XCTAssertEqual(nonUniqueError?["code"], .string("patch_context_non_unique"))
+    XCTAssertEqual(nonUniqueError?["category"], .string("state_conflict"))
   }
 
   func testDirectWriteStdinClosesEOFAndFlushesGrepThroughMCPDispatcher() async throws {
@@ -1233,22 +1315,36 @@ final class BridgeServiceApplicationTests: XCTestCase {
       .auto, deadline: ContinuousClock.now.advanced(by: .seconds(3)))
     let dispatcher = MCPServiceToolDispatcher(service: application, exposureMode: .full)
 
-    do {
-      _ = try await dispatcher.call(
-        .init(
-          name: MCPServiceToolName.directExecCommand.rawValue,
-          arguments: [
-            "project_id": .string(fixture.project.id.rawValue),
-            "argv": .array([.string("/usr/bin/grep"), .string("needle")]),
-            "tty": .bool(true),
-          ]
-        ))
-      XCTFail("Expected tty=true to be rejected")
-    } catch let error as MCPError {
-      guard case .invalidParams = error else {
-        return XCTFail("Unexpected MCP error: \(error)")
-      }
-    }
+    let rejectedTTY = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directExecCommand.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "argv": .array([.string("/usr/bin/grep"), .string("needle")]),
+          "tty": .bool(true),
+        ]
+      ))
+    XCTAssertEqual(rejectedTTY.isError, true)
+    XCTAssertEqual(
+      rejectedTTY.structuredContent?.objectValue?["error"]?.objectValue?["code"],
+      .string("invalid_arguments")
+    )
+
+    let unregistered = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directExecCommand.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "argv": .array([
+            .string(
+              "/Volumes/fanch/Applications/Xcode-beta.app/Contents/Developer/usr/bin/xcodebuild")
+          ]),
+        ]
+      ))
+    let commandError = unregistered.structuredContent?.objectValue?["error"]?.objectValue
+    XCTAssertEqual(commandError?["code"], .string("command_not_registered"))
+    XCTAssertEqual(commandError?["category"], .string("policy_denied"))
+    XCTAssertEqual(commandError?["next_action"], .string("list_project_commands"))
 
     let launched = try await dispatcher.call(
       .init(
@@ -1262,6 +1358,8 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ))
     let sessionID = try XCTUnwrap(
       launched.structuredContent?.objectValue?["session_id"]?.stringValue)
+    XCTAssertEqual(
+      launched.structuredContent?.objectValue?["receipt_type"], .string("direct_command"))
 
     let written = try await dispatcher.call(
       .init(
@@ -1274,6 +1372,11 @@ final class BridgeServiceApplicationTests: XCTestCase {
       ))
     XCTAssertEqual(written.structuredContent?.objectValue?["bytes_written"], .int(21))
     XCTAssertEqual(written.structuredContent?.objectValue?["stdin_closed"], .bool(true))
+    XCTAssertEqual(written.structuredContent?.objectValue?["session_id"], .string(sessionID))
+    XCTAssertEqual(
+      written.structuredContent?.objectValue?["receipt_type"],
+      .string("direct_command_input")
+    )
 
     let output = try await waitForCommand(
       application,
@@ -1323,6 +1426,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(readContent["command_timed_out"], .bool(false))
     XCTAssertEqual(readContent["read_timeout"], .bool(true))
     XCTAssertNotNil(readContent["execution_environment"])
+    XCTAssertEqual(readContent["receipt_type"], .string("direct_command"))
 
     _ = try await dispatcher.call(
       .init(
@@ -1495,6 +1599,10 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
     let result = try await context.value
     XCTAssertEqual(result.isError, false)
+    XCTAssertEqual(
+      result.structuredContent?.objectValue?["receipt_type"], .string("provider_task")
+    )
+    XCTAssertNotNil(result.structuredContent?.objectValue?["task_id"]?.stringValue)
     XCTAssertEqual(
       result.structuredContent?.objectValue?["status"],
       .string(ServiceTaskStatus.awaitingLocalApproval.rawValue)
@@ -1833,6 +1941,7 @@ final class BridgeServiceApplicationTests: XCTestCase {
     )
     XCTAssertEqual(result.isError, false)
     let outputObj = result.structuredContent?.objectValue
+    XCTAssertEqual(outputObj?["receipt_type"], .string("skill_action"))
     XCTAssertEqual(outputObj?["status"], .string("ended"))
     XCTAssertEqual(outputObj?["exit_code"], .int(0))
     let output = outputObj?["output"]?.objectValue

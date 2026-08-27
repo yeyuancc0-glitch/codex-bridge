@@ -176,10 +176,46 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
   ) async throws -> MCPProjectCommands {
     try Self.checkDeadline(deadline)
     let project = try await readableProject(projectID)
+    let commands = project.workspaceCommands.map(Self.projectCommand)
+    var recommendedUsage: [String: MCPRecommendedCommandUsage] = [:]
+    for rule in commandPolicy.effectiveSafeCommandRules {
+      guard let key = Self.builtInRecommendationKey(rule) else { continue }
+      let argv = [rule.executable] + rule.argumentsPrefix
+      let resolution = commandPolicy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id,
+          commandID: nil,
+          argv: argv,
+          requiresNetwork: rule.requiresNetwork
+        )
+      )
+      guard resolution.allowed else { continue }
+      recommendedUsage[key] = MCPRecommendedCommandUsage(argv: argv)
+    }
+    for command in commands {
+      let resolution = commandPolicy.resolve(
+        project: project,
+        request: DirectCommandRequest(
+          projectID: project.id,
+          commandID: command.commandID,
+          argv: [command.executable] + command.arguments,
+          workingDirectory: command.workingDirectory,
+          requiresNetwork: command.requiresNetwork
+        )
+      )
+      guard resolution.allowed else { continue }
+      recommendedUsage[command.commandID] = MCPRecommendedCommandUsage(
+        commandID: command.commandID,
+        argv: [command.executable] + command.arguments,
+        workingDirectory: command.workingDirectory
+      )
+    }
     return MCPProjectCommands(
       commandMode: project.directCommandMode.rawValue,
       builtInCommands: builtInCommands(),
-      commands: project.workspaceCommands.map(Self.projectCommand)
+      commands: commands,
+      recommendedUsage: recommendedUsage
     )
   }
 
@@ -191,6 +227,23 @@ public actor BridgeServiceApplication: BridgeMCPServiceAPI {
         requiresNetwork: rule.requiresNetwork
       )
     }
+  }
+
+  private static func builtInRecommendationKey(
+    _ rule: DirectCommandPolicy.DirectSafeCommandRule
+  ) -> String? {
+    let executable = URL(fileURLWithPath: rule.executable).lastPathComponent
+    if rule.argumentsPrefix.isEmpty, !["pwd", "ls"].contains(executable) { return nil }
+    if ["-project", "-workspace"].contains(rule.argumentsPrefix.last) { return nil }
+    let components: [String] = ([executable] + rule.argumentsPrefix).map { component in
+      String(
+        component.lowercased().map { character in
+          character.isLetter || character.isNumber ? character : "_"
+        })
+    }
+    let key = components.joined(separator: "_")
+    return key.replacingOccurrences(of: "__", with: "_")
+      .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
   }
 
   public func serviceSearchProjectFiles(

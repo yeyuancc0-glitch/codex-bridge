@@ -1068,7 +1068,7 @@ final class DirectApprovalFlowTests: XCTestCase {
       )
       XCTFail("Expected invalid patch")
     } catch let error as BridgeMCPQueryError {
-      XCTAssertEqual(error, .invalidPatch)
+      XCTAssertEqual(error, .invalidPatchSyntax)
     }
 
     let receipt = try await application.serviceDirectWriteFile(

@@ -37,7 +37,8 @@ public struct MCPServerFactory: Sendable {
       title: "Codex Bridge",
       instructions: "This server controls only user-approved local Codex projects. Always list "
         + "projects, threads, and models before starting a task. Never invent project IDs, "
-        + "thread IDs, model IDs, or paths.",
+        + "thread IDs, model IDs, or paths. Never report an operation as executed unless its "
+        + "tool call returned an authoritative receipt.",
       capabilities: .init(tools: .init(listChanged: false)),
       configuration: .strict
     )

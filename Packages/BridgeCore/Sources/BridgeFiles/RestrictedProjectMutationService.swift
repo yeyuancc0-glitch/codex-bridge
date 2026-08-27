@@ -140,7 +140,7 @@ public struct RestrictedProjectMutationService: Sendable {
     for operation in operations {
       let path = try securePath(operation.relativePath)
       guard paths.insert(path.value).inserted else {
-        throw ProjectMutationError.invalidPatch
+        throw ProjectMutationError.invalidPatchSyntax
       }
       guard resolver.sensitivePolicy.allows(path) else {
         throw ProjectMutationError.forbiddenPath
@@ -161,7 +161,7 @@ public struct RestrictedProjectMutationService: Sendable {
     case "update":
       return try stageUpdate(operation, at: path, resolver: resolver)
     default:
-      throw ProjectMutationError.invalidPatch
+      throw ProjectMutationError.invalidPatchSyntax
     }
   }
 
@@ -246,6 +246,7 @@ public struct RestrictedProjectMutationService: Sendable {
       }
       return committed
     } catch {
+      guard !committedFiles.isEmpty else { throw error }
       let rolledBack = rollback(staged: committedFiles, resolver: resolver)
       let changedPaths = committedFiles.map { $0.path.value }
       throw ProjectMutationError.partialCommit(
@@ -270,9 +271,11 @@ public struct RestrictedProjectMutationService: Sendable {
         expectedSHA256: file.expectedSHA256,
         createParents: true
       )
-    } catch let PathSecurityError.mutationAppliedDurabilityUncertain(code) {
-      committedFiles.append(file)
-      throw PathSecurityError.mutationAppliedDurabilityUncertain(code)
+    } catch let error as PathSecurityError {
+      if case .mutationAppliedDurabilityUncertain = error {
+        committedFiles.append(file)
+      }
+      throw Self.mapSecurityError(error)
     }
     committedFiles.append(file)
     return ProjectMutationResult(
@@ -407,18 +410,21 @@ public struct RestrictedProjectMutationService: Sendable {
   private func apply(hunk: ProjectPatchHunk, to content: String) throws -> String {
     let before = hunk.removals
     let after = hunk.additions
-    guard !before.isEmpty else { throw ProjectMutationError.invalidPatch }
+    guard !before.isEmpty else { throw ProjectMutationError.invalidPatchSyntax }
     let lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     let matches = indices(of: before, in: lines)
     guard !matches.isEmpty else {
-      throw ProjectMutationError.invalidPatch
+      throw ProjectMutationError.patchContextNotFound
     }
     let candidates =
       matches.count == 1
       ? matches
       : narrow(matches: matches, using: hunk.context, in: lines)
+    guard !candidates.isEmpty else {
+      throw ProjectMutationError.patchContextNotFound
+    }
     guard candidates.count == 1, let matchIndex = candidates.first else {
-      throw ProjectMutationError.invalidPatch
+      throw ProjectMutationError.patchContextNonUnique
     }
     var updated = lines
     updated.replaceSubrange(matchIndex..<(matchIndex + before.count), with: after)

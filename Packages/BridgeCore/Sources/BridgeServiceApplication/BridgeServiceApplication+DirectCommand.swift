@@ -87,7 +87,9 @@ extension BridgeServiceApplication {
       )
     )
     guard resolution.allowed else {
-      throw BridgeMCPQueryError.commandDenied(Self.denialMessage(resolution.reason))
+      throw BridgeMCPQueryError.commandDenied(
+        Self.commandDenialReason(resolution.reason).rawValue
+      )
     }
     let workingDirectory = try Self.resolvedWorkingDirectory(
       project: project,
@@ -420,16 +422,14 @@ extension BridgeServiceApplication {
     return resolved
   }
 
-  static func denialMessage(_ reason: DirectCommandDenialReason?) -> String {
+  static func commandDenialReason(_ reason: DirectCommandDenialReason?) -> MCPCommandDenialReason {
     switch reason {
-    case .commandModeDenied: "direct commands are disabled for this project"
-    case .commandNotRegistered: "command is not registered for this project"
-    case .invalidArguments: "invalid command arguments"
-    case .unknownCommand: "unknown command"
-    case .networkNotAllowed: "network access is not allowed for this project"
-    case .writeNotAllowed: "project write access is denied"
-    case .blacklisted: "command is blacklisted for this project"
-    case nil: "command denied"
+    case .commandModeDenied: .commandModeDenied
+    case .commandNotRegistered, .unknownCommand: .commandNotRegistered
+    case .invalidArguments, nil: .invalidArguments
+    case .networkNotAllowed: .networkDenied
+    case .writeNotAllowed: .writeDenied
+    case .blacklisted: .blacklisted
     }
   }
 

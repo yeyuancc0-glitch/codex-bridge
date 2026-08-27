@@ -28,6 +28,7 @@ extension MCPToolCatalog {
     annotations: readOnlyTaskAnnotations,
     outputSchema: taskOutputSchema(
       properties: [
+        "receipt_type": ["type": "string", "const": "provider_task"],
         "task_id": taskString,
         "events": taskArray(taskEventSchema),
         "next_after_seq": taskInteger(minimum: 0),
@@ -94,7 +95,7 @@ extension MCPToolCatalog {
         "local_approval_required": ["type": "boolean"],
       ],
       required: [
-        "task_id", "phase", "reused_existing_task", "local_approval_required",
+        "receipt_type", "task_id", "phase", "reused_existing_task", "local_approval_required",
       ]
     )
   )
@@ -156,7 +157,7 @@ extension MCPToolCatalog {
   private static let taskSubmissionSchema = taskObjectSchema(
     properties: [
       "idempotency_key": taskBoundedString(512),
-      "project_id": taskBoundedString(128),
+      "project_id": MCPSharedToolSchemas.opaqueProjectID,
       "thread": threadTargetSchema,
       "execution": taskObjectSchema(
         properties: [
@@ -245,6 +246,7 @@ extension MCPToolCatalog {
 
   private static let taskSnapshotSchema = taskObjectSchema(
     properties: [
+      "receipt_type": ["type": "string", "const": "task_mutation"],
       "task_id": taskString,
       "phase": taskString,
       "activity": taskString,
@@ -317,17 +319,32 @@ extension MCPToolCatalog {
       "accepted": ["type": "boolean"],
       "operation_id": taskString,
     ],
-    required: ["task_id", "phase", "accepted", "operation_id"]
+    required: ["receipt_type", "task_id", "phase", "accepted", "operation_id"]
   )
 
   private static let taskErrorSchema = taskObjectSchema(
     properties: [
       "code": taskString,
+      "category": taskErrorCategorySchema,
       "message": taskString,
       "retryable": ["type": "boolean"],
+      "next_action": taskString,
+      "owner": taskString,
+      "task_id": taskString,
+      "operation_id": taskString,
+      "session_id": taskString,
+      "data": MCPSharedToolSchemas.errorData,
     ],
-    required: ["code", "message", "retryable"]
+    required: ["code", "category", "message", "retryable", "next_action"]
   )
+
+  private static let taskErrorCategorySchema: Value = [
+    "type": "string",
+    "enum": [
+      "caller_error", "state_conflict", "policy_denied", "approval_required",
+      "capability_unavailable", "infrastructure_failure",
+    ],
+  ]
 
   private static let taskString: Value = ["type": "string"]
 

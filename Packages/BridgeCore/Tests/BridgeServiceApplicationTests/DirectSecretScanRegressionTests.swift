@@ -91,24 +91,22 @@ final class DirectSecretScanRegressionTests: XCTestCase {
     XCTAssertFalse(String(describing: removal.structuredContent).contains("definitely-secret"))
     XCTAssertEqual(try String(contentsOf: target), "let safeValue = 1\n")
 
-    do {
-      _ = try await dispatcher.call(
-        .init(
-          name: MCPServiceToolName.directApplyProjectPatch.rawValue,
-          arguments: [
-            "project_id": .string(fixture.project.id.rawValue),
-            "patch": .string(
-              "*** Update File: \(target.lastPathComponent)\n@@\n-let safeValue = 1\n+const api_key = \"new-secret-value\";"
-            ),
-          ]
-        )
+    let rejected = try await dispatcher.call(
+      .init(
+        name: MCPServiceToolName.directApplyProjectPatch.rawValue,
+        arguments: [
+          "project_id": .string(fixture.project.id.rawValue),
+          "patch": .string(
+            "*** Update File: \(target.lastPathComponent)\n@@\n-let safeValue = 1\n+const api_key = \"new-secret-value\";"
+          ),
+        ]
       )
-      XCTFail("Expected a credential introduced by the patch to be rejected")
-    } catch let error as MCPError {
-      guard case .invalidParams = error else {
-        return XCTFail("Unexpected MCP error: \(error)")
-      }
-    }
+    )
+    XCTAssertEqual(rejected.isError, true)
+    XCTAssertEqual(
+      rejected.structuredContent?.objectValue?["error"]?.objectValue?["code"],
+      .string("unsafe_content_detected")
+    )
   }
 
   private func sha256(_ data: Data) -> String {

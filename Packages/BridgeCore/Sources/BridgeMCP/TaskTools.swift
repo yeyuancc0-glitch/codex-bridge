@@ -504,6 +504,7 @@ struct GetFinalReportOutput: Codable, Sendable {
 
 struct SubmitTaskOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "provider_task"
   let taskID: String
   let phase: String
   let reusedExistingTask: Bool
@@ -518,6 +519,7 @@ struct SubmitTaskOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case taskID = "task_id"
     case phase
     case reusedExistingTask = "reused_existing_task"
@@ -527,6 +529,7 @@ struct SubmitTaskOutput: Codable, Sendable {
 
 struct MutateTaskOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "task_mutation"
   let taskID: String
   let phase: String
   let accepted: Bool
@@ -541,6 +544,7 @@ struct MutateTaskOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case taskID = "task_id"
     case phase
     case accepted

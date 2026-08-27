@@ -145,7 +145,7 @@ public struct MCPToolCatalog: Sendable {
     description: "List Codex threads bound to one approved project.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maxLength: 128),
+        "project_id": MCPSharedToolSchemas.opaqueProjectID,
         "cursor": nullableStringSchema(maxLength: 2_048),
         "limit": integerSchema(minimum: 1, maximum: 100),
         "search": nullableStringSchema(maxLength: 200),
@@ -168,7 +168,7 @@ public struct MCPToolCatalog: Sendable {
     description: "Read a summary or one bounded page of a project-bound Codex thread.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maxLength: 128),
+        "project_id": MCPSharedToolSchemas.opaqueProjectID,
         "thread_id": boundedStringSchema(maxLength: 256),
         "detail": ["type": "string", "enum": ["summary", "full"]],
         "cursor": nullableStringSchema(maxLength: 2_048),
@@ -265,11 +265,26 @@ public struct MCPToolCatalog: Sendable {
   private static let errorSchema = objectSchema(
     properties: [
       "code": stringSchema,
+      "category": errorCategorySchema,
       "message": stringSchema,
       "retryable": ["type": "boolean"],
+      "next_action": stringSchema,
+      "owner": stringSchema,
+      "task_id": stringSchema,
+      "operation_id": stringSchema,
+      "session_id": stringSchema,
+      "data": MCPSharedToolSchemas.errorData,
     ],
-    required: ["code", "message", "retryable"]
+    required: ["code", "category", "message", "retryable", "next_action"]
   )
+
+  private static let errorCategorySchema: Value = [
+    "type": "string",
+    "enum": [
+      "caller_error", "state_conflict", "policy_denied", "approval_required",
+      "capability_unavailable", "infrastructure_failure",
+    ],
+  ]
 
   private static let stringSchema: Value = ["type": "string"]
 

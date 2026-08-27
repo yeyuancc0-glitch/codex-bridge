@@ -19,7 +19,7 @@ extension MCPToolCatalog {
     description: "Search bounded text in one approved project and return relative paths only.",
     inputSchema: projectObject(
       properties: [
-        "project_id": projectBoundedString(128),
+        "project_id": MCPSharedToolSchemas.opaqueProjectID,
         "query": projectBoundedString(512),
         "relative_directory": projectNullableString(1_024),
         "case_sensitive": ["type": "boolean"],
@@ -47,7 +47,7 @@ extension MCPToolCatalog {
       + "project path; larger files page via next_start_line.",
     inputSchema: projectObject(
       properties: [
-        "project_id": projectBoundedString(128),
+        "project_id": MCPSharedToolSchemas.opaqueProjectID,
         "relative_path": projectBoundedString(1_024),
         "start_line": projectInteger(minimum: 1),
         "line_count": projectInteger(minimum: 1, maximum: 10_000),
@@ -77,7 +77,7 @@ extension MCPToolCatalog {
     description: "Navigate the local Codex app to a verified project-bound thread.",
     inputSchema: projectObject(
       properties: [
-        "project_id": projectBoundedString(128),
+        "project_id": MCPSharedToolSchemas.opaqueProjectID,
         "thread_id": projectBoundedString(256),
       ],
       required: ["project_id", "thread_id"]
@@ -106,7 +106,7 @@ extension MCPToolCatalog {
   )
 
   private static let projectIDInput = projectObject(
-    properties: ["project_id": projectBoundedString(128)],
+    properties: ["project_id": MCPSharedToolSchemas.opaqueProjectID],
     required: ["project_id"]
   )
 
@@ -144,11 +144,26 @@ extension MCPToolCatalog {
   private static let projectErrorSchema = projectObject(
     properties: [
       "code": projectString,
+      "category": projectErrorCategorySchema,
       "message": projectString,
       "retryable": ["type": "boolean"],
+      "next_action": projectString,
+      "owner": projectString,
+      "task_id": projectString,
+      "operation_id": projectString,
+      "session_id": projectString,
+      "data": MCPSharedToolSchemas.errorData,
     ],
-    required: ["code", "message", "retryable"]
+    required: ["code", "category", "message", "retryable", "next_action"]
   )
+
+  private static let projectErrorCategorySchema: Value = [
+    "type": "string",
+    "enum": [
+      "caller_error", "state_conflict", "policy_denied", "approval_required",
+      "capability_unavailable", "infrastructure_failure",
+    ],
+  ]
 
   private static let projectString: Value = ["type": "string"]
 

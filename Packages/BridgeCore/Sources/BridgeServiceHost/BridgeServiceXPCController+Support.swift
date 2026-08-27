@@ -423,13 +423,28 @@ extension BridgeServiceXPCController {
           message: "The local user denied this action.",
           retryable: true
         )
-      case .invalidPatch:
+      case .invalidPatch, .invalidPatchSyntax:
         return .init(
-          code: "invalid_patch",
-          message:
-            "The patch syntax was invalid or its exact context did not match. Read the file, then "
-            + "use *** Update File with space/-/+ lines, *** Add File with + lines, or a standard "
-            + "---/+++ unified diff."
+          code: "invalid_patch_syntax",
+          message: "The patch syntax is invalid."
+        )
+      case .patchContextNotFound:
+        return .init(
+          code: "patch_context_not_found",
+          message: "The exact patch context was not found.",
+          retryable: true
+        )
+      case .patchContextNonUnique:
+        return .init(
+          code: "patch_context_non_unique",
+          message: "The exact patch context matched more than one location.",
+          retryable: true
+        )
+      case .patchContextStale:
+        return .init(
+          code: "patch_context_stale",
+          message: "The file revision changed after the patch was prepared.",
+          retryable: true
         )
       case .notGitRepository:
         return .init(code: "not_git_repository", message: "The project is not a Git repository.")
@@ -450,6 +465,12 @@ extension BridgeServiceXPCController {
           retryable: true
         )
       case .commandDenied(let reason):
+        if let structuredReason = MCPCommandDenialReason(rawValue: reason) {
+          return .init(
+            code: structuredReason.rawValue,
+            message: "The requested command was denied by the project policy."
+          )
+        }
         return .init(
           code: "command_denied",
           message: "The requested command was denied: \(reason)"
@@ -486,6 +507,17 @@ extension BridgeServiceXPCController {
         return .init(
           code: "unsafe_content_detected",
           message: "The content contains restricted credential material."
+        )
+      case .binaryContentUnsupported:
+        return .init(
+          code: "binary_content_unsupported",
+          message: "Direct file mutation supports UTF-8 text files only."
+        )
+      case .patchPartialCommit(let partialCommit):
+        return .init(
+          code: "patch_partial_commit",
+          message:
+            "The multi-file patch did not complete (rollback: \(partialCommit.rollbackStatus))."
         )
       }
     }

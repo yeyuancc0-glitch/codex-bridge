@@ -159,6 +159,7 @@ extension MCPServiceToolDispatcher {
     }
     return try resultEncoder.encode(
       ServiceDirectWriteStdinOutput(
+        sessionID: sessionID,
         bytesWritten: data.utf8.count,
         stdinClosed: closeStdin
       )
@@ -195,6 +196,9 @@ extension MCPServiceToolDispatcher {
   }
 
   private func encodePatchReceipt(_ receipt: MCPDirectPatchReceipt) throws -> CallTool.Result {
+    if let partialCommit = receipt.partialCommit {
+      throw BridgeMCPQueryError.patchPartialCommit(partialCommit)
+    }
     do {
       return try resultEncoder.encode(ServiceDirectPatchOutput(receipt: receipt))
     } catch is MCPToolResultEncodingError {

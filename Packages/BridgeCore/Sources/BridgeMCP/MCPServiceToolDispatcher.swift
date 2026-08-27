@@ -89,6 +89,9 @@ public struct MCPServiceToolDispatcher: Sendable {
     } catch let error as MCPToolResultEncodingError {
       return try encodeResultError(error)
     } catch let error as MCPError {
+      if case .invalidParams(let detail) = error {
+        return try encodeInvalidParameters(detail)
+      }
       throw error
     } catch is CancellationError {
       throw CancellationError()
