@@ -407,6 +407,49 @@ public actor SimpleServiceStore {
     }
   }
 
+  public func task(
+    providerSessionID: String,
+    providerID: String,
+    installationID: String,
+    projectID: ProjectID
+  ) throws -> ServiceTaskRecord? {
+    try ServiceValidation.identifier(
+      providerSessionID,
+      field: "task.providerSessionID",
+      maximumBytes: 1_024
+    )
+    try ServiceValidation.identifier(providerID, field: "task.providerID", maximumBytes: 64)
+    try ServiceValidation.identifier(
+      installationID,
+      field: "task.installationID",
+      maximumBytes: 256
+    )
+    do {
+      return try database.read { db in
+        try Row.fetchOne(
+          db,
+          sql: """
+            SELECT * FROM bridge_service_tasks
+            WHERE project_id = ?
+              AND provider_id = ?
+              AND installation_id = ?
+              AND (provider_session_id = ? OR requested_thread_id = ?)
+            ORDER BY updated_at DESC, task_id
+            LIMIT 1
+            """,
+          arguments: [
+            projectID.rawValue, providerID, installationID, providerSessionID,
+            providerSessionID,
+          ]
+        ).map(Self.decodeTask)
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
   public func tasks(projectID: ProjectID? = nil, limit: Int = 100) throws
     -> [ServiceTaskRecord]
   {

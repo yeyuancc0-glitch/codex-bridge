@@ -316,7 +316,6 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.contractRejected
     }
     guard
-      submission.threadID == nil,
       submission.supervisorModel == nil,
       submission.supervisorEffort == nil,
       submission.skillName == nil
@@ -368,6 +367,21 @@ extension BridgeServiceApplication {
       .sorted { $0.id.rawValue < $1.id.rawValue }
     let record = try Self.selectAgentInstallation(
       requested: submission.installationID, from: selectable)
+    if let requestedSessionID = submission.threadID {
+      guard
+        let previous = try await tasks.task(
+          providerSessionID: requestedSessionID,
+          providerID: AgentProviderID.openCode.rawValue,
+          installationID: record.id.rawValue,
+          projectID: project.id
+        )
+      else {
+        throw BridgeMCPQueryError.taskNotFound
+      }
+      guard previous.state.status.isTerminal else {
+        throw BridgeMCPQueryError.invalidTaskState
+      }
+    }
     let modelCatalog = try? await registry.models(
       installationID: record.id,
       projectRoot: project.root.canonicalPath,
@@ -413,6 +427,7 @@ extension BridgeServiceApplication {
         sourceClientID: sourceClientID,
         clientRequestID: submission.clientRequestID,
         prompt: prompt,
+        requestedThreadID: submission.threadID,
         providerID: AgentProviderID.openCode.rawValue,
         installationID: record.id.rawValue,
         selectionMode: .explicit,

@@ -136,6 +136,46 @@ final class OpenCodeACPProfileTests: XCTestCase {
     )
   }
 
+  func testPersistentDatabaseIsSharedWithoutSharingPerRunHome() throws {
+    let root = try makeTemporaryDirectory(prefix: "project")
+    let sourceHome = try makeTemporaryDirectory(prefix: "source-home")
+    let persistentState = temporaryPath(prefix: "persistent-state")
+    let runtimeOne = temporaryPath(prefix: "runtime-one")
+    let runtimeTwo = temporaryPath(prefix: "runtime-two")
+    addTeardownBlock {
+      for path in [root, sourceHome, persistentState, runtimeOne, runtimeTwo] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+    let installation = try AgentInstallation(
+      id: AgentInstallationID(rawValue: "opencode-persistent"),
+      providerID: .openCode,
+      executablePath: "/bin/echo"
+    )
+    let builder = OpenCodeACPLaunchBuilder()
+    let first = try builder.make(
+      installation: installation,
+      projectRoot: root,
+      runDirectory: runtimeOne,
+      persistentStateDirectory: persistentState,
+      networkAllowed: false,
+      sourceEnvironment: ["HOME": sourceHome]
+    )
+    let second = try builder.make(
+      installation: installation,
+      projectRoot: root,
+      runDirectory: runtimeTwo,
+      persistentStateDirectory: persistentState,
+      networkAllowed: false,
+      sourceEnvironment: ["HOME": sourceHome]
+    )
+
+    XCTAssertEqual(
+      first.process.environment["OPENCODE_DB"], second.process.environment["OPENCODE_DB"])
+    XCTAssertNotEqual(first.process.environment["HOME"], second.process.environment["HOME"])
+    XCTAssertEqual(try permissions(of: persistentState), 0o700)
+  }
+
   func testRejectsWorldWritableExecutable() throws {
     let root = try makeTemporaryDirectory(prefix: "unsafe-executable")
     let executable = URL(fileURLWithPath: root).appendingPathComponent("opencode").path

@@ -57,7 +57,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
 
     func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
       let capabilities: Set<AgentCapability> = [
-        .sessionCreate, .interrupt, .steer, .textDelta, .reasoningDelta,
+        .sessionCreate, .sessionContinue, .interrupt, .steer, .textDelta, .reasoningDelta,
         .toolLifecycle, .plan, .usage, .workspaceRead, .profileSelection,
       ]
 
@@ -317,6 +317,90 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(provider.startedRequests[0].workspaceStrategy, .exclusiveProject)
     XCTAssertTrue(provider.startedRequests[0].requiredCapabilities.contains(.workspaceWriteInPlace))
     await handle.shutdown()
+  }
+
+  func testOpenCodeSubmissionContinuesRequestedProviderSession() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let firstTaskID = TaskID(rawValue: "tsk-session-first")
+    _ = try await fixture.tasks.submit(
+      ServiceTaskRequest(
+        projectID: fixture.project.id,
+        source: .mcpClient,
+        sourceClientID: MCPClientID.chatGPT.rawValue,
+        clientRequestID: "agent-session-first",
+        prompt: "Start the analysis.",
+        providerID: AgentProviderID.openCode.rawValue,
+        installationID: "ainst-route-opencode",
+        selectionMode: .explicit,
+        executionModel: serviceDefaultProviderExecutionModel,
+        executionEffort: serviceDefaultProviderExecutionEffort,
+        permissionMode: .readOnly
+      ),
+      taskID: firstTaskID
+    )
+    _ = try await fixture.tasks.approveAndBegin(taskID: firstTaskID)
+    let sessionID = "session-existing"
+    _ = try await fixture.tasks.markAgentExecutionStarted(
+      taskID: firstTaskID,
+      providerSessionID: sessionID,
+      providerRunID: "run-first"
+    )
+    _ = try await fixture.tasks.complete(
+      taskID: firstTaskID,
+      resultSummary: "Initial analysis complete.",
+      changedFiles: []
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Continue the prior analysis.",
+        threadID: sessionID,
+        providerID: "opencode",
+        permissionMode: "read-only",
+        clientRequestID: "agent-session-continue"
+      ),
+      deadline: deadline
+    )
+
+    let taskID = TaskID(rawValue: receipt.taskID)
+    let taskRecord = try await fixture.tasks.task(id: taskID)
+    let stored = try XCTUnwrap(taskRecord)
+    XCTAssertEqual(stored.requestedThreadID, sessionID)
+
+    try await assertRejected(
+      application,
+      submission: MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Continue concurrently.",
+        threadID: sessionID,
+        providerID: "opencode",
+        permissionMode: "read-only",
+        clientRequestID: "agent-session-concurrent"
+      ),
+      expected: .invalidTaskState,
+      reason: "same provider session is already active"
+    )
+
+    try await application.resolveTaskStartApproval(
+      taskID: taskID,
+      approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+      approved: true,
+      deadline: deadline
+    )
+
+    XCTAssertEqual(provider.startedRequests.count, 1)
+    XCTAssertEqual(provider.startedRequests[0].requestedSessionID, sessionID)
+    XCTAssertTrue(provider.startedRequests[0].requiredCapabilities.contains(.sessionContinue))
   }
 
   func testWorkspaceWriteAgentSubmissionUsesDatabaseWriteSlot() async throws {
@@ -1044,6 +1128,17 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       let stored = try await fixture2.tasks.task(id: TaskID(rawValue: receipt.taskID))
       XCTAssertEqual(stored?.executionModel, "openai/gpt-5.6-sol")
       XCTAssertEqual(stored?.executionEffort, serviceDefaultProviderExecutionEffort)
+      try await assertRejected(
+        app2,
+        submission: MCPServiceTaskSubmission(
+          projectID: fixture2.project.id.rawValue,
+          prompt: "x",
+          threadID: "unknown-session",
+          providerID: "opencode"
+        ),
+        expected: .taskNotFound,
+        reason: "unknown provider session"
+      )
       try await assertRejected(
         app2,
         submission: MCPServiceTaskSubmission(

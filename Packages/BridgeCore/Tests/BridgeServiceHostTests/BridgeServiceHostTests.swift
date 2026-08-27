@@ -47,6 +47,7 @@ final class BridgeServiceHostTests: XCTestCase {
     let paths = try ServiceDataPaths.prepare(at: privateRoot)
     XCTAssertEqual(try fileMode(paths.rootURL), 0o700)
     XCTAssertEqual(try fileMode(paths.supervisorScratchURL), 0o700)
+    XCTAssertEqual(try fileMode(paths.agentStateURL), 0o700)
     XCTAssertEqual(try fileMode(paths.tunnelRuntimeURL), 0o700)
     XCTAssertEqual(paths.databaseURL.lastPathComponent, "service.sqlite")
 

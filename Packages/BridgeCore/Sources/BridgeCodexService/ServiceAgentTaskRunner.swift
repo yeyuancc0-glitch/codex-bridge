@@ -122,10 +122,13 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
     if let profileID = brief.profileID, record.securityProfileID != profileID {
       throw AgentRuntimeError.invalidRequest("request.profileID")
     }
-    let requiredCapabilities: Set<AgentCapability> =
+    var requiredCapabilities: Set<AgentCapability> =
       brief.permissionMode == .workspaceWrite
       ? [.workspaceRead, .workspaceWriteInPlace]
       : [.workspaceRead]
+    if brief.requestedSessionID != nil {
+      requiredCapabilities.insert(.sessionContinue)
+    }
     guard record.capabilities.supports(requiredCapabilities) else {
       let missing = requiredCapabilities.subtracting(record.capabilities.effective)
       guard let capability = missing.sorted(by: { $0.rawValue < $1.rawValue }).first else {

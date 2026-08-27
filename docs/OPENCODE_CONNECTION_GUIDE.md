@@ -105,7 +105,7 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 - `permission_mode` 只能是 `read-only` 或 `workspace-write`；它们分别映射为 ACP Plan 和 Build。
 - 只有用户明确要求本次模式时，才设置 `permission_mode_override=true`。
 - 当前 OpenCode ACP 没有 Bridge 级逐任务网络沙箱，因此 `network_access=true` 会被拒绝；网络行为由 OpenCode 原生权限设置控制。
-- OpenCode 任务不要携带 `thread_id`、`skill_name`、`supervisor_model` 或 `supervisor_effort`。
+- 新建 OpenCode 会话时省略 `thread_id`；继续已有会话时，将上一任务 `get_task` 返回的 `provider_session_id` 作为 `submit_task.thread_id`。不要携带 `skill_name`、`supervisor_model` 或 `supervisor_effort`。
 - 项目本身禁止写入时，默认 Build 会安全收窄为只读，不会越过项目策略。
 
 ## 6. 审批、查询和继续任务

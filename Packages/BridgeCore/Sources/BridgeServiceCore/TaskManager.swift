@@ -286,6 +286,20 @@ public actor ServiceTaskManager {
     try await store.task(id: id)
   }
 
+  public func task(
+    providerSessionID: String,
+    providerID: String,
+    installationID: String,
+    projectID: ProjectID
+  ) async throws -> ServiceTaskRecord? {
+    try await store.task(
+      providerSessionID: providerSessionID,
+      providerID: providerID,
+      installationID: installationID,
+      projectID: projectID
+    )
+  }
+
   public func tasks(projectID: ProjectID? = nil, limit: Int = 100) async throws
     -> [ServiceTaskRecord]
   {

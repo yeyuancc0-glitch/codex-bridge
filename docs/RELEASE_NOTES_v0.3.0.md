@@ -5,6 +5,7 @@
 ## 本次更新
 
 - 新增完整可用的 OpenCode ACP Provider：可在 App 中登记和 Probe 本机安装，刷新 ACP 模型目录，选择 Plan/Build 模式，并通过本机审批执行任务、继续任务或中断任务。
+- OpenCode 任务可将上一任务的 `provider_session_id` 作为 `submit_task.thread_id` 继续同一会话；Bridge 会校验项目、Provider、安装实例与终态归属，并在私有持久目录保留会话数据库。
 - 保持 Codex 默认 `submit_task` 路径与旧客户端字段兼容，同时支持在请求中明确选择 OpenCode Provider。
 - 提升任务结果可观测性：任务绑定、最近活动、终态结果和轮询建议可持续查询，短暂安静不会被误报为失败。
 - 提升工作台、XPC 和对话流稳定性，完善 Provider 安装管理、任务提交状态和本机审批展示。

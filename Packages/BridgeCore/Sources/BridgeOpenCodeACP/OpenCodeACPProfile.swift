@@ -102,6 +102,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     installation: AgentInstallation,
     projectRoot: String,
     runDirectory: String,
+    persistentStateDirectory: String? = nil,
     networkAllowed _: Bool,
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> OpenCodeACPLaunchConfiguration {
@@ -114,6 +115,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     let environment = try Self.environment(
       executable: executable,
       runDirectory: runtime,
+      persistentStateDirectory: persistentStateDirectory,
       source: sourceEnvironment
     )
     let argv = [
@@ -144,6 +146,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
   private static func environment(
     executable: String,
     runDirectory: String,
+    persistentStateDirectory: String?,
     source: [String: String]
   ) throws -> [String: String] {
     let sourceHome = try absoluteEnvironmentPath(
@@ -164,7 +167,13 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     let cache = URL(fileURLWithPath: runDirectory).appendingPathComponent("cache").path
     let state = URL(fileURLWithPath: runDirectory).appendingPathComponent("state").path
     let temporary = URL(fileURLWithPath: runDirectory).appendingPathComponent("tmp").path
-    let database = URL(fileURLWithPath: runDirectory).appendingPathComponent("opencode.db").path
+    let databaseRoot: String
+    if let persistentStateDirectory {
+      databaseRoot = try prepareRunDirectory(persistentStateDirectory)
+    } else {
+      databaseRoot = runDirectory
+    }
+    let database = URL(fileURLWithPath: databaseRoot).appendingPathComponent("opencode.db").path
     for path in [home, cache, state, temporary] {
       try createPrivateDirectory(path)
     }

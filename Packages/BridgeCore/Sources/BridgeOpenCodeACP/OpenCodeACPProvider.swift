@@ -1,4 +1,5 @@
 import BridgeAgentCore
+import CryptoKit
 import Foundation
 
 #if canImport(Darwin)
@@ -20,6 +21,7 @@ public struct OpenCodeACPProviderConfiguration: Sendable {
   public let inactivityTimeout: Duration
   public let eventBufferLimit: Int
   public let runtimeBaseDirectory: String
+  public let persistentStateBaseDirectory: String?
   public let sourceEnvironment: [String: String]
   public let transportFactory: OpenCodeACPTransportFactory
 
@@ -36,6 +38,7 @@ public struct OpenCodeACPProviderConfiguration: Sendable {
     eventBufferLimit: Int = 256,
     runtimeBaseDirectory: String = FileManager.default.temporaryDirectory
       .appendingPathComponent("CodexBridge/OpenCodeACP", isDirectory: true).path,
+    persistentStateBaseDirectory: String? = nil,
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment,
     transportFactory: @escaping OpenCodeACPTransportFactory = { launch in
       try OpenCodeACPProcessTransport.launch(configuration: launch.process)
@@ -48,6 +51,7 @@ public struct OpenCodeACPProviderConfiguration: Sendable {
     self.inactivityTimeout = inactivityTimeout
     self.eventBufferLimit = max(1, eventBufferLimit)
     self.runtimeBaseDirectory = runtimeBaseDirectory
+    self.persistentStateBaseDirectory = persistentStateBaseDirectory
     self.sourceEnvironment = sourceEnvironment
     self.transportFactory = transportFactory
   }
@@ -207,10 +211,15 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
     var client: OpenCodeACPClient?
 
     do {
+      let persistentStateDirectory = try makePersistentStateDirectory(
+        installation: installation,
+        request: request
+      )
       let launch = try configuration.launchBuilder.make(
         installation: installation,
         projectRoot: request.projectRoot,
         runDirectory: runDirectory,
+        persistentStateDirectory: persistentStateDirectory,
         networkAllowed: request.networkAccessRequested,
         sourceEnvironment: configuration.sourceEnvironment
       )
@@ -574,6 +583,54 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
         throw AgentRuntimeError.processUnavailable
       }
       try Self.validatePrivateDirectory(canonical)
+      return canonical
+    } catch let error as AgentRuntimeError {
+      throw error
+    } catch {
+      throw AgentRuntimeError.processUnavailable
+    }
+  }
+
+  private func makePersistentStateDirectory(
+    installation: AgentInstallation,
+    request: AgentExecutionRequest
+  ) throws -> String? {
+    guard let configuredBase = configuration.persistentStateBaseDirectory else { return nil }
+    let base = try preparePrivateDirectory(
+      configuredBase,
+      field: "persistentStateBaseDirectory"
+    )
+    let identity = [
+      installation.providerID.rawValue,
+      installation.id.rawValue,
+      request.projectID.rawValue,
+      request.projectRoot,
+    ].joined(separator: "\u{0}")
+    let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }
+      .joined()
+    return try preparePrivateDirectory(
+      URL(fileURLWithPath: base, isDirectory: true)
+        .appendingPathComponent(digest, isDirectory: true).path,
+      field: "persistentStateDirectory"
+    )
+  }
+
+  private func preparePrivateDirectory(_ value: String, field: String) throws -> String {
+    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
+      throw AgentRuntimeError.invalidRequest(field)
+    }
+    let requested = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL.path
+    do {
+      try FileManager.default.createDirectory(
+        atPath: requested,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+      )
+      guard chmod(requested, 0o700) == 0 else { throw AgentRuntimeError.processUnavailable }
+      try Self.validatePrivateDirectory(requested)
+      let canonical = URL(fileURLWithPath: requested, isDirectory: true)
+        .resolvingSymlinksInPath()
+        .standardizedFileURL.path
       return canonical
     } catch let error as AgentRuntimeError {
       throw error

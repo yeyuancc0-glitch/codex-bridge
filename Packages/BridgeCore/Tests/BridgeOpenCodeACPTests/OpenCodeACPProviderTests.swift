@@ -597,6 +597,89 @@ final class OpenCodeACPProviderTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
   }
 
+  func testContinuesRequestedSessionBeforePrompting() async throws {
+    let transport = ScriptedACPTransport()
+    let runtimeBase = temporaryPath(prefix: "continue-runtime")
+    let persistentStateBase = temporaryPath(prefix: "continue-state")
+    let projectRoot = try makeTemporaryDirectory(prefix: "continue-project")
+    let sourceHome = try makeTemporaryDirectory(prefix: "continue-home")
+    let captured = LockedValue<OpenCodeACPLaunchConfiguration>()
+    addTeardownBlock {
+      for path in [runtimeBase, persistentStateBase, projectRoot, sourceHome] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/resume":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: Self.sessionResult(id: "session-existing", models: [])
+          )
+        )
+      case "session/set_config_option":
+        try await transport.emit(ACPWireMessage(id: id, result: .object([:])))
+      case "session/prompt":
+        try await transport.emit(
+          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
+        )
+      default:
+        break
+      }
+    }
+
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        runtimeBaseDirectory: runtimeBase,
+        persistentStateBaseDirectory: persistentStateBase,
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { launch in
+          captured.set(launch)
+          return transport
+        }
+      )
+    )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "task-continue"),
+      projectID: ProjectID(rawValue: "project-continue"),
+      projectRoot: projectRoot,
+      prompt: "Continue the prior analysis.",
+      requestedSessionID: "session-existing",
+      mutationIntent: .readOnly,
+      workspaceStrategy: .sharedProject,
+      networkAccessRequested: false,
+      requiredCapabilities: [.sessionContinue, .workspaceRead]
+    )
+
+    let handle = try await provider.start(
+      request,
+      installation: try makeInstallation(id: "continue-installation")
+    )
+    for try await _ in handle.events {}
+
+    XCTAssertEqual(handle.binding.providerSessionID, "session-existing")
+    let sent = await transport.sentMessages()
+    XCTAssertFalse(sent.contains { $0.method == "session/new" })
+    let resume = try XCTUnwrap(sent.first { $0.method == "session/resume" })
+    XCTAssertEqual(resume.params?["sessionId"], .string("session-existing"))
+    XCTAssertEqual(resume.params?["cwd"], .string(projectRoot))
+    let launch = try XCTUnwrap(captured.get())
+    let database = try XCTUnwrap(launch.process.environment["OPENCODE_DB"])
+    XCTAssertTrue(database.hasPrefix(persistentStateBase + "/"))
+    XCTAssertFalse(database.hasPrefix(launch.runDirectory + "/"))
+    XCTAssertTrue(
+      FileManager.default.fileExists(
+        atPath: URL(fileURLWithPath: database).deletingLastPathComponent().path
+      )
+    )
+    XCTAssertFalse(FileManager.default.fileExists(atPath: launch.runDirectory))
+  }
+
   func testInactivityTimeoutFailsRunAndCleansRuntime() async throws {
     let transport = ScriptedACPTransport()
     await transport.setHandler { message, transport in

@@ -117,7 +117,13 @@ public actor ServiceComposition {
     let projects = ServiceProjectService(store: store)
     let tasks = ServiceTaskManager(store: store)
     let settings = ServiceSettings(store: store)
-    let agentProviders: [any AgentProvider] = [try OpenCodeACPProvider()]
+    let agentProviders: [any AgentProvider] = [
+      try OpenCodeACPProvider(
+        configuration: OpenCodeACPProviderConfiguration(
+          persistentStateBaseDirectory: paths.agentStateURL.path
+        )
+      )
+    ]
     let agentRegistry = ServiceAgentRegistry(
       store: store,
       providers: agentProviders
