@@ -112,7 +112,6 @@ extension BridgeServiceApplication {
         requiresNetwork: resolution.requiresNetwork,
         usePTY: request.tty,
         timeout: .milliseconds(request.timeoutMS),
-        sandboxRoot: project.root.canonicalPath,
         denyNetwork: denyNetwork || !resolution.requiresNetwork
           || project.accessPolicy.network == .denied,
         onExit: { await lease.release() }
@@ -457,5 +456,38 @@ extension BridgeServiceApplication {
     default:
       return .unavailable
     }
+  }
+
+  static func mcpEnvironment(
+    _ environment: DirectExecutionEnvironmentCapabilities
+  ) -> MCPExecutionEnvironment {
+    let directDefault = environment.commandEnvironment(denyNetwork: true)
+    return MCPExecutionEnvironment(
+      bridgeSandbox: directDefault.bridgeSandbox,
+      scope: "direct_default",
+      sandboxExec: directDefault.sandboxExec,
+      nestedSandbox: directDefault.nestedSandbox,
+      loopback: directDefault.loopback,
+      childNetworkPolicy: "denied_by_default",
+      xcodebuildNestedSandbox: directDefault.xcodebuildNestedSandbox,
+      loopbackBind: directDefault.loopbackBind,
+      limitations: directDefault.limitations
+    )
+  }
+
+  private static func mcpEnvironment(
+    _ environment: DirectCommandExecutionEnvironment
+  ) -> MCPExecutionEnvironment {
+    MCPExecutionEnvironment(
+      bridgeSandbox: environment.bridgeSandbox,
+      scope: "direct_command",
+      sandboxExec: environment.sandboxExec,
+      nestedSandbox: environment.nestedSandbox,
+      loopback: environment.loopback,
+      childNetworkPolicy: environment.childNetworkPolicy,
+      xcodebuildNestedSandbox: environment.xcodebuildNestedSandbox,
+      loopbackBind: environment.loopbackBind,
+      limitations: environment.limitations
+    )
   }
 }
