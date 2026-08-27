@@ -164,11 +164,17 @@ extension BridgeServiceApplication {
     if let modelID {
       selectedModelID = modelID
     } else if useStoredDefault {
-      selectedModelID = try await settings.string(for: .openCodeDefaultModel)
+      guard let installation = try await registry.installation(id: installationID) else {
+        throw BridgeMCPQueryError.unavailable
+      }
+      selectedModelID = try await settings.string(
+        for: try Self.agentDefaultModelKey(providerID: installation.providerID)
+      )
     } else {
       selectedModelID = nil
     }
-    let models = try await registry.models(
+    let models = try await serviceAgentModelCatalog(
+      registry: registry,
       installationID: installationID,
       projectRoot: projectRoot,
       selectedModelID: selectedModelID
@@ -182,6 +188,57 @@ extension BridgeServiceApplication {
         defaultReasoningEffort: $0.defaultReasoningEffort
       )
     }
+  }
+
+  func serviceAgentModelCatalog(
+    registry: ServiceAgentRegistry,
+    installationID: AgentInstallationID,
+    projectRoot: String?,
+    selectedModelID: String?
+  ) async throws -> [AgentModelDescriptor] {
+    guard let installation = try await registry.installation(id: installationID),
+      let policy = ServiceAgentProviderPolicyRegistry.policy(for: installation.providerID)
+    else {
+      throw BridgeMCPQueryError.unavailable
+    }
+    guard let sourceProviderID = policy.modelCatalogSourceProviderID else {
+      return try await registry.models(
+        installationID: installationID,
+        projectRoot: projectRoot,
+        selectedModelID: selectedModelID
+      )
+    }
+    guard
+      let source = try await registry.installations(providerID: sourceProviderID)
+        .filter(\.isSelectable)
+        .sorted(by: { $0.id.rawValue < $1.id.rawValue })
+        .first
+    else {
+      throw BridgeMCPQueryError.unavailable
+    }
+    let sourceModels = try await registry.models(
+      installationID: source.id,
+      projectRoot: projectRoot,
+      selectedModelID: selectedModelID ?? policy.modelCatalogDefaultID
+    )
+    let filtered = try sourceModels.compactMap { model -> AgentModelDescriptor? in
+      if let prefix = policy.modelCatalogPrefix, !model.id.hasPrefix(prefix) { return nil }
+      let efforts =
+        policy.modelCatalogAllowedEfforts.map { allowed in
+          model.supportedReasoningEfforts.filter(allowed.contains)
+        } ?? model.supportedReasoningEfforts
+      let defaultEffort = model.defaultReasoningEffort.flatMap { effort in
+        efforts.contains(effort) ? effort : nil
+      }
+      return try AgentModelDescriptor(
+        id: model.id,
+        displayName: model.displayName,
+        supportedReasoningEfforts: efforts,
+        defaultReasoningEffort: defaultEffort
+      )
+    }
+    guard !filtered.isEmpty else { throw BridgeMCPQueryError.unavailable }
+    return filtered
   }
 
   private func agentModelProjectRoot(
@@ -201,6 +258,60 @@ extension BridgeServiceApplication {
 }
 
 extension BridgeServiceApplication {
+  public func serviceAgentModelDefault(
+    providerID: AgentProviderID,
+    deadline: ContinuousClock.Instant
+  ) async throws -> (model: String?, permissionMode: String, effort: String?) {
+    try Self.checkDeadline(deadline)
+    let model = try await settings.string(
+      for: try Self.agentDefaultModelKey(providerID: providerID)
+    )
+    let effort = try await settings.string(
+      for: try Self.agentDefaultEffortKey(providerID: providerID)
+    )
+    let permissionMode =
+      providerID == .openCode ? try await settings.openCodeDefaultPermissionMode() : "read-only"
+    return (model, permissionMode, effort)
+  }
+
+  public func serviceSetAgentModelDefault(
+    providerID: AgentProviderID,
+    model: String?,
+    permissionMode: String?,
+    effort: String?,
+    updateEffort: Bool,
+    deadline: ContinuousClock.Instant
+  ) async throws -> (model: String?, permissionMode: String, effort: String?) {
+    try Self.checkDeadline(deadline)
+    guard let policy = ServiceAgentProviderPolicyRegistry.policy(for: providerID),
+      policy.supportsModelSelection
+    else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    let validated = try Self.validatedAgentModel(model)
+    try await settings.set(
+      validated,
+      for: try Self.agentDefaultModelKey(providerID: providerID)
+    )
+    if let permissionMode {
+      guard providerID == .openCode else { throw BridgeMCPQueryError.contractRejected }
+      try await settings.setOpenCodeDefaultPermissionMode(permissionMode)
+    }
+    if updateEffort {
+      if let effort {
+        guard !effort.isEmpty, effort.utf8.count <= 64,
+          !effort.contains("\0"),
+          effort.rangeOfCharacter(from: .controlCharacters) == nil
+        else { throw BridgeMCPQueryError.contractRejected }
+      }
+      try await settings.set(
+        effort,
+        for: try Self.agentDefaultEffortKey(providerID: providerID)
+      )
+    }
+    return try await serviceAgentModelDefault(providerID: providerID, deadline: deadline)
+  }
+
   public func serviceOpenCodeDefaultModel(
     deadline: ContinuousClock.Instant
   ) async throws -> String? {
@@ -245,5 +356,21 @@ extension BridgeServiceApplication {
   ) async throws {
     try Self.checkDeadline(deadline)
     try await settings.setOpenCodeDefaultEffort(effort)
+  }
+
+  static func agentDefaultModelKey(providerID: AgentProviderID) throws
+    -> ServiceSettingKey
+  {
+    if providerID == .openCode { return .openCodeDefaultModel }
+    if providerID == .deepSeekHarness { return .deepSeekHarnessDefaultModel }
+    throw BridgeMCPQueryError.contractRejected
+  }
+
+  static func agentDefaultEffortKey(providerID: AgentProviderID) throws
+    -> ServiceSettingKey
+  {
+    if providerID == .openCode { return .openCodeDefaultEffort }
+    if providerID == .deepSeekHarness { return .deepSeekHarnessDefaultEffort }
+    throw BridgeMCPQueryError.contractRejected
   }
 }

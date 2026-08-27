@@ -20,6 +20,10 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
   public let supportsInteractiveApproval: Bool
   public let supportsModelSelection: Bool
   public let supportsEffortSelection: Bool
+  public let modelCatalogSourceProviderID: AgentProviderID?
+  public let modelCatalogPrefix: String?
+  public let modelCatalogDefaultID: String?
+  public let modelCatalogAllowedEfforts: Set<String>?
   public let supportsSkillSelection: Bool
   public let supportsSupervisor: Bool
   public let allowsNetworkAccess: Bool
@@ -45,6 +49,10 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
     supportsInteractiveApproval: Bool = false,
     supportsModelSelection: Bool = false,
     supportsEffortSelection: Bool = false,
+    modelCatalogSourceProviderID: AgentProviderID? = nil,
+    modelCatalogPrefix: String? = nil,
+    modelCatalogDefaultID: String? = nil,
+    modelCatalogAllowedEfforts: Set<String>? = nil,
     supportsSkillSelection: Bool = false,
     supportsSupervisor: Bool = false,
     allowsNetworkAccess: Bool = false,
@@ -69,6 +77,10 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
     self.supportsInteractiveApproval = supportsInteractiveApproval
     self.supportsModelSelection = supportsModelSelection
     self.supportsEffortSelection = supportsEffortSelection
+    self.modelCatalogSourceProviderID = modelCatalogSourceProviderID
+    self.modelCatalogPrefix = modelCatalogPrefix
+    self.modelCatalogDefaultID = modelCatalogDefaultID
+    self.modelCatalogAllowedEfforts = modelCatalogAllowedEfforts
     self.supportsSkillSelection = supportsSkillSelection
     self.supportsSupervisor = supportsSupervisor
     self.allowsNetworkAccess = allowsNetworkAccess
@@ -181,8 +193,12 @@ public enum ServiceAgentProviderPolicyRegistry {
     requiresConfiguration: true,
     supportsWorkspaceWrite: false,
     supportsSessionContinuation: false,
-    supportsModelSelection: false,
-    supportsEffortSelection: false,
+    supportsModelSelection: true,
+    supportsEffortSelection: true,
+    modelCatalogSourceProviderID: .openCode,
+    modelCatalogPrefix: "opencode-go/",
+    modelCatalogDefaultID: "opencode-go/deepseek-v4-pro",
+    modelCatalogAllowedEfforts: ["off", "low", "high", "max"],
     supportsSkillSelection: false,
     supportsSupervisor: false,
     allowsNetworkAccess: false,
@@ -190,7 +206,8 @@ public enum ServiceAgentProviderPolicyRegistry {
     approvalEnforcement: "automatic_deny",
     networkEnforcement: "unavailable",
     allowedCapabilities: [
-      .sessionCreate, .interrupt, .textDelta, .workspaceRead,
+      .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
+      .effortSelection,
     ],
     requiredArtifactRoles: Set(AgentInstallationArtifactRole.allCases),
     requiredVersion: "0.1.1-rc.2",

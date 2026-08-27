@@ -358,6 +358,10 @@ extension BridgeServiceApplication {
       configuredEffort = try await settings.openCodeDefaultEffort()
       let configuredMode = try await settings.openCodeDefaultPermissionMode()
       defaultMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
+    } else if policy.providerID == .deepSeekHarness {
+      configuredModel = try await settings.string(for: .deepSeekHarnessDefaultModel)
+      configuredEffort = try await settings.string(for: .deepSeekHarnessDefaultEffort)
+      defaultMode = policy.defaultPermissionMode
     } else {
       configuredModel = nil
       configuredEffort = nil
@@ -408,7 +412,8 @@ extension BridgeServiceApplication {
     }
     let modelCatalog: [AgentModelDescriptor]?
     if policy.supportsModelSelection {
-      modelCatalog = try? await registry.models(
+      modelCatalog = try? await serviceAgentModelCatalog(
+        registry: registry,
         installationID: record.id,
         projectRoot: project.root.canonicalPath,
         selectedModelID: resolvedModel
@@ -427,6 +432,9 @@ extension BridgeServiceApplication {
       }
     } else {
       selectedDescriptor = nil
+    }
+    if policy.providerID == .deepSeekHarness, resolvedModel != nil, selectedDescriptor == nil {
+      throw BridgeMCPQueryError.unavailable
     }
     let executionEffort: String
     if let requestedEffort {

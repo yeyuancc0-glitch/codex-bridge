@@ -315,6 +315,7 @@ struct BridgeServiceAgentSettingsSection: View {
         .disabled(model.isRefreshingAgentModels)
         .task(
           id: AgentModelHydrationID(
+            providerID: submitProviderID,
             installationID: selectedInstallation?.installationID,
             projectID: model.selectedProjectID,
             modelID: model.openCodeDefaultModel
@@ -322,17 +323,24 @@ struct BridgeServiceAgentSettingsSection: View {
         ) {
           guard
             !model.consumeAgentModelHydrationSuppression(
+              providerID: submitProviderID,
               installationID: selectedInstallation?.installationID,
               projectID: model.selectedProjectID,
               modelID: model.openCodeDefaultModel
             )
           else { return }
-          await model.hydrateAgentModelState(installationID: selectedInstallation?.installationID)
+          await model.hydrateAgentModelState(
+            installationID: selectedInstallation?.installationID,
+            providerID: submitProviderID
+          )
         }
 
         HStack(spacing: 10) {
           Button {
-            model.refreshAgentModelCatalog(installationID: selectedInstallation?.installationID)
+            model.refreshAgentModelCatalog(
+              installationID: selectedInstallation?.installationID,
+              providerID: submitProviderID
+            )
           } label: {
             if model.isRefreshingAgentModels {
               ProgressView()
@@ -348,8 +356,8 @@ struct BridgeServiceAgentSettingsSection: View {
               || model.isRefreshingAgentModels
               || model.isManagingAgents
           )
-          .accessibilityLabel("刷新 OpenCode 模型列表")
-          .accessibilityHint("从当前 OpenCode ACP 安装重新读取模型目录")
+          .accessibilityLabel("刷新 \(providerDisplayName(submitProviderID)) 模型列表")
+          .accessibilityHint("从当前 Provider 安装重新读取模型目录")
 
           if !model.agentModelOptions.isEmpty {
             Text("\(model.agentModelOptions.count) 个模型")
@@ -367,7 +375,7 @@ struct BridgeServiceAgentSettingsSection: View {
       }
 
       if supportsEffortSelection {
-        Picker("默认推理强度", selection: openCodeDefaultEffortBinding) {
+        Picker("默认推理强度", selection: agentDefaultEffortBinding) {
           Text("Provider 默认").tag("")
           if let current = selectedAgentModel,
             !current.supportedReasoningEfforts.isEmpty
@@ -379,11 +387,15 @@ struct BridgeServiceAgentSettingsSection: View {
         }
         .pickerStyle(.menu)
         .disabled(model.isRefreshingAgentModels)
-        .help("OpenCode 通过 ACP 的 effort 选项提供模型支持的推理强度")
+        .help("所选推理强度会应用到该 Provider 的后续任务")
         if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
-          Text("当前模型不提供可选推理强度，使用 Provider 默认")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          Text(
+            submitProviderID == "deepseek-harness"
+              ? "当前 OpenCode Go 模型未公布 Harness 可用的推理强度"
+              : "当前模型不提供可选推理强度，使用 Provider 默认"
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
       }
 
@@ -412,6 +424,8 @@ struct BridgeServiceAgentSettingsSection: View {
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selectable.isEmpty
             || model.selectedProjectID == nil && model.projects.isEmpty
+            || submitProviderID == "deepseek-harness"
+              && selectedAgentModel?.supportedReasoningEfforts.isEmpty != false
         )
       }
     }
@@ -452,7 +466,7 @@ struct BridgeServiceAgentSettingsSection: View {
       set: { value in
         let selected = value.isEmpty ? nil : value
         guard selected != model.openCodeDefaultModel else { return }
-        model.saveAgentModelDefault(selected)
+        model.saveAgentModelDefault(selected, providerID: submitProviderID)
       }
     )
   }
@@ -469,13 +483,13 @@ struct BridgeServiceAgentSettingsSection: View {
     )
   }
 
-  private var openCodeDefaultEffortBinding: Binding<String> {
+  private var agentDefaultEffortBinding: Binding<String> {
     Binding(
       get: { model.openCodeDefaultEffort ?? "" },
       set: { value in
         let selected = value.isEmpty ? nil : value
         guard selected != model.openCodeDefaultEffort else { return }
-        model.saveOpenCodeEffort(selected)
+        model.saveAgentEffort(selected, providerID: submitProviderID)
       }
     )
   }

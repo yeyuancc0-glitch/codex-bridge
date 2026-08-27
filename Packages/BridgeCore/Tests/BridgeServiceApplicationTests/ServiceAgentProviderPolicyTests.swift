@@ -16,8 +16,11 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertTrue(policy.requiresConfiguration)
     XCTAssertFalse(policy.supportsWorkspaceWrite)
     XCTAssertFalse(policy.supportsSessionContinuation)
-    XCTAssertFalse(policy.supportsModelSelection)
-    XCTAssertFalse(policy.supportsEffortSelection)
+    XCTAssertTrue(policy.supportsModelSelection)
+    XCTAssertTrue(policy.supportsEffortSelection)
+    XCTAssertEqual(policy.modelCatalogSourceProviderID, .openCode)
+    XCTAssertEqual(policy.modelCatalogPrefix, "opencode-go/")
+    XCTAssertEqual(policy.modelCatalogDefaultID, "opencode-go/deepseek-v4-pro")
     XCTAssertFalse(policy.supportsSkillSelection)
     XCTAssertFalse(policy.supportsSupervisor)
     XCTAssertFalse(policy.supportsSteer)
@@ -34,7 +37,10 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     let reported: Set<AgentCapability> = Set(AgentCapability.allCases)
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: true),
-      [.sessionCreate, .interrupt, .textDelta, .workspaceRead]
+      [
+        .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
+        .effortSelection,
+      ]
     )
   }
 
@@ -102,6 +108,8 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
         AgentCapability.interrupt.rawValue,
         AgentCapability.sessionCreate.rawValue,
         AgentCapability.textDelta.rawValue,
+        AgentCapability.effortSelection.rawValue,
+        AgentCapability.modelSelection.rawValue,
         AgentCapability.workspaceRead.rawValue,
       ].sorted()
     )
@@ -200,28 +208,6 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
         )
       ),
       (
-        "model override",
-        MCPServiceTaskSubmission(
-          projectID: projectID,
-          prompt: "Choose a model.",
-          providerID: AgentProviderID.deepSeekHarness.rawValue,
-          executionModel: "deepseek/model",
-          modelOverride: true,
-          clientRequestID: "deepseek-policy-model"
-        )
-      ),
-      (
-        "effort override",
-        MCPServiceTaskSubmission(
-          projectID: projectID,
-          prompt: "Choose effort.",
-          providerID: AgentProviderID.deepSeekHarness.rawValue,
-          executionEffort: "high",
-          modelOverride: true,
-          clientRequestID: "deepseek-policy-effort"
-        )
-      ),
-      (
         "skill",
         MCPServiceTaskSubmission(
           projectID: projectID,
@@ -304,6 +290,82 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     }
   }
 
+  func testDeepSeekUsesOpenCodeGoCatalogAndPersistsExplicitSelection() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let goProvider = try OpenCodeGoCatalogFixtureProvider()
+    let deepSeekProvider = try DeepSeekPolicyFixtureProvider()
+    let openCodeExecutable = fixture.root.appending(path: "opencode-go-catalog-fixture")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: openCodeExecutable)
+    XCTAssertEqual(chmod(openCodeExecutable.path, 0o700), 0)
+    let openCodeRegistry = ServiceAgentRegistry(
+      store: fixture.store,
+      providers: [goProvider],
+      makeInstallationID: { AgentInstallationID(rawValue: "ainst-catalog-opencode") }
+    )
+    _ = try await openCodeRegistry.registerAndProbe(
+      ServiceAgentRegistrationRequest(
+        providerID: .openCode,
+        displayName: "OpenCode",
+        executablePath: openCodeExecutable.path,
+        trustProfile: .managed,
+        securityProfileID: ServiceAgentProviderPolicyRegistry.controlledReadOnlyProfileID,
+        enableOnSuccess: true,
+        projectRoot: fixture.project.root.canonicalPath
+      )
+    )
+
+    let deepSeekExecutable = fixture.root.appending(path: "deepseek-go-catalog-fixture")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: deepSeekExecutable)
+    XCTAssertEqual(chmod(deepSeekExecutable.path, 0o700), 0)
+    let registry = ServiceAgentRegistry(
+      store: fixture.store,
+      providers: [goProvider, deepSeekProvider],
+      makeInstallationID: { AgentInstallationID(rawValue: "ainst-catalog-deepseek") }
+    )
+    _ = try await registry.registerAndProbe(
+      ServiceAgentRegistrationRequest(
+        providerID: .deepSeekHarness,
+        displayName: "DeepSeek Harness",
+        executablePath: deepSeekExecutable.path,
+        trustProfile: .userTrusted,
+        securityProfileID: ServiceAgentProviderPolicyRegistry.controlledReadOnlyProfileID,
+        enableOnSuccess: true,
+        projectRoot: fixture.project.root.canonicalPath,
+        artifacts: try makeDeepSeekArtifactRequests(in: fixture.root)
+      )
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry
+    )
+
+    let models = try await application.serviceListAgentModels(
+      installationID: AgentInstallationID(rawValue: "ainst-catalog-deepseek"),
+      projectID: fixture.project.id.rawValue,
+      modelID: "opencode-go/deepseek-v4-pro",
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    XCTAssertEqual(models.map(\.modelID), ["opencode-go/deepseek-v4-pro"])
+    XCTAssertEqual(models[0].supportedReasoningEfforts, ["high", "max"])
+
+    let receipt = try await application.serviceSubmitAgentTask(
+      projectID: fixture.project.id.rawValue,
+      providerID: AgentProviderID.deepSeekHarness.rawValue,
+      installationID: "ainst-catalog-deepseek",
+      model: "opencode-go/deepseek-v4-pro",
+      effort: "max",
+      permissionMode: "read-only",
+      prompt: "Inspect the workspace.",
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let storedTask = try await fixture.store.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(storedTask)
+    XCTAssertEqual(task.executionModel, "opencode-go/deepseek-v4-pro")
+    XCTAssertEqual(task.executionEffort, "max")
+    XCTAssertEqual(task.permissionMode, .readOnly)
+  }
+
   private func assertRejected(
     _ application: BridgeServiceApplication,
     submission: MCPServiceTaskSubmission,
@@ -363,7 +425,8 @@ private struct DeepSeekPolicyFixtureProvider: AgentProvider, Sendable {
       )
     }
     let capabilities: Set<AgentCapability> = [
-      .sessionCreate, .interrupt, .textDelta, .workspaceRead,
+      .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
+      .effortSelection,
     ]
     return AgentProbeResult(
       installation: installation,
@@ -374,6 +437,79 @@ private struct DeepSeekPolicyFixtureProvider: AgentProvider, Sendable {
         enforced: capabilities
       )
     )
+  }
+
+  func start(
+    _: AgentExecutionRequest,
+    installation _: AgentInstallation
+  ) async throws -> AgentExecutionHandle {
+    throw AgentRuntimeError.processUnavailable
+  }
+}
+
+private struct OpenCodeGoCatalogFixtureProvider: AgentProvider, Sendable {
+  let descriptor: AgentProviderDescriptor
+
+  init() throws {
+    descriptor = try AgentProviderDescriptor(
+      providerID: .openCode,
+      displayName: "OpenCode",
+      adapterRevision: 1
+    )
+  }
+
+  func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
+    guard
+      let installation = try? AgentInstallation(
+        id: request.installation.id,
+        providerID: .openCode,
+        executablePath: request.installation.executablePath,
+        version: "1.18.23",
+        protocolRevision: "1"
+      )
+    else {
+      return AgentProbeResult(
+        installation: request.installation,
+        available: false,
+        capabilities: .empty,
+        unavailableReason: "The fixture installation is invalid."
+      )
+    }
+    let capabilities: Set<AgentCapability> = [
+      .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
+      .effortSelection,
+    ]
+    return AgentProbeResult(
+      installation: installation,
+      available: true,
+      capabilities: AgentCapabilitySnapshot(
+        advertised: capabilities,
+        observed: capabilities,
+        enforced: capabilities
+      )
+    )
+  }
+
+  func models(
+    installation _: AgentInstallation,
+    projectRoot _: String?,
+    selectedModelID: String?
+  ) async throws -> [AgentModelDescriptor] {
+    if let selectedModelID, selectedModelID != "opencode-go/deepseek-v4-pro" {
+      throw AgentRuntimeError.modelUnavailable(selectedModelID)
+    }
+    return try [
+      AgentModelDescriptor(
+        id: "opencode-go/deepseek-v4-pro",
+        displayName: "OpenCode Go/DeepSeek V4 Pro",
+        supportedReasoningEfforts: ["high", "max", "ultra"],
+        defaultReasoningEffort: "high"
+      ),
+      AgentModelDescriptor(
+        id: "other-provider/model",
+        displayName: "Other Provider Model"
+      ),
+    ]
   }
 
   func start(

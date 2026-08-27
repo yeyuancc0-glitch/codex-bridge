@@ -28,6 +28,8 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case openCodeDefaultModel = "agent.opencode.default_model"
   case openCodeDefaultPermissionMode = "agent.opencode.default_permission_mode"
   case openCodeDefaultEffort = "agent.opencode.default_effort"
+  case deepSeekHarnessDefaultModel = "agent.deepseek-harness.default_model"
+  case deepSeekHarnessDefaultEffort = "agent.deepseek-harness.default_effort"
   case tunnelID = "tunnel.id"
   case tunnelEnabled = "tunnel.enabled"
 }

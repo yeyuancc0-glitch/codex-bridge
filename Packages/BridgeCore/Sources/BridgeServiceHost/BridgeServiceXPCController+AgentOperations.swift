@@ -215,55 +215,48 @@ extension BridgeServiceXPCController {
 
 extension BridgeServiceXPCController {
   func handleGetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.optionalPayload(
+      IPCAgentModelDefaultRequest.self,
+      from: request
+    )
+    let providerID = AgentProviderID(
+      rawValue: payload?.providerID ?? AgentProviderID.openCode.rawValue)
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    let model = try await composition.application.serviceOpenCodeDefaultModel(deadline: deadline)
-    let permissionMode = try await composition.application.serviceOpenCodeDefaultPermissionMode(
+    let persisted = try await composition.application.serviceAgentModelDefault(
+      providerID: providerID,
       deadline: deadline
     )
-    let effort = try await composition.application.serviceOpenCodeDefaultEffort(deadline: deadline)
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCAgentModelDefaultResponse(
-        model: model,
-        permissionMode: permissionMode,
-        effort: effort
+        providerID: providerID.rawValue,
+        model: persisted.model,
+        permissionMode: persisted.permissionMode,
+        effort: persisted.effort
       )
     )
   }
 
   func handleSetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentModelDefaultRequest.self, from: request)
+    let providerID = AgentProviderID(
+      rawValue: payload.providerID ?? AgentProviderID.openCode.rawValue)
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    try await composition.application.serviceSetOpenCodeDefaultModel(
-      payload.model,
-      deadline: deadline
-    )
-    if let permissionMode = payload.permissionMode {
-      try await composition.application.serviceSetOpenCodeDefaultPermissionMode(
-        permissionMode,
-        deadline: deadline
-      )
-    }
-    if let effort = payload.effort {
-      try await composition.application.serviceSetOpenCodeDefaultEffort(
-        effort.isEmpty ? nil : effort,
-        deadline: deadline
-      )
-    }
-    let persistedModel = try await composition.application.serviceOpenCodeDefaultModel(
-      deadline: deadline
-    )
-    let persistedPermissionMode = try await composition.application
-      .serviceOpenCodeDefaultPermissionMode(deadline: deadline)
-    let persistedEffort = try await composition.application.serviceOpenCodeDefaultEffort(
+    let persisted = try await composition.application.serviceSetAgentModelDefault(
+      providerID: providerID,
+      model: payload.model,
+      permissionMode: payload.permissionMode,
+      effort: payload.effort.flatMap { $0.isEmpty ? nil : $0 },
+      updateEffort: payload.effort != nil,
       deadline: deadline
     )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCAgentModelDefaultResponse(
-        model: persistedModel,
-        permissionMode: persistedPermissionMode,
-        effort: persistedEffort
+        providerID: providerID.rawValue,
+        model: persisted.model,
+        permissionMode: persisted.permissionMode,
+        effort: persisted.effort
       )
     )
   }

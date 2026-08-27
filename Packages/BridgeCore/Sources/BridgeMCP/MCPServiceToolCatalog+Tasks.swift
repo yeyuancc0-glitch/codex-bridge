@@ -116,12 +116,12 @@ extension MCPServiceToolCatalog {
         "execution_model": nullableStringSchema(
           maximum: 256,
           description:
-            "Omit to use the Codex Bridge default or the selected provider default. DeepSeek Harness does not support model selection; set only for an explicitly supported provider override."
+            "Omit to use the Codex Bridge default or the selected provider default. For OpenCode or DeepSeek Harness, use only a model advertised by the local Provider catalog."
         ),
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the Codex Bridge/OpenCode default effort. DeepSeek Harness does not support effort selection; for OpenCode, set only to a value advertised for the selected model when the user explicitly requests a per-task override."
+            "Omit to use the selected provider default effort. For OpenCode or DeepSeek Harness, set only a value advertised for the selected model when the user explicitly requests a per-task override."
         ),
         "model_override": [
           "type": ["boolean", "null"],

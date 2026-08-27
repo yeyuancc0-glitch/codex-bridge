@@ -145,6 +145,48 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     )
   }
 
+  func testRuntimeProfileAppliesOpenCodeGoModelAndEffortOnlyToPrivateCopy() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-runtime-selection")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-selection")
+    addTeardownBlock {
+      fixture.remove()
+      try? FileManager.default.removeItem(atPath: runDirectory)
+    }
+    let bundled = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    let stagedConfiguration = try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
+      sourceRoot: fixture.root,
+      runDirectory: runDirectory,
+      modelID: "opencode-go/kimi-k2.6",
+      reasoningEffort: "high"
+    )
+
+    let staged = try String(contentsOfFile: stagedConfiguration, encoding: .utf8)
+    XCTAssertTrue(staged.contains("reasoningEffort: high"))
+    XCTAssertTrue(staged.contains("- id: kimi-k2.6"))
+    XCTAssertTrue(staged.contains("model: kimi-k2.6"))
+    XCTAssertEqual(try DeepSeekHarnessACPProfile.bundledConfigurationTemplate(), bundled)
+  }
+
+  func testRuntimeProfileRejectsModelTextOutsideOpenCodeGoCatalogNamespace() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-runtime-invalid-selection")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-invalid-selection")
+    addTeardownBlock {
+      fixture.remove()
+      try? FileManager.default.removeItem(atPath: runDirectory)
+    }
+
+    XCTAssertThrowsError(
+      try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
+        sourceRoot: fixture.root,
+        runDirectory: runDirectory,
+        modelID: "other-provider/model",
+        reasoningEffort: "high"
+      )
+    ) { error in
+      XCTAssertEqual(error as? AgentRuntimeError, .modelUnavailable("other-provider/model"))
+    }
+  }
+
   private func makeProfileFixture(
     prefix: String,
     lockVersion: String = "0.25.1",

@@ -57,8 +57,15 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
     useStoredDefault: Bool
   ) async throws -> IPCAgentModelsResponse
   func agentModelDefault() async throws -> IPCAgentModelDefaultResponse
+  func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse
   func setAgentModelDefault(_ model: String?) async throws
   func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse
+  func setAgentDefaults(
+    providerID: String,
     model: String?,
     permissionMode: String?,
     effort: String?
@@ -176,6 +183,11 @@ extension BridgeServiceClientProtocol {
     throw BridgeServiceClientError.unavailable
   }
 
+  public func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse {
+    guard providerID == "opencode" else { throw BridgeServiceClientError.unavailable }
+    return try await agentModelDefault()
+  }
+
   public func setAgentModelDefault(_: String?) async throws {
     throw BridgeServiceClientError.unavailable
   }
@@ -189,6 +201,20 @@ extension BridgeServiceClientProtocol {
     return IPCAgentModelDefaultResponse(
       model: model,
       permissionMode: permissionMode ?? "build",
+      effort: effort
+    )
+  }
+
+  public func setAgentDefaults(
+    providerID: String,
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
+    guard providerID == "opencode" else { throw BridgeServiceClientError.unavailable }
+    return try await setOpenCodeDefaults(
+      model: model,
+      permissionMode: permissionMode,
       effort: effort
     )
   }

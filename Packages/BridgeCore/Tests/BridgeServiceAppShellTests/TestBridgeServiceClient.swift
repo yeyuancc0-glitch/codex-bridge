@@ -72,6 +72,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentModelDefaultPermissionMode = "build"
   private var agentModelDefaultEffort: String?
   private var agentModelDefaultWrites: [String?] = []
+  private var agentDefaultsByProvider: [String: IPCAgentModelDefaultResponse] = [:]
   private var agentModelDefaultReadDelay: Duration = .zero
   private var agentModelDefaultReadCount = 0
   private var agentModelRequestCount = 0
@@ -441,6 +442,13 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     )
   }
 
+  func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse {
+    if providerID == "opencode" { return try await agentModelDefault() }
+    return agentDefaultsByProvider[providerID]
+      ?? IPCAgentModelDefaultResponse(
+        providerID: providerID, model: nil, permissionMode: "read-only")
+  }
+
   func setAgentModelDefault(_ model: String?) async throws {
     agentModelDefaultValue = model
     agentModelDefaultWrites.append(model)
@@ -460,6 +468,29 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       permissionMode: agentModelDefaultPermissionMode,
       effort: effort
     )
+  }
+
+  func setAgentDefaults(
+    providerID: String,
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
+    if providerID == "opencode" {
+      return try await setOpenCodeDefaults(
+        model: model,
+        permissionMode: permissionMode,
+        effort: effort
+      )
+    }
+    let response = IPCAgentModelDefaultResponse(
+      providerID: providerID,
+      model: model,
+      permissionMode: permissionMode ?? "read-only",
+      effort: effort
+    )
+    agentDefaultsByProvider[providerID] = response
+    return response
   }
 
   func agentActionsValue() -> [String] {

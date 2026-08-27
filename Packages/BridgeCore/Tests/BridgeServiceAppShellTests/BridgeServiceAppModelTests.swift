@@ -211,6 +211,47 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertTrue(writes.isEmpty)
   }
 
+  func testDeepSeekDefaultsDoNotOverwriteOpenCodeDefaults() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    await client.configureOpenCodeDefault(
+      model: "opencode-go/ox-alpha-free",
+      permissionMode: "plan",
+      effort: nil
+    )
+    _ = try await client.setAgentDefaults(
+      providerID: "deepseek-harness",
+      model: "opencode-go/deepseek-v4-pro",
+      permissionMode: nil,
+      effort: "high"
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    await model.hydrateAgentModelState(
+      installationID: nil,
+      providerID: "deepseek-harness"
+    )
+    XCTAssertEqual(model.openCodeDefaultModel, "opencode-go/deepseek-v4-pro")
+    XCTAssertEqual(model.openCodeDefaultEffort, "high")
+    model.saveAgentEffort("max", providerID: "deepseek-harness")
+
+    try await waitUntil {
+      let persisted = try? await client.agentModelDefault(providerID: "deepseek-harness")
+      return persisted?.effort == "max"
+    }
+    let openCode = try await client.agentModelDefault()
+    XCTAssertEqual(openCode.model, "opencode-go/ox-alpha-free")
+    XCTAssertEqual(openCode.permissionMode, "plan")
+    XCTAssertNil(openCode.effort)
+  }
+
   func testStaleAgentDefaultLoadCannotOverwriteNewSave() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

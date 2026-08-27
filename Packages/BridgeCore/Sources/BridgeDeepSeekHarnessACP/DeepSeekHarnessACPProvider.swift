@@ -57,8 +57,25 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     descriptor = try AgentProviderDescriptor(
       providerID: .deepSeekHarness,
       displayName: "DeepSeek Harness",
-      adapterRevision: 1
+      adapterRevision: 2
     )
+  }
+
+  public func models(
+    installation: AgentInstallation,
+    projectRoot _: String?,
+    selectedModelID: String?
+  ) async throws -> [AgentModelDescriptor] {
+    guard installation.providerID == .deepSeekHarness else {
+      throw AgentRuntimeError.providerUnavailable(installation.providerID)
+    }
+    let models = try DeepSeekHarnessACPModelCatalog.descriptors()
+    if let selectedModelID,
+      !models.contains(where: { $0.id == selectedModelID })
+    {
+      throw AgentRuntimeError.modelUnavailable(selectedModelID)
+    }
+    return models
   }
 
   public func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
@@ -133,6 +150,8 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
         installation: installation,
         projectRoot: request.projectRoot,
         runDirectory: runDirectory,
+        modelID: request.model,
+        reasoningEffort: request.effort,
         networkAllowed: false,
         sourceEnvironment: configuration.sourceEnvironment
       )
@@ -191,6 +210,8 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
       .textDelta,
       .workspaceRead,
       .oneShotApproval,
+      .modelSelection,
+      .effortSelection,
     ],
     observed: [
       .sessionCreate,
@@ -198,12 +219,16 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
       .textDelta,
       .workspaceRead,
       .oneShotApproval,
+      .modelSelection,
+      .effortSelection,
     ],
     enforced: [
       .sessionCreate,
       .interrupt,
       .textDelta,
       .workspaceRead,
+      .modelSelection,
+      .effortSelection,
     ]
   )
 
@@ -235,12 +260,10 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     guard request.requestedSessionID == nil else {
       throw AgentRuntimeError.capabilityUnavailable(.sessionContinue)
     }
-    guard request.model == nil else {
-      throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
-    }
-    guard request.effort == nil else {
-      throw AgentRuntimeError.capabilityUnavailable(.effortSelection)
-    }
+    _ = try DeepSeekHarnessACPModelCatalog.resolvedSelection(
+      modelID: request.model,
+      reasoningEffort: request.effort
+    )
     guard
       request.profileID == nil || request.profileID == DeepSeekHarnessACPProfiles.controlledReadOnly
     else {

@@ -285,9 +285,22 @@ public final class BridgeServiceAppModel: ObservableObject {
 }
 
 struct AgentModelHydrationID: Equatable {
+  let providerID: String
   let installationID: String?
   let projectID: String?
   let modelID: String?
+
+  init(
+    providerID: String = "opencode",
+    installationID: String?,
+    projectID: String?,
+    modelID: String?
+  ) {
+    self.providerID = providerID
+    self.installationID = installationID
+    self.projectID = projectID
+    self.modelID = modelID
+  }
 }
 
 public struct ToastNotice: Identifiable, Equatable, Sendable {

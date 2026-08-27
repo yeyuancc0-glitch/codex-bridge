@@ -2,10 +2,13 @@ import BridgeIPC
 import Foundation
 
 extension BridgeServiceAppModel {
-  func refreshAgentModelCatalog(installationID: String?) {
+  func refreshAgentModelCatalog(
+    installationID: String?,
+    providerID: String = "opencode"
+  ) {
     guard !isRefreshingAgentModels else { return }
     guard let installationID, !installationID.isEmpty else {
-      agentModelRefreshError = "暂无已启用且可用的 OpenCode 安装。"
+      agentModelRefreshError = "暂无已启用且可用的 \(agentProviderName(providerID)) 安装。"
       return
     }
 
@@ -33,7 +36,7 @@ extension BridgeServiceAppModel {
         else { return }
         let defaultRevision = self.agentModelDefaultRevision
         let client = try self.currentClient()
-        let persistedDefault = try await client.agentModelDefault()
+        let persistedDefault = try await client.agentModelDefault(providerID: providerID)
         guard !Task.isCancelled,
           defaultRevision == self.agentModelDefaultRevision
         else { return }
@@ -79,9 +82,10 @@ extension BridgeServiceAppModel {
         if defaultWasRemoved || effortWasRemoved,
           defaultRevision == self.agentModelDefaultRevision
         {
-          correctedDefault = try await client.setOpenCodeDefaults(
+          correctedDefault = try await client.setAgentDefaults(
+            providerID: providerID,
             model: defaultWasRemoved ? nil : defaultModel,
-            permissionMode: persistedDefault.permissionMode,
+            permissionMode: providerID == "opencode" ? persistedDefault.permissionMode : nil,
             effort: nil
           )
           guard defaultRevision == self.agentModelDefaultRevision else { return }
@@ -99,6 +103,7 @@ extension BridgeServiceAppModel {
         let finalDefault = correctedDefault ?? persistedDefault
         if self.openCodeDefaultModel != finalDefault.model {
           self.agentModelHydrationSuppression = AgentModelHydrationID(
+            providerID: providerID,
             installationID: installationID,
             projectID: self.selectedProjectID,
             modelID: finalDefault.model
@@ -113,9 +118,10 @@ extension BridgeServiceAppModel {
 
         let message: String
         if addedCount == 0, removedCount == 0 {
-          message = "OpenCode 模型列表已是最新（共 \(response.models.count) 个）"
+          message = "\(self.agentProviderName(providerID)) 模型列表已是最新（共 \(response.models.count) 个）"
         } else {
-          message = "OpenCode 模型列表已刷新：新增 \(addedCount) 个，移除 \(removedCount) 个"
+          message =
+            "\(self.agentProviderName(providerID)) 模型列表已刷新：新增 \(addedCount) 个，移除 \(removedCount) 个"
         }
         self.postToast(message, symbol: "arrow.clockwise", tone: .success)
       } catch {
@@ -274,11 +280,13 @@ extension BridgeServiceAppModel {
 
 extension BridgeServiceAppModel {
   func consumeAgentModelHydrationSuppression(
+    providerID: String = "opencode",
     installationID: String?,
     projectID: String?,
     modelID: String?
   ) -> Bool {
     let hydrationID = AgentModelHydrationID(
+      providerID: providerID,
       installationID: installationID,
       projectID: projectID,
       modelID: modelID
@@ -291,7 +299,10 @@ extension BridgeServiceAppModel {
     return true
   }
 
-  func hydrateAgentModelState(installationID: String?) async {
+  func hydrateAgentModelState(
+    installationID: String?,
+    providerID: String = "opencode"
+  ) async {
     agentModelCatalogGeneration &+= 1
     let catalogGeneration = agentModelCatalogGeneration
     agentModelDefaultLoadGeneration &+= 1
@@ -308,7 +319,7 @@ extension BridgeServiceAppModel {
     let defaultRevision = agentModelDefaultRevision
     guard let client = try? currentClient() else { return }
 
-    let persistedDefault = try? await client.agentModelDefault()
+    let persistedDefault = try? await client.agentModelDefault(providerID: providerID)
     let modelResponse: IPCAgentModelsResponse?
     if let installationID, !installationID.isEmpty {
       modelResponse = try? await client.agentModels(
@@ -333,33 +344,37 @@ extension BridgeServiceAppModel {
     openCodeDefaultEffort = persistedDefault.effort
   }
 
-  func saveAgentModelDefault(_ model: String?) {
+  func saveAgentModelDefault(_ model: String?, providerID: String = "opencode") {
     agentModelCatalogGeneration &+= 1
     agentModelHydrationSuppression = nil
-    saveOpenCodeDefaults(
+    saveAgentDefaults(
+      providerID: providerID,
       model: model,
-      permissionMode: openCodeDefaultPermissionMode,
+      permissionMode: providerID == "opencode" ? openCodeDefaultPermissionMode : nil,
       effort: nil
     )
   }
 
   func saveOpenCodePermissionMode(_ mode: String) {
-    saveOpenCodeDefaults(
+    saveAgentDefaults(
+      providerID: "opencode",
       model: openCodeDefaultModel,
       permissionMode: mode,
       effort: openCodeDefaultEffort
     )
   }
 
-  func saveOpenCodeEffort(_ effort: String?) {
-    saveOpenCodeDefaults(
+  func saveAgentEffort(_ effort: String?, providerID: String = "opencode") {
+    saveAgentDefaults(
+      providerID: providerID,
       model: openCodeDefaultModel,
-      permissionMode: openCodeDefaultPermissionMode,
+      permissionMode: providerID == "opencode" ? openCodeDefaultPermissionMode : nil,
       effort: effort
     )
   }
 
-  private func saveOpenCodeDefaults(
+  private func saveAgentDefaults(
+    providerID: String,
     model: String?,
     permissionMode: String?,
     effort: String?
@@ -385,18 +400,23 @@ extension BridgeServiceAppModel {
       }
       do {
         let client = try self.currentClient()
-        _ = try await client.setOpenCodeDefaults(
+        _ = try await client.setAgentDefaults(
+          providerID: providerID,
           model: model,
           permissionMode: permissionMode,
           effort: effort
         )
         guard self.agentModelDefaultRevision == revision else { return }
-        let persisted = try await client.agentModelDefault()
+        let persisted = try await client.agentModelDefault(providerID: providerID)
         guard self.agentModelDefaultRevision == revision else { return }
         self.openCodeDefaultModel = persisted.model
         self.openCodeDefaultPermissionMode = persisted.permissionMode
         self.openCodeDefaultEffort = persisted.effort
-        self.postToast("OpenCode 默认设置已保存", symbol: "checkmark.circle.fill", tone: .success)
+        self.postToast(
+          "\(self.agentProviderName(providerID)) 默认设置已保存",
+          symbol: "checkmark.circle.fill",
+          tone: .success
+        )
       } catch {
         guard self.agentModelDefaultRevision == revision else { return }
         self.openCodeDefaultModel = previous
@@ -406,5 +426,9 @@ extension BridgeServiceAppModel {
       }
     }
     agentModelDefaultMutationTask = task
+  }
+
+  private func agentProviderName(_ providerID: String) -> String {
+    agentProviders.first(where: { $0.providerID == providerID })?.displayName ?? providerID
   }
 }

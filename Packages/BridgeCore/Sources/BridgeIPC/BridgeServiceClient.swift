@@ -570,9 +570,13 @@ extension BridgeServiceClient {
 
 extension BridgeServiceClient {
   public func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
+    try await agentModelDefault(providerID: "opencode")
+  }
+
+  public func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse {
     try await call(
       operation: .getAgentModelDefault,
-      payload: Optional<IPCMutationResponse>.none
+      payload: IPCAgentModelDefaultRequest(providerID: providerID, model: nil)
     )
   }
 
@@ -588,9 +592,24 @@ extension BridgeServiceClient {
     permissionMode: String?,
     effort: String?
   ) async throws -> IPCAgentModelDefaultResponse {
+    try await setAgentDefaults(
+      providerID: "opencode",
+      model: model,
+      permissionMode: permissionMode,
+      effort: effort
+    )
+  }
+
+  public func setAgentDefaults(
+    providerID: String,
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
     try await call(
       operation: .setAgentModelDefault,
       payload: IPCAgentModelDefaultRequest(
+        providerID: providerID,
         model: model,
         permissionMode: permissionMode,
         effort: effort ?? ""

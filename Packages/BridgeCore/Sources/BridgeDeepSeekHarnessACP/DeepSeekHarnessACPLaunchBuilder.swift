@@ -44,6 +44,8 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     installation: AgentInstallation,
     projectRoot: String,
     runDirectory: String,
+    modelID: String? = nil,
+    reasoningEffort: String? = nil,
     networkAllowed: Bool,
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> DeepSeekHarnessACPLaunchConfiguration {
@@ -61,7 +63,9 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     )
     let runtimeConfiguration = try prepareRuntimeProfile(
       sourceRoot: validated.sourceRoot,
-      runDirectory: runtime
+      runDirectory: runtime,
+      modelID: modelID,
+      reasoningEffort: reasoningEffort
     )
     let configurationDirectory = URL(fileURLWithPath: validated.configurationPath)
       .deletingLastPathComponent().standardizedFileURL.path
@@ -91,7 +95,12 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     )
   }
 
-  func prepareRuntimeProfile(sourceRoot: String, runDirectory: String) throws -> String {
+  func prepareRuntimeProfile(
+    sourceRoot: String,
+    runDirectory: String,
+    modelID: String? = nil,
+    reasoningEffort: String? = nil
+  ) throws -> String {
     let moduleDirectory = URL(fileURLWithPath: sourceRoot, isDirectory: true)
       .appendingPathComponent("node_modules/.pnpm/node_modules", isDirectory: true)
       .standardizedFileURL.path
@@ -111,7 +120,12 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     let configuration = URL(fileURLWithPath: runtimeProfile, isDirectory: true)
       .appendingPathComponent("cordis.yml").path
     do {
-      try profile.configurationTemplate.write(
+      let runtimeConfiguration = try DeepSeekHarnessACPModelCatalog.runtimeConfiguration(
+        from: profile.configurationTemplate,
+        modelID: modelID,
+        reasoningEffort: reasoningEffort
+      )
+      try runtimeConfiguration.write(
         to: URL(fileURLWithPath: configuration),
         options: .atomic
       )
