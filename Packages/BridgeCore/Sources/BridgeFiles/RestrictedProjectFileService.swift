@@ -277,7 +277,7 @@ private struct SearchScanPage: Sendable {
   let skippedFileCount: Int
 }
 
-private struct SearchPageScanner {
+fileprivate struct SearchPageScanner {
   let root: RegisteredRoot
   let limits: ProjectFileLimits
   let query: String

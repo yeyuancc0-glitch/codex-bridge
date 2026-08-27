@@ -27,6 +27,10 @@ public struct DirectGitResult: Equatable, Sendable {
 public struct DirectGitRunner: Sendable {
   public static let gitPath = "/usr/bin/git"
 
+  public static func resolveGitPath() throws -> String {
+    return gitPath
+  }
+
   public let defaultTimeout: Duration
 
   public init(defaultTimeout: Duration = .seconds(60)) {
