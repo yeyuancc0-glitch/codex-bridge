@@ -283,6 +283,20 @@ fileprivate struct SearchPageScanner {
   let query: String
   let caseSensitive: Bool
   let limit: Int
+  fileprivate init(
+    root: RegisteredRoot,
+    limits: ProjectFileLimits,
+    query: String,
+    caseSensitive: Bool,
+    limit: Int
+  ) {
+    self.root = root
+    self.limits = limits
+    self.query = query
+    self.caseSensitive = caseSensitive
+    self.limit = limit
+  }
+
   private var matches: [ProjectFileSearchMatch] = []
   private var positionsAfterMatches: [SearchPosition] = []
   private var skippedFileCount = 0
