@@ -36,6 +36,11 @@ extension MCPServiceTaskSnapshot {
     !isCodexTask
   }
 
+  var expectedControlID: String? {
+    guard status == "running" else { return nil }
+    return isCodexTask ? turnID : providerRunID
+  }
+
   var workbenchTitle: String {
     for value in [currentStep, resultSummary] {
       if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

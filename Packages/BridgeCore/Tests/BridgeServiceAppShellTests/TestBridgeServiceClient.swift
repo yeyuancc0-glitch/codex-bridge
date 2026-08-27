@@ -53,6 +53,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
   private var workbenchProjectSelections: [String?] = []
   private var taskSnapshotsValue: [MCPServiceTaskSnapshot]?
+  private var taskControlActions: [String] = []
   private var approvalsValue: [IPCApprovalSummary] = [
     IPCApprovalSummary(
       approvalID: "approval-1",
@@ -85,7 +86,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     IPCAgentProviderSummary(
       providerID: "opencode",
       displayName: "OpenCode",
-      adapterRevision: 1
+      adapterRevision: 1,
+      supportsSteer: true
     )
   ]
 
@@ -584,6 +586,35 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func stopTask(taskID _: String) async throws {}
+
+  func steerTask(
+    taskID: String,
+    expectedTurnID: String,
+    input: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    taskControlActions.append("steer:\(taskID):\(expectedTurnID):\(input)")
+    return MCPServiceTaskMutationReceipt(
+      taskID: taskID,
+      status: "running",
+      accepted: true
+    )
+  }
+
+  func interruptTask(
+    taskID: String,
+    expectedTurnID: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    taskControlActions.append("interrupt:\(taskID):\(expectedTurnID)")
+    return MCPServiceTaskMutationReceipt(
+      taskID: taskID,
+      status: "interrupted",
+      accepted: true
+    )
+  }
+
+  func taskControlActionsValue() -> [String] {
+    taskControlActions
+  }
 
   func deleteTask(taskID: String) async throws {
     deletedTaskIDs.append(taskID)

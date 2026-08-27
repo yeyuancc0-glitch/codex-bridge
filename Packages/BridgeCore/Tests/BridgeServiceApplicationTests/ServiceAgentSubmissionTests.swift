@@ -403,6 +403,133 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertTrue(provider.startedRequests[0].requiredCapabilities.contains(.sessionContinue))
   }
 
+  func testNonCodexSubmissionInjectsExplicitSkillIntoProviderPrompt() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try writeSkill(
+      named: "review",
+      content:
+        "---\n"
+        + "name: review\n"
+        + "description: test\n"
+        + "---\n\n"
+        + "Follow the repository review checklist.",
+      in: fixture.project.root.canonicalPath
+    )
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let taskID = try await assertAgentSkillInjectedIntoProviderPrompt(
+      application: application,
+      fixture: fixture,
+      submission: MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect the repository.",
+        skillName: "review",
+        providerID: "opencode",
+        permissionMode: "read-only",
+        clientRequestID: "agent-skill-injection"
+      ),
+      expectedPrompt:
+        "Skill instructions for review:\n\n---\nname: review\ndescription: test\n---\n\nFollow the repository review checklist.\n\nUser task:\nInspect the repository.",
+      deadline: deadline,
+      providerPrompt: { provider.startedRequests.first?.prompt }
+    )
+
+    try emit(
+      provider,
+      taskID: taskID,
+      sequence: 1,
+      event: .completed(summary: "Skill run complete.", stopReason: nil)
+    )
+    provider.finish(taskID: taskID)
+    _ = try await waitForTask(fixture, taskID: taskID.rawValue) {
+      $0.state.status == .completed
+    }
+  }
+
+  func testNonCodexSubmissionRejectsMissingAndInvalidSkills() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+
+    for (skillName, clientRequestID) in [
+      ("missing", "agent-skill-missing"),
+      ("../escape", "agent-skill-invalid"),
+    ] {
+      try await assertRejected(
+        application,
+        submission: MCPServiceTaskSubmission(
+          projectID: fixture.project.id.rawValue,
+          prompt: "Inspect the repository.",
+          skillName: skillName,
+          providerID: "opencode",
+          permissionMode: "read-only",
+          clientRequestID: clientRequestID
+        ),
+        expected: .skillNotFound,
+        reason: "skill \(skillName) must fail closed"
+      )
+    }
+    XCTAssertTrue(provider.startedRequests.isEmpty)
+  }
+
+  func testNonCodexSubmissionWithoutSkillKeepsPromptUnchanged() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(registry: registry, providers: [.openCode: provider])
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect the repository.",
+        providerID: "opencode",
+        permissionMode: "read-only",
+        clientRequestID: "agent-skill-omitted"
+      ),
+      deadline: deadline
+    )
+    let taskID = TaskID(rawValue: receipt.taskID)
+    try await application.resolveTaskStartApproval(
+      taskID: taskID,
+      approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+      approved: true,
+      deadline: deadline
+    )
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .running
+    }
+    XCTAssertEqual(provider.startedRequests.first?.prompt, "Inspect the repository.")
+
+    try emit(
+      provider,
+      taskID: taskID,
+      sequence: 1,
+      event: .completed(summary: "No skill run complete.", stopReason: nil)
+    )
+    provider.finish(taskID: taskID)
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .completed
+    }
+  }
+
   func testWorkspaceWriteAgentSubmissionUsesDatabaseWriteSlot() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider()
@@ -738,6 +865,66 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.permissionMode, .workspaceWrite)
     XCTAssertEqual(task.executionModel, "opencode/x-preview-f-free")
     XCTAssertEqual(task.executionEffort, "high")
+  }
+
+  func testManagedAgentSubmissionReusesIDAndUsesDefaultsWhenOverridesAreDisabled()
+    async throws
+  {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.set("opencode/x-preview-f-free", for: .openCodeDefaultModel)
+    try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
+    try await fixture.settings.setOpenCodeDefaultEffort("high")
+    let provider = try ScriptedAgentProvider(
+      supportsWorkspaceWrite: true,
+      supportedReasoningEfforts: ["low", "high"]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+
+    let first = try await application.serviceSubmitAgentTask(
+      projectID: fixture.project.id.rawValue,
+      providerID: AgentProviderID.openCode.rawValue,
+      installationID: nil,
+      model: "opencode/deleted",
+      effort: "unsupported",
+      permissionMode: "read-only",
+      prompt: "Use the saved OpenCode defaults.",
+      modelOverride: false,
+      permissionModeOverride: false,
+      clientRequestID: "managed-agent-request-1",
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+    let replay = try await application.serviceSubmitAgentTask(
+      projectID: fixture.project.id.rawValue,
+      providerID: AgentProviderID.openCode.rawValue,
+      installationID: nil,
+      model: "opencode/deleted",
+      effort: "unsupported",
+      permissionMode: "read-only",
+      prompt: "Use the saved OpenCode defaults.",
+      modelOverride: false,
+      permissionModeOverride: false,
+      clientRequestID: "managed-agent-request-1",
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+    )
+
+    XCTAssertEqual(first.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
+    XCTAssertEqual(replay.taskID, first.taskID)
+    XCTAssertEqual(replay.status, first.status)
+    let stored = try await fixture.tasks.task(id: TaskID(rawValue: first.taskID))
+    let task = try XCTUnwrap(stored)
+    XCTAssertEqual(task.clientRequestID, "managed-agent-request-1")
+    XCTAssertEqual(task.executionModel, "opencode/x-preview-f-free")
+    XCTAssertEqual(task.executionEffort, "high")
+    XCTAssertEqual(task.permissionMode, .workspaceWrite)
   }
 
   func testOpenCodeSubmissionIgnoresUnmarkedClientPermissionMode() async throws {
@@ -1390,6 +1577,20 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       )
     )
     return registry
+  }
+
+  private func writeSkill(named name: String, content: String, in projectRoot: String) throws {
+    let skillDirectory = URL(fileURLWithPath: projectRoot, isDirectory: true)
+      .appending(path: "skills", directoryHint: .isDirectory)
+      .appending(path: name, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(
+      at: skillDirectory,
+      withIntermediateDirectories: true
+    )
+    try Data(content.utf8).write(
+      to: skillDirectory.appending(path: "SKILL.md"),
+      options: .atomic
+    )
   }
 
   private func emit(

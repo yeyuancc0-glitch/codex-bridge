@@ -7,6 +7,7 @@ import WebKit
 struct BridgeServiceWorkbenchView: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var isInspectorVisible = true
+  @State private var steerInput = ""
 
   var body: some View {
     HSplitView {
@@ -245,14 +246,30 @@ struct BridgeServiceWorkbenchView: View {
         HStack(spacing: 6) {
           WorkbenchProviderTaskPicker(model: model, tasks: externalAgentTasks)
           Spacer()
-          if let activeTask = currentActiveTask, activeTask.isExternalAgentTask {
+          if let activeTask = currentActiveTask, canInterrupt(activeTask) {
             Button("中断", role: .destructive) {
-              model.stopTask(activeTask.taskID)
+              model.interruptTask(activeTask)
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
           }
         }
+      }
+
+      if let task = steerableTask {
+        HStack(spacing: 6) {
+          TextField("补充指令（当前轮完成后继续）", text: $steerInput)
+            .textFieldStyle(.roundedBorder)
+            .lineLimit(1...3)
+          Button("发送") {
+            model.steerTask(task, input: steerInput)
+            steerInput = ""
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.mini)
+          .disabled(!canSubmitSteer)
+        }
+        .help("该 Provider 会在当前轮完成后，将补充指令作为同一会话的下一次输入")
       }
 
       if currentTask?.isExternalAgentTask != true {
@@ -306,9 +323,9 @@ struct BridgeServiceWorkbenchView: View {
 
           Spacer()
 
-          if let activeTask = currentActiveTask {
+          if let activeTask = currentActiveTask, canInterrupt(activeTask) {
             Button("中断", role: .destructive) {
-              model.stopTask(activeTask.taskID)
+              model.interruptTask(activeTask)
             }
             .buttonStyle(.bordered)
             .controlSize(.mini)
@@ -525,6 +542,26 @@ struct BridgeServiceWorkbenchView: View {
       task.isExternalAgentTask
         && (model.selectedProjectID == nil || task.projectID == model.selectedProjectID)
     }
+  }
+
+  private func canInterrupt(_ task: MCPServiceTaskSnapshot) -> Bool {
+    task.expectedControlID != nil
+  }
+
+  private var steerableTask: MCPServiceTaskSnapshot? {
+    guard let task = currentTask,
+      task.isExternalAgentTask,
+      task.expectedControlID != nil,
+      let providerID = task.providerID,
+      model.agentProviders.first(where: { $0.providerID == providerID })?.supportsSteer == true
+    else { return nil }
+    return task
+  }
+
+  private var canSubmitSteer: Bool {
+    let text = steerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !text.isEmpty && steerInput.utf8.count <= IPCTaskSteerRequest.maximumInputBytes
+      && !steerInput.contains("\0")
   }
 
   private var providerSubtitle: String {

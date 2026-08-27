@@ -267,7 +267,8 @@ extension BridgeServiceApplication {
         submission,
         providerRaw: providerRaw,
         project: project,
-        sourceClientID: sourceClientID
+        sourceClientID: sourceClientID,
+        deadline: deadline
       )
     }
     let models = try await catalog.listModels(deadline: deadline).models
@@ -310,7 +311,8 @@ extension BridgeServiceApplication {
     _ submission: MCPServiceTaskSubmission,
     providerRaw: String,
     project: ServiceProjectRecord,
-    sourceClientID: String
+    sourceClientID: String,
+    deadline: ContinuousClock.Instant
   ) async throws -> PreparedTaskSubmission {
     let providerID = AgentProviderID(rawValue: providerRaw)
     guard let policy = ServiceAgentProviderPolicyRegistry.policy(for: providerID),
@@ -361,7 +363,8 @@ extension BridgeServiceApplication {
     } else if policy.providerID == .deepSeekHarness {
       configuredModel = try await settings.string(for: .deepSeekHarnessDefaultModel)
       configuredEffort = try await settings.string(for: .deepSeekHarnessDefaultEffort)
-      defaultMode = policy.defaultPermissionMode
+      let configuredMode = try await settings.deepSeekHarnessDefaultPermissionMode()
+      defaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
     } else {
       configuredModel = nil
       configuredEffort = nil
@@ -456,10 +459,11 @@ extension BridgeServiceApplication {
     } else {
       executionEffort = serviceDefaultProviderExecutionEffort
     }
-    let prompt = Self.prompt(submission.prompt, acceptanceCriteria: submission.acceptanceCriteria)
-    guard prompt.utf8.count <= 32 * 1_024 else {
-      throw BridgeMCPQueryError.contractRejected
-    }
+    let prompt = try await taskPrompt(
+      for: submission,
+      project: project,
+      deadline: deadline
+    )
     let accessMode = try await settings.accessMode()
     let executionModel =
       selectedDescriptor?.id ?? resolvedModel ?? serviceDefaultProviderExecutionModel
@@ -478,7 +482,7 @@ extension BridgeServiceApplication {
         executionModel: executionModel,
         executionEffort: executionEffort,
         permissionMode: permission,
-        networkAllowed: false,
+        networkAllowed: submission.networkAccess,
         accessMode: accessMode
       )
     )

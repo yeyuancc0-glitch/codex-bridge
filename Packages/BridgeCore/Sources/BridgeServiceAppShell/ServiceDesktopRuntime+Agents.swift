@@ -101,7 +101,7 @@ extension BridgeServiceAppModel {
         self.agentModelOptions = response.models
         self.agentModelRefreshError = nil
         let finalDefault = correctedDefault ?? persistedDefault
-        if self.openCodeDefaultModel != finalDefault.model {
+        if self.agentModelDefault(for: providerID).model != finalDefault.model {
           self.agentModelHydrationSuppression = AgentModelHydrationID(
             providerID: providerID,
             installationID: installationID,
@@ -112,9 +112,7 @@ extension BridgeServiceAppModel {
         if correctedDefault != nil {
           self.agentModelDefaultRevision &+= 1
         }
-        self.openCodeDefaultModel = finalDefault.model
-        self.openCodeDefaultPermissionMode = finalDefault.permissionMode
-        self.openCodeDefaultEffort = finalDefault.effort
+        self.applyAgentModelDefault(finalDefault, providerID: providerID)
 
         let message: String
         if addedCount == 0, removedCount == 0 {
@@ -241,7 +239,14 @@ extension BridgeServiceAppModel {
     model: String?,
     effort: String? = nil,
     permissionMode: String? = nil,
-    prompt: String
+    prompt: String,
+    threadID: String? = nil,
+    skillName: String? = nil,
+    networkAccess: Bool? = nil,
+    modelOverride: Bool? = nil,
+    permissionModeOverride: Bool? = nil,
+    acceptanceCriteria: [String]? = nil,
+    clientRequestID: String? = nil
   ) {
     guard !isManagingAgents else { return }
     isManagingAgents = true
@@ -261,7 +266,14 @@ extension BridgeServiceAppModel {
             },
             effort: effort,
             permissionMode: permissionMode,
-            prompt: prompt
+            prompt: prompt,
+            threadID: threadID,
+            skillName: skillName,
+            networkAccess: networkAccess,
+            modelOverride: modelOverride,
+            permissionModeOverride: permissionModeOverride,
+            acceptanceCriteria: acceptanceCriteria,
+            clientRequestID: clientRequestID
           )
         )
         self.postToast(
@@ -339,36 +351,41 @@ extension BridgeServiceAppModel {
       defaultRevision == agentModelDefaultRevision,
       let persistedDefault
     else { return }
-    openCodeDefaultModel = persistedDefault.model
-    openCodeDefaultPermissionMode = persistedDefault.permissionMode
-    openCodeDefaultEffort = persistedDefault.effort
+    applyAgentModelDefault(persistedDefault, providerID: providerID)
   }
 
   func saveAgentModelDefault(_ model: String?, providerID: String = "opencode") {
     agentModelCatalogGeneration &+= 1
     agentModelHydrationSuppression = nil
+    let current = agentModelDefault(for: providerID)
     saveAgentDefaults(
       providerID: providerID,
       model: model,
-      permissionMode: providerID == "opencode" ? openCodeDefaultPermissionMode : nil,
+      permissionMode: current.permissionMode,
       effort: nil
     )
   }
 
   func saveOpenCodePermissionMode(_ mode: String) {
+    saveAgentPermissionMode(mode, providerID: "opencode")
+  }
+
+  func saveAgentPermissionMode(_ mode: String, providerID: String) {
+    let current = agentModelDefault(for: providerID)
     saveAgentDefaults(
-      providerID: "opencode",
-      model: openCodeDefaultModel,
+      providerID: providerID,
+      model: current.model,
       permissionMode: mode,
-      effort: openCodeDefaultEffort
+      effort: current.effort
     )
   }
 
   func saveAgentEffort(_ effort: String?, providerID: String = "opencode") {
+    let current = agentModelDefault(for: providerID)
     saveAgentDefaults(
       providerID: providerID,
-      model: openCodeDefaultModel,
-      permissionMode: providerID == "opencode" ? openCodeDefaultPermissionMode : nil,
+      model: current.model,
+      permissionMode: current.permissionMode,
       effort: effort
     )
   }
@@ -379,16 +396,18 @@ extension BridgeServiceAppModel {
     permissionMode: String?,
     effort: String?
   ) {
-    let previous = openCodeDefaultModel
-    let previousPermissionMode = openCodeDefaultPermissionMode
-    let previousEffort = openCodeDefaultEffort
+    let previous = agentModelDefault(for: providerID)
     agentModelDefaultRevision &+= 1
     let revision = agentModelDefaultRevision
-    openCodeDefaultModel = model
-    if let permissionMode {
-      openCodeDefaultPermissionMode = permissionMode
-    }
-    openCodeDefaultEffort = effort
+    applyAgentModelDefault(
+      IPCAgentModelDefaultResponse(
+        providerID: providerID,
+        model: model,
+        permissionMode: permissionMode ?? previous.permissionMode,
+        effort: effort
+      ),
+      providerID: providerID
+    )
     let previousMutation = agentModelDefaultMutationTask
     let task = Task { [weak self, previousMutation] in
       await previousMutation?.value
@@ -409,9 +428,7 @@ extension BridgeServiceAppModel {
         guard self.agentModelDefaultRevision == revision else { return }
         let persisted = try await client.agentModelDefault(providerID: providerID)
         guard self.agentModelDefaultRevision == revision else { return }
-        self.openCodeDefaultModel = persisted.model
-        self.openCodeDefaultPermissionMode = persisted.permissionMode
-        self.openCodeDefaultEffort = persisted.effort
+        self.applyAgentModelDefault(persisted, providerID: providerID)
         self.postToast(
           "\(self.agentProviderName(providerID)) 默认设置已保存",
           symbol: "checkmark.circle.fill",
@@ -419,9 +436,7 @@ extension BridgeServiceAppModel {
         )
       } catch {
         guard self.agentModelDefaultRevision == revision else { return }
-        self.openCodeDefaultModel = previous
-        self.openCodeDefaultPermissionMode = previousPermissionMode
-        self.openCodeDefaultEffort = previousEffort
+        self.applyAgentModelDefault(previous, providerID: providerID)
         self.errorMessage = Self.message(error)
       }
     }
@@ -430,5 +445,16 @@ extension BridgeServiceAppModel {
 
   private func agentProviderName(_ providerID: String) -> String {
     agentProviders.first(where: { $0.providerID == providerID })?.displayName ?? providerID
+  }
+
+  private func applyAgentModelDefault(
+    _ value: IPCAgentModelDefaultResponse,
+    providerID: String
+  ) {
+    agentModelDefaults[providerID] = value
+    guard providerID == "opencode" else { return }
+    openCodeDefaultModel = value.model
+    openCodeDefaultPermissionMode = value.permissionMode
+    openCodeDefaultEffort = value.effort
   }
 }

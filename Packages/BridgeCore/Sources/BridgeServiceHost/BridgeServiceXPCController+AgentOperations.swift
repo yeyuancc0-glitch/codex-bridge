@@ -132,6 +132,7 @@ extension BridgeServiceXPCController {
       supportsModelSelection: policy?.supportsModelSelection ?? true,
       supportsEffortSelection: policy?.supportsEffortSelection ?? true,
       supportsSessionContinuation: policy?.supportsSessionContinuation ?? true,
+      supportsSteer: policy?.supportsSteer ?? false,
       supportsWorkspaceWrite: policy?.supportsWorkspaceWrite ?? true,
       supportsSkillSelection: policy?.supportsSkillSelection ?? false,
       supportsSupervisor: policy?.supportsSupervisor ?? false,
@@ -178,7 +179,14 @@ extension BridgeServiceXPCController {
       model: payload.model,
       effort: payload.effort,
       permissionMode: payload.permissionMode,
+      networkAccess: payload.networkAccess ?? false,
       prompt: payload.prompt,
+      threadID: payload.threadID,
+      skillName: payload.skillName,
+      modelOverride: payload.modelOverride,
+      permissionModeOverride: payload.permissionModeOverride,
+      acceptanceCriteria: payload.acceptanceCriteria ?? [],
+      clientRequestID: payload.clientRequestID,
       deadline: deadline
     )
     return try BridgeServiceIPCCodec.success(

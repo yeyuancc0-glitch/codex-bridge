@@ -46,6 +46,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     runDirectory: String,
     modelID: String? = nil,
     reasoningEffort: String? = nil,
+    mutationIntent: AgentMutationIntent = .readOnly,
     networkAllowed: Bool,
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> DeepSeekHarnessACPLaunchConfiguration {
@@ -59,6 +60,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       nodeInterpreter: validated.nodeInterpreterPath,
       projectRoot: project,
       runDirectory: runtime,
+      mutationIntent: mutationIntent,
       sourceEnvironment: sourceEnvironment
     )
     let runtimeConfiguration = try prepareRuntimeProfile(
@@ -66,7 +68,8 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       runDirectory: runtime,
       configurationData: validated.configurationData,
       modelID: modelID,
-      reasoningEffort: reasoningEffort
+      reasoningEffort: reasoningEffort,
+      mutationIntent: mutationIntent
     )
     let configurationDirectory = URL(fileURLWithPath: validated.configurationPath)
       .deletingLastPathComponent().standardizedFileURL.path
@@ -101,7 +104,8 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     runDirectory: String,
     configurationData: Data? = nil,
     modelID: String? = nil,
-    reasoningEffort: String? = nil
+    reasoningEffort: String? = nil,
+    mutationIntent: AgentMutationIntent = .readOnly
   ) throws -> String {
     let moduleDirectory = URL(fileURLWithPath: sourceRoot, isDirectory: true)
       .appendingPathComponent("node_modules/.pnpm/node_modules", isDirectory: true)
@@ -122,11 +126,15 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     let configuration = URL(fileURLWithPath: runtimeProfile, isDirectory: true)
       .appendingPathComponent("cordis.yml").path
     do {
-      let runtimeConfiguration = try DeepSeekHarnessACPModelCatalog.runtimeConfiguration(
+      let stagedConfiguration = try DeepSeekHarnessACPModelCatalog.runtimeConfiguration(
         from: configurationData ?? profile.configurationTemplate,
         template: profile.configurationTemplate,
         modelID: modelID,
         reasoningEffort: reasoningEffort
+      )
+      let runtimeConfiguration = try Self.replaceSandboxMode(
+        in: stagedConfiguration,
+        mutationIntent: mutationIntent
       )
       try runtimeConfiguration.write(
         to: URL(fileURLWithPath: configuration),
@@ -157,6 +165,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     nodeInterpreter: String,
     projectRoot: String,
     runDirectory: String,
+    mutationIntent: AgentMutationIntent,
     sourceEnvironment: [String: String]
   ) throws -> [String: String] {
     let home = URL(fileURLWithPath: runDirectory).appendingPathComponent("home").path
@@ -182,7 +191,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       "DSH_HOME": dshHome,
       "DSH_SNAPSHOT_SESSIONS_ROOT": snapshots,
       "DSH_WORKSPACE_ROOT": projectRoot,
-      "DSH_PERMISSION_MODE": "read-only",
+      "DSH_PERMISSION_MODE": Self.permissionMode(for: mutationIntent),
     ]
     for key in ["USER", "LOGNAME", "LANG", "LC_ALL", "SHELL"] {
       if let value = sourceEnvironment[key],
@@ -194,6 +203,40 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       }
     }
     return environment
+  }
+
+  private static func permissionMode(for mutationIntent: AgentMutationIntent) -> String {
+    switch mutationIntent {
+    case .readOnly:
+      "read-only"
+    case .workspaceWrite:
+      "workspace-write"
+    }
+  }
+
+  private static func replaceSandboxMode(
+    in configuration: Data,
+    mutationIntent: AgentMutationIntent
+  ) throws -> Data {
+    guard var value = String(data: configuration, encoding: .utf8) else {
+      throw DeepSeekHarnessACPError.templateMismatch
+    }
+    let prefix = "    mode: "
+    let lines = value.split(separator: "\n", omittingEmptySubsequences: false)
+    let matching = lines.indices.filter { lines[$0].hasPrefix(prefix) }
+    guard matching.count == 1,
+      lines[matching[0]] == prefix + "read-only"
+    else {
+      throw DeepSeekHarnessACPError.templateMismatch
+    }
+    let mode = permissionMode(for: mutationIntent)
+    guard mode != "danger-full-access" else {
+      throw DeepSeekHarnessACPError.templateMismatch
+    }
+    var updated = lines.map(String.init)
+    updated[matching[0]] = prefix + mode
+    value = updated.joined(separator: "\n")
+    return Data(value.utf8)
   }
 
   private static func trustedPath(nodeInterpreter: String) -> String {

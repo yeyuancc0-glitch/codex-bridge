@@ -33,7 +33,7 @@ extension MCPServiceToolCatalog {
       "provider_id": [
         "type": "string",
         "description":
-          "Provider identifier. deepseek-harness is experimental, read-only, and supports fresh sessions only.",
+          "Provider identifier. deepseek-harness is experimental, supports fresh sessions with provider-native read-only or workspace-write modes, and requires explicit selection.",
       ],
       "installation_id": stringSchema,
       "display_name": stringSchema,
@@ -49,7 +49,7 @@ extension MCPServiceToolCatalog {
         "type": "array",
         "items": stringSchema,
         "description":
-          "Capabilities enforced for this installation. DeepSeek Harness exposes session_create, interrupt, text_delta, and workspace.read only.",
+          "Capabilities enforced for this installation. DeepSeek Harness may expose session_create, interrupt, lifecycle.steer, text_delta, workspace.read, workspace.write_in_place, approval.one_shot, approval.structured_payload, selection.model, and selection.effort.",
       ],
       "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
       "security_profile_id": stringSchema,

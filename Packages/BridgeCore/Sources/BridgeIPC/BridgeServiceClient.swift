@@ -280,6 +280,34 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func steerTask(
+    taskID: String,
+    expectedTurnID: String,
+    input: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    try await call(
+      operation: .steerTask,
+      payload: IPCTaskSteerRequest(
+        taskID: taskID,
+        expectedTurnID: expectedTurnID,
+        input: input
+      )
+    )
+  }
+
+  public func interruptTask(
+    taskID: String,
+    expectedTurnID: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    try await call(
+      operation: .interruptTask,
+      payload: IPCTaskInterruptRequest(
+        taskID: taskID,
+        expectedTurnID: expectedTurnID
+      )
+    )
+  }
+
   public func deleteTask(taskID: String) async throws {
     let _: IPCMutationResponse = try await call(
       operation: .deleteTask,

@@ -23,6 +23,7 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertTrue(decoded.supportsModelSelection)
     XCTAssertTrue(decoded.supportsEffortSelection)
     XCTAssertTrue(decoded.supportsSessionContinuation)
+    XCTAssertFalse(decoded.supportsSteer)
     XCTAssertTrue(decoded.supportsWorkspaceWrite)
     XCTAssertFalse(decoded.supportsSkillSelection)
     XCTAssertFalse(decoded.supportsSupervisor)
@@ -60,6 +61,13 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(decoded.projectID, "project-1")
     XCTAssertEqual(decoded.providerID, "opencode")
     XCTAssertNil(decoded.permissionMode)
+    XCTAssertNil(decoded.threadID)
+    XCTAssertNil(decoded.skillName)
+    XCTAssertNil(decoded.networkAccess)
+    XCTAssertNil(decoded.modelOverride)
+    XCTAssertNil(decoded.permissionModeOverride)
+    XCTAssertNil(decoded.acceptanceCriteria)
+    XCTAssertNil(decoded.clientRequestID)
 
     let encoded = try JSONEncoder().encode(
       IPCAgentSubmitRequest(
@@ -72,6 +80,65 @@ final class BridgeServiceHostTests: XCTestCase {
     let value = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     XCTAssertEqual(value["permission_mode"] as? String, "workspace-write")
     XCTAssertNil(value["network_access"])
+  }
+
+  func testAgentSubmitRequestCarriesMCPSubmissionFields() throws {
+    let request = IPCAgentSubmitRequest(
+      projectID: "project-1",
+      providerID: "opencode",
+      installationID: "installation-1",
+      model: "opencode/model",
+      effort: "high",
+      permissionMode: "workspace-write",
+      prompt: "Continue the task.",
+      threadID: "session-1",
+      skillName: "review",
+      networkAccess: true,
+      modelOverride: true,
+      permissionModeOverride: true,
+      acceptanceCriteria: ["Tests pass"],
+      clientRequestID: "request-1"
+    )
+
+    let encoded = try JSONEncoder().encode(request)
+    let decoded = try JSONDecoder().decode(IPCAgentSubmitRequest.self, from: encoded)
+
+    XCTAssertEqual(decoded, request)
+    let value = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    XCTAssertEqual(value["thread_id"] as? String, "session-1")
+    XCTAssertEqual(value["skill_name"] as? String, "review")
+    XCTAssertEqual(value["network_access"] as? Bool, true)
+    XCTAssertEqual(value["model_override"] as? Bool, true)
+    XCTAssertEqual(value["permission_mode_override"] as? Bool, true)
+    XCTAssertEqual(value["acceptance_criteria"] as? [String], ["Tests pass"])
+    XCTAssertEqual(value["client_request_id"] as? String, "request-1")
+  }
+
+  func testTaskControlRequestsCarryExpectedBinding() throws {
+    let steer = IPCTaskSteerRequest(
+      taskID: "task-1",
+      expectedTurnID: "provider-run-1",
+      input: "Continue with the tests."
+    )
+    let encodedSteer = try JSONEncoder().encode(steer)
+    let decodedSteer = try JSONDecoder().decode(IPCTaskSteerRequest.self, from: encodedSteer)
+    XCTAssertEqual(decodedSteer, steer)
+    let steerValue = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: encodedSteer) as? [String: Any]
+    )
+    XCTAssertEqual(steerValue["task_id"] as? String, "task-1")
+    XCTAssertEqual(steerValue["expected_turn_id"] as? String, "provider-run-1")
+    XCTAssertEqual(steerValue["input"] as? String, "Continue with the tests.")
+
+    let interrupt = IPCTaskInterruptRequest(
+      taskID: "task-1",
+      expectedTurnID: "provider-run-1"
+    )
+    let encodedInterrupt = try JSONEncoder().encode(interrupt)
+    XCTAssertEqual(
+      try JSONDecoder().decode(IPCTaskInterruptRequest.self, from: encodedInterrupt),
+      interrupt
+    )
   }
 
   func testDataPathsCreatePrivateRootAndRejectUnsafeExistingRoots() throws {
@@ -346,6 +413,58 @@ final class BridgeServiceHostTests: XCTestCase {
     try await client.removeAgentInstallation(installationID: registered.installationID)
     let finalCatalog = try await client.agentCatalog()
     XCTAssertTrue(finalCatalog.installations.isEmpty)
+  }
+
+  func testXPCTaskControlsUseBoundedPayloadsAndFailClosedForMissingTask() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    do {
+      _ = try await client.interruptTask(
+        taskID: "missing-task",
+        expectedTurnID: "missing-run"
+      )
+      XCTFail("An interrupt for a missing task must be rejected.")
+    } catch let error as BridgeServiceIPCCodecError {
+      guard case .remoteError(let remote) = error else {
+        return XCTFail("Expected a stable task-not-found error.")
+      }
+      XCTAssertEqual(remote.code, "task_not_found")
+    }
+
+    do {
+      _ = try await client.steerTask(
+        taskID: "missing-task",
+        expectedTurnID: "missing-run",
+        input: "Continue with the tests."
+      )
+      XCTFail("A steer for a missing task must be rejected.")
+    } catch let error as BridgeServiceIPCCodecError {
+      guard case .remoteError(let remote) = error else {
+        return XCTFail("Expected a stable task-not-found error.")
+      }
+      XCTAssertEqual(remote.code, "task_not_found")
+    }
+
+    do {
+      _ = try await client.steerTask(
+        taskID: "task-1",
+        expectedTurnID: "run-1",
+        input: "   \n"
+      )
+      XCTFail("A whitespace-only steer input must be rejected before dispatch.")
+    } catch let error as BridgeServiceIPCCodecError {
+      guard case .remoteError(let remote) = error else {
+        return XCTFail("Expected a stable contract error.")
+      }
+      XCTAssertEqual(remote.code, "invalid_state")
+    }
   }
 
   func testXPCDeepSeekRegistrationReturnsActionableArtifactFailure() async throws {

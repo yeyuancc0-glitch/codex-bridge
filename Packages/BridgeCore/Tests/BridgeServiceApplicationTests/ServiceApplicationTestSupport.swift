@@ -125,6 +125,29 @@ func makeServiceApplication(
   )
 }
 
+@discardableResult
+func assertAgentSkillInjectedIntoProviderPrompt(
+  application: BridgeServiceApplication,
+  fixture: ServiceApplicationFixture,
+  submission: MCPServiceTaskSubmission,
+  expectedPrompt: String,
+  deadline: ContinuousClock.Instant,
+  providerPrompt: @Sendable @escaping () -> String?
+) async throws -> TaskID {
+  let receipt = try await application.serviceSubmitTask(submission, deadline: deadline)
+  let taskID = TaskID(rawValue: receipt.taskID)
+  try await application.resolveTaskStartApproval(
+    taskID: taskID,
+    approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+    approved: true,
+    deadline: deadline
+  )
+  let task = try await fixture.tasks.task(id: taskID)
+  XCTAssertEqual(task?.state.status, .running)
+  XCTAssertEqual(providerPrompt(), expectedPrompt)
+  return taskID
+}
+
 var serviceModelCatalogScript: String {
   #"""
   IFS= read -r initialize

@@ -16,8 +16,13 @@ public actor DeepSeekHarnessACPExecution {
   private var promptTask: Task<Void, Never>?
   private var watchdogTask: Task<Void, Never>?
   private var consumedClientEventBarrier: Int64
+  private var queuedSteers: [String] = []
+  private var queuedSteerBytes = 0
   private var interruptRequested = false
   private var terminal = false
+
+  private static let maximumQueuedSteers = 32
+  private static let maximumQueuedSteerBytes = 256 * 1_024
 
   public init(
     client: DeepSeekHarnessACPClient,
@@ -64,12 +69,43 @@ public actor DeepSeekHarnessACPExecution {
   public func interrupt() async throws {
     guard !terminal else { throw AgentRuntimeError.processUnavailable }
     interruptRequested = true
+    clearQueuedSteers()
     try await client.cancel(sessionID: sessionID)
+  }
+
+  /// ACP has no standard in-flight steer operation. Queue the input and send
+  /// it as the next prompt on this same session after the current prompt
+  /// resolves. The queue is bounded so control input cannot grow without
+  /// limit while the Harness is busy.
+  public func steer(text: String) throws {
+    guard !terminal, !interruptRequested else {
+      throw AgentRuntimeError.processUnavailable
+    }
+    let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !prompt.isEmpty, prompt.utf8.count <= 64 * 1_024, !prompt.contains("\0") else {
+      throw AgentRuntimeError.invalidRequest("steer.text")
+    }
+    guard queuedSteers.count < Self.maximumQueuedSteers,
+      queuedSteerBytes + prompt.utf8.count <= Self.maximumQueuedSteerBytes
+    else {
+      throw AgentRuntimeError.invalidRequest("steer.queue")
+    }
+    queuedSteers.append(prompt)
+    queuedSteerBytes += prompt.utf8.count
+  }
+
+  public func resolveApproval(
+    approvalID: String,
+    optionID: String
+  ) async throws {
+    guard !terminal else { throw AgentRuntimeError.approvalUnavailable(approvalID) }
+    try await client.resolvePermission(approvalID: approvalID, optionID: optionID)
   }
 
   public func shutdown() async {
     guard claimTerminal() else { return }
     interruptRequested = true
+    clearQueuedSteers()
     try? await client.cancel(sessionID: sessionID)
     if let event = try? await normalizer.interrupted() {
       _ = emit(event)
@@ -106,49 +142,24 @@ public actor DeepSeekHarnessACPExecution {
 
   private func runPrompt() async {
     do {
-      let result = try await client.prompt(sessionID: sessionID, text: prompt)
-      try await waitUntilConsumed(result.eventSequenceBarrier)
-      guard !terminal else { return }
-      if interruptRequested || result.stopReason == "cancelled" {
-        await finishInterrupted()
-        return
-      }
-      switch result.stopReason {
-      case "end_turn":
-        let finalized = try await normalizer.finalizeContent()
-        guard !finalized.isEmpty else {
-          await failExecution(
-            code: "deepseek_harness_empty_response",
-            summary: "DeepSeek Harness ACP completed without a committed assistant message."
-          )
+      var nextPrompt = prompt
+      while true {
+        if interruptRequested {
+          await finishInterrupted()
           return
         }
-        guard claimTerminal() else { return }
-        do {
-          for event in finalized {
-            guard emit(event) else { throw DeepSeekHarnessACPError.transportClosed }
-          }
-          let completed = try await normalizer.completed(stopReason: result.stopReason)
-          guard emit(completed) else { throw DeepSeekHarnessACPError.transportClosed }
-          await closeStream()
-        } catch {
-          await closeStream(throwing: error)
+        let result = try await client.prompt(sessionID: sessionID, text: nextPrompt)
+        try await waitUntilConsumed(result.eventSequenceBarrier)
+        guard !terminal else { return }
+        if interruptRequested || result.stopReason == "cancelled" {
+          await finishInterrupted()
+          return
         }
-      case "refusal":
-        await failExecution(
-          code: "deepseek_harness_refusal",
-          summary: "DeepSeek Harness refused the task."
-        )
-      case "max_tokens":
-        await failExecution(
-          code: "deepseek_harness_max_tokens",
-          summary: "DeepSeek Harness reached the model token limit before completion."
-        )
-      default:
-        await failExecution(
-          code: "deepseek_harness_unknown_stop_reason",
-          summary: "DeepSeek Harness returned an unsupported stop reason."
-        )
+        if let queued = try await nextPromptOrTerminal(stopReason: result.stopReason) {
+          nextPrompt = queued
+          continue
+        }
+        return
       }
     } catch is CancellationError {
       guard claimTerminal() else { return }
@@ -165,6 +176,67 @@ public actor DeepSeekHarnessACPExecution {
     }
   }
 
+  private func nextPromptOrTerminal(stopReason: String) async throws -> String? {
+    guard stopReason == "end_turn" else {
+      switch stopReason {
+      case "refusal":
+        await failExecution(
+          code: "deepseek_harness_refusal",
+          summary: "DeepSeek Harness refused the task."
+        )
+      case "max_tokens":
+        await failExecution(
+          code: "deepseek_harness_max_tokens",
+          summary: "DeepSeek Harness reached the model token limit before completion."
+        )
+      default:
+        await failExecution(
+          code: "deepseek_harness_unknown_stop_reason",
+          summary: "DeepSeek Harness returned an unsupported stop reason."
+        )
+      }
+      return nil
+    }
+    let finalizedContent = try await normalizer.finalizeContent()
+    guard !terminal else { return nil }
+    guard !finalizedContent.isEmpty else {
+      await failExecution(
+        code: "deepseek_harness_empty_response",
+        summary: "DeepSeek Harness ACP completed without a committed assistant message."
+      )
+      return nil
+    }
+
+    do {
+      for event in finalizedContent {
+        guard emit(event) else { throw DeepSeekHarnessACPError.transportClosed }
+      }
+    } catch {
+      await closeStream(throwing: error)
+      return nil
+    }
+
+    if interruptRequested {
+      await finishInterrupted()
+      return nil
+    }
+    // A steer can arrive while the normalizer is finalizing the previous
+    // turn. Re-check before claiming terminal so accepted input is never
+    // lost to a completion race.
+    if let nextPrompt = dequeueSteer() {
+      return nextPrompt
+    }
+    guard claimTerminal() else { return nil }
+    do {
+      let completed = try await normalizer.completed(stopReason: stopReason)
+      guard emit(completed) else { throw DeepSeekHarnessACPError.transportClosed }
+      await closeStream()
+    } catch {
+      await closeStream(throwing: error)
+    }
+    return nil
+  }
+
   private func waitUntilConsumed(_ barrier: Int64) async throws {
     while consumedClientEventBarrier < barrier {
       guard !terminal else { throw DeepSeekHarnessACPError.transportClosed }
@@ -178,6 +250,18 @@ public actor DeepSeekHarnessACPExecution {
       _ = emit(interrupted)
     }
     await closeStream()
+  }
+
+  private func dequeueSteer() -> String? {
+    guard !queuedSteers.isEmpty else { return nil }
+    let prompt = queuedSteers.removeFirst()
+    queuedSteerBytes -= prompt.utf8.count
+    return prompt
+  }
+
+  private func clearQueuedSteers() {
+    queuedSteers.removeAll(keepingCapacity: false)
+    queuedSteerBytes = 0
   }
 
   private func emit(_ event: AgentEventEnvelope) -> Bool {
@@ -204,6 +288,7 @@ public actor DeepSeekHarnessACPExecution {
   private func claimTerminal() -> Bool {
     guard !terminal else { return false }
     terminal = true
+    clearQueuedSteers()
     return true
   }
 

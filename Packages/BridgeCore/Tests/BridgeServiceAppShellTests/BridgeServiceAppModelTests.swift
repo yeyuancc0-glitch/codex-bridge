@@ -191,6 +191,49 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(request.model, "opencode/x-preview-f-free")
   }
 
+  func testAgentTaskSubmissionCarriesMCPSubmissionFields() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.submitAgentTask(
+      projectID: "project-1",
+      providerID: "opencode",
+      installationID: "agent-installation-1",
+      model: "opencode/model",
+      effort: "high",
+      permissionMode: "workspace-write",
+      prompt: "Continue the task.",
+      threadID: "session-1",
+      skillName: "review",
+      networkAccess: true,
+      modelOverride: true,
+      permissionModeOverride: true,
+      acceptanceCriteria: ["Tests pass"],
+      clientRequestID: "request-1"
+    )
+
+    try await waitUntil {
+      await client.submittedAgentRequest() != nil && !model.isManagingAgents
+    }
+    let requestValue = await client.submittedAgentRequest()
+    let request = try XCTUnwrap(requestValue)
+    XCTAssertEqual(request.threadID, "session-1")
+    XCTAssertEqual(request.skillName, "review")
+    XCTAssertEqual(request.networkAccess, true)
+    XCTAssertEqual(request.modelOverride, true)
+    XCTAssertEqual(request.permissionModeOverride, true)
+    XCTAssertEqual(request.acceptanceCriteria, ["Tests pass"])
+    XCTAssertEqual(request.clientRequestID, "request-1")
+  }
+
   func testHydratingAgentDefaultUsesServiceValueWithoutWritingBack() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -238,8 +281,13 @@ final class BridgeServiceAppModelTests: XCTestCase {
       installationID: nil,
       providerID: "deepseek-harness"
     )
-    XCTAssertEqual(model.openCodeDefaultModel, "private-backend/model-v1")
-    XCTAssertEqual(model.openCodeDefaultEffort, "high")
+    XCTAssertEqual(
+      model.agentModelDefault(for: "deepseek-harness").model,
+      "private-backend/model-v1"
+    )
+    XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").effort, "high")
+    XCTAssertNil(model.openCodeDefaultModel)
+    XCTAssertNil(model.openCodeDefaultEffort)
     model.saveAgentEffort("max", providerID: "deepseek-harness")
 
     try await waitUntil {
@@ -423,8 +471,40 @@ final class BridgeServiceAppModelTests: XCTestCase {
         && model.agentModelOptions == [option]
         && requestCount == requestCountBeforeRefresh + 1
     }
-    XCTAssertEqual(model.openCodeDefaultModel, option.modelID)
-    XCTAssertEqual(model.openCodeDefaultEffort, "high")
+    XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").model, option.modelID)
+    XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").effort, "high")
+  }
+
+  func testProviderDefaultEffortFallsBackWhenModelHasNoVariants() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let option = IPCAgentModelSummary(
+      modelID: "gateway/model-v1",
+      displayName: "Gateway Model"
+    )
+    await client.configureAgentModels([option])
+    _ = try await client.setAgentDefaults(
+      providerID: "deepseek-harness",
+      model: option.modelID,
+      permissionMode: nil,
+      effort: "high"
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+    await model.hydrateAgentModelState(
+      installationID: "agent-installation",
+      providerID: "deepseek-harness"
+    )
+
+    XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").effort, "high")
+    XCTAssertNil(model.agentExecutionEffort(for: "deepseek-harness"))
   }
 
   func testRefreshingAgentModelsClearsRemovedEffortAndPreservesPersistedMode() async throws {
@@ -912,6 +992,77 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertNil(model.selectedThread)
     XCTAssertEqual(calls.read, 0)
     XCTAssertEqual(model.tasks.first?.providerDisplayName, "OpenCode")
+    await model.shutdownUI()
+  }
+
+  func testTaskControlsUseProviderSpecificLiveBindingAndFailClosedWithoutOne() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    let codexTask = MCPServiceTaskSnapshot(
+      taskID: "codex-running",
+      projectID: "project-1",
+      status: "running",
+      providerID: "codex",
+      turnID: "codex-turn-1",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-21T00:00:00Z"
+    )
+    let openCodeTask = MCPServiceTaskSnapshot(
+      taskID: "opencode-running",
+      projectID: "project-1",
+      status: "running",
+      providerID: "opencode",
+      providerRunID: "opencode-run-1",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-21T00:00:00Z"
+    )
+    let terminalTask = MCPServiceTaskSnapshot(
+      taskID: "terminal",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "codex",
+      turnID: "old-turn",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-21T00:00:00Z"
+    )
+    let missingBindingTask = MCPServiceTaskSnapshot(
+      taskID: "missing-binding",
+      projectID: "project-1",
+      status: "running",
+      providerID: "opencode",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-21T00:00:00Z"
+    )
+
+    model.interruptTask(codexTask)
+    model.steerTask(openCodeTask, input: "Continue with the tests.")
+    model.interruptTask(terminalTask)
+    model.steerTask(missingBindingTask, input: "This must not be sent.")
+
+    try await waitUntil {
+      await client.taskControlActionsValue().count == 2
+    }
+    let actions = await client.taskControlActionsValue()
+    XCTAssertEqual(
+      Set(actions),
+      Set([
+        "interrupt:codex-running:codex-turn-1",
+        "steer:opencode-running:opencode-run-1:Continue with the tests.",
+      ])
+    )
     await model.shutdownUI()
   }
 

@@ -29,6 +29,7 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case openCodeDefaultPermissionMode = "agent.opencode.default_permission_mode"
   case openCodeDefaultEffort = "agent.opencode.default_effort"
   case deepSeekHarnessDefaultModel = "agent.deepseek-harness.default_model"
+  case deepSeekHarnessDefaultPermissionMode = "agent.deepseek-harness.default_permission_mode"
   case deepSeekHarnessDefaultEffort = "agent.deepseek-harness.default_effort"
   case tunnelID = "tunnel.id"
   case tunnelEnabled = "tunnel.enabled"
@@ -255,6 +256,23 @@ public actor ServiceSettings {
       throw ServiceStoreError.invalidArgument("agent.opencode.default_permission_mode")
     }
     try await set(mode, for: .openCodeDefaultPermissionMode)
+  }
+
+  public func deepSeekHarnessDefaultPermissionMode() async throws -> String {
+    guard let value = try await string(for: .deepSeekHarnessDefaultPermissionMode) else {
+      return "workspace-write"
+    }
+    guard value == "workspace-write" || value == "read-only" else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return value
+  }
+
+  public func setDeepSeekHarnessDefaultPermissionMode(_ mode: String) async throws {
+    guard mode == "workspace-write" || mode == "read-only" else {
+      throw ServiceStoreError.invalidArgument("agent.deepseek-harness.default_permission_mode")
+    }
+    try await set(mode, for: .deepSeekHarnessDefaultPermissionMode)
   }
 
   public func openCodeDefaultEffort() async throws -> String? {

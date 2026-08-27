@@ -58,9 +58,11 @@ extension MCPServiceToolCatalog {
     description:
       "List user-registered Agent installations and their persisted Probe results. "
       + "A selectable OpenCode installation can receive tasks through submit_task; DeepSeek "
-      + "Harness is experimental and read-only with fresh sessions only. The local user still "
-      + "approves each task before execution, while DeepSeek execution-time permission requests "
-      + "are automatically denied. Inspect network_enforcement: unavailable means network_access=false "
+      + "Harness is experimental and supports fresh sessions with provider-native read-only or "
+      + "workspace-write modes. The local user still approves each task before execution, while "
+      + "DeepSeek execution-time permission requests are surfaced for one-shot local approval; "
+      + "steer input is queued as a follow-up on the same session. "
+      + "Inspect network_enforcement: unavailable means network_access=false "
       + "does not guarantee blocking the Provider model control plane or shell-tool network.",
     inputSchema: objectSchema(
       properties: ["project_id": optionalOpaqueProjectIDSchema]

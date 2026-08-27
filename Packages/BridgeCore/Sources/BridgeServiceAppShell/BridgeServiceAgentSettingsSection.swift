@@ -9,6 +9,7 @@ struct BridgeServiceAgentSettingsSection: View {
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
   @State private var submitProviderID = "opencode"
   @State private var submitInstallationID = ""
+  @State private var submitSkillName = ""
   @State private var submitPrompt = ""
 
   var body: some View {
@@ -17,7 +18,7 @@ struct BridgeServiceAgentSettingsSection: View {
         VStack(alignment: .leading, spacing: 4) {
           Text("只有在这里明确登记并通过 Probe 的本机安装才会出现在 list_agents。")
             .font(.caption)
-          Text("已启用且 Probe 通过的安装可以通过 submit_task 提交任务；每个任务仍需本机批准。DeepSeek Harness 为实验性只读。")
+          Text("已启用且 Probe 通过的安装可以通过 submit_task 提交任务；每个任务仍需本机批准，具体能力以 Provider 有效能力为准。")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -238,31 +239,45 @@ struct BridgeServiceAgentSettingsSection: View {
     let selectable = model.agentInstallations.filter {
       $0.providerID == submitProviderID && $0.isEnabled && $0.availability == "available"
     }
-    let selectedInstallation =
-      selectable.first(where: { $0.installationID == submitInstallationID })
-      ?? selectable.first
+    let chosenInstallation = selectedInstallation(in: selectable)
     let provider = selectedProvider
-    let supportsWorkspaceWrite = provider?.supportsWorkspaceWrite ?? true
-    let supportsModelSelection = provider?.supportsModelSelection ?? true
-    let supportsEffortSelection = provider?.supportsEffortSelection ?? true
+    let providerDefault = model.agentModelDefault(for: submitProviderID)
+    let supportsWorkspaceWrite = supportsWorkspaceWrite(
+      provider: provider,
+      installation: chosenInstallation
+    )
+    let supportsModelSelection = supports(
+      provider?.supportsModelSelection,
+      installation: chosenInstallation,
+      capability: "selection.model"
+    )
+    let supportsEffortSelection = supports(
+      provider?.supportsEffortSelection,
+      installation: chosenInstallation,
+      capability: "selection.effort"
+    )
+    let supportsSkillSelection = supports(
+      provider?.supportsSkillSelection,
+      installation: chosenInstallation
+    )
     VStack(alignment: .leading, spacing: 8) {
       Divider()
       Text("本机 Agent 任务")
         .font(.body.weight(.semibold))
       if supportsWorkspaceWrite {
-        Text("提交后进入工作台等待本机批准；OpenCode 使用原生 Build/Plan，网络访问由原生 permissions 控制。")
+        Text("提交后进入工作台等待本机批准；当前 Provider 支持只读和工作区写入模式。")
           .font(.caption)
           .foregroundStyle(.secondary)
       } else {
-        Label("实验性只读 · 仅新会话", systemImage: "lock.shield.fill")
+        Label("只读 · Provider 能力限制", systemImage: "lock.shield.fill")
           .font(.caption)
           .foregroundStyle(.orange)
-        Text("Bridge 会自动拒绝 Provider 的执行期权限请求；网络控制面不由 Bridge 保证阻断。")
+        Text("Bridge 会按 Provider 有效能力限制工作区写入和执行期权限。")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
 
-      Picker("Provider", selection: $submitProviderID) {
+      Picker("Provider", selection: providerSelection) {
         ForEach(providerIDs, id: \.self) { id in
           Text(providerDisplayName(id)).tag(id)
         }
@@ -276,9 +291,9 @@ struct BridgeServiceAgentSettingsSection: View {
       }
 
       if supportsWorkspaceWrite {
-        Picker("默认执行模式", selection: openCodeDefaultPermissionModeBinding) {
-          Text("OpenCode 原生 Build（工作区可写）").tag("build")
-          Text("OpenCode 原生 Plan（只读）").tag("plan")
+        Picker("默认执行模式", selection: agentPermissionModeBinding) {
+          Text("工作区可写").tag("build")
+          Text("只读").tag("plan")
         }
         .pickerStyle(.menu)
         .disabled(model.isRefreshingAgentModels)
@@ -291,6 +306,7 @@ struct BridgeServiceAgentSettingsSection: View {
           .foregroundStyle(.orange)
       } else if selectable.count > 1 {
         Picker("安装", selection: installationSelection(selectable)) {
+          Text("请选择安装").tag("")
           ForEach(selectable, id: \.installationID) { installation in
             Text(installation.displayName + " · " + installation.installationID)
               .tag(installation.installationID)
@@ -299,10 +315,21 @@ struct BridgeServiceAgentSettingsSection: View {
         .pickerStyle(.menu)
       }
 
+      if supportsSkillSelection, !model.skills.isEmpty {
+        Picker("Skill", selection: $submitSkillName) {
+          Text("不指定").tag("")
+          ForEach(model.skills) { skill in
+            Text(skill.name).tag(skill.name)
+          }
+        }
+        .pickerStyle(.menu)
+        .help("将已加载的项目 Skill 注入本次任务")
+      }
+
       if supportsModelSelection {
         Picker("默认模型", selection: agentModelDefaultBinding) {
           Text("Provider 默认").tag("")
-          if let current = model.openCodeDefaultModel,
+          if let current = providerDefault.model,
             !model.agentModelOptions.contains(where: { $0.modelID == current })
           {
             Text("当前设置 · \(current)").tag(current)
@@ -316,21 +343,21 @@ struct BridgeServiceAgentSettingsSection: View {
         .task(
           id: AgentModelHydrationID(
             providerID: submitProviderID,
-            installationID: selectedInstallation?.installationID,
+            installationID: chosenInstallation?.installationID,
             projectID: model.selectedProjectID,
-            modelID: model.openCodeDefaultModel
+            modelID: providerDefault.model
           )
         ) {
           guard
             !model.consumeAgentModelHydrationSuppression(
               providerID: submitProviderID,
-              installationID: selectedInstallation?.installationID,
+              installationID: chosenInstallation?.installationID,
               projectID: model.selectedProjectID,
-              modelID: model.openCodeDefaultModel
+              modelID: providerDefault.model
             )
           else { return }
           await model.hydrateAgentModelState(
-            installationID: selectedInstallation?.installationID,
+            installationID: chosenInstallation?.installationID,
             providerID: submitProviderID
           )
         }
@@ -338,7 +365,7 @@ struct BridgeServiceAgentSettingsSection: View {
         HStack(spacing: 10) {
           Button {
             model.refreshAgentModelCatalog(
-              installationID: selectedInstallation?.installationID,
+              installationID: chosenInstallation?.installationID,
               providerID: submitProviderID
             )
           } label: {
@@ -389,13 +416,9 @@ struct BridgeServiceAgentSettingsSection: View {
         .disabled(model.isRefreshingAgentModels)
         .help("所选推理强度会应用到该 Provider 的后续任务")
         if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
-          Text(
-            submitProviderID == "deepseek-harness"
-              ? "当前 Harness Profile 模型未公布可用的推理强度"
-              : "当前模型不提供可选推理强度，使用 Provider 默认"
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          Text("当前模型不提供可选推理强度，使用 Provider 默认")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
 
@@ -409,11 +432,12 @@ struct BridgeServiceAgentSettingsSection: View {
           model.submitAgentTask(
             projectID: model.selectedProjectID ?? (model.projects.first?.projectID ?? ""),
             providerID: submitProviderID,
-            installationID: selectedInstallation?.installationID,
-            model: supportsModelSelection ? model.openCodeDefaultModel : nil,
-            effort: supportsEffortSelection ? model.openCodeDefaultEffort : nil,
+            installationID: chosenInstallation?.installationID,
+            model: supportsModelSelection ? providerDefault.model : nil,
+            effort: supportsEffortSelection ? selectedExecutionEffort : nil,
             permissionMode: supportsWorkspaceWrite ? nil : "read-only",
-            prompt: submitPrompt
+            prompt: submitPrompt,
+            skillName: selectedSkillName
           )
           submitPrompt = ""
         }
@@ -423,9 +447,9 @@ struct BridgeServiceAgentSettingsSection: View {
           submitPrompt
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || selectable.isEmpty
+            || chosenInstallation == nil
+            || provider == nil
             || model.selectedProjectID == nil && model.projects.isEmpty
-            || submitProviderID == "deepseek-harness"
-              && selectedAgentModel?.supportedReasoningEfforts.isEmpty != false
         )
       }
     }
@@ -442,6 +466,18 @@ struct BridgeServiceAgentSettingsSection: View {
     model.agentProviders.first(where: { $0.providerID == submitProviderID })
   }
 
+  private var providerSelection: Binding<String> {
+    Binding(
+      get: { submitProviderID },
+      set: { value in
+        guard value != submitProviderID else { return }
+        submitProviderID = value
+        submitInstallationID = ""
+        submitSkillName = ""
+      }
+    )
+  }
+
   private func providerDisplayName(_ providerID: String) -> String {
     model.agentProviders.first(where: { $0.providerID == providerID })?.displayName
       ?? providerID
@@ -452,53 +488,98 @@ struct BridgeServiceAgentSettingsSection: View {
   ) -> Binding<String> {
     Binding(
       get: {
-        selectable.contains(where: { $0.installationID == submitInstallationID })
-          ? submitInstallationID
-          : selectable.first?.installationID ?? ""
+        if selectable.contains(where: { $0.installationID == submitInstallationID }) {
+          return submitInstallationID
+        }
+        return selectable.count == 1 ? selectable[0].installationID : ""
       },
       set: { submitInstallationID = $0 }
     )
   }
 
+  private func selectedInstallation(
+    in selectable: [IPCAgentInstallationSummary]
+  ) -> IPCAgentInstallationSummary? {
+    if let selected = selectable.first(where: { $0.installationID == submitInstallationID }) {
+      return selected
+    }
+    return selectable.count == 1 ? selectable[0] : nil
+  }
+
+  private func supports(
+    _ providerCapability: Bool?,
+    installation: IPCAgentInstallationSummary?,
+    capability: String? = nil
+  ) -> Bool {
+    guard providerCapability == true, let installation else { return false }
+    guard let capability else { return true }
+    return installation.effectiveCapabilities.contains(capability)
+  }
+
+  private func supportsWorkspaceWrite(
+    provider: IPCAgentProviderSummary?,
+    installation: IPCAgentInstallationSummary?
+  ) -> Bool {
+    guard provider?.supportsWorkspaceWrite == true, let installation else { return false }
+    return installation.effectiveCapabilities.contains("workspace.write_in_place")
+      || installation.effectiveCapabilities.contains("workspace.write_isolated")
+  }
+
   private var agentModelDefaultBinding: Binding<String> {
     Binding(
-      get: { model.openCodeDefaultModel ?? "" },
+      get: { model.agentModelDefault(for: submitProviderID).model ?? "" },
       set: { value in
         let selected = value.isEmpty ? nil : value
-        guard selected != model.openCodeDefaultModel else { return }
+        guard selected != model.agentModelDefault(for: submitProviderID).model else { return }
         model.saveAgentModelDefault(selected, providerID: submitProviderID)
       }
     )
   }
 
-  private var openCodeDefaultPermissionModeBinding: Binding<String> {
+  private var agentPermissionModeBinding: Binding<String> {
     Binding(
-      get: { model.openCodeDefaultPermissionMode },
+      get: {
+        let mode = model.agentModelDefault(for: submitProviderID).permissionMode
+        return mode == "plan" || mode == "read-only" ? "plan" : "build"
+      },
       set: { value in
-        guard value == "build" || value == "plan",
-          value != model.openCodeDefaultPermissionMode
+        let current = model.agentModelDefault(for: submitProviderID).permissionMode
+        let normalized = current == "plan" || current == "read-only" ? "plan" : "build"
+        guard value == "build" || value == "plan", value != normalized
         else { return }
-        model.saveOpenCodePermissionMode(value)
+        model.saveAgentPermissionMode(value, providerID: submitProviderID)
       }
     )
   }
 
   private var agentDefaultEffortBinding: Binding<String> {
     Binding(
-      get: { model.openCodeDefaultEffort ?? "" },
+      get: { model.agentModelDefault(for: submitProviderID).effort ?? "" },
       set: { value in
         let selected = value.isEmpty ? nil : value
-        guard selected != model.openCodeDefaultEffort else { return }
+        guard selected != model.agentModelDefault(for: submitProviderID).effort else { return }
         model.saveAgentEffort(selected, providerID: submitProviderID)
       }
     )
   }
 
   private var selectedAgentModel: IPCAgentModelSummary? {
-    if let modelID = model.openCodeDefaultModel {
+    if let modelID = model.agentModelDefault(for: submitProviderID).model {
       return model.agentModelOptions.first(where: { $0.modelID == modelID })
     }
-    return model.agentModelOptions.first(where: { !$0.supportedReasoningEfforts.isEmpty })
+    return model.agentModelOptions.first
+  }
+
+  private var selectedExecutionEffort: String? {
+    model.agentExecutionEffort(for: submitProviderID)
+  }
+
+  private var selectedSkillName: String? {
+    guard selectedProvider?.supportsSkillSelection == true,
+      !submitSkillName.isEmpty,
+      model.skills.contains(where: { $0.name == submitSkillName })
+    else { return nil }
+    return submitSkillName
   }
 
   private func availabilityTitle(_ value: String) -> String {

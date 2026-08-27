@@ -1,3 +1,4 @@
+import BridgeACP
 import BridgeAgentCore
 import BridgeDomain
 import CryptoKit
@@ -37,18 +38,21 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     }
   }
 
-  func testEffectiveCapabilitiesIncludeEnforcedSelectionButExcludePermission() {
+  func testEffectiveCapabilitiesIncludeWritableWorkspaceAndInteractiveApproval() {
     let snapshot = DeepSeekHarnessACPProvider.capabilitySnapshot
     XCTAssertEqual(
       snapshot.effective,
       [
-        .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
-        .effortSelection,
+        .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
+        .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
       ]
     )
     XCTAssertTrue(snapshot.advertised.contains(.oneShotApproval))
     XCTAssertTrue(snapshot.observed.contains(.oneShotApproval))
-    XCTAssertFalse(snapshot.enforced.contains(.oneShotApproval))
+    XCTAssertTrue(snapshot.enforced.contains(.oneShotApproval))
+    XCTAssertTrue(snapshot.effective.contains(.steer))
+    XCTAssertTrue(snapshot.effective.contains(.workspaceWriteInPlace))
+    XCTAssertTrue(snapshot.effective.contains(.structuredApprovalPayload))
   }
 
   func testCatalogComesFromHarnessACPWithoutAnotherProvider() async throws {
@@ -108,20 +112,20 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     addTeardownBlock { try? FileManager.default.removeItem(atPath: fixture.directory) }
     let installation = fixture.installation
 
-    let writeRequest = try AgentExecutionRequest(
-      taskID: .init(rawValue: "write-task"),
+    let isolatedRequest = try AgentExecutionRequest(
+      taskID: .init(rawValue: "isolated-task"),
       projectID: .init(rawValue: "project"),
       projectRoot: project,
-      prompt: "write",
+      prompt: "isolated",
       mutationIntent: .workspaceWrite,
-      workspaceStrategy: .sharedProject,
+      workspaceStrategy: .isolatedGitWorktree,
       networkAccessRequested: false
     )
     do {
-      _ = try await provider.start(writeRequest, installation: installation)
-      XCTFail("Expected write request rejection")
+      _ = try await provider.start(isolatedRequest, installation: installation)
+      XCTFail("Expected isolated workspace strategy rejection")
     } catch let error as AgentRuntimeError {
-      XCTAssertEqual(error, .invalidRequest("request.mutationIntent"))
+      XCTAssertEqual(error, .invalidRequest("request.workspaceStrategy"))
     }
 
     let networkRequest = try AgentExecutionRequest(
@@ -156,6 +160,94 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     } catch let error as AgentRuntimeError {
       XCTAssertEqual(error, .invalidRequest("request.effort"))
     }
+  }
+
+  func testWorkspaceWriteStartExposesInteractiveApproval() async throws {
+    let transport = ScriptedDeepSeekHarnessTransport()
+    let promptState = ProviderPromptState()
+    await transport.setHandler { message, transport in
+      if message.method == "session/prompt", let id = message.id {
+        await promptState.set(id)
+        try await transport.emit(
+          deepSeekPermissionRequest(
+            sessionID: "provider-approval-session",
+            toolCallID: "provider-tool",
+            options: [("allow-once", "allow_once"), ("reject-once", "reject_once")]
+          )
+        )
+        return
+      }
+      if message.method == nil, message.id == .string("permission-1") {
+        guard let promptID = await promptState.value() else { return }
+        try await transport.emit(
+          deepSeekMessageChunk(sessionID: "provider-approval-session", text: "approved")
+        )
+        try await transport.emit(
+          ACPWireMessage(id: promptID, result: .object(["stopReason": .string("end_turn")]))
+        )
+        return
+      }
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(deepSeekInitializationResult(id: id))
+      case "session/new":
+        try await transport.emit(
+          deepSeekSessionResult(id: id, sessionID: "provider-approval-session")
+        )
+      default:
+        break
+      }
+    }
+    let fixture = try makeCatalogInstallation()
+    addTeardownBlock { try? FileManager.default.removeItem(atPath: fixture.directory) }
+    let provider = try DeepSeekHarnessACPProvider(
+      configuration: DeepSeekHarnessACPProviderConfiguration(
+        runtimeBaseDirectory: URL(fileURLWithPath: fixture.directory)
+          .appendingPathComponent("runtime").path,
+        transportFactory: { _ in transport }
+      )
+    )
+    let request = try AgentExecutionRequest(
+      taskID: .init(rawValue: "provider-write-task"),
+      projectID: .init(rawValue: "project"),
+      projectRoot: FileManager.default.temporaryDirectory.path,
+      prompt: "write",
+      mutationIntent: .workspaceWrite,
+      workspaceStrategy: .exclusiveProject,
+      networkAccessRequested: false,
+      requiredCapabilities: [
+        .workspaceRead, .workspaceWriteInPlace, .steer, .oneShotApproval,
+        .structuredApprovalPayload,
+      ]
+    )
+
+    let handle = try await provider.start(request, installation: fixture.installation)
+    XCTAssertNotNil(handle.control.steer)
+    var iterator = handle.events.makeAsyncIterator()
+    guard let first = try await iterator.next(),
+      case .approvalRequested(let approval) = first.event
+    else {
+      return XCTFail("Expected a provider approval request")
+    }
+    XCTAssertEqual(approval.providerItemID, "provider-tool")
+    XCTAssertTrue(handle.capabilities.effective.contains(.workspaceWriteInPlace))
+    XCTAssertTrue(handle.capabilities.effective.contains(.structuredApprovalPayload))
+    try await XCTUnwrap(handle.control.resolveApproval)?(
+      approval.approvalID,
+      "allow-once"
+    )
+
+    var events = [first]
+    while let event = try await iterator.next() {
+      events.append(event)
+    }
+    XCTAssertTrue(
+      events.contains {
+        if case .completed = $0.event { return true }
+        return false
+      }
+    )
   }
 
   private func makeCatalogInstallation() throws -> (
@@ -235,5 +327,17 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       modificationTimeNanoseconds: modificationTime,
       sha256: digest
     )
+  }
+}
+
+private actor ProviderPromptState {
+  private var promptID: ACPRequestID?
+
+  func set(_ id: ACPRequestID) {
+    promptID = id
+  }
+
+  func value() -> ACPRequestID? {
+    promptID
   }
 }

@@ -17,6 +17,8 @@ public enum DeepSeekHarnessACPConstants {
   public static let maximumFrameBytes = 1_048_576
   public static let maximumStandardErrorBytes = 256 * 1_024
   public static let maximumFinalTextBytes = 256 * 1_024
+  public static let maximumPendingPermissions = 32
+  public static let maximumPermissionInputBytes = 64 * 1_024
   public static let maximumEventBuffer = 256
   public static let requestTimeout: Duration = .seconds(30)
   public static let inactivityTimeout: Duration = .seconds(10 * 60)
@@ -130,8 +132,40 @@ public struct DeepSeekHarnessACPPromptResult: Equatable, Sendable {
   }
 }
 
+public struct DeepSeekHarnessACPPermissionRequest: Equatable, Sendable {
+  public let approvalID: String
+  public let requestID: ACPRequestID
+  public let sessionID: String
+  public let toolCallID: String
+  public let title: String
+  public let kind: String?
+  public let rawInput: ACPJSONValue?
+  public let options: [AgentApprovalOption]
+
+  public init(
+    approvalID: String,
+    requestID: ACPRequestID,
+    sessionID: String,
+    toolCallID: String,
+    title: String,
+    kind: String?,
+    rawInput: ACPJSONValue?,
+    options: [AgentApprovalOption]
+  ) {
+    self.approvalID = approvalID
+    self.requestID = requestID
+    self.sessionID = sessionID
+    self.toolCallID = toolCallID
+    self.title = title
+    self.kind = kind
+    self.rawInput = rawInput
+    self.options = options
+  }
+}
+
 public enum DeepSeekHarnessACPClientEvent: Equatable, Sendable {
   case textDelta(sessionID: String, text: String)
+  case permissionRequested(DeepSeekHarnessACPPermissionRequest)
   case approvalAutomaticallyDenied(sessionID: String, toolCallID: String)
 }
 

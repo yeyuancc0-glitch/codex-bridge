@@ -57,7 +57,7 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     descriptor = try AgentProviderDescriptor(
       providerID: .deepSeekHarness,
       displayName: "DeepSeek Harness",
-      adapterRevision: 3
+      adapterRevision: 4
     )
   }
 
@@ -195,6 +195,7 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
         runDirectory: runDirectory,
         modelID: request.model,
         reasoningEffort: request.effort,
+        mutationIntent: request.mutationIntent,
         networkAllowed: false,
         sourceEnvironment: configuration.sourceEnvironment
       )
@@ -213,7 +214,8 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
       )
       let normalizer = DeepSeekHarnessACPEventNormalizer(
         taskID: request.taskID,
-        binding: binding
+        binding: binding,
+        projectRoot: request.projectRoot
       )
       let initialSequence = await connected.eventSequence
       let execution = DeepSeekHarnessACPExecution(
@@ -236,7 +238,14 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
         events: execution.events,
         control: AgentExecutionControl(
           interrupt: { try await execution.interrupt() },
-          shutdown: { await execution.shutdown() }
+          shutdown: { await execution.shutdown() },
+          steer: { text in try await execution.steer(text: text) },
+          resolveApproval: { approvalID, optionID in
+            try await execution.resolveApproval(
+              approvalID: approvalID,
+              optionID: optionID
+            )
+          }
         )
       )
     } catch {
@@ -250,26 +259,36 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     advertised: [
       .sessionCreate,
       .interrupt,
+      .steer,
       .textDelta,
       .workspaceRead,
+      .workspaceWriteInPlace,
       .oneShotApproval,
+      .structuredApprovalPayload,
       .modelSelection,
       .effortSelection,
     ],
     observed: [
       .sessionCreate,
       .interrupt,
+      .steer,
       .textDelta,
       .workspaceRead,
+      .workspaceWriteInPlace,
       .oneShotApproval,
+      .structuredApprovalPayload,
       .modelSelection,
       .effortSelection,
     ],
     enforced: [
       .sessionCreate,
       .interrupt,
+      .steer,
       .textDelta,
       .workspaceRead,
+      .workspaceWriteInPlace,
+      .oneShotApproval,
+      .structuredApprovalPayload,
       .modelSelection,
       .effortSelection,
     ]
@@ -291,10 +310,13 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     guard installation.providerID == .deepSeekHarness else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
     }
-    guard request.mutationIntent == .readOnly else {
+    guard request.mutationIntent == .readOnly || request.mutationIntent == .workspaceWrite else {
       throw AgentRuntimeError.invalidRequest("request.mutationIntent")
     }
-    guard request.workspaceStrategy == .sharedProject else {
+    guard
+      request.workspaceStrategy == .sharedProject
+        || request.workspaceStrategy == .exclusiveProject
+    else {
       throw AgentRuntimeError.invalidRequest("request.workspaceStrategy")
     }
     guard !request.networkAccessRequested else {

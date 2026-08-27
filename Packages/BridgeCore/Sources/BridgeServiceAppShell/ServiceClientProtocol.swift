@@ -84,6 +84,15 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot]
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot
   func stopTask(taskID: String) async throws
+  func steerTask(
+    taskID: String,
+    expectedTurnID: String,
+    input: String
+  ) async throws -> MCPServiceTaskMutationReceipt
+  func interruptTask(
+    taskID: String,
+    expectedTurnID: String
+  ) async throws -> MCPServiceTaskMutationReceipt
   func deleteTask(taskID: String) async throws
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws
@@ -144,6 +153,21 @@ extension BridgeServiceClientProtocol {
   public func submitAgentTask(
     _ request: IPCAgentSubmitRequest
   ) async throws -> IPCAgentSubmitResponse {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func steerTask(
+    taskID _: String,
+    expectedTurnID _: String,
+    input _: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func interruptTask(
+    taskID _: String,
+    expectedTurnID _: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
     throw BridgeServiceClientError.unavailable
   }
 

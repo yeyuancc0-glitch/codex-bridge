@@ -100,20 +100,30 @@ extension BridgeServiceApplication {
     permissionMode: String? = nil,
     networkAccess: Bool = false,
     prompt: String,
+    threadID: String? = nil,
+    skillName: String? = nil,
+    modelOverride: Bool? = nil,
+    permissionModeOverride: Bool? = nil,
+    acceptanceCriteria: [String] = [],
+    clientRequestID: String? = nil,
     deadline: ContinuousClock.Instant
   ) async throws -> (taskID: String, status: String) {
     try Self.checkDeadline(deadline)
     let submission = MCPServiceTaskSubmission(
       projectID: projectID,
       prompt: prompt,
+      skillName: skillName,
+      threadID: threadID,
       providerID: providerID,
       installationID: installationID,
       executionModel: model,
       executionEffort: effort,
-      modelOverride: model != nil || effort != nil ? true : nil,
+      modelOverride: modelOverride ?? (model != nil || effort != nil ? true : nil),
       permissionMode: permissionMode,
+      permissionModeOverride: permissionModeOverride,
       networkAccess: networkAccess,
-      clientRequestID: "app-\(UUID().uuidString.lowercased())"
+      acceptanceCriteria: acceptanceCriteria,
+      clientRequestID: clientRequestID ?? "app-\(UUID().uuidString.lowercased())"
     )
     let receipt = try await serviceSubmitTask(
       submission,
@@ -238,8 +248,14 @@ extension BridgeServiceApplication {
     let effort = try await settings.string(
       for: try Self.agentDefaultEffortKey(providerID: providerID)
     )
-    let permissionMode =
-      providerID == .openCode ? try await settings.openCodeDefaultPermissionMode() : "read-only"
+    let permissionMode: String
+    if providerID == .openCode {
+      permissionMode = try await settings.openCodeDefaultPermissionMode()
+    } else if providerID == .deepSeekHarness {
+      permissionMode = try await settings.deepSeekHarnessDefaultPermissionMode()
+    } else {
+      permissionMode = "read-only"
+    }
     return (model, permissionMode, effort)
   }
 
@@ -287,8 +303,22 @@ extension BridgeServiceApplication {
       for: try Self.agentDefaultModelKey(providerID: providerID)
     )
     if let permissionMode {
-      guard providerID == .openCode else { throw BridgeMCPQueryError.contractRejected }
-      try await settings.setOpenCodeDefaultPermissionMode(permissionMode)
+      if providerID == .openCode {
+        try await settings.setOpenCodeDefaultPermissionMode(permissionMode)
+      } else if providerID == .deepSeekHarness {
+        let normalized: String
+        switch permissionMode {
+        case "build", "workspace-write":
+          normalized = "workspace-write"
+        case "plan", "read-only":
+          normalized = "read-only"
+        default:
+          throw BridgeMCPQueryError.contractRejected
+        }
+        try await settings.setDeepSeekHarnessDefaultPermissionMode(normalized)
+      } else {
+        throw BridgeMCPQueryError.contractRejected
+      }
     }
     if updateEffort {
       if let effort {

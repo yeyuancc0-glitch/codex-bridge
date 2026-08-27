@@ -85,6 +85,7 @@ extension BridgeServiceAppModel {
       projects = []
       agentProviders = []
       agentInstallations = []
+      agentModelDefaults = [:]
       isManagingAgents = false
       tasks = []
       approvals = []

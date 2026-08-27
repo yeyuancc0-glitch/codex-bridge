@@ -1,4 +1,5 @@
 import BridgeAgentCore
+import BridgeCodexService
 import BridgeDomain
 import BridgeMCP
 import BridgeServiceApplication
@@ -8,22 +9,22 @@ import Foundation
 import XCTest
 
 final class ServiceAgentProviderPolicyTests: XCTestCase {
-  func testDeepSeekPolicyExposesOnlyReadOnlyFreshSessionContract() {
+  func testDeepSeekPolicyExposesNativeWriteAndOneShotApprovalFreshSessionContract() {
     let policy = ServiceAgentProviderPolicyRegistry.deepSeekHarness
 
     XCTAssertEqual(policy.providerID, .deepSeekHarness)
     XCTAssertEqual(policy.displayName, "DeepSeek Harness")
     XCTAssertTrue(policy.requiresConfiguration)
-    XCTAssertFalse(policy.supportsWorkspaceWrite)
+    XCTAssertTrue(policy.supportsWorkspaceWrite)
     XCTAssertFalse(policy.supportsSessionContinuation)
     XCTAssertTrue(policy.supportsModelSelection)
     XCTAssertTrue(policy.supportsEffortSelection)
-    XCTAssertFalse(policy.supportsSkillSelection)
+    XCTAssertTrue(policy.supportsSkillSelection)
     XCTAssertFalse(policy.supportsSupervisor)
-    XCTAssertFalse(policy.supportsSteer)
-    XCTAssertFalse(policy.supportsInteractiveApproval)
-    XCTAssertEqual(policy.workspaceEnforcement, "provider_native_read_only")
-    XCTAssertEqual(policy.approvalEnforcement, "automatic_deny")
+    XCTAssertTrue(policy.supportsSteer)
+    XCTAssertTrue(policy.supportsInteractiveApproval)
+    XCTAssertEqual(policy.workspaceEnforcement, "provider_native")
+    XCTAssertEqual(policy.approvalEnforcement, "local_app")
     XCTAssertEqual(policy.networkEnforcement, "unavailable")
     XCTAssertEqual(policy.registrationTrustProfile, .userTrusted)
     XCTAssertEqual(
@@ -35,8 +36,15 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: true),
       [
-        .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
-        .effortSelection,
+        .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
+        .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+      ]
+    )
+    XCTAssertEqual(
+      policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: false),
+      [
+        .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead,
+        .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
       ]
     )
   }
@@ -60,7 +68,7 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     )
   }
 
-  func testDeepSeekSubmissionUsesFixedReadOnlyDefaultsAndProviderPresentation() async throws {
+  func testDeepSeekSubmissionUsesNativeWriteDefaultsAndProviderPresentation() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let executableURL = fixture.root.appending(path: "deepseek-policy-fixture")
     try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
@@ -104,14 +112,18 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
       [
         AgentCapability.interrupt.rawValue,
         AgentCapability.sessionCreate.rawValue,
+        AgentCapability.steer.rawValue,
         AgentCapability.textDelta.rawValue,
         AgentCapability.effortSelection.rawValue,
         AgentCapability.modelSelection.rawValue,
         AgentCapability.workspaceRead.rawValue,
+        AgentCapability.workspaceWriteInPlace.rawValue,
+        AgentCapability.oneShotApproval.rawValue,
+        AgentCapability.structuredApprovalPayload.rawValue,
       ].sorted()
     )
-    XCTAssertEqual(agent.workspaceEnforcement, "provider_native_read_only")
-    XCTAssertEqual(agent.approvalEnforcement, "automatic_deny")
+    XCTAssertEqual(agent.workspaceEnforcement, "provider_native")
+    XCTAssertEqual(agent.approvalEnforcement, "local_app")
     XCTAssertEqual(agent.networkEnforcement, "unavailable")
 
     let receipt = try await application.serviceSubmitTask(
@@ -128,10 +140,77 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertEqual(task.providerID, AgentProviderID.deepSeekHarness.rawValue)
     XCTAssertEqual(task.installationID, registered.id.rawValue)
     XCTAssertEqual(task.selectionMode, .explicit)
-    XCTAssertEqual(task.permissionMode, .readOnly)
+    XCTAssertEqual(task.permissionMode, .workspaceWrite)
     XCTAssertEqual(task.executionModel, "private-backend/model-v1")
     XCTAssertEqual(task.executionEffort, serviceDefaultProviderExecutionEffort)
     XCTAssertNil(task.requestedThreadID)
+  }
+
+  func testDeepSeekSkillInjectionUsesProviderNeutralPromptContract() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let skillDirectory = URL(fileURLWithPath: fixture.project.root.canonicalPath, isDirectory: true)
+      .appending(path: "skills/review", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(
+      at: skillDirectory,
+      withIntermediateDirectories: true
+    )
+    try Data(
+      "---\nname: review\ndescription: test\n---\n\nFollow the repository review checklist."
+        .utf8
+    ).write(to: skillDirectory.appending(path: "SKILL.md"), options: .atomic)
+
+    let executableURL = fixture.root.appending(path: "deepseek-skill-fixture")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
+    XCTAssertEqual(chmod(executableURL.path, 0o700), 0)
+    let provider = try DeepSeekPolicyFixtureProvider()
+    let registry = ServiceAgentRegistry(
+      store: fixture.store,
+      providers: [provider],
+      makeInstallationID: { AgentInstallationID(rawValue: "ainst-skill-deepseek") }
+    )
+    _ = try await registry.registerAndProbe(
+      ServiceAgentRegistrationRequest(
+        providerID: .deepSeekHarness,
+        displayName: "DeepSeek Harness",
+        executablePath: executableURL.path,
+        trustProfile: .userTrusted,
+        securityProfileID: ServiceAgentProviderPolicyRegistry.controlledReadOnlyProfileID,
+        enableOnSuccess: true,
+        projectRoot: fixture.project.root.canonicalPath,
+        artifacts: try makeDeepSeekArtifactRequests(in: fixture.root)
+      )
+    )
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.deepSeekHarness: provider]
+      )
+    )
+    let taskID = try await assertAgentSkillInjectedIntoProviderPrompt(
+      application: application,
+      fixture: fixture,
+      submission: MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Inspect the repository.",
+        skillName: "review",
+        providerID: AgentProviderID.deepSeekHarness.rawValue,
+        permissionMode: "read-only",
+        clientRequestID: "deepseek-skill-injection"
+      ),
+      expectedPrompt:
+        "Skill instructions for review:\n\n---\nname: review\ndescription: test\n---\n\nFollow the repository review checklist.\n\nUser task:\nInspect the repository.",
+      deadline: ContinuousClock.now.advanced(by: .seconds(10)),
+      providerPrompt: { provider.startedRequests.first?.prompt }
+    )
+
+    provider.complete(taskID: taskID)
+    let completed = try await waitForTask(fixture, taskID: taskID) {
+      $0.state.status == .completed
+    }
+    XCTAssertEqual(completed.state.resultSummary, "Skill run complete.")
   }
 
   func testDeepSeekSubmissionRejectsUnsupportedOverridesAndRemainsUnavailableUnregistered()
@@ -185,16 +264,6 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
 
     let unsupported: [(String, MCPServiceTaskSubmission)] = [
       (
-        "workspace write",
-        MCPServiceTaskSubmission(
-          projectID: projectID,
-          prompt: "Write.",
-          providerID: AgentProviderID.deepSeekHarness.rawValue,
-          permissionMode: "workspace-write",
-          clientRequestID: "deepseek-policy-write"
-        )
-      ),
-      (
         "session continuation",
         MCPServiceTaskSubmission(
           projectID: projectID,
@@ -202,16 +271,6 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
           threadID: "old-session",
           providerID: AgentProviderID.deepSeekHarness.rawValue,
           clientRequestID: "deepseek-policy-session"
-        )
-      ),
-      (
-        "skill",
-        MCPServiceTaskSubmission(
-          projectID: projectID,
-          prompt: "Use a skill.",
-          skillName: "review",
-          providerID: AgentProviderID.deepSeekHarness.rawValue,
-          clientRequestID: "deepseek-policy-skill"
         )
       ),
       (
@@ -360,6 +419,23 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     }
   }
 
+  private func waitForTask(
+    _ fixture: ServiceApplicationFixture,
+    taskID: TaskID,
+    timeout: TimeInterval = 10,
+    _ condition: @escaping (ServiceTaskRecord) -> Bool
+  ) async throws -> ServiceTaskRecord {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if let task = try await fixture.tasks.task(id: taskID), condition(task) {
+        return task
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTFail("Timed out waiting for task \(taskID.rawValue).")
+    throw CancellationError()
+  }
+
   private func makeDeepSeekArtifactRequests(in root: URL) throws
     -> [ServiceAgentInstallationArtifactRequest]
   {
@@ -374,8 +450,15 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
   }
 }
 
-private struct DeepSeekPolicyFixtureProvider: AgentProvider, Sendable {
+private final class DeepSeekPolicyFixtureProvider: AgentProvider, @unchecked Sendable {
+  private struct Run {
+    let continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation
+  }
+
   let descriptor: AgentProviderDescriptor
+  private let lock = NSLock()
+  private var runs: [TaskID: Run] = [:]
+  private(set) var startedRequests: [AgentExecutionRequest] = []
 
   init() throws {
     descriptor = try AgentProviderDescriptor(
@@ -403,8 +486,8 @@ private struct DeepSeekPolicyFixtureProvider: AgentProvider, Sendable {
       )
     }
     let capabilities: Set<AgentCapability> = [
-      .sessionCreate, .interrupt, .textDelta, .workspaceRead, .modelSelection,
-      .effortSelection,
+      .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
+      .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
     ]
     return AgentProbeResult(
       installation: installation,
@@ -436,9 +519,76 @@ private struct DeepSeekPolicyFixtureProvider: AgentProvider, Sendable {
   }
 
   func start(
-    _: AgentExecutionRequest,
-    installation _: AgentInstallation
+    _ request: AgentExecutionRequest,
+    installation: AgentInstallation
   ) async throws -> AgentExecutionHandle {
-    throw AgentRuntimeError.processUnavailable
+    let stream = register(request.taskID)
+    recordStarted(request)
+    let binding = try AgentBinding(
+      providerID: .deepSeekHarness,
+      installationID: installation.id,
+      providerSessionID: "sess-\(request.taskID.rawValue)",
+      providerRunID: "run-\(request.taskID.rawValue)"
+    )
+    let capabilities: Set<AgentCapability> = [
+      .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
+      .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+    ]
+    return AgentExecutionHandle(
+      taskID: request.taskID,
+      binding: binding,
+      capabilities: AgentCapabilitySnapshot(
+        advertised: capabilities,
+        observed: capabilities,
+        enforced: capabilities
+      ),
+      events: stream,
+      control: AgentExecutionControl(
+        interrupt: { [weak self] in self?.finish(taskID: request.taskID) },
+        shutdown: { [weak self] in self?.finish(taskID: request.taskID) }
+      )
+    )
+  }
+
+  private func recordStarted(_ request: AgentExecutionRequest) {
+    lock.lock()
+    startedRequests.append(request)
+    lock.unlock()
+  }
+
+  func complete(taskID: TaskID) {
+    lock.lock()
+    let run = runs[taskID]
+    lock.unlock()
+    let envelope = try? AgentEventEnvelope(
+      taskID: taskID,
+      providerID: .deepSeekHarness,
+      providerSessionID: "sess-\(taskID.rawValue)",
+      providerRunID: "run-\(taskID.rawValue)",
+      providerSequence: 0,
+      event: .completed(summary: "Skill run complete.", stopReason: nil)
+    )
+    if let envelope { run?.continuation.yield(envelope) }
+    run?.continuation.finish()
+  }
+
+  private func register(_ taskID: TaskID)
+    -> AsyncThrowingStream<AgentEventEnvelope, any Error>
+  {
+    lock.lock()
+    defer { lock.unlock() }
+    var continuationRef: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation!
+    let stream = AsyncThrowingStream<AgentEventEnvelope, any Error>(
+      bufferingPolicy: .unbounded
+    ) { continuationRef = $0 }
+    runs[taskID] = Run(continuation: continuationRef)
+    return stream
+  }
+
+  private func finish(taskID: TaskID) {
+    lock.lock()
+    let run = runs[taskID]
+    lock.unlock()
+    run?.continuation.finish()
   }
 }

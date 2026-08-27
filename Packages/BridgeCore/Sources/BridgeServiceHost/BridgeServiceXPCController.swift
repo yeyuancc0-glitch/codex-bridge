@@ -153,6 +153,10 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleGetTask(request)
     case .stopTask:
       return try await handleStopTask(request)
+    case .steerTask:
+      return try await handleSteerTask(request)
+    case .interruptTask:
+      return try await handleInterruptTask(request)
     case .deleteTask:
       return try await handleDeleteTask(request)
     case .getTaskConversation:

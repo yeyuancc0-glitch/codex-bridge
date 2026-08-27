@@ -225,6 +225,35 @@ extension BridgeServiceAppModel {
     }
   }
 
+  public func interruptTask(_ task: MCPServiceTaskSnapshot) {
+    guard let expectedTurnID = task.expectedControlID else { return }
+    runMutation { [weak self] client in
+      guard let self else { return }
+      _ = try await client.interruptTask(
+        taskID: task.taskID,
+        expectedTurnID: expectedTurnID
+      )
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
+  public func steerTask(_ task: MCPServiceTaskSnapshot, input: String) {
+    guard let expectedTurnID = task.expectedControlID,
+      !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      input.utf8.count <= IPCTaskSteerRequest.maximumInputBytes,
+      !input.contains("\0")
+    else { return }
+    runMutation { [weak self] client in
+      guard let self else { return }
+      _ = try await client.steerTask(
+        taskID: task.taskID,
+        expectedTurnID: expectedTurnID,
+        input: input
+      )
+      await self.refresh(silent: true, includeCatalog: false)
+    }
+  }
+
   public func openConversation(taskID: String) {
     guard let client, connectionState == .connected else {
       errorMessage = "后台 Service 未连接，无法查看对话。"

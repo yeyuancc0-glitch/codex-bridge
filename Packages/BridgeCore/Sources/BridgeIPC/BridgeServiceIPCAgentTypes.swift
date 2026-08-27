@@ -9,6 +9,7 @@ public struct IPCAgentProviderSummary: Codable, Equatable, Sendable {
   public let supportsModelSelection: Bool
   public let supportsEffortSelection: Bool
   public let supportsSessionContinuation: Bool
+  public let supportsSteer: Bool
   public let supportsWorkspaceWrite: Bool
   public let supportsSkillSelection: Bool
   public let supportsSupervisor: Bool
@@ -25,6 +26,7 @@ public struct IPCAgentProviderSummary: Codable, Equatable, Sendable {
     supportsModelSelection: Bool = true,
     supportsEffortSelection: Bool = true,
     supportsSessionContinuation: Bool = true,
+    supportsSteer: Bool = false,
     supportsWorkspaceWrite: Bool = true,
     supportsSkillSelection: Bool = false,
     supportsSupervisor: Bool = false,
@@ -40,6 +42,7 @@ public struct IPCAgentProviderSummary: Codable, Equatable, Sendable {
     self.supportsModelSelection = supportsModelSelection
     self.supportsEffortSelection = supportsEffortSelection
     self.supportsSessionContinuation = supportsSessionContinuation
+    self.supportsSteer = supportsSteer
     self.supportsWorkspaceWrite = supportsWorkspaceWrite
     self.supportsSkillSelection = supportsSkillSelection
     self.supportsSupervisor = supportsSupervisor
@@ -57,6 +60,7 @@ public struct IPCAgentProviderSummary: Codable, Equatable, Sendable {
     case supportsModelSelection = "supports_model_selection"
     case supportsEffortSelection = "supports_effort_selection"
     case supportsSessionContinuation = "supports_session_continuation"
+    case supportsSteer = "supports_steer"
     case supportsWorkspaceWrite = "supports_workspace_write"
     case supportsSkillSelection = "supports_skill_selection"
     case supportsSupervisor = "supports_supervisor"
@@ -91,6 +95,10 @@ public struct IPCAgentProviderSummary: Codable, Equatable, Sendable {
         Bool.self,
         forKey: .supportsSessionContinuation
       ) ?? true,
+      supportsSteer: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsSteer
+      ) ?? false,
       supportsWorkspaceWrite: try container.decodeIfPresent(
         Bool.self,
         forKey: .supportsWorkspaceWrite
@@ -278,6 +286,13 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
   public let effort: String?
   public let permissionMode: String?
   public let prompt: String
+  public let threadID: String?
+  public let skillName: String?
+  public let networkAccess: Bool?
+  public let modelOverride: Bool?
+  public let permissionModeOverride: Bool?
+  public let acceptanceCriteria: [String]?
+  public let clientRequestID: String?
 
   public init(
     projectID: String,
@@ -286,7 +301,14 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     model: String? = nil,
     effort: String? = nil,
     permissionMode: String? = nil,
-    prompt: String
+    prompt: String,
+    threadID: String? = nil,
+    skillName: String? = nil,
+    networkAccess: Bool? = nil,
+    modelOverride: Bool? = nil,
+    permissionModeOverride: Bool? = nil,
+    acceptanceCriteria: [String]? = nil,
+    clientRequestID: String? = nil
   ) {
     self.projectID = projectID
     self.providerID = providerID
@@ -295,6 +317,13 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     self.effort = effort
     self.permissionMode = permissionMode
     self.prompt = prompt
+    self.threadID = threadID
+    self.skillName = skillName
+    self.networkAccess = networkAccess
+    self.modelOverride = modelOverride
+    self.permissionModeOverride = permissionModeOverride
+    self.acceptanceCriteria = acceptanceCriteria
+    self.clientRequestID = clientRequestID
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -305,6 +334,13 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     case effort
     case permissionMode = "permission_mode"
     case prompt
+    case threadID = "thread_id"
+    case skillName = "skill_name"
+    case networkAccess = "network_access"
+    case modelOverride = "model_override"
+    case permissionModeOverride = "permission_mode_override"
+    case acceptanceCriteria = "acceptance_criteria"
+    case clientRequestID = "client_request_id"
   }
 }
 

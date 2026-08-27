@@ -1,4 +1,6 @@
 import BridgeAgentCore
+import CryptoKit
+import Darwin
 import Foundation
 import XCTest
 
@@ -161,6 +163,79 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
       URL(fileURLWithPath: fixture.root)
         .appendingPathComponent("node_modules/.pnpm/node_modules").path
     )
+  }
+
+  func testRuntimeProfileUsesWorkspaceWriteModeWithoutDangerFullAccess() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-runtime-write-mode")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-write-mode")
+    addTeardownBlock {
+      fixture.remove()
+      try? FileManager.default.removeItem(atPath: runDirectory)
+    }
+
+    let stagedConfiguration = try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
+      sourceRoot: fixture.root,
+      runDirectory: runDirectory,
+      mutationIntent: .workspaceWrite
+    )
+    let value = try String(contentsOfFile: stagedConfiguration, encoding: .utf8)
+
+    XCTAssertTrue(value.contains("    mode: workspace-write"))
+    XCTAssertFalse(value.contains("danger-full-access"))
+  }
+
+  func testLaunchEnvironmentMatchesWorkspaceWriteMode() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-launch-write-mode")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-launch-write-mode")
+    addTeardownBlock {
+      fixture.remove()
+      try? FileManager.default.removeItem(atPath: runDirectory)
+    }
+    let installation = try AgentInstallation(
+      id: .init(rawValue: "launch-write-installation"),
+      providerID: .deepSeekHarness,
+      executablePath: fixture.executable,
+      artifacts: try [
+        artifact(
+          role: .launchConfiguration,
+          path: fixture.configuration,
+          data: try Data(contentsOf: URL(fileURLWithPath: fixture.configuration))
+        ),
+        artifact(
+          role: .runtimeManifest,
+          path: URL(fileURLWithPath: fixture.root).appendingPathComponent("package.json").path,
+          data: Data(
+            ("{\"version\":\"0.1.1-rc.2\",\"packageManager\":\"pnpm@11.7.0\","
+              + "\"engines\":{\"node\":\"^22.19.0 || >=24.0.0\"}}").utf8
+          )
+        ),
+        artifact(
+          role: .dependencyLock,
+          path: URL(fileURLWithPath: fixture.root).appendingPathComponent("pnpm-lock.yaml").path,
+          data: Data(
+            "packages:\n  /@agentclientprotocol/sdk@0.25.1:\n    resolution: {}\n".utf8
+          )
+        ),
+        artifact(
+          role: .nodeInterpreter,
+          path: URL(fileURLWithPath: fixture.root).appendingPathComponent("node").path,
+          data: Data("#!/bin/sh\necho v22.19.0\n".utf8)
+        ),
+      ]
+    )
+    let launch = try DeepSeekHarnessACPLaunchBuilder().make(
+      installation: installation,
+      projectRoot: fixture.root,
+      runDirectory: runDirectory,
+      mutationIntent: .workspaceWrite,
+      networkAllowed: false,
+      sourceEnvironment: ["PATH": "/usr/bin:/bin"]
+    )
+
+    XCTAssertEqual(launch.process.environment["DSH_PERMISSION_MODE"], "workspace-write")
+    let value = try String(contentsOfFile: launch.process.argv[3], encoding: .utf8)
+    XCTAssertTrue(value.contains("    mode: workspace-write"))
+    XCTAssertFalse(value.contains("danger-full-access"))
   }
 
   func testRuntimeProfileAppliesDeclaredModelAndEffortOnlyToPrivateCopy() throws {
@@ -367,4 +442,26 @@ private struct ProfileFixture {
     try? FileManager.default.removeItem(atPath: root)
     try? FileManager.default.removeItem(atPath: profile)
   }
+}
+
+private func artifact(
+  role: AgentInstallationArtifactRole,
+  path: String,
+  data: Data
+) throws -> AgentInstallationArtifact {
+  var metadata = stat()
+  guard lstat(path, &metadata) == 0 else { throw POSIXError(.ENOENT) }
+  let modificationTime =
+    Int64(metadata.st_mtimespec.tv_sec) * 1_000_000_000
+    + Int64(metadata.st_mtimespec.tv_nsec)
+  let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+  return AgentInstallationArtifact(
+    role: role,
+    canonicalPath: path,
+    device: UInt64(metadata.st_dev),
+    inode: UInt64(metadata.st_ino),
+    fileSize: UInt64(metadata.st_size),
+    modificationTimeNanoseconds: modificationTime,
+    sha256: digest
+  )
 }

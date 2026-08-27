@@ -120,7 +120,7 @@ func deepSeekModelConfigOptions(
 }
 
 func deepSeekMessageChunk(sessionID: String, text: String) -> ACPWireMessage {
-  ACPWireMessage(
+  return ACPWireMessage(
     method: "session/update",
     params: .object([
       "sessionId": .string(sessionID),
@@ -139,14 +139,17 @@ func deepSeekPermissionRequest(
   sessionID: String,
   requestID: ACPRequestID = .string("permission-1"),
   toolCallID: String = "tool-1",
+  rawInput: ACPJSONValue? = nil,
   options: [(String, String)] = [("allow-once", "allow_once"), ("reject-once", "reject_once")]
 ) -> ACPWireMessage {
-  ACPWireMessage(
+  var toolCall: [String: ACPJSONValue] = ["toolCallId": .string(toolCallID)]
+  toolCall["rawInput"] = rawInput
+  return ACPWireMessage(
     id: requestID,
     method: "session/request_permission",
     params: .object([
       "sessionId": .string(sessionID),
-      "toolCall": .object(["toolCallId": .string(toolCallID)]),
+      "toolCall": .object(toolCall),
       "options": .array(
         options.map { optionID, kind in
           .object([

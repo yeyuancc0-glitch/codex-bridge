@@ -88,6 +88,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var agentProviders: [IPCAgentProviderSummary] = []
   @Published public internal(set) var agentInstallations: [IPCAgentInstallationSummary] = []
   @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = []
+  @Published public internal(set) var agentModelDefaults: [String: IPCAgentModelDefaultResponse] =
+    [:]
   @Published public internal(set) var openCodeDefaultModel: String?
   @Published public internal(set) var openCodeDefaultPermissionMode = "build"
   @Published public internal(set) var openCodeDefaultEffort: String?
@@ -209,6 +211,30 @@ public final class BridgeServiceAppModel: ObservableObject {
   public var navigation: BridgeServiceNavigation {
     get { selection ?? .overview }
     set { selection = newValue }
+  }
+
+  func agentModelDefault(for providerID: String) -> IPCAgentModelDefaultResponse {
+    agentModelDefaults[providerID]
+      ?? IPCAgentModelDefaultResponse(
+        providerID: providerID,
+        model: providerID == "opencode" ? openCodeDefaultModel : nil,
+        permissionMode:
+          providerID == "opencode" ? openCodeDefaultPermissionMode : "workspace-write",
+        effort: providerID == "opencode" ? openCodeDefaultEffort : nil
+      )
+  }
+
+  func agentExecutionEffort(for providerID: String) -> String? {
+    let value = agentModelDefault(for: providerID)
+    guard let effort = value.effort else { return nil }
+    let selectedModel =
+      value.model.flatMap { modelID in
+        agentModelOptions.first(where: { $0.modelID == modelID })
+      } ?? (value.model == nil ? agentModelOptions.first : nil)
+    guard selectedModel?.supportedReasoningEfforts.contains(effort) == true else {
+      return nil
+    }
+    return effort
   }
 
   public var exposureMode: MCPServiceExposureMode {
