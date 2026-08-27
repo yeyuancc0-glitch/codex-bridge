@@ -424,7 +424,13 @@ extension BridgeServiceApplication {
     let selectedDescriptor: AgentModelDescriptor?
     if let modelCatalog {
       if let resolvedModel {
-        selectedDescriptor = modelCatalog.first(where: { $0.id == resolvedModel })
+        selectedDescriptor =
+          modelCatalog.first(where: { $0.id == resolvedModel })
+          ?? Self.legacyDeepSeekDescriptor(
+            providerID: policy.providerID,
+            modelID: resolvedModel,
+            catalog: modelCatalog
+          )
       } else {
         selectedDescriptor = modelCatalog.first(where: {
           !$0.supportedReasoningEfforts.isEmpty
@@ -455,7 +461,8 @@ extension BridgeServiceApplication {
       throw BridgeMCPQueryError.contractRejected
     }
     let accessMode = try await settings.accessMode()
-    let executionModel = resolvedModel ?? serviceDefaultProviderExecutionModel
+    let executionModel =
+      selectedDescriptor?.id ?? resolvedModel ?? serviceDefaultProviderExecutionModel
     return PreparedTaskSubmission(
       projectID: project.id,
       request: ServiceTaskRequest(
@@ -475,6 +482,17 @@ extension BridgeServiceApplication {
         accessMode: accessMode
       )
     )
+  }
+
+  private static func legacyDeepSeekDescriptor(
+    providerID: AgentProviderID,
+    modelID: String,
+    catalog: [AgentModelDescriptor]
+  ) -> AgentModelDescriptor? {
+    let prefix = "opencode-go/"
+    guard providerID == .deepSeekHarness, modelID.hasPrefix(prefix) else { return nil }
+    let wireModelID = String(modelID.dropFirst(prefix.count))
+    return catalog.first(where: { $0.id == wireModelID })
   }
 
   private func submissionProjectID(explicit: String?) async throws -> String {

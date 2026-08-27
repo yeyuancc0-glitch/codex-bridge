@@ -221,7 +221,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
     )
     _ = try await client.setAgentDefaults(
       providerID: "deepseek-harness",
-      model: "opencode-go/deepseek-v4-pro",
+      model: "private-backend/model-v1",
       permissionMode: nil,
       effort: "high"
     )
@@ -238,7 +238,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
       installationID: nil,
       providerID: "deepseek-harness"
     )
-    XCTAssertEqual(model.openCodeDefaultModel, "opencode-go/deepseek-v4-pro")
+    XCTAssertEqual(model.openCodeDefaultModel, "private-backend/model-v1")
     XCTAssertEqual(model.openCodeDefaultEffort, "high")
     model.saveAgentEffort("max", providerID: "deepseek-harness")
 

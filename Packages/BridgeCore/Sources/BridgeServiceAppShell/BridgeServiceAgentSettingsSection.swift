@@ -391,7 +391,7 @@ struct BridgeServiceAgentSettingsSection: View {
         if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
           Text(
             submitProviderID == "deepseek-harness"
-              ? "当前 OpenCode Go 模型未公布 Harness 可用的推理强度"
+              ? "当前 Harness Profile 模型未公布可用的推理强度"
               : "当前模型不提供可选推理强度，使用 Provider 默认"
           )
           .font(.caption)

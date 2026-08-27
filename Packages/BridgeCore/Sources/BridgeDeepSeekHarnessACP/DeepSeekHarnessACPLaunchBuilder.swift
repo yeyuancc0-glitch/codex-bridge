@@ -64,6 +64,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     let runtimeConfiguration = try prepareRuntimeProfile(
       sourceRoot: validated.sourceRoot,
       runDirectory: runtime,
+      configurationData: validated.configurationData,
       modelID: modelID,
       reasoningEffort: reasoningEffort
     )
@@ -98,6 +99,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
   func prepareRuntimeProfile(
     sourceRoot: String,
     runDirectory: String,
+    configurationData: Data? = nil,
     modelID: String? = nil,
     reasoningEffort: String? = nil
   ) throws -> String {
@@ -121,7 +123,8 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       .appendingPathComponent("cordis.yml").path
     do {
       let runtimeConfiguration = try DeepSeekHarnessACPModelCatalog.runtimeConfiguration(
-        from: profile.configurationTemplate,
+        from: configurationData ?? profile.configurationTemplate,
+        template: profile.configurationTemplate,
         modelID: modelID,
         reasoningEffort: reasoningEffort
       )

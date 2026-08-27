@@ -46,15 +46,15 @@ public struct DeepSeekHarnessACPProfile: Sendable {
     let profile = try Self.init()
     let executable = try canonicalPath(executablePath, field: "launch.executable")
     let configuration = try canonicalPath(configurationPath, field: "launch.configuration")
-    guard
-      try boundedData(
-        at: configuration,
-        maximumBytes: DeepSeekHarnessACPConstants.maximumFinalTextBytes,
-        field: "launch_configuration.size"
-      ) == profile.configurationTemplate
-    else {
-      throw DeepSeekHarnessACPError.templateMismatch
-    }
+    let configurationData = try boundedData(
+      at: configuration,
+      maximumBytes: DeepSeekHarnessACPConstants.maximumFinalTextBytes,
+      field: "launch_configuration.size"
+    )
+    _ = try DeepSeekHarnessACPModelCatalog.profile(
+      configuration: configurationData,
+      template: profile.configurationTemplate
+    )
     let sourceRoot = try findSourceRoot(startingAt: executable)
     let configurationRoot = URL(fileURLWithPath: configuration)
       .deletingLastPathComponent()
@@ -126,15 +126,18 @@ public struct DeepSeekHarnessACPProfile: Sendable {
       artifacts[.launchConfiguration]!,
       role: .launchConfiguration
     )
-    guard configuration.fileSize <= DeepSeekHarnessACPConstants.maximumFinalTextBytes,
-      try Self.boundedData(
-        at: configuration.path,
-        maximumBytes: DeepSeekHarnessACPConstants.maximumFinalTextBytes,
-        field: "launch_configuration.size"
-      ) == configurationTemplate
-    else {
+    guard configuration.fileSize <= DeepSeekHarnessACPConstants.maximumFinalTextBytes else {
       throw DeepSeekHarnessACPError.templateMismatch
     }
+    let configurationData = try Self.boundedData(
+      at: configuration.path,
+      maximumBytes: DeepSeekHarnessACPConstants.maximumFinalTextBytes,
+      field: "launch_configuration.size"
+    )
+    _ = try DeepSeekHarnessACPModelCatalog.profile(
+      configuration: configurationData,
+      template: configurationTemplate
+    )
 
     let manifest = try Self.validateArtifact(
       artifacts[.runtimeManifest]!,
@@ -177,8 +180,35 @@ public struct DeepSeekHarnessACPProfile: Sendable {
       nodeInterpreterPath: node.path,
       executablePath: executable,
       configurationPath: configuration.path,
+      configurationData: configurationData,
       sourceRoot: sourceRoot,
       nodeVersion: nodeVersion
+    )
+  }
+
+  func modelDescriptors(
+    for installation: AgentInstallation,
+    selectedModelID: String?
+  ) throws -> [AgentModelDescriptor] {
+    let configuration = try validatedConfigurationData(for: installation)
+    return try DeepSeekHarnessACPModelCatalog.descriptors(
+      configuration: configuration,
+      template: configurationTemplate,
+      selectedModelID: selectedModelID
+    )
+  }
+
+  func resolvedSelection(
+    for installation: AgentInstallation,
+    modelID: String?,
+    reasoningEffort: String?
+  ) throws -> (modelID: String, reasoningEffort: String) {
+    let configuration = try validatedConfigurationData(for: installation)
+    return try DeepSeekHarnessACPModelCatalog.resolvedSelection(
+      configuration: configuration,
+      template: configurationTemplate,
+      modelID: modelID,
+      reasoningEffort: reasoningEffort
     )
   }
 
@@ -199,6 +229,30 @@ public struct DeepSeekHarnessACPProfile: Sendable {
       throw DeepSeekHarnessACPError.artifactInvalid("required_roles")
     }
     return Dictionary(uniqueKeysWithValues: installation.artifacts.map { ($0.role, $0) })
+  }
+
+  private func validatedConfigurationData(for installation: AgentInstallation) throws -> Data {
+    guard installation.providerID == .deepSeekHarness else {
+      throw AgentRuntimeError.providerUnavailable(installation.providerID)
+    }
+    let artifacts = try Self.requiredArtifacts(from: installation)
+    let configuration = try Self.validateArtifact(
+      artifacts[.launchConfiguration]!,
+      role: .launchConfiguration
+    )
+    guard configuration.fileSize <= DeepSeekHarnessACPConstants.maximumFinalTextBytes else {
+      throw DeepSeekHarnessACPError.templateMismatch
+    }
+    let data = try Self.boundedData(
+      at: configuration.path,
+      maximumBytes: DeepSeekHarnessACPConstants.maximumFinalTextBytes,
+      field: "launch_configuration.size"
+    )
+    _ = try DeepSeekHarnessACPModelCatalog.profile(
+      configuration: data,
+      template: configurationTemplate
+    )
+    return data
   }
 
   private static func validateArtifact(

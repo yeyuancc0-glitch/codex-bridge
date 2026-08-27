@@ -167,9 +167,10 @@ extension BridgeServiceApplication {
       guard let installation = try await registry.installation(id: installationID) else {
         throw BridgeMCPQueryError.unavailable
       }
-      selectedModelID = try await settings.string(
-        for: try Self.agentDefaultModelKey(providerID: installation.providerID)
-      )
+      selectedModelID = try await serviceAgentModelDefault(
+        providerID: installation.providerID,
+        deadline: deadline
+      ).model
     } else {
       selectedModelID = nil
     }
@@ -196,49 +197,14 @@ extension BridgeServiceApplication {
     projectRoot: String?,
     selectedModelID: String?
   ) async throws -> [AgentModelDescriptor] {
-    guard let installation = try await registry.installation(id: installationID),
-      let policy = ServiceAgentProviderPolicyRegistry.policy(for: installation.providerID)
-    else {
+    guard try await registry.installation(id: installationID) != nil else {
       throw BridgeMCPQueryError.unavailable
     }
-    guard let sourceProviderID = policy.modelCatalogSourceProviderID else {
-      return try await registry.models(
-        installationID: installationID,
-        projectRoot: projectRoot,
-        selectedModelID: selectedModelID
-      )
-    }
-    guard
-      let source = try await registry.installations(providerID: sourceProviderID)
-        .filter(\.isSelectable)
-        .sorted(by: { $0.id.rawValue < $1.id.rawValue })
-        .first
-    else {
-      throw BridgeMCPQueryError.unavailable
-    }
-    let sourceModels = try await registry.models(
-      installationID: source.id,
+    return try await registry.models(
+      installationID: installationID,
       projectRoot: projectRoot,
-      selectedModelID: selectedModelID ?? policy.modelCatalogDefaultID
+      selectedModelID: selectedModelID
     )
-    let filtered = try sourceModels.compactMap { model -> AgentModelDescriptor? in
-      if let prefix = policy.modelCatalogPrefix, !model.id.hasPrefix(prefix) { return nil }
-      let efforts =
-        policy.modelCatalogAllowedEfforts.map { allowed in
-          model.supportedReasoningEfforts.filter(allowed.contains)
-        } ?? model.supportedReasoningEfforts
-      let defaultEffort = model.defaultReasoningEffort.flatMap { effort in
-        efforts.contains(effort) ? effort : nil
-      }
-      return try AgentModelDescriptor(
-        id: model.id,
-        displayName: model.displayName,
-        supportedReasoningEfforts: efforts,
-        defaultReasoningEffort: defaultEffort
-      )
-    }
-    guard !filtered.isEmpty else { throw BridgeMCPQueryError.unavailable }
-    return filtered
   }
 
   private func agentModelProjectRoot(
@@ -263,15 +229,42 @@ extension BridgeServiceApplication {
     deadline: ContinuousClock.Instant
   ) async throws -> (model: String?, permissionMode: String, effort: String?) {
     try Self.checkDeadline(deadline)
-    let model = try await settings.string(
+    var model = try await settings.string(
       for: try Self.agentDefaultModelKey(providerID: providerID)
     )
+    if providerID == .deepSeekHarness {
+      model = try await migratedDeepSeekModelDefault(model)
+    }
     let effort = try await settings.string(
       for: try Self.agentDefaultEffortKey(providerID: providerID)
     )
     let permissionMode =
       providerID == .openCode ? try await settings.openCodeDefaultPermissionMode() : "read-only"
     return (model, permissionMode, effort)
+  }
+
+  private func migratedDeepSeekModelDefault(_ model: String?) async throws -> String? {
+    let prefix = "opencode-go/"
+    guard let model, model.hasPrefix(prefix) else { return model }
+    let wireModelID = String(model.dropFirst(prefix.count))
+    let registry = try requiredAgentRegistry()
+    guard
+      let installation = try await registry.installations(providerID: .deepSeekHarness)
+        .filter(\.isSelectable)
+        .sorted(by: { $0.id.rawValue < $1.id.rawValue })
+        .first,
+      let catalog = try? await registry.models(
+        installationID: installation.id,
+        projectRoot: nil,
+        selectedModelID: model
+      ),
+      !catalog.contains(where: { $0.id == model }),
+      catalog.contains(where: { $0.id == wireModelID })
+    else {
+      return model
+    }
+    try await settings.set(wireModelID, for: .deepSeekHarnessDefaultModel)
+    return wireModelID
   }
 
   public func serviceSetAgentModelDefault(

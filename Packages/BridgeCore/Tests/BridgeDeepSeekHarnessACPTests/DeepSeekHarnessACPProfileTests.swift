@@ -59,6 +59,24 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     XCTAssertFalse(artifacts.values.contains { $0.hasSuffix(".env") })
   }
 
+  func testRegistrationAcceptsCatalogDeclaredByIndependentProfile() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-custom-catalog")
+    addTeardownBlock { fixture.remove() }
+    try profileConfiguration(
+      modelIDs: ["private-backend/model-v1", "another-api/model-v2"],
+      defaultModelID: "private-backend/model-v1",
+      reasoningEffort: "high"
+    ).write(to: URL(fileURLWithPath: fixture.configuration))
+
+    let artifacts = try DeepSeekHarnessACPProfile.resolveArtifacts(
+      executablePath: fixture.executable,
+      configurationPath: fixture.configuration,
+      sourceEnvironment: ["PATH": "/usr/bin:/bin"]
+    )
+
+    XCTAssertEqual(artifacts[.launchConfiguration], fixture.configuration)
+  }
+
   func testDependencyLockRequiresExactSDKVersion() throws {
     let fixture = try makeProfileFixture(
       prefix: "deepseek-sdk-prefix",
@@ -145,29 +163,35 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     )
   }
 
-  func testRuntimeProfileAppliesOpenCodeGoModelAndEffortOnlyToPrivateCopy() throws {
+  func testRuntimeProfileAppliesDeclaredModelAndEffortOnlyToPrivateCopy() throws {
     let fixture = try makeProfileFixture(prefix: "deepseek-runtime-selection")
     let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-selection")
     addTeardownBlock {
       fixture.remove()
       try? FileManager.default.removeItem(atPath: runDirectory)
     }
+    let profile = try profileConfiguration(
+      modelIDs: ["deepseek-v4-pro", "kimi-k2.6"],
+      defaultModelID: "deepseek-v4-pro"
+    )
     let bundled = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
     let stagedConfiguration = try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
       sourceRoot: fixture.root,
       runDirectory: runDirectory,
-      modelID: "opencode-go/kimi-k2.6",
+      configurationData: profile,
+      modelID: "kimi-k2.6",
       reasoningEffort: "high"
     )
 
     let staged = try String(contentsOfFile: stagedConfiguration, encoding: .utf8)
     XCTAssertTrue(staged.contains("reasoningEffort: high"))
+    XCTAssertTrue(staged.contains("- id: deepseek-v4-pro"))
     XCTAssertTrue(staged.contains("- id: kimi-k2.6"))
     XCTAssertTrue(staged.contains("model: kimi-k2.6"))
     XCTAssertEqual(try DeepSeekHarnessACPProfile.bundledConfigurationTemplate(), bundled)
   }
 
-  func testRuntimeProfileRejectsModelTextOutsideOpenCodeGoCatalogNamespace() throws {
+  func testRuntimeProfileRejectsModelOutsideDeclaredProfileCatalog() throws {
     let fixture = try makeProfileFixture(prefix: "deepseek-runtime-invalid-selection")
     let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-invalid-selection")
     addTeardownBlock {
@@ -184,6 +208,56 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
       )
     ) { error in
       XCTAssertEqual(error as? AgentRuntimeError, .modelUnavailable("other-provider/model"))
+    }
+  }
+
+  func testProfileCatalogAllowsBoundedThirdPartyModelsWithoutChangingSecurityPolicy() throws {
+    let configuration = try profileConfiguration(
+      modelIDs: ["deepseek-v4-pro", "vendor/model-v1"],
+      defaultModelID: "vendor/model-v1",
+      reasoningEffort: "low"
+    )
+    let template = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+
+    let models = try DeepSeekHarnessACPModelCatalog.descriptors(
+      configuration: configuration,
+      template: template,
+      selectedModelID: "vendor/model-v1"
+    )
+
+    XCTAssertEqual(models.map(\.id), ["deepseek-v4-pro", "vendor/model-v1"])
+    XCTAssertEqual(models[1].supportedReasoningEfforts, ["off", "low", "high", "max"])
+    XCTAssertEqual(models[1].defaultReasoningEffort, "low")
+  }
+
+  func testDisabledThinkingProfileOnlyAdvertisesOff() throws {
+    let configuration = try profileConfiguration(
+      modelIDs: ["private-reasoner"],
+      defaultModelID: "private-reasoner",
+      reasoningEffort: "off",
+      thinking: "disabled"
+    )
+    let models = try DeepSeekHarnessACPModelCatalog.descriptors(
+      configuration: configuration,
+      template: DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    )
+
+    XCTAssertEqual(models[0].supportedReasoningEfforts, ["off"])
+    XCTAssertEqual(models[0].defaultReasoningEffort, "off")
+  }
+
+  func testProfileCatalogRejectsChangesOutsideManagedModelFields() throws {
+    let template = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    var value = try XCTUnwrap(String(data: template, encoding: .utf8))
+    value = value.replacingOccurrences(of: "    mode: read-only", with: "    mode: full-access")
+
+    XCTAssertThrowsError(
+      try DeepSeekHarnessACPModelCatalog.descriptors(
+        configuration: Data(value.utf8),
+        template: template
+      )
+    ) { error in
+      XCTAssertEqual(error as? DeepSeekHarnessACPError, .templateMismatch)
     }
   }
 
@@ -219,6 +293,35 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
       executable: executable,
       configuration: configuration.path
     )
+  }
+
+  private func profileConfiguration(
+    modelIDs: [String],
+    defaultModelID: String,
+    reasoningEffort: String = "max",
+    thinking: String = "enabled"
+  ) throws -> Data {
+    var value = try XCTUnwrap(
+      String(data: DeepSeekHarnessACPProfile.bundledConfigurationTemplate(), encoding: .utf8)
+    )
+    let models = modelIDs.map { "      - id: \($0)" }.joined(separator: "\n")
+    value = value.replacingOccurrences(
+      of: "      - id: deepseek-v4-pro",
+      with: models
+    )
+    value = value.replacingOccurrences(
+      of: "    model: deepseek-v4-pro",
+      with: "    model: \(defaultModelID)"
+    )
+    value = value.replacingOccurrences(
+      of: "    reasoningEffort: max",
+      with: "    reasoningEffort: \(reasoningEffort)"
+    )
+    value = value.replacingOccurrences(
+      of: "    thinking: enabled",
+      with: "    thinking: \(thinking)"
+    )
+    return Data(value.utf8)
   }
 
   private func makeTemporaryDirectory(prefix: String) throws -> String {

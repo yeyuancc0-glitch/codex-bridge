@@ -27,7 +27,7 @@ final class MCPServiceExposureTests: XCTestCase {
       XCTAssertTrue(instructions.contains("Unmarked permission_mode values are ignored"))
       XCTAssertTrue(instructions.contains("provider_session_id returned by get_task as thread_id"))
       XCTAssertTrue(instructions.contains("optional execution_model"))
-      XCTAssertTrue(instructions.contains("local OpenCode Go catalog"))
+      XCTAssertTrue(instructions.contains("registered Harness profile"))
       XCTAssertTrue(instructions.contains("wait_policy"))
       XCTAssertTrue(instructions.contains("120 seconds"))
       XCTAssertTrue(instructions.contains("300 seconds"))

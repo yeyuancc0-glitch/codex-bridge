@@ -294,7 +294,7 @@ extension BridgeServiceXPCController {
         return .init(
           code: "agent_configuration_mismatch",
           message:
-            "The selected cordis.yml does not match the Codex Bridge DeepSeek Harness profile. Copy the bundled template to an external profile without modifying it."
+            "The selected cordis.yml must retain the Codex Bridge read-only profile structure. Only the model catalog, default model, thinking mode, and reasoning effort may differ."
         )
       case .nodeVersionIncompatible:
         return .init(

@@ -1,5 +1,7 @@
 import BridgeAgentCore
 import BridgeDomain
+import CryptoKit
+import Darwin
 import Foundation
 import XCTest
 
@@ -49,22 +51,19 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertFalse(snapshot.enforced.contains(.oneShotApproval))
   }
 
-  func testCatalogExposesControlledOpenCodeGoDefaultAndEfforts() async throws {
+  func testCatalogComesFromDeepSeekProfileWithoutAnotherProvider() async throws {
     let provider = try DeepSeekHarnessACPProvider()
-    let installation = try AgentInstallation(
-      id: .init(rawValue: "catalog-installation"),
-      providerID: .deepSeekHarness,
-      executablePath: "/tmp/dsh-acp-demo"
-    )
+    let fixture = try makeCatalogInstallation()
+    addTeardownBlock { try? FileManager.default.removeItem(atPath: fixture.directory) }
 
     let models = try await provider.models(
-      installation: installation,
+      installation: fixture.installation,
       projectRoot: nil,
       selectedModelID: "opencode-go/deepseek-v4-pro"
     )
 
-    XCTAssertEqual(models.map(\.id), ["opencode-go/deepseek-v4-pro"])
-    XCTAssertEqual(models[0].supportedReasoningEfforts, ["high", "max"])
+    XCTAssertEqual(models.map(\.id), ["deepseek-v4-pro"])
+    XCTAssertEqual(models[0].supportedReasoningEfforts, ["off", "low", "high", "max"])
     XCTAssertEqual(models[0].defaultReasoningEffort, "max")
   }
 
@@ -78,11 +77,9 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       )
     )
     let project = FileManager.default.temporaryDirectory.path
-    let installation = try AgentInstallation(
-      id: .init(rawValue: "validation-installation"),
-      providerID: .deepSeekHarness,
-      executablePath: "/tmp/dsh-acp-demo"
-    )
+    let fixture = try makeCatalogInstallation()
+    addTeardownBlock { try? FileManager.default.removeItem(atPath: fixture.directory) }
+    let installation = fixture.installation
 
     let writeRequest = try AgentExecutionRequest(
       taskID: .init(rawValue: "write-task"),
@@ -149,5 +146,62 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     } catch let error as AgentRuntimeError {
       XCTAssertEqual(error, .invalidRequest("request.effort"))
     }
+  }
+
+  private func makeCatalogInstallation() throws -> (
+    installation: AgentInstallation, directory: String
+  ) {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deepseek-provider-catalog-\(UUID().uuidString)").path
+    try FileManager.default.createDirectory(
+      atPath: directory,
+      withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let executable = URL(fileURLWithPath: directory).appendingPathComponent("dsh-acp-demo").path
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: URL(fileURLWithPath: executable))
+    XCTAssertEqual(chmod(executable, 0o700), 0)
+
+    var artifacts: [AgentInstallationArtifact] = []
+    for role in AgentInstallationArtifactRole.allCases {
+      let path = URL(fileURLWithPath: directory).appendingPathComponent(role.rawValue).path
+      let data =
+        role == .launchConfiguration
+        ? try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+        : Data("fixture\n".utf8)
+      try data.write(to: URL(fileURLWithPath: path))
+      artifacts.append(try artifact(role: role, path: path, data: data))
+    }
+    return try (
+      AgentInstallation(
+        id: .init(rawValue: "catalog-installation"),
+        providerID: .deepSeekHarness,
+        executablePath: executable,
+        artifacts: artifacts
+      ),
+      directory
+    )
+  }
+
+  private func artifact(
+    role: AgentInstallationArtifactRole,
+    path: String,
+    data: Data
+  ) throws -> AgentInstallationArtifact {
+    var metadata = stat()
+    guard lstat(path, &metadata) == 0 else { throw POSIXError(.ENOENT) }
+    let modificationTime =
+      Int64(metadata.st_mtimespec.tv_sec) * 1_000_000_000
+      + Int64(metadata.st_mtimespec.tv_nsec)
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    return AgentInstallationArtifact(
+      role: role,
+      canonicalPath: path,
+      device: UInt64(metadata.st_dev),
+      inode: UInt64(metadata.st_ino),
+      fileSize: UInt64(metadata.st_size),
+      modificationTimeNanoseconds: modificationTime,
+      sha256: digest
+    )
   }
 }

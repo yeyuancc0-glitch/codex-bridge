@@ -57,7 +57,7 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     descriptor = try AgentProviderDescriptor(
       providerID: .deepSeekHarness,
       displayName: "DeepSeek Harness",
-      adapterRevision: 2
+      adapterRevision: 3
     )
   }
 
@@ -69,13 +69,10 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     guard installation.providerID == .deepSeekHarness else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
     }
-    let models = try DeepSeekHarnessACPModelCatalog.descriptors()
-    if let selectedModelID,
-      !models.contains(where: { $0.id == selectedModelID })
-    {
-      throw AgentRuntimeError.modelUnavailable(selectedModelID)
-    }
-    return models
+    return try configuration.launchBuilder.profile.modelDescriptors(
+      for: installation,
+      selectedModelID: selectedModelID
+    )
   }
 
   public func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
@@ -260,7 +257,8 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     guard request.requestedSessionID == nil else {
       throw AgentRuntimeError.capabilityUnavailable(.sessionContinue)
     }
-    _ = try DeepSeekHarnessACPModelCatalog.resolvedSelection(
+    _ = try configuration.launchBuilder.profile.resolvedSelection(
+      for: installation,
       modelID: request.model,
       reasoningEffort: request.effort
     )
@@ -311,7 +309,8 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
   private static func probeReason(_ error: any Error) -> String {
     switch error {
     case DeepSeekHarnessACPError.templateMismatch:
-      return "DeepSeek Harness configuration does not match the managed read-only template."
+      return
+        "DeepSeek Harness configuration changed outside the managed model and reasoning fields."
     case DeepSeekHarnessACPError.nodeVersionIncompatible(let version):
       return
         "DeepSeek Harness requires Node \(DeepSeekHarnessACPConstants.nodeRequirement); found \(version)."

@@ -119,6 +119,7 @@ public struct DeepSeekHarnessACPValidatedInstallation: Equatable, Sendable {
   public let nodeInterpreterPath: String
   public let executablePath: String
   public let configurationPath: String
+  public let configurationData: Data
   public let sourceRoot: String
   public let nodeVersion: String
 
@@ -127,6 +128,7 @@ public struct DeepSeekHarnessACPValidatedInstallation: Equatable, Sendable {
     nodeInterpreterPath: String,
     executablePath: String,
     configurationPath: String,
+    configurationData: Data,
     sourceRoot: String,
     nodeVersion: String
   ) {
@@ -134,6 +136,7 @@ public struct DeepSeekHarnessACPValidatedInstallation: Equatable, Sendable {
     self.nodeInterpreterPath = nodeInterpreterPath
     self.executablePath = executablePath
     self.configurationPath = configurationPath
+    self.configurationData = configurationData
     self.sourceRoot = sourceRoot
     self.nodeVersion = nodeVersion
   }

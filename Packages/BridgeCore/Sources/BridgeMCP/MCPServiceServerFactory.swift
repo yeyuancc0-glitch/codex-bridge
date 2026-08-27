@@ -87,7 +87,7 @@ public struct MCPServiceServerFactory: Sendable {
       + "with provider_id=deepseek-harness and a verified installation; it supports experimental "
       + "read-only fresh sessions only, so omit thread_id, skill_name, supervisor_model and "
       + "supervisor_effort, and use permission_mode=read-only. Its optional execution_model and "
-      + "execution_effort must match the local OpenCode Go catalog exposed for that model. "
+      + "execution_effort must match the selected model declared by the registered Harness profile. "
       + "Its execution-time permission requests are automatically denied. A network_enforcement "
       + "value of unavailable means network_access=false does not guarantee blocking the Harness "
       + "model control plane or shell-tool network."
