@@ -143,7 +143,18 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       providerID: record.providerID,
       executablePath: record.executableIdentity.canonicalPath,
       version: record.version,
-      protocolRevision: record.protocolRevision
+      protocolRevision: record.protocolRevision,
+      artifacts: record.artifacts.map { artifact in
+        AgentInstallationArtifact(
+          role: artifact.role,
+          canonicalPath: artifact.identity.canonicalPath,
+          device: artifact.identity.device,
+          inode: artifact.identity.inode,
+          fileSize: artifact.identity.fileSize,
+          modificationTimeNanoseconds: artifact.identity.modificationTimeNanoseconds,
+          sha256: artifact.identity.sha256
+        )
+      }
     )
     let request = try AgentExecutionRequest(
       taskID: brief.taskID,

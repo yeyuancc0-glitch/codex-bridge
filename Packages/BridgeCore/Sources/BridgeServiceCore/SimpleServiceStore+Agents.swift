@@ -21,6 +21,11 @@ extension SimpleServiceStore {
           )
         }
         try Self.insertAgentInstallation(installation, capabilities: capabilities, in: db)
+        try Self.insertAgentInstallationArtifacts(
+          installation.artifacts,
+          for: installation.id,
+          in: db
+        )
       }
     } catch let error as ServiceStoreError {
       throw error
@@ -48,7 +53,7 @@ extension SimpleServiceStore {
         guard let row = try Self.agentInstallationRow(id: installation.id, in: db) else {
           throw ServiceStoreError.unknownAgentInstallation(installation.id)
         }
-        let existing = try Self.decodeAgentInstallation(row)
+        let existing = try Self.decodeAgentInstallation(row, in: db)
         guard existing.providerID == installation.providerID,
           existing.executablePath == installation.executablePath,
           existing.createdAt == installation.createdAt,
@@ -87,6 +92,11 @@ extension SimpleServiceStore {
           )
         )
         guard db.changesCount == 1 else { throw ServiceStoreError.storageFailure }
+        try Self.replaceAgentInstallationArtifacts(
+          installation.artifacts,
+          for: installation.id,
+          in: db
+        )
       }
     } catch let error as ServiceStoreError {
       throw error
@@ -100,7 +110,9 @@ extension SimpleServiceStore {
   {
     do {
       return try database.read { db in
-        try Self.agentInstallationRow(id: id, in: db).map(Self.decodeAgentInstallation)
+        try Self.agentInstallationRow(id: id, in: db).map {
+          try Self.decodeAgentInstallation($0, in: db)
+        }
       }
     } catch let error as ServiceStoreError {
       throw error
@@ -134,7 +146,7 @@ extension SimpleServiceStore {
               """
           )
         }
-        return try rows.map(Self.decodeAgentInstallation)
+        return try rows.map { try Self.decodeAgentInstallation($0, in: db) }
       }
     } catch let error as ServiceStoreError {
       throw error
@@ -162,6 +174,49 @@ extension SimpleServiceStore {
     }
   }
 
+  public func agentInstallationArtifacts(
+    installationID: AgentInstallationID
+  ) throws -> [ServiceAgentInstallationArtifact] {
+    do {
+      return try database.read { db in
+        try Self.agentInstallationArtifacts(for: installationID, in: db)
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
+  public func agentInstallationArtifacts(
+    for installationID: AgentInstallationID
+  ) throws -> [ServiceAgentInstallationArtifact] {
+    try agentInstallationArtifacts(installationID: installationID)
+  }
+
+  public func replaceAgentInstallationArtifacts(
+    _ artifacts: [ServiceAgentInstallationArtifact],
+    for installationID: AgentInstallationID
+  ) throws {
+    guard artifacts.count <= ServiceAgentInstallationArtifact.maximumCount,
+      Set(artifacts.map(\.role)).count == artifacts.count
+    else {
+      throw ServiceStoreError.invalidArgument("agentInstallation.artifacts")
+    }
+    do {
+      try database.write { db in
+        guard try Self.agentInstallationRow(id: installationID, in: db) != nil else {
+          throw ServiceStoreError.unknownAgentInstallation(installationID)
+        }
+        try Self.replaceAgentInstallationArtifacts(artifacts, for: installationID, in: db)
+      }
+    } catch let error as ServiceStoreError {
+      throw error
+    } catch {
+      throw ServiceStoreError.storageFailure
+    }
+  }
+
   private func agentInstallation(
     providerID: AgentProviderID,
     canonicalPath: String
@@ -171,7 +226,7 @@ extension SimpleServiceStore {
         providerID: providerID,
         canonicalPath: canonicalPath,
         in: db
-      ).map(Self.decodeAgentInstallation)
+      ).map { try Self.decodeAgentInstallation($0, in: db) }
     }
   }
 
@@ -199,6 +254,47 @@ extension SimpleServiceStore {
         includeImmutableFields: true
       )
     )
+  }
+
+  private static func insertAgentInstallationArtifacts(
+    _ artifacts: [ServiceAgentInstallationArtifact],
+    for installationID: AgentInstallationID,
+    in db: Database
+  ) throws {
+    for artifact in artifacts {
+      try db.execute(
+        sql: """
+          INSERT INTO bridge_service_agent_installation_artifacts (
+            installation_id, role, canonical_path, artifact_device, artifact_inode,
+            artifact_size, artifact_mtime_ns, artifact_sha256, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+        arguments: [
+          installationID.rawValue,
+          artifact.role.rawValue,
+          artifact.identity.canonicalPath,
+          String(artifact.identity.device),
+          String(artifact.identity.inode),
+          String(artifact.identity.fileSize),
+          artifact.identity.modificationTimeNanoseconds,
+          artifact.identity.sha256,
+          artifact.createdAt.timeIntervalSince1970,
+          artifact.updatedAt.timeIntervalSince1970,
+        ]
+      )
+    }
+  }
+
+  private static func replaceAgentInstallationArtifacts(
+    _ artifacts: [ServiceAgentInstallationArtifact],
+    for installationID: AgentInstallationID,
+    in db: Database
+  ) throws {
+    try db.execute(
+      sql: "DELETE FROM bridge_service_agent_installation_artifacts WHERE installation_id = ?",
+      arguments: [installationID.rawValue]
+    )
+    try insertAgentInstallationArtifacts(artifacts, for: installationID, in: db)
   }
 
   private static func agentInstallationArguments(
@@ -281,7 +377,7 @@ extension SimpleServiceStore {
     )
   }
 
-  private static func decodeAgentInstallation(_ row: Row) throws
+  private static func decodeAgentInstallation(_ row: Row, in db: Database) throws
     -> ServiceAgentInstallationRecord
   {
     guard let device = UInt64(row["executable_device"] as String),
@@ -311,8 +407,10 @@ extension SimpleServiceStore {
     )
     let securityProfile: String? = row["security_profile_id"]
     let lastProbedAt: Double? = row["last_probed_at"]
+    let installationID = AgentInstallationID(rawValue: row["installation_id"])
+    let artifacts = try agentInstallationArtifacts(for: installationID, in: db)
     return try ServiceAgentInstallationRecord(
-      id: AgentInstallationID(rawValue: row["installation_id"]),
+      id: installationID,
       providerID: AgentProviderID(rawValue: row["provider_id"]),
       displayName: row["display_name"],
       executablePath: row["executable_path"],
@@ -325,11 +423,52 @@ extension SimpleServiceStore {
       isEnabled: enabled == 1,
       availability: availability,
       capabilities: capabilities,
+      artifacts: artifacts,
       lastProbeError: row["last_probe_error"],
       lastProbedAt: lastProbedAt.map(Date.init(timeIntervalSince1970:)),
       createdAt: Date(timeIntervalSince1970: row["created_at"]),
       updatedAt: Date(timeIntervalSince1970: row["updated_at"])
     )
+  }
+
+  private static func agentInstallationArtifacts(
+    for installationID: AgentInstallationID,
+    in db: Database
+  ) throws -> [ServiceAgentInstallationArtifact] {
+    let rows = try Row.fetchAll(
+      db,
+      sql: """
+        SELECT role, canonical_path, artifact_device, artifact_inode, artifact_size,
+               artifact_mtime_ns, artifact_sha256, created_at, updated_at
+        FROM bridge_service_agent_installation_artifacts
+        WHERE installation_id = ?
+        ORDER BY role
+        """,
+      arguments: [installationID.rawValue]
+    )
+    return try rows.map { row in
+      guard let role = ServiceAgentInstallationArtifactRole(rawValue: row["role"]),
+        let device = UInt64(row["artifact_device"] as String),
+        let inode = UInt64(row["artifact_inode"] as String),
+        let fileSize = UInt64(row["artifact_size"] as String)
+      else {
+        throw ServiceStoreError.corruptRecord
+      }
+      let identity = try ServiceAgentFileIdentity(
+        canonicalPath: row["canonical_path"],
+        device: device,
+        inode: inode,
+        fileSize: fileSize,
+        modificationTimeNanoseconds: row["artifact_mtime_ns"],
+        sha256: row["artifact_sha256"]
+      )
+      return try ServiceAgentInstallationArtifact(
+        role: role,
+        identity: identity,
+        createdAt: Date(timeIntervalSince1970: row["created_at"]),
+        updatedAt: Date(timeIntervalSince1970: row["updated_at"])
+      )
+    }
   }
 
   private static func encodeCapabilities(_ capabilities: AgentCapabilitySnapshot) throws -> Data {

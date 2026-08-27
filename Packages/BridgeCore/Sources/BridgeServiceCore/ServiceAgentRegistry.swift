@@ -23,6 +23,8 @@ public enum ServiceAgentRegistryError: Error, Equatable, LocalizedError, Sendabl
 
 public actor ServiceAgentRegistry {
   public typealias IdentityCapture = @Sendable (String) throws -> ServiceAgentExecutableIdentity
+  public typealias ArtifactIdentityCapture =
+    @Sendable (String, Bool) throws -> ServiceAgentFileIdentity
 
   private struct RegistrationKey: Hashable, Sendable {
     let providerID: AgentProviderID
@@ -33,6 +35,7 @@ public actor ServiceAgentRegistry {
   private let providers: [AgentProviderID: any AgentProvider]
   private let makeInstallationID: @Sendable () -> AgentInstallationID
   private let captureIdentity: IdentityCapture
+  private let captureArtifactIdentity: ArtifactIdentityCapture
   private let now: @Sendable () -> Date
   private var activeRegistrations: Set<RegistrationKey> = []
 
@@ -45,6 +48,9 @@ public actor ServiceAgentRegistry {
     captureIdentity: @escaping IdentityCapture = { path in
       try ServiceAgentExecutableIdentity(capturing: path)
     },
+    captureArtifactIdentity: @escaping ArtifactIdentityCapture = { path, requiresExecutable in
+      try ServiceAgentFileIdentity(capturing: path, requiresExecutable: requiresExecutable)
+    },
     now: @escaping @Sendable () -> Date = Date.init
   ) {
     let pairs = providers.map { ($0.descriptor.providerID, $0) }
@@ -53,6 +59,7 @@ public actor ServiceAgentRegistry {
     self.providers = Dictionary(uniqueKeysWithValues: pairs)
     self.makeInstallationID = makeInstallationID
     self.captureIdentity = captureIdentity
+    self.captureArtifactIdentity = captureArtifactIdentity
     self.now = now
   }
 
@@ -86,6 +93,7 @@ public actor ServiceAgentRegistry {
     }
 
     let createdAt = now()
+    let artifacts = try captureArtifacts(request.artifactRequests, at: createdAt)
     let installationID = makeInstallationID()
     let record = try await probeRecord(
       id: installationID,
@@ -97,6 +105,7 @@ public actor ServiceAgentRegistry {
       securityProfileID: request.securityProfileID,
       isEnabled: request.enableOnSuccess,
       projectRoot: request.projectRoot,
+      artifacts: artifacts,
       createdAt: createdAt
     )
     try await store.insertAgentInstallation(record)
@@ -141,6 +150,38 @@ public actor ServiceAgentRegistry {
       return review
     }
 
+    let currentArtifacts: [ServiceAgentInstallationArtifact]
+    do {
+      currentArtifacts = try captureArtifacts(existing.artifacts, at: now())
+    } catch {
+      let review = try unavailableRecord(
+        existing,
+        availability: .needsReview,
+        identity: existing.executableIdentity,
+        artifacts: existing.artifacts,
+        reason: "A registered installation artifact is unavailable and requires local review.",
+        probedAt: existing.lastProbedAt,
+        updatedAt: now()
+      )
+      try await store.updateAgentInstallation(review)
+      return review
+    }
+    let artifactsChanged = !artifactsHaveSameIdentity(currentArtifacts, existing.artifacts)
+    if artifactsChanged, !acceptReplacement {
+      let review = try unavailableRecord(
+        existing,
+        availability: .needsReview,
+        identity: existing.executableIdentity,
+        artifacts: existing.artifacts,
+        reason: "A registered installation artifact changed and requires local review.",
+        probedAt: existing.lastProbedAt,
+        updatedAt: now()
+      )
+      try await store.updateAgentInstallation(review)
+      return review
+    }
+    let artifactsForProbe = artifactsChanged ? currentArtifacts : existing.artifacts
+
     let record = try await probeRecord(
       id: existing.id,
       provider: provider,
@@ -151,6 +192,7 @@ public actor ServiceAgentRegistry {
       securityProfileID: existing.securityProfileID,
       isEnabled: existing.isEnabled,
       projectRoot: projectRoot,
+      artifacts: artifactsForProbe,
       createdAt: existing.createdAt
     )
     try await store.updateAgentInstallation(record)
@@ -191,6 +233,36 @@ public actor ServiceAgentRegistry {
         try await store.updateAgentInstallation(review)
         throw ServiceAgentRegistryError.installationNeedsReview(installationID)
       }
+      do {
+        let currentArtifacts = try captureArtifacts(existing.artifacts, at: now())
+        guard artifactsHaveSameIdentity(currentArtifacts, existing.artifacts) else {
+          let review = try unavailableRecord(
+            existing,
+            availability: .needsReview,
+            identity: existing.executableIdentity,
+            artifacts: existing.artifacts,
+            reason: "A registered installation artifact changed and requires local review.",
+            probedAt: existing.lastProbedAt,
+            updatedAt: now()
+          )
+          try await store.updateAgentInstallation(review)
+          throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+        }
+      } catch let error as ServiceAgentRegistryError {
+        throw error
+      } catch {
+        let review = try unavailableRecord(
+          existing,
+          availability: .needsReview,
+          identity: existing.executableIdentity,
+          artifacts: existing.artifacts,
+          reason: "A registered installation artifact is unavailable and requires local review.",
+          probedAt: existing.lastProbedAt,
+          updatedAt: now()
+        )
+        try await store.updateAgentInstallation(review)
+        throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+      }
       guard existing.availability == .available else {
         if existing.availability == .needsReview {
           throw ServiceAgentRegistryError.installationNeedsReview(installationID)
@@ -215,6 +287,72 @@ public actor ServiceAgentRegistry {
     try await store.agentInstallations(providerID: providerID)
   }
 
+  public func validateForExecution(
+    installationID: AgentInstallationID
+  ) async throws -> ServiceAgentInstallationRecord {
+    guard let record = try await store.agentInstallation(id: installationID) else {
+      throw ServiceStoreError.unknownAgentInstallation(installationID)
+    }
+    guard record.isSelectable else {
+      if record.availability == .needsReview {
+        throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+      }
+      throw ServiceAgentRegistryError.installationUnavailable(installationID)
+    }
+    guard let provider = providers[record.providerID] else {
+      throw ServiceAgentRegistryError.providerUnavailable(record.providerID)
+    }
+    guard provider.descriptor.adapterRevision == record.adapterRevision else {
+      _ = try await persistStateIfNeeded(
+        record,
+        availability: .needsReview,
+        reason: "The Provider adapter changed and requires a new Probe."
+      )
+      throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+    }
+    do {
+      let current = try captureIdentity(record.executablePath)
+      guard current == record.executableIdentity else {
+        _ = try await persistStateIfNeeded(
+          record,
+          availability: .needsReview,
+          reason: "The registered executable changed and requires local review."
+        )
+        throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+      }
+    } catch let error as ServiceAgentRegistryError {
+      throw error
+    } catch {
+      _ = try await persistStateIfNeeded(
+        record,
+        availability: .unavailable,
+        reason: "The registered executable is unavailable."
+      )
+      throw ServiceAgentRegistryError.installationUnavailable(installationID)
+    }
+    do {
+      let currentArtifacts = try captureArtifacts(record.artifacts, at: now())
+      guard artifactsHaveSameIdentity(currentArtifacts, record.artifacts) else {
+        _ = try await persistStateIfNeeded(
+          record,
+          availability: .needsReview,
+          reason: "A registered installation artifact changed and requires local review."
+        )
+        throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+      }
+    } catch let error as ServiceAgentRegistryError {
+      throw error
+    } catch {
+      _ = try await persistStateIfNeeded(
+        record,
+        availability: .needsReview,
+        reason: "A registered installation artifact is unavailable and requires local review."
+      )
+      throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+    }
+    return record
+  }
+
   public func models(
     installationID: AgentInstallationID,
     projectRoot: String? = nil,
@@ -233,12 +371,27 @@ public actor ServiceAgentRegistry {
     guard currentIdentity == record.executableIdentity else {
       throw ServiceAgentRegistryError.installationNeedsReview(installationID)
     }
+    let currentArtifacts = try captureArtifacts(record.artifacts, at: now())
+    guard artifactsHaveSameIdentity(currentArtifacts, record.artifacts) else {
+      throw ServiceAgentRegistryError.installationNeedsReview(installationID)
+    }
     let installation = try AgentInstallation(
       id: record.id,
       providerID: record.providerID,
       executablePath: record.executableIdentity.canonicalPath,
       version: record.version,
-      protocolRevision: record.protocolRevision
+      protocolRevision: record.protocolRevision,
+      artifacts: record.artifacts.map { artifact in
+        AgentInstallationArtifact(
+          role: artifact.role,
+          canonicalPath: artifact.identity.canonicalPath,
+          device: artifact.identity.device,
+          inode: artifact.identity.inode,
+          fileSize: artifact.identity.fileSize,
+          modificationTimeNanoseconds: artifact.identity.modificationTimeNanoseconds,
+          sha256: artifact.identity.sha256
+        )
+      }
     )
     return try await provider.models(
       installation: installation,
@@ -297,6 +450,22 @@ public actor ServiceAgentRegistry {
         reason: "The registered executable changed and requires local review."
       )
     }
+    do {
+      let currentArtifacts = try captureArtifacts(record.artifacts, at: now())
+      guard artifactsHaveSameIdentity(currentArtifacts, record.artifacts) else {
+        return try await persistStateIfNeeded(
+          record,
+          availability: .needsReview,
+          reason: "A registered installation artifact changed and requires local review."
+        )
+      }
+    } catch {
+      return try await persistStateIfNeeded(
+        record,
+        availability: .needsReview,
+        reason: "A registered installation artifact is unavailable and requires local review."
+      )
+    }
     return record
   }
 
@@ -333,12 +502,24 @@ public actor ServiceAgentRegistry {
     securityProfileID: AgentProfileID?,
     isEnabled: Bool,
     projectRoot: String?,
+    artifacts: [ServiceAgentInstallationArtifact],
     createdAt: Date
   ) async throws -> ServiceAgentInstallationRecord {
     let installation = try AgentInstallation(
       id: id,
       providerID: provider.descriptor.providerID,
-      executablePath: identity.canonicalPath
+      executablePath: identity.canonicalPath,
+      artifacts: artifacts.map { artifact in
+        AgentInstallationArtifact(
+          role: artifact.role,
+          canonicalPath: artifact.identity.canonicalPath,
+          device: artifact.identity.device,
+          inode: artifact.identity.inode,
+          fileSize: artifact.identity.fileSize,
+          modificationTimeNanoseconds: artifact.identity.modificationTimeNanoseconds,
+          sha256: artifact.identity.sha256
+        )
+      }
     )
     let request = try AgentProbeRequest(
       installation: installation,
@@ -364,6 +545,7 @@ public actor ServiceAgentRegistry {
         isEnabled: isEnabled,
         availability: .needsReview,
         capabilities: .empty,
+        artifacts: artifacts,
         lastProbeError: "The executable changed while the Probe was running.",
         lastProbedAt: completedAt,
         createdAt: createdAt,
@@ -385,6 +567,7 @@ public actor ServiceAgentRegistry {
         isEnabled: isEnabled,
         availability: .needsReview,
         capabilities: .empty,
+        artifacts: artifacts,
         lastProbeError: "The executable changed while the Probe was running.",
         lastProbedAt: completedAt,
         createdAt: createdAt,
@@ -396,6 +579,53 @@ public actor ServiceAgentRegistry {
       result.installation.id == id
       && result.installation.providerID == provider.descriptor.providerID
       && result.installation.executablePath == identity.canonicalPath
+    let observedArtifacts: [ServiceAgentInstallationArtifact]
+    do {
+      observedArtifacts = try captureArtifacts(artifacts, at: completedAt)
+    } catch {
+      return try ServiceAgentInstallationRecord(
+        id: id,
+        providerID: provider.descriptor.providerID,
+        displayName: displayName,
+        executablePath: executablePath,
+        executableIdentity: identity,
+        version: result.installation.version,
+        protocolRevision: result.installation.protocolRevision,
+        adapterRevision: provider.descriptor.adapterRevision,
+        trustProfile: trustProfile,
+        securityProfileID: securityProfileID,
+        isEnabled: isEnabled,
+        availability: .needsReview,
+        capabilities: .empty,
+        artifacts: artifacts,
+        lastProbeError: "A registered installation artifact changed while the Probe was running.",
+        lastProbedAt: completedAt,
+        createdAt: createdAt,
+        updatedAt: completedAt
+      )
+    }
+    guard artifactsHaveSameIdentity(observedArtifacts, artifacts) else {
+      return try ServiceAgentInstallationRecord(
+        id: id,
+        providerID: provider.descriptor.providerID,
+        displayName: displayName,
+        executablePath: executablePath,
+        executableIdentity: identity,
+        version: result.installation.version,
+        protocolRevision: result.installation.protocolRevision,
+        adapterRevision: provider.descriptor.adapterRevision,
+        trustProfile: trustProfile,
+        securityProfileID: securityProfileID,
+        isEnabled: isEnabled,
+        availability: .needsReview,
+        capabilities: .empty,
+        artifacts: artifacts,
+        lastProbeError: "A registered installation artifact changed while the Probe was running.",
+        lastProbedAt: completedAt,
+        createdAt: createdAt,
+        updatedAt: completedAt
+      )
+    }
     let hasVersion = result.installation.version != nil
     let available = result.available && resultMatches && hasVersion
     let availability: ServiceAgentInstallationAvailability
@@ -430,6 +660,7 @@ public actor ServiceAgentRegistry {
       isEnabled: isEnabled,
       availability: availability,
       capabilities: available ? result.capabilities : .empty,
+      artifacts: artifacts,
       lastProbeError: reason,
       lastProbedAt: completedAt,
       createdAt: createdAt,
@@ -441,6 +672,7 @@ public actor ServiceAgentRegistry {
     _ existing: ServiceAgentInstallationRecord,
     availability: ServiceAgentInstallationAvailability,
     identity: ServiceAgentExecutableIdentity,
+    artifacts: [ServiceAgentInstallationArtifact]? = nil,
     reason: String,
     probedAt: Date?,
     updatedAt: Date
@@ -459,6 +691,7 @@ public actor ServiceAgentRegistry {
       isEnabled: existing.isEnabled,
       availability: availability,
       capabilities: .empty,
+      artifacts: artifacts ?? existing.artifacts,
       lastProbeError: reason,
       lastProbedAt: probedAt,
       createdAt: existing.createdAt,
@@ -471,5 +704,60 @@ public actor ServiceAgentRegistry {
       throw ServiceAgentRegistryError.providerUnavailable(providerID)
     }
     return provider
+  }
+
+  private func captureArtifacts(
+    _ requests: [ServiceAgentInstallationArtifactRequest],
+    at date: Date
+  ) throws -> [ServiceAgentInstallationArtifact] {
+    try requests.map { request in
+      let identity = try captureArtifactIdentity(request.path, request.role.requiresExecutable)
+      guard
+        request.role != .launchConfiguration
+          || identity.fileSize <= ServiceAgentFileIdentity.maximumConfigurationBytes
+      else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactSize")
+      }
+      return try ServiceAgentInstallationArtifact(
+        role: request.role,
+        identity: identity,
+        createdAt: date,
+        updatedAt: date
+      )
+    }
+  }
+
+  private func captureArtifacts(
+    _ artifacts: [ServiceAgentInstallationArtifact],
+    at date: Date
+  ) throws -> [ServiceAgentInstallationArtifact] {
+    try artifacts.map { artifact in
+      let identity = try captureArtifactIdentity(
+        artifact.identity.canonicalPath,
+        artifact.role.requiresExecutable
+      )
+      guard
+        artifact.role != .launchConfiguration
+          || identity.fileSize <= ServiceAgentFileIdentity.maximumConfigurationBytes
+      else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactSize")
+      }
+      return try ServiceAgentInstallationArtifact(
+        role: artifact.role,
+        identity: identity,
+        createdAt: artifact.createdAt,
+        updatedAt: date
+      )
+    }
+  }
+
+  private func artifactsHaveSameIdentity(
+    _ first: [ServiceAgentInstallationArtifact],
+    _ second: [ServiceAgentInstallationArtifact]
+  ) -> Bool {
+    guard first.count == second.count else { return false }
+    let firstByRole = Dictionary(uniqueKeysWithValues: first.map { ($0.role, $0.identity) })
+    let secondByRole = Dictionary(uniqueKeysWithValues: second.map { ($0.role, $0.identity) })
+    return firstByRole == secondByRole
   }
 }

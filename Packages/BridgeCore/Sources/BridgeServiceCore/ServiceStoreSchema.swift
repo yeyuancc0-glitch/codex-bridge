@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 12
+  static let version: Int64 = 13
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -34,9 +34,10 @@ enum ServiceStoreSchema {
   static let migrationV10 = "BridgeServiceCore.v10"
   static let migrationV11 = "BridgeServiceCore.v11"
   static let migrationV12 = "BridgeServiceCore.v12"
+  static let migrationV13 = "BridgeServiceCore.v13"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
-    migrationV8, migrationV9, migrationV10, migrationV11, migrationV12,
+    migrationV8, migrationV9, migrationV10, migrationV11, migrationV12, migrationV13,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -70,6 +71,7 @@ enum ServiceStoreSchema {
     case 9: backupSuffix = ".pre-v10"
     case 10: backupSuffix = ".pre-v11"
     case 11: backupSuffix = ".pre-v12"
+    case 12: backupSuffix = ".pre-v13"
     default: return
     }
     let backupPath = sourcePath + backupSuffix
@@ -140,6 +142,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV12) { db in
       try createVersionTwelve(in: db)
+    }
+    migrator.registerMigration(migrationV13) { db in
+      try createVersionThirteen(in: db)
     }
     return migrator
   }
@@ -762,6 +767,48 @@ enum ServiceStoreSchema {
         """)
   }
 
+  static func createVersionThirteen(in db: Database) throws {
+    try db.execute(
+      sql: """
+        CREATE TABLE bridge_service_agent_installation_artifacts (
+            installation_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN (
+              'launch_configuration', 'runtime_manifest',
+              'dependency_lock', 'node_interpreter'
+            )),
+            canonical_path TEXT NOT NULL,
+            artifact_device TEXT NOT NULL,
+            artifact_inode TEXT NOT NULL,
+            artifact_size TEXT NOT NULL,
+            artifact_mtime_ns INTEGER NOT NULL,
+            artifact_sha256 TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY (installation_id, role),
+            FOREIGN KEY (installation_id)
+              REFERENCES bridge_service_agent_installations(installation_id) ON DELETE CASCADE,
+            CHECK (length(CAST(installation_id AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(canonical_path AS BLOB)) BETWEEN 1 AND 16384),
+            CHECK (substr(canonical_path, 1, 1) = '/'),
+            CHECK (length(artifact_device) BETWEEN 1 AND 20),
+            CHECK (length(artifact_inode) BETWEEN 1 AND 20),
+            CHECK (length(artifact_size) BETWEEN 1 AND 20),
+            CHECK (artifact_mtime_ns >= 0),
+            CHECK (length(artifact_sha256) = 64),
+            CHECK (artifact_sha256 NOT GLOB '*[^0-9a-f]*'),
+            CHECK (updated_at >= created_at)
+        ) WITHOUT ROWID;
+
+        CREATE INDEX bridge_service_agent_installation_artifacts_path
+        ON bridge_service_agent_installation_artifacts(canonical_path);
+
+        CREATE INDEX bridge_service_agent_installation_artifacts_updated
+        ON bridge_service_agent_installation_artifacts(updated_at DESC, installation_id, role);
+
+        UPDATE bridge_service_meta SET schema_version = 13 WHERE singleton = 1;
+        """)
+  }
+
   static func createVersionOne(in db: Database) throws {
     try db.execute(
       sql: """
@@ -934,6 +981,10 @@ enum ServiceStoreSchema {
           "is_enabled", "availability", "capabilities_json", "last_probe_error",
           "last_probed_at", "created_at", "updated_at",
         ],
+        "bridge_service_agent_installation_artifacts": [
+          "installation_id", "role", "canonical_path", "artifact_device", "artifact_inode",
+          "artifact_size", "artifact_mtime_ns", "artifact_sha256", "created_at", "updated_at",
+        ],
         "bridge_service_tasks": [
           "task_id", "project_id", "source", "source_client_id", "client_request_id", "prompt",
           "requested_thread_id", "codex_thread_id", "codex_turn_id", "status",
@@ -958,6 +1009,17 @@ enum ServiceStoreSchema {
         guard Set(try db.columns(in: table).map(\.name)) == expected else {
           throw ServiceStoreError.corruptSchema
         }
+      }
+      let artifactForeignKeys = try Row.fetchAll(
+        db,
+        sql: "PRAGMA foreign_key_list(bridge_service_agent_installation_artifacts)"
+      )
+      guard artifactForeignKeys.count == 1,
+        artifactForeignKeys[0]["table"] as String
+          == "bridge_service_agent_installations",
+        artifactForeignKeys[0]["on_delete"] as String == "CASCADE"
+      else {
+        throw ServiceStoreError.corruptSchema
       }
     }
   }
