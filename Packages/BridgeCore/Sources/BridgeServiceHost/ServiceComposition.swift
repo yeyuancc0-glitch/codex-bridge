@@ -101,14 +101,20 @@ public actor ServiceComposition {
 
   public static func make(
     configuration: ServiceCompositionConfiguration,
-#if canImport(Darwin)
-    secretStore: any SecretStore = KeychainSecretStore(),
-#else
-    secretStore: any SecretStore = WindowsCredentialSecretStore(),
-#endif
+    secretStore: (any SecretStore)? = nil,
     randomBytes: (@Sendable (Int) throws -> Data)? = nil,
     tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
+    let effectiveSecretStore: any SecretStore
+    if let secretStore {
+      effectiveSecretStore = secretStore
+    } else {
+#if canImport(Darwin)
+      effectiveSecretStore = KeychainSecretStore()
+#else
+      effectiveSecretStore = WindowsCredentialSecretStore()
+#endif
+    }
     let effectiveRandomBytes: @Sendable (Int) throws -> Data
     if let randomBytes {
       effectiveRandomBytes = randomBytes
@@ -189,16 +195,16 @@ public actor ServiceComposition {
       ?? BundledServiceTunnelManagerFactory(
         appBundleURL: configuration.appBundleURL ?? URL(fileURLWithPath: "/"),
         runtimeDirectory: paths.tunnelRuntimeURL,
-        secretStore: secretStore
+        secretStore: effectiveSecretStore
       )
     let tunnel = ServiceTunnelController(
       settings: settings,
       runtimeStatus: runtimeStatus,
-      secretStore: secretStore,
+      secretStore: effectiveSecretStore,
       factory: resolvedTunnelFactory
     )
     let secretProvider = ServiceMCPSecretProvider(
-      store: secretStore,
+      store: effectiveSecretStore,
       randomBytes: effectiveRandomBytes
     )
     let mcpClients = try await ServiceMCPClientRegistry.make(
