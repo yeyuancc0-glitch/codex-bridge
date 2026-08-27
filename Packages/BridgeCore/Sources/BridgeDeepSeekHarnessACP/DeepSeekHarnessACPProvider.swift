@@ -248,10 +248,11 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     }
   }
 
-  private func validate(_ initialization: DeepSeekHarnessACPInitialization) throws {
+  func validate(_ initialization: DeepSeekHarnessACPInitialization) throws {
     guard initialization.protocolVersion == DeepSeekHarnessACPConstants.acpProtocolVersion else {
       throw AgentRuntimeError.unsupportedProtocol(String(initialization.protocolVersion))
     }
+    guard initialization.agentName != nil || initialization.agentVersion != nil else { return }
     guard initialization.agentName == DeepSeekHarnessACPConstants.agentName,
       initialization.agentVersion == DeepSeekHarnessACPConstants.agentVersion
     else {

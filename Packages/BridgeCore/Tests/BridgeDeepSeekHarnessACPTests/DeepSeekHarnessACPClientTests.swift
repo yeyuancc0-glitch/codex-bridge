@@ -6,6 +6,27 @@ import XCTest
 @testable import BridgeDeepSeekHarnessACP
 
 final class DeepSeekHarnessACPClientTests: XCTestCase {
+  func testInitializeAcceptsProtocolResponseWithoutOptionalAgentInfo() async throws {
+    let transport = ScriptedDeepSeekHarnessTransport()
+    await transport.setHandler { message, transport in
+      guard message.method == "initialize", let id = message.id else { return }
+      try await transport.emit(
+        ACPWireMessage(id: id, result: .object(["protocolVersion": .integer(1)]))
+      )
+    }
+    let client = DeepSeekHarnessACPClient(
+      transport: transport,
+      clientInfo: .init(name: "tests", title: "Tests", version: "1")
+    )
+    addTeardownBlock { await client.shutdown() }
+
+    let initialization = try await client.initialize()
+
+    XCTAssertEqual(initialization.protocolVersion, 1)
+    XCTAssertNil(initialization.agentName)
+    XCTAssertNil(initialization.agentVersion)
+  }
+
   func testInitializeFreshSessionAndPromptPreserveTextOrderAndBarrier() async throws {
     let transport = ScriptedDeepSeekHarnessTransport()
     await transport.setHandler { message, transport in

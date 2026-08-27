@@ -59,6 +59,10 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       runDirectory: runtime,
       sourceEnvironment: sourceEnvironment
     )
+    let runtimeConfiguration = try prepareRuntimeProfile(
+      sourceRoot: validated.sourceRoot,
+      runDirectory: runtime
+    )
     let configurationDirectory = URL(fileURLWithPath: validated.configurationPath)
       .deletingLastPathComponent().standardizedFileURL.path
     guard FileManager.default.fileExists(atPath: configurationDirectory) else {
@@ -68,7 +72,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       validated.nodeInterpreterPath,
       validated.executablePath,
       "--config",
-      validated.configurationPath,
+      runtimeConfiguration,
     ]
     return DeepSeekHarnessACPLaunchConfiguration(
       process: ACPProcessTransportConfiguration(
@@ -85,6 +89,46 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       resolvedExecutablePath: validated.executablePath,
       resolvedConfigurationPath: validated.configurationPath
     )
+  }
+
+  func prepareRuntimeProfile(sourceRoot: String, runDirectory: String) throws -> String {
+    let moduleDirectory = URL(fileURLWithPath: sourceRoot, isDirectory: true)
+      .appendingPathComponent("node_modules/.pnpm/node_modules", isDirectory: true)
+      .standardizedFileURL.path
+    let resolvedModuleDirectory = URL(fileURLWithPath: moduleDirectory, isDirectory: true)
+      .resolvingSymlinksInPath().standardizedFileURL.path
+    var isDirectory: ObjCBool = false
+    guard resolvedModuleDirectory == moduleDirectory,
+      FileManager.default.fileExists(atPath: moduleDirectory, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      throw DeepSeekHarnessACPError.artifactInvalid("runtime_modules")
+    }
+
+    let runtimeProfile = URL(fileURLWithPath: runDirectory, isDirectory: true)
+      .appendingPathComponent("profile", isDirectory: true).path
+    try createPrivateDirectory(runtimeProfile)
+    let configuration = URL(fileURLWithPath: runtimeProfile, isDirectory: true)
+      .appendingPathComponent("cordis.yml").path
+    do {
+      try profile.configurationTemplate.write(
+        to: URL(fileURLWithPath: configuration),
+        options: .atomic
+      )
+      guard chmod(configuration, 0o600) == 0 else {
+        throw AgentRuntimeError.processUnavailable
+      }
+      try FileManager.default.createSymbolicLink(
+        atPath: URL(fileURLWithPath: runtimeProfile, isDirectory: true)
+          .appendingPathComponent("node_modules").path,
+        withDestinationPath: moduleDirectory
+      )
+      return configuration
+    } catch let error as AgentRuntimeError {
+      throw error
+    } catch {
+      throw AgentRuntimeError.processUnavailable
+    }
   }
 
   public static func removeRunDirectory(_ path: String) {

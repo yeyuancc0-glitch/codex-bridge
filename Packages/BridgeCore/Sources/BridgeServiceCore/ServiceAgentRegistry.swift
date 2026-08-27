@@ -641,10 +641,10 @@ public actor ServiceAgentRegistry {
       reason = nil
     } else if !resultMatches {
       reason = "The Provider returned a mismatched installation identity."
-    } else if !hasVersion {
-      reason = "The Provider did not report a version."
-    } else {
+    } else if !result.available {
       reason = result.unavailableReason ?? "The Provider is unavailable."
+    } else {
+      reason = "The Provider did not report a version."
     }
     return try ServiceAgentInstallationRecord(
       id: id,

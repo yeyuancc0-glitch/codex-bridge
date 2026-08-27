@@ -27,6 +27,7 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     let manifest = URL(fileURLWithPath: root).appendingPathComponent("package.json").path
     let lock = URL(fileURLWithPath: root).appendingPathComponent("pnpm-lock.yaml").path
     let configuration = URL(fileURLWithPath: profile).appendingPathComponent("cordis.yml").path
+    try makeModuleResolutionDirectory(sourceRoot: root)
     try Data("#!/bin/sh\necho v22.19.0\n".utf8).write(to: URL(fileURLWithPath: node))
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o700],
@@ -117,6 +118,33 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     XCTAssertLessThan(start.duration(to: .now), .seconds(8))
   }
 
+  func testRuntimeProfileStagesManagedTemplateWithWorkspaceModuleResolution() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-runtime-profile")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime")
+    addTeardownBlock {
+      fixture.remove()
+      try? FileManager.default.removeItem(atPath: runDirectory)
+    }
+    let stagedConfiguration = try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
+      sourceRoot: fixture.root,
+      runDirectory: runDirectory
+    )
+
+    XCTAssertEqual(
+      try Data(contentsOf: URL(fileURLWithPath: stagedConfiguration)),
+      try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    )
+    XCTAssertTrue(stagedConfiguration.hasPrefix(runDirectory + "/profile/"))
+    XCTAssertEqual(
+      try FileManager.default.destinationOfSymbolicLink(
+        atPath: URL(fileURLWithPath: runDirectory)
+          .appendingPathComponent("profile/node_modules").path
+      ),
+      URL(fileURLWithPath: fixture.root)
+        .appendingPathComponent("node_modules/.pnpm/node_modules").path
+    )
+  }
+
   private func makeProfileFixture(
     prefix: String,
     lockVersion: String = "0.25.1",
@@ -140,6 +168,7 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     try Data(
       "packages:\n  /@agentclientprotocol/sdk@\(lockVersion):\n    resolution: {}\n".utf8
     ).write(to: URL(fileURLWithPath: root).appendingPathComponent("pnpm-lock.yaml"))
+    try makeModuleResolutionDirectory(sourceRoot: root)
     let configuration = URL(fileURLWithPath: profile).appendingPathComponent("cordis.yml")
     try DeepSeekHarnessACPProfile.bundledConfigurationTemplate().write(to: configuration)
     return ProfileFixture(
@@ -159,6 +188,15 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
       attributes: [.posixPermissions: 0o700]
     )
     return path
+  }
+
+  private func makeModuleResolutionDirectory(sourceRoot: String) throws {
+    try FileManager.default.createDirectory(
+      at: URL(fileURLWithPath: sourceRoot)
+        .appendingPathComponent("node_modules/.pnpm/node_modules"),
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
   }
 }
 

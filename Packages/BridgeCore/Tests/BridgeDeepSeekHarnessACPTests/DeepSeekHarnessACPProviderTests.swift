@@ -6,6 +6,35 @@ import XCTest
 @testable import BridgeDeepSeekHarnessACP
 
 final class DeepSeekHarnessACPProviderTests: XCTestCase {
+  func testInitializationIdentityIsOptionalButStrictWhenPresent() throws {
+    let provider = try DeepSeekHarnessACPProvider()
+    XCTAssertNoThrow(
+      try provider.validate(
+        DeepSeekHarnessACPInitialization(
+          protocolVersion: 1,
+          agentName: nil,
+          agentTitle: nil,
+          agentVersion: nil
+        )
+      )
+    )
+    XCTAssertThrowsError(
+      try provider.validate(
+        DeepSeekHarnessACPInitialization(
+          protocolVersion: 1,
+          agentName: "other-agent",
+          agentTitle: nil,
+          agentVersion: "0.0.1"
+        )
+      )
+    ) { error in
+      XCTAssertEqual(
+        error as? AgentRuntimeError,
+        .unsupportedProtocol("unexpected_deepseek_harness_identity")
+      )
+    }
+  }
+
   func testEffectiveCapabilitiesExcludePermissionAndUnsupportedSelection() {
     let snapshot = DeepSeekHarnessACPProvider.capabilitySnapshot
     XCTAssertEqual(

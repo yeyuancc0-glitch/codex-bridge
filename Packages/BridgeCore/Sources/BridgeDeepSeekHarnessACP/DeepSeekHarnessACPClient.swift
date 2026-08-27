@@ -195,16 +195,27 @@ public actor DeepSeekHarnessACPClient {
       ])
     )
     guard let object = response.value.objectValue,
-      let protocolVersion = object["protocolVersion"]?.intValue,
-      let agentInfo = object["agentInfo"]?.objectValue
+      let protocolVersion = object["protocolVersion"]?.intValue
     else {
       throw DeepSeekHarnessACPError.malformedResponse
     }
+    let agentInfo: [String: ACPJSONValue]?
+    if let value = object["agentInfo"] {
+      guard let decoded = value.objectValue,
+        decoded["name"]?.stringValue != nil,
+        decoded["version"]?.stringValue != nil
+      else {
+        throw DeepSeekHarnessACPError.malformedResponse
+      }
+      agentInfo = decoded
+    } else {
+      agentInfo = nil
+    }
     let initialization = DeepSeekHarnessACPInitialization(
       protocolVersion: protocolVersion,
-      agentName: agentInfo["name"]?.stringValue,
-      agentTitle: agentInfo["title"]?.stringValue,
-      agentVersion: agentInfo["version"]?.stringValue
+      agentName: agentInfo?["name"]?.stringValue,
+      agentTitle: agentInfo?["title"]?.stringValue,
+      agentVersion: agentInfo?["version"]?.stringValue
     )
     guard initialization.protocolVersion == DeepSeekHarnessACPConstants.acpProtocolVersion else {
       throw DeepSeekHarnessACPError.unsupportedProtocol(initialization.protocolVersion)

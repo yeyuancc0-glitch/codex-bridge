@@ -179,6 +179,39 @@ final class ServiceAgentRegistryTests: XCTestCase {
     XCTAssertTrue(record.lastProbeError?.contains("unsupported") == true)
   }
 
+  func testUnavailableProbeReasonIsNotMaskedByMissingVersion() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let executable = try makeExecutable(
+      directory: fixture.rootURL,
+      name: "opencode-unavailable",
+      content: "#!/bin/sh\nexit 1\n"
+    )
+    let provider = try RegistryFixtureProvider(
+      counter: ProbeInvocationCounter(),
+      unavailableReason: "Fixture failed before version negotiation."
+    )
+    let registry = ServiceAgentRegistry(
+      store: try SimpleServiceStore(path: fixture.databasePath),
+      providers: [provider],
+      makeInstallationID: { AgentInstallationID(rawValue: "ainst-unavailable") }
+    )
+
+    let record = try await registry.registerAndProbe(
+      ServiceAgentRegistrationRequest(
+        providerID: .openCode,
+        displayName: "OpenCode unavailable",
+        executablePath: executable,
+        trustProfile: .managed,
+        enableOnSuccess: true
+      )
+    )
+
+    XCTAssertNil(record.version)
+    XCTAssertEqual(record.availability, .unavailable)
+    XCTAssertEqual(record.lastProbeError, "Fixture failed before version negotiation.")
+  }
+
   func testExecutableIdentityRejectsUnsafeModeAndDetectsInPlaceChange() throws {
     let directory = FileManager.default.temporaryDirectory.appending(
       path: "bridge-agent-identity-\(UUID().uuidString)",
@@ -293,11 +326,13 @@ private struct RegistryFixtureProvider: AgentProvider, Sendable {
   let counter: ProbeInvocationCounter
   let version: String
   let reviewRequired: Bool
+  let unavailableReason: String?
 
   init(
     counter: ProbeInvocationCounter,
     version: String = "1.18.22",
-    reviewRequired: Bool = false
+    reviewRequired: Bool = false,
+    unavailableReason: String? = nil
   ) throws {
     descriptor = try AgentProviderDescriptor(
       providerID: .openCode,
@@ -307,10 +342,19 @@ private struct RegistryFixtureProvider: AgentProvider, Sendable {
     self.counter = counter
     self.version = version
     self.reviewRequired = reviewRequired
+    self.unavailableReason = unavailableReason
   }
 
   func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
     await counter.increment()
+    if let unavailableReason {
+      return AgentProbeResult(
+        installation: request.installation,
+        available: false,
+        capabilities: .empty,
+        unavailableReason: unavailableReason
+      )
+    }
     guard
       let installation = try? AgentInstallation(
         id: request.installation.id,
