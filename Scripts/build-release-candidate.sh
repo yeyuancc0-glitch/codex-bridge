@@ -74,9 +74,17 @@ cd "${repository_root}"
   exit 66
 }
 readonly app_binary="${archived_app}/Contents/MacOS/CodexBridge"
+readonly service_binary="${archived_app}/Contents/Resources/CodexBridgeService"
 readonly bundled_helper="${archived_app}/Contents/Helpers/tunnel-client"
 readonly bundled_digest="${archived_app}/Contents/Resources/TunnelClient/tunnel-client.sha256"
-for binary in "${app_binary}" "${bundled_helper}"; do
+readonly deepseek_bundle="${archived_app}/Contents/Resources/BridgeCore_BridgeDeepSeekHarnessACP.bundle"
+readonly deepseek_template="${deepseek_bundle}/Contents/Resources/cordis.yml"
+[[ -d "${deepseek_bundle}" && ! -L "${deepseek_bundle}" && \
+  -f "${deepseek_template}" && ! -L "${deepseek_template}" ]] || {
+  print -u2 "Archive did not contain the DeepSeek Harness resource bundle."
+  exit 66
+}
+for binary in "${app_binary}" "${service_binary}" "${bundled_helper}"; do
   /usr/bin/lipo "${binary}" -verify_arch arm64
   /usr/bin/lipo "${binary}" -verify_arch x86_64
 done

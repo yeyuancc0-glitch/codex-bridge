@@ -124,6 +124,34 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     }
   }
 
+  func testEmbeddedServiceResourcesAreStagedAndRequiredByReleaseBuilds() throws {
+    let repositoryRoot = Self.packageRoot
+      .deletingLastPathComponent()
+      .deletingLastPathComponent()
+    let project = try String(
+      contentsOf: repositoryRoot.appending(path: "CodexBridge.xcodeproj/project.pbxproj"),
+      encoding: .utf8
+    )
+    let stagingScript = try String(
+      contentsOf: repositoryRoot.appending(path: "Scripts/stage-embedded-service-resources.sh"),
+      encoding: .utf8
+    )
+    let releaseScript = try String(
+      contentsOf: repositoryRoot.appending(path: "Scripts/build-release-candidate.sh"),
+      encoding: .utf8
+    )
+    let bundleName = "BridgeCore_BridgeDeepSeekHarnessACP.bundle"
+
+    XCTAssertTrue(project.contains("Stage Embedded Service Resources"))
+    XCTAssertTrue(project.contains("Scripts/stage-embedded-service-resources.sh"))
+    XCTAssertTrue(project.contains(bundleName))
+    XCTAssertTrue(stagingScript.contains("BUILT_PRODUCTS_DIR"))
+    XCTAssertTrue(stagingScript.contains("UNLOCALIZED_RESOURCES_FOLDER_PATH"))
+    XCTAssertTrue(stagingScript.contains("Contents/Resources/cordis.yml"))
+    XCTAssertTrue(
+      releaseScript.contains("Archive did not contain the DeepSeek Harness resource bundle."))
+  }
+
   private static var packageRoot: URL {
     URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()

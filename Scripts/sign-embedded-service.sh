@@ -2,9 +2,16 @@
 set -euo pipefail
 
 readonly service_path="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/CodexBridgeService"
+readonly deepseek_bundle="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/BridgeCore_BridgeDeepSeekHarnessACP.bundle"
+readonly deepseek_template="${deepseek_bundle}/Contents/Resources/cordis.yml"
 
 [[ -f "${service_path}" && -x "${service_path}" && ! -L "${service_path}" ]] || {
   print -u2 "Embedded CodexBridgeService is missing or unsafe."
+  exit 66
+}
+[[ -d "${deepseek_bundle}" && ! -L "${deepseek_bundle}" && \
+  -f "${deepseek_template}" && ! -L "${deepseek_template}" ]] || {
+  print -u2 "Embedded DeepSeek Harness resources are missing or unsafe."
   exit 66
 }
 
@@ -24,4 +31,4 @@ then
   /usr/bin/codesign --verify --strict --verbose=2 "${service_path}"
 fi
 
-print "Verified embedded CodexBridgeService for ${ARCHS}."
+print "Verified embedded CodexBridgeService and resources for ${ARCHS}."

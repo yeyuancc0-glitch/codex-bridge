@@ -9,9 +9,11 @@ fi
 readonly app="${1:A}"
 readonly service="${app}/Contents/Resources/CodexBridgeService"
 readonly helper="${app}/Contents/Helpers/tunnel-client"
+readonly deepseek_bundle="${app}/Contents/Resources/BridgeCore_BridgeDeepSeekHarnessACP.bundle"
+readonly deepseek_template="${deepseek_bundle}/Contents/Resources/cordis.yml"
 
 [[ -d "${app}" && ! -L "${app}" ]] || { print -u2 "App bundle is missing or unsafe."; exit 66; }
-for path in "${app}" "${service}" "${helper}"; do
+for path in "${app}" "${service}" "${helper}" "${deepseek_bundle}" "${deepseek_template}"; do
   [[ -e "${path}" && ! -L "${path}" ]] || { print -u2 "Missing release component: ${path}"; exit 66; }
 done
 

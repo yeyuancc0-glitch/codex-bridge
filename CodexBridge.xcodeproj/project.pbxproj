@@ -181,6 +181,7 @@
 				01C000000000000000000003 /* Resources */,
 				05C000000000000000000001 /* Embed Service */,
 				05C000000000000000000002 /* Copy LaunchAgent */,
+				05C000000000000000000007 /* Stage Embedded Service Resources */,
 				05C000000000000000000006 /* Sign Embedded Service */,
 				01C000000000000000000004 /* Stage Tunnel Helper */,
 			);
@@ -309,6 +310,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		05C000000000000000000007 /* Stage Embedded Service Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/BridgeCore_BridgeDeepSeekHarnessACP.bundle",
+			);
+			name = "Stage Embedded Service Resources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/BridgeCore_BridgeDeepSeekHarnessACP.bundle",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "\"/bin/zsh\" \"$SRCROOT/Scripts/stage-embedded-service-resources.sh\"\n";
+		};
 		05C000000000000000000006 /* Sign Embedded Service */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
