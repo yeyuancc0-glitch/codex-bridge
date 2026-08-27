@@ -24,11 +24,16 @@ public struct DirectGitResult: Equatable, Sendable {
 /// Runs one bounded, non-interactive git command inside the project root and
 /// captures bounded head/tail output. Used by the controlled Direct Git
 /// commit path so that no shell is involved and no history rewrite is possible.
+import BridgeProcessRuntime
+
 public struct DirectGitRunner: Sendable {
   public static let gitPath = "/usr/bin/git"
 
   public static func resolveGitPath() throws -> String {
-    return gitPath
+    guard let resolved = GitExecutableResolver().resolve() else {
+      throw DirectGitError.launchFailed
+    }
+    return resolved.path
   }
 
   public let defaultTimeout: Duration
