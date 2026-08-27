@@ -288,6 +288,7 @@ let sharedTestTargets: [Target] = [
       name: "BridgeProcessRuntime",
       dependencies: ["BridgePlatform", "BridgeWindowsSandboxSupport"]
     ),
+    .target(name: "BridgeProcess"),
     .target(
       name: "BridgeCodexRPC",
       dependencies: ["BridgeProcessRuntime"]
@@ -311,6 +312,7 @@ let sharedTestTargets: [Target] = [
       name: "BridgeDirectCommand",
       dependencies: [
         "BridgeDomain",
+        "BridgeProcess",
         "BridgeProcessRuntime",
         "BridgeProjects",
         "BridgeSecurity",
