@@ -12,6 +12,45 @@ import MCP
 import XCTest
 
 final class BridgeServiceHostTests: XCTestCase {
+  func testAgentProviderSummaryDecodesLegacyPayloadWithCompatibleDefaults() throws {
+    let legacy = Data(
+      #"{"provider_id":"opencode","display_name":"OpenCode","adapter_revision":1}"#.utf8
+    )
+    let decoded = try JSONDecoder().decode(IPCAgentProviderSummary.self, from: legacy)
+
+    XCTAssertFalse(decoded.requiresConfiguration)
+    XCTAssertEqual(decoded.registrationTrustProfile, "managed")
+    XCTAssertTrue(decoded.supportsModelSelection)
+    XCTAssertTrue(decoded.supportsEffortSelection)
+    XCTAssertTrue(decoded.supportsSessionContinuation)
+    XCTAssertTrue(decoded.supportsWorkspaceWrite)
+    XCTAssertFalse(decoded.supportsSkillSelection)
+    XCTAssertFalse(decoded.supportsSupervisor)
+    XCTAssertEqual(decoded.workspaceEnforcement, "legacy")
+    XCTAssertEqual(decoded.approvalEnforcement, "legacy")
+    XCTAssertEqual(decoded.networkEnforcement, "legacy")
+  }
+
+  func testAgentRegistrationRequestCarriesOptionalConfigurationPath() throws {
+    let request = IPCAgentRegistrationRequest(
+      providerID: "deepseek-harness",
+      displayName: "DeepSeek Harness",
+      executablePath: "/opt/harness/dsh-acp-demo",
+      configurationPath: "/Users/test/Profiles/DeepSeek/cordis.yml"
+    )
+    let encoded = try JSONEncoder().encode(request)
+    let value = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    XCTAssertEqual(
+      value["configuration_path"] as? String, "/Users/test/Profiles/DeepSeek/cordis.yml")
+
+    let legacy = Data(
+      #"{"provider_id":"opencode","display_name":"OpenCode","executable_path":"/usr/bin/opencode"}"#
+        .utf8
+    )
+    XCTAssertNil(
+      try JSONDecoder().decode(IPCAgentRegistrationRequest.self, from: legacy).configurationPath)
+  }
+
   func testAgentSubmitRequestDecodesLegacyPayloadAndEncodesPermissionMode() throws {
     let legacy = Data(
       #"{"project_id":"project-1","provider_id":"opencode","installation_id":null,"model":null,"prompt":"Inspect the project."}"#
@@ -263,7 +302,7 @@ final class BridgeServiceHostTests: XCTestCase {
     }
 
     let initial = try await client.agentCatalog()
-    XCTAssertEqual(initial.providers.map(\.providerID), ["opencode"])
+    XCTAssertEqual(initial.providers.map(\.providerID), ["deepseek-harness", "opencode"])
     XCTAssertTrue(initial.installations.isEmpty)
 
     let registered = try await client.registerAgentInstallation(

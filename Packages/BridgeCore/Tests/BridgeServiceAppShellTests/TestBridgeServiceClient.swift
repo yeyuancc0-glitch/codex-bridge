@@ -77,6 +77,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentModelRequestCount = 0
   private var failAgentModels = false
   private var submittedAgentRequestValue: IPCAgentSubmitRequest?
+  private var registrationRequestValue: IPCAgentRegistrationRequest?
   private var approvalResolutionDelay: Duration = .zero
   private var failApprovalReplyAfterResolution = false
   private let agentProvidersValue = [
@@ -182,6 +183,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func submittedAgentRequest() -> IPCAgentSubmitRequest? {
     submittedAgentRequestValue
+  }
+
+  func registrationRequest() -> IPCAgentRegistrationRequest? {
+    registrationRequestValue
   }
 
   func status() async throws -> IPCServiceStatusResponse {
@@ -348,6 +353,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func registerAgentInstallation(
     _ request: IPCAgentRegistrationRequest
   ) async throws -> IPCAgentInstallationSummary {
+    registrationRequestValue = request
     let installation = makeAgentInstallation(
       installationID: "agent-installation-1",
       displayName: request.displayName,

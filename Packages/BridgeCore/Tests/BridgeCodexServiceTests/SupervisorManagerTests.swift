@@ -147,16 +147,22 @@ final class SupervisorManagerTests: XCTestCase {
     addTeardownBlock { await coordinator.shutdown() }
 
     _ = try await coordinator.start(taskID: task.id)
-    let executionCompleted = try await waitForTask(fixture, taskID: task.id) {
-      $0.state.status == .completed
-    }
+    let executionCompleted = try await waitForTask(
+      fixture,
+      taskID: task.id,
+      matching: { $0.state.status == .completed },
+      timeout: .seconds(10)
+    )
     XCTAssertEqual(
       executionCompleted.state.resultSummary,
       "Implemented the change and verified it."
     )
-    let degraded = try await waitForTask(fixture, taskID: task.id) {
-      $0.state.supervisorStatus == .degraded
-    }
+    let degraded = try await waitForTask(
+      fixture,
+      taskID: task.id,
+      matching: { $0.state.supervisorStatus == .degraded },
+      timeout: .seconds(10)
+    )
     XCTAssertTrue(degraded.state.supervisorSummary?.contains("approval") == true)
   }
 

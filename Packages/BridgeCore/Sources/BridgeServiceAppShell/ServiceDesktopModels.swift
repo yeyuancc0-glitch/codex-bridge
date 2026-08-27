@@ -86,6 +86,7 @@ enum AgentProviderPresentation {
     switch identifier(providerID) {
     case "codex": return "Codex"
     case "opencode": return "OpenCode"
+    case "deepseek-harness": return "DeepSeek Harness"
     default:
       let value = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
       return value.isEmpty ? "Codex" : value
@@ -96,6 +97,7 @@ enum AgentProviderPresentation {
     switch identifier(providerID) {
     case "codex": return "cpu.fill"
     case "opencode": return "chevron.left.forwardslash.chevron.right"
+    case "deepseek-harness": return "lock.shield.fill"
     default: return "point.3.connected.trianglepath.dotted"
     }
   }

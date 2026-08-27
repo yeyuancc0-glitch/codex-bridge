@@ -203,6 +203,65 @@ final class ServiceAgentRegistryTests: XCTestCase {
     XCTAssertThrowsError(try ServiceAgentExecutableIdentity(capturing: path))
   }
 
+  func testArtifactReplacementRequiresReviewAndExplicitAcceptance() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let executable = try makeExecutable(
+      directory: fixture.rootURL,
+      name: "opencode-artifact",
+      content: "#!/bin/sh\nexit 0\n"
+    )
+    let configurationURL = fixture.rootURL.appending(path: "cordis.yml")
+    try Data("sandbox: read-only\n".utf8).write(to: configurationURL)
+    XCTAssertEqual(chmod(configurationURL.path, 0o600), 0)
+    let counter = ProbeInvocationCounter()
+    let provider = try RegistryFixtureProvider(counter: counter)
+    let registry = ServiceAgentRegistry(
+      store: try SimpleServiceStore(path: fixture.databasePath),
+      providers: [provider],
+      makeInstallationID: { AgentInstallationID(rawValue: "ainst-artifact-review") }
+    )
+
+    let registered = try await registry.registerAndProbe(
+      ServiceAgentRegistrationRequest(
+        providerID: .openCode,
+        displayName: "OpenCode artifact",
+        executablePath: executable,
+        trustProfile: .managed,
+        enableOnSuccess: true,
+        artifacts: [
+          try ServiceAgentInstallationArtifactRequest(
+            role: .launchConfiguration,
+            path: configurationURL.path
+          )
+        ]
+      )
+    )
+    XCTAssertEqual(registered.artifacts.count, 1)
+
+    try Data("sandbox: changed\n".utf8).write(to: configurationURL)
+    XCTAssertEqual(chmod(configurationURL.path, 0o600), 0)
+    let refreshed = try await registry.refreshInstallationStates()
+    let review = try XCTUnwrap(refreshed.first)
+    XCTAssertEqual(review.availability, .needsReview)
+    XCTAssertFalse(review.isSelectable)
+    let reviewProbeCount = await counter.value()
+    XCTAssertEqual(reviewProbeCount, 1)
+
+    let accepted = try await registry.reprobe(
+      installationID: registered.id,
+      acceptReplacement: true
+    )
+    XCTAssertEqual(accepted.availability, .available)
+    XCTAssertTrue(accepted.isSelectable)
+    XCTAssertNotEqual(
+      accepted.artifacts.first?.identity.sha256,
+      registered.artifacts.first?.identity.sha256
+    )
+    let acceptedProbeCount = await counter.value()
+    XCTAssertEqual(acceptedProbeCount, 2)
+  }
+
   private func makeExecutable(
     directory: URL,
     name: String,

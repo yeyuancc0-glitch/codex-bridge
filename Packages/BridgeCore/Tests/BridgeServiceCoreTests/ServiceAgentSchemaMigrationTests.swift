@@ -126,7 +126,7 @@ final class ServiceAgentSchemaMigrationTests: XCTestCase {
       let exists = try db.tableExists("bridge_service_agent_installations")
       return (version, exists)
     }
-    XCTAssertEqual(schema.0, 12)
+    XCTAssertEqual(schema.0, 13)
     XCTAssertTrue(schema.1)
 
     let backupPath = databasePath + ".pre-v10"
@@ -197,5 +197,153 @@ final class ServiceAgentSchemaMigrationTests: XCTestCase {
     try await reopened.removeAgentInstallation(id: record.id)
     let removed = try await reopened.agentInstallation(id: record.id)
     XCTAssertNil(removed)
+  }
+
+  func testVersionTwelveMigratesInstallationArtifactsWithPrivateBackup() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-agent-artifacts-v13-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let databasePath = directory.appending(path: "service.sqlite").path
+
+    do {
+      let legacy = try DatabaseQueue(path: databasePath)
+      try await legacy.writeWithoutTransaction { db in
+        try db.execute(
+          sql: """
+            CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+            INSERT INTO grdb_migrations (identifier) VALUES
+              ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+              ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4'),
+              ('BridgeServiceCore.v5'), ('BridgeServiceCore.v6'),
+              ('BridgeServiceCore.v7'), ('BridgeServiceCore.v8'),
+              ('BridgeServiceCore.v9'), ('BridgeServiceCore.v10'),
+              ('BridgeServiceCore.v11'), ('BridgeServiceCore.v12');
+            """)
+        try ServiceStoreSchema.createVersionOne(in: db)
+        try ServiceStoreSchema.createVersionTwo(in: db)
+        try ServiceStoreSchema.createVersionThree(in: db)
+        try ServiceStoreSchema.createVersionFour(in: db)
+        try ServiceStoreSchema.createVersionFive(in: db)
+        try ServiceStoreSchema.createVersionSix(in: db)
+        try ServiceStoreSchema.createVersionSeven(in: db)
+        try ServiceStoreSchema.createVersionEight(in: db)
+        try ServiceStoreSchema.createVersionNine(in: db)
+        try ServiceStoreSchema.createVersionTen(in: db)
+        try ServiceStoreSchema.createVersionEleven(in: db)
+        try ServiceStoreSchema.createVersionTwelve(in: db)
+      }
+    }
+
+    let store = try SimpleServiceStore(path: databasePath)
+    let result = try await store.database.read { db in
+      let version = try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+      let columns = Set(
+        try db.columns(in: "bridge_service_agent_installation_artifacts").map(\.name)
+      )
+      let foreignKeys = try Row.fetchAll(
+        db,
+        sql: "PRAGMA foreign_key_list(bridge_service_agent_installation_artifacts)"
+      )
+      return (version, columns, foreignKeys.count)
+    }
+    XCTAssertEqual(result.0, 13)
+    XCTAssertEqual(
+      result.1,
+      [
+        "installation_id", "role", "canonical_path", "artifact_device", "artifact_inode",
+        "artifact_size", "artifact_mtime_ns", "artifact_sha256", "created_at", "updated_at",
+      ]
+    )
+    XCTAssertEqual(result.2, 1)
+
+    let backupPath = databasePath + ".pre-v13"
+    var metadata = stat()
+    XCTAssertEqual(lstat(backupPath, &metadata), 0)
+    XCTAssertEqual(metadata.st_mode & 0o777, 0o600)
+    let backup = try DatabaseQueue(path: backupPath)
+    let backupVersion = try await backup.read { db in
+      try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+    }
+    XCTAssertEqual(backupVersion, 12)
+  }
+
+  func testInstallationArtifactIdentityAndForeignKeyCascade() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let executableURL = fixture.rootURL.appending(path: "registered-agent")
+    let configurationURL = fixture.rootURL.appending(path: "cordis.yml")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
+    try Data("sandbox: read-only\n".utf8).write(to: configurationURL)
+    XCTAssertEqual(chmod(executableURL.path, 0o700), 0)
+    XCTAssertEqual(chmod(configurationURL.path, 0o600), 0)
+
+    let capturedAt = Date(timeIntervalSince1970: 1_800_002_000)
+    let executableIdentity = try ServiceAgentExecutableIdentity(capturing: executableURL.path)
+    let configurationIdentity = try ServiceAgentFileIdentity(
+      capturing: configurationURL.path,
+      role: .launchConfiguration
+    )
+    let artifacts = [
+      try ServiceAgentInstallationArtifact(
+        role: .launchConfiguration,
+        identity: configurationIdentity,
+        createdAt: capturedAt,
+        updatedAt: capturedAt
+      )
+    ]
+    let record = try ServiceAgentInstallationRecord(
+      id: AgentInstallationID(rawValue: "ainst-artifacts"),
+      providerID: .openCode,
+      displayName: "OpenCode",
+      executablePath: executableURL.path,
+      executableIdentity: executableIdentity,
+      version: "1.18.22",
+      protocolRevision: "1",
+      adapterRevision: 1,
+      trustProfile: .managed,
+      securityProfileID: nil,
+      isEnabled: true,
+      availability: .available,
+      capabilities: AgentCapabilitySnapshot(
+        advertised: [.sessionCreate],
+        observed: [.sessionCreate],
+        enforced: [.sessionCreate]
+      ),
+      artifacts: artifacts,
+      lastProbedAt: capturedAt,
+      createdAt: capturedAt,
+      updatedAt: capturedAt
+    )
+
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    try await store.insertAgentInstallation(record)
+    let persistedArtifacts = try await store.agentInstallationArtifacts(for: record.id)
+    XCTAssertEqual(persistedArtifacts, artifacts)
+    guard let installation = try await store.agentInstallation(id: record.id) else {
+      return XCTFail("Expected the installation to persist")
+    }
+    XCTAssertEqual(installation.artifacts, artifacts)
+
+    try await store.removeAgentInstallation(id: record.id)
+    let artifactCount = try await store.database.read { db in
+      try Int.fetchOne(
+        db,
+        sql: """
+          SELECT COUNT(*) FROM bridge_service_agent_installation_artifacts
+          WHERE installation_id = ?
+          """,
+        arguments: [record.id.rawValue]
+      )
+    }
+    XCTAssertEqual(artifactCount, 0)
   }
 }

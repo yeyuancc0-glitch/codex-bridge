@@ -1,6 +1,7 @@
 import BridgeAgentCore
+import BridgeDeepSeekHarnessACP
 import BridgeIPC
-import BridgeOpenCodeACP
+import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
 
@@ -28,16 +29,22 @@ extension BridgeServiceXPCController {
       from: request
     )
     let providerID = AgentProviderID(rawValue: payload.providerID)
-    let securityProfileID: AgentProfileID? =
-      providerID == .openCode ? OpenCodeACPProfiles.controlledReadOnly : nil
+    let policy = ServiceAgentProviderPolicyRegistry.policy(for: providerID)
+    let artifacts = try Self.registrationArtifacts(
+      providerID: providerID,
+      executablePath: payload.executablePath,
+      configurationPath: payload.configurationPath
+    )
     let record = try await composition.application.serviceRegisterManagedAgent(
       try ServiceAgentRegistrationRequest(
         providerID: providerID,
         displayName: payload.displayName,
         executablePath: payload.executablePath,
-        trustProfile: .managed,
-        securityProfileID: securityProfileID,
-        enableOnSuccess: false
+        trustProfile: policy?.registrationTrustProfile ?? .managed,
+        securityProfileID: policy?.registrationSecurityProfileID,
+        enableOnSuccess: false,
+        configurationPath: payload.configurationPath,
+        artifacts: artifacts
       ),
       deadline: Self.deadline()
     )
@@ -45,6 +52,25 @@ extension BridgeServiceXPCController {
       requestID: request.requestID,
       payload: Self.agentInstallationSummary(record)
     )
+  }
+
+  private static func registrationArtifacts(
+    providerID: AgentProviderID,
+    executablePath: String,
+    configurationPath: String?
+  ) throws -> [ServiceAgentInstallationArtifactRequest] {
+    guard providerID == .deepSeekHarness else { return [] }
+    guard let configurationPath else {
+      throw AgentRuntimeError.invalidRequest("registration.configurationPath")
+    }
+    let paths = try DeepSeekHarnessACPProfile.resolveArtifacts(
+      executablePath: executablePath,
+      configurationPath: configurationPath
+    )
+    return try AgentInstallationArtifactRole.allCases.compactMap { role in
+      guard role != .launchConfiguration, let path = paths[role] else { return nil }
+      return try ServiceAgentInstallationArtifactRequest(role: role, path: path)
+    }
   }
 
   func handleReprobeAgentInstallation(_ request: BridgeServiceIPCRequest) async throws -> Data {
@@ -96,10 +122,22 @@ extension BridgeServiceXPCController {
   private static func agentProviderSummary(
     _ descriptor: AgentProviderDescriptor
   ) -> IPCAgentProviderSummary {
-    IPCAgentProviderSummary(
+    let policy = ServiceAgentProviderPolicyRegistry.policy(for: descriptor.providerID)
+    return IPCAgentProviderSummary(
       providerID: descriptor.providerID.rawValue,
       displayName: descriptor.displayName,
-      adapterRevision: descriptor.adapterRevision
+      adapterRevision: descriptor.adapterRevision,
+      requiresConfiguration: policy?.requiresConfiguration ?? false,
+      registrationTrustProfile: policy?.registrationTrustProfile.rawValue ?? "managed",
+      supportsModelSelection: policy?.supportsModelSelection ?? true,
+      supportsEffortSelection: policy?.supportsEffortSelection ?? true,
+      supportsSessionContinuation: policy?.supportsSessionContinuation ?? true,
+      supportsWorkspaceWrite: policy?.supportsWorkspaceWrite ?? true,
+      supportsSkillSelection: policy?.supportsSkillSelection ?? false,
+      supportsSupervisor: policy?.supportsSupervisor ?? false,
+      workspaceEnforcement: policy?.workspaceEnforcement ?? "legacy",
+      approvalEnforcement: policy?.approvalEnforcement ?? "legacy",
+      networkEnforcement: policy?.networkEnforcement ?? "legacy"
     )
   }
 

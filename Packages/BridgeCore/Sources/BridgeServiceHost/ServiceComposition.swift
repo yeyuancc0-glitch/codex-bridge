@@ -1,6 +1,7 @@
 import BridgeAgentCore
 import BridgeCodexRPC
 import BridgeCodexService
+import BridgeDeepSeekHarnessACP
 import BridgeDirectCommand
 import BridgeDomain
 import BridgeLegacyImport
@@ -122,7 +123,13 @@ public actor ServiceComposition {
         configuration: OpenCodeACPProviderConfiguration(
           persistentStateBaseDirectory: paths.agentStateURL.path
         )
-      )
+      ),
+      try DeepSeekHarnessACPProvider(
+        configuration: DeepSeekHarnessACPProviderConfiguration(
+          runtimeBaseDirectory: paths.agentStateURL
+            .appendingPathComponent("DeepSeekHarnessACP", isDirectory: true).path
+        )
+      ),
     ]
     let agentRegistry = ServiceAgentRegistry(
       store: store,

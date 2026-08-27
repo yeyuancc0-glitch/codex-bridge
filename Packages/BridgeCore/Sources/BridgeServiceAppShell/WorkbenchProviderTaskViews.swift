@@ -65,9 +65,15 @@ struct WorkbenchExternalTaskCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
-          .font(.caption2)
-          .foregroundStyle(.secondary)
+        if task.providerIdentifier == "deepseek-harness" {
+          Label("实验性只读 · 仅新会话", systemImage: "lock.shield.fill")
+            .font(.caption2)
+            .foregroundStyle(.orange)
+        } else {
+          Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
 
         if let failureDescription = task.failureDescription {
           Label {

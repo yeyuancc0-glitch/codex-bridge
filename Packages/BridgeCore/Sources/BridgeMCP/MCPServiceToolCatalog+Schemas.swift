@@ -30,7 +30,11 @@ extension MCPServiceToolCatalog {
 
   static let agentSummarySchema = objectSchema(
     properties: [
-      "provider_id": stringSchema,
+      "provider_id": [
+        "type": "string",
+        "description":
+          "Provider identifier. deepseek-harness is experimental, read-only, and supports fresh sessions only.",
+      ],
       "installation_id": stringSchema,
       "display_name": stringSchema,
       "availability": [
@@ -41,12 +45,21 @@ extension MCPServiceToolCatalog {
       "version": stringSchema,
       "protocol_revision": stringSchema,
       "adapter_revision": integerSchema(minimum: 1),
-      "effective_capabilities": arraySchema(stringSchema),
+      "effective_capabilities": [
+        "type": "array",
+        "items": stringSchema,
+        "description":
+          "Capabilities enforced for this installation. DeepSeek Harness exposes session_create, interrupt, text_delta, and workspace.read only.",
+      ],
       "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
       "security_profile_id": stringSchema,
       "workspace_enforcement": stringSchema,
       "approval_enforcement": stringSchema,
-      "network_enforcement": stringSchema,
+      "network_enforcement": [
+        "type": "string",
+        "description":
+          "Bridge enforcement status. unavailable means network_access=false does not guarantee blocking the Provider model control plane or shell-tool network.",
+      ],
       "models_summary": arraySchema(stringSchema),
       "unavailable_reason": stringSchema,
       "last_verified_at": stringSchema,

@@ -77,7 +77,10 @@ extension MCPServiceToolCatalog {
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
       + "Model and effort fields are applied only when model_override is true. "
       + "Set provider_id to route the task to another registered agent provider (for example "
-      + "opencode). For OpenCode, omit permission_mode to use the saved Bridge default. Set "
+      + "opencode or deepseek-harness). DeepSeek Harness is experimental and supports only a "
+      + "fresh read-only session; omit thread_id, execution_model, execution_effort, skill_name, "
+      + "supervisor_model and supervisor_effort, set permission_mode to read-only, and expect "
+      + "execution-time permission requests to be automatically denied. For OpenCode, omit permission_mode to use the saved Bridge default. Set "
       + "permission_mode_override=true together with permission_mode only when the user explicitly "
       + "asks for native ACP Plan/read-only or native ACP Build/workspace-write; an unmarked client-selected "
       + "mode is ignored. OpenCode network access follows its native permissions; the "
@@ -90,7 +93,9 @@ extension MCPServiceToolCatalog {
       + "ACP session in the selected project. The response includes wait_policy; follow "
       + "its recommended_poll_after_seconds before checking get_task again. The three profiles are "
       + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
-      + "seconds, quiet long-running work). Never treat a non-terminal status or unchanged "
+      + "seconds, quiet long-running work). A DeepSeek Harness network_enforcement of unavailable "
+      + "means network_access=false does not guarantee blocking the Harness model control plane or "
+      + "shell-tool network. Never treat a non-terminal status or unchanged "
       + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [
@@ -101,7 +106,7 @@ extension MCPServiceToolCatalog {
         "provider_id": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit for Codex. Set to opencode to run the task with a locally registered OpenCode installation; list_agents shows availability."
+            "Omit for Codex. Set to opencode or deepseek-harness only when the user explicitly selected a locally registered installation; list_agents shows availability and enforcement."
         ),
         "installation_id": nullableStringSchema(
           maximum: 256,
@@ -111,12 +116,12 @@ extension MCPServiceToolCatalog {
         "execution_model": nullableStringSchema(
           maximum: 256,
           description:
-            "Omit to use the Codex Bridge default. Set only when the user explicitly requests a per-task model override."
+            "Omit to use the Codex Bridge default or the selected provider default. DeepSeek Harness does not support model selection; set only for an explicitly supported provider override."
         ),
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the Codex Bridge/OpenCode default effort. For OpenCode, set only to a value advertised for the selected model when the user explicitly requests a per-task override."
+            "Omit to use the Codex Bridge/OpenCode default effort. DeepSeek Harness does not support effort selection; for OpenCode, set only to a value advertised for the selected model when the user explicitly requests a per-task override."
         ),
         "model_override": [
           "type": ["boolean", "null"],
@@ -137,7 +142,7 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build.",
+            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness accepts read-only only and automatically rejects execution-time permission requests.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
@@ -147,7 +152,7 @@ extension MCPServiceToolCatalog {
         "network_access": [
           "type": "boolean",
           "description":
-            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them.",
+            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access.",
         ],
         "acceptance_criteria": [
           "type": "array",

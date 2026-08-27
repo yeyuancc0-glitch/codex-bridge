@@ -130,7 +130,8 @@ extension BridgeServiceAppModel {
   func registerAgentInstallation(
     providerID: String,
     displayName: String,
-    executableURL: URL
+    executableURL: URL,
+    configurationURL: URL? = nil
   ) {
     runAgentMutation(
       operation: { client in
@@ -138,7 +139,8 @@ extension BridgeServiceAppModel {
           IPCAgentRegistrationRequest(
             providerID: providerID,
             displayName: displayName,
-            executablePath: executableURL.standardizedFileURL.path
+            executablePath: executableURL.standardizedFileURL.path,
+            configurationPath: configurationURL?.standardizedFileURL.path
           )
         )
       },

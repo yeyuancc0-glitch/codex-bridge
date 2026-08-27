@@ -17,7 +17,23 @@ extension BridgeServiceApplication {
       project = nil
     }
     guard let agentRegistry else { return MCPAgentList(agents: []) }
-    let records = try await agentRegistry.installations()
+    let persistedRecords = try await agentRegistry.installations()
+    var records: [ServiceAgentInstallationRecord] = []
+    records.reserveCapacity(persistedRecords.count)
+    for record in persistedRecords {
+      try Self.checkDeadline(deadline)
+      guard record.isSelectable else {
+        records.append(record)
+        continue
+      }
+      do {
+        records.append(
+          try await agentRegistry.validateForExecution(installationID: record.id)
+        )
+      } catch {
+        records.append(try await agentRegistry.installation(id: record.id) ?? record)
+      }
+    }
     try Self.checkDeadline(deadline)
     return MCPAgentList(
       agents: records.map { Self.agentSummary($0, project: project, formatter: iso8601) }
@@ -29,21 +45,38 @@ extension BridgeServiceApplication {
     project: ServiceProjectRecord?,
     formatter: ISO8601DateFormatter
   ) -> MCPAgentSummary {
+    let policy = ServiceAgentProviderPolicyRegistry.policy(for: record.providerID)
+    let projectAllowsWorkspaceWrite = project?.accessPolicy.write != .denied
     var capabilities = record.capabilities.effective
-    if project?.accessPolicy.write == .denied {
+    if let policy {
+      capabilities = policy.effectiveCapabilities(
+        capabilities,
+        projectAllowsWorkspaceWrite: projectAllowsWorkspaceWrite
+      )
+    } else if !projectAllowsWorkspaceWrite {
       capabilities.remove(.workspaceWriteInPlace)
       capabilities.remove(.workspaceWriteIsolated)
     }
-    // OpenCode uses its native ACP Plan/Build modes and permission requests.
-    // The persisted capability snapshot and project policy remain the public
-    // source of truth for whether the installation may receive tasks.
     let submissionEnabled =
-      record.providerID == .openCode
-      && record.isSelectable
-      && capabilities.contains(.workspaceRead)
-    let workspaceEnforcement = submissionEnabled ? "provider_native" : "unavailable"
-    let approvalEnforcement = submissionEnabled ? "local_app" : "unavailable"
-    let networkEnforcement = submissionEnabled ? "provider_native" : "unavailable"
+      policy?.taskSubmissionEnabled(
+        isSelectable: record.isSelectable,
+        capabilities: capabilities,
+        artifactRoles: Set(record.artifacts.map(\.role)),
+        version: record.version,
+        protocolRevision: record.protocolRevision
+      ) ?? false
+    let workspaceEnforcement =
+      submissionEnabled
+      ? policy?.workspaceEnforcement ?? "unavailable"
+      : "unavailable"
+    let approvalEnforcement =
+      submissionEnabled
+      ? policy?.approvalEnforcement ?? "unavailable"
+      : "unavailable"
+    let networkEnforcement =
+      submissionEnabled
+      ? policy?.networkEnforcement ?? "unavailable"
+      : "unavailable"
     return MCPAgentSummary(
       providerID: record.providerID.rawValue,
       installationID: record.id.rawValue,

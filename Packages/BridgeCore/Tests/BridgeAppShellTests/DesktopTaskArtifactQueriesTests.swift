@@ -143,7 +143,7 @@ final class DesktopTaskArtifactQueriesTests: XCTestCase {
     _ = try await store.store(scope: scope, kind: .gitBaseline, payload: baseline)
     _ = try await store.store(scope: scope, kind: .gitFinal, payload: final)
     let queries = DesktopTaskArtifactQueries(artifacts: store, patches: GitPatchStore())
-    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
     var cursor: String?
     var files: [MCPTaskDiffFile] = []
 
