@@ -79,6 +79,24 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     }
   }
 
+  func testRegistrationDiscoveryResolvesEnvNodeShebangWithoutFreezingEnvTool() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-env-node")
+    addTeardownBlock { fixture.remove() }
+    try Data("#!/usr/bin/env node\n".utf8).write(
+      to: URL(fileURLWithPath: fixture.executable)
+    )
+
+    let artifacts = try DeepSeekHarnessACPProfile.resolveArtifacts(
+      executablePath: fixture.executable,
+      configurationPath: fixture.configuration,
+      sourceEnvironment: ["PATH": fixture.root]
+    )
+
+    let node = try XCTUnwrap(artifacts[.nodeInterpreter])
+    XCTAssertEqual(URL(fileURLWithPath: node).lastPathComponent, "node")
+    XCTAssertNotEqual(node, "/usr/bin/env")
+  }
+
   func testNodeVersionProbeHasABoundedTimeout() throws {
     let fixture = try makeProfileFixture(
       prefix: "deepseek-node-timeout",

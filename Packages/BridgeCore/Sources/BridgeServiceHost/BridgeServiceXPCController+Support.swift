@@ -1,4 +1,5 @@
 import BridgeCodexService
+import BridgeDeepSeekHarnessACP
 import BridgeDomain
 import BridgeIPC
 import BridgeMCP
@@ -278,6 +279,42 @@ extension BridgeServiceXPCController {
           code: "agent_registration_in_progress",
           message: "This Agent executable is already being registered.",
           retryable: true
+        )
+      }
+    }
+    if let error = error as? DeepSeekHarnessACPError {
+      switch error {
+      case .artifactInvalid(let field):
+        return .init(
+          code: "agent_artifact_invalid",
+          message:
+            "The selected DeepSeek Harness build is incomplete or incompatible (\(field)). Use the pinned dsh-v0.1.1-rc.2 build and select packages/examples/acp-demo/lib/bin.js."
+        )
+      case .templateMismatch:
+        return .init(
+          code: "agent_configuration_mismatch",
+          message:
+            "The selected cordis.yml does not match the Codex Bridge DeepSeek Harness profile. Copy the bundled template to an external profile without modifying it."
+        )
+      case .nodeVersionIncompatible:
+        return .init(
+          code: "agent_runtime_incompatible",
+          message: "DeepSeek Harness requires Node ^22.19.0 or >=24.0.0."
+        )
+      case .processUnavailable:
+        return .init(
+          code: "agent_runtime_unavailable",
+          message: "The DeepSeek Harness Node runtime could not be launched."
+        )
+      case .processExited:
+        return .init(
+          code: "agent_runtime_probe_failed",
+          message: "The DeepSeek Harness Node version probe failed."
+        )
+      default:
+        return .init(
+          code: "agent_validation_failed",
+          message: "The DeepSeek Harness installation could not be validated."
         )
       }
     }

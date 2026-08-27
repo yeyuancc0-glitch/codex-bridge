@@ -309,9 +309,10 @@ public struct DeepSeekHarnessACPProfile: Sendable {
     else { return [] }
     let words = line.dropFirst(2).split { $0 == " " || $0 == "\t" }.map(String.init)
     guard let first = words.first else { return [] }
-    if first.hasPrefix("/") { return [first] }
-    guard URL(fileURLWithPath: first).lastPathComponent == "env" else { return [] }
-    return words.dropFirst().filter { $0.hasPrefix("/") }
+    if URL(fileURLWithPath: first).lastPathComponent == "env" {
+      return words.dropFirst().filter { $0.hasPrefix("/") }
+    }
+    return first.hasPrefix("/") ? [first] : []
   }
 
   private static func trustedNodeCandidates(sourceEnvironment: [String: String]) -> [String] {

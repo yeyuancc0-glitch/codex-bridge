@@ -348,6 +348,36 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertTrue(finalCatalog.installations.isEmpty)
   }
 
+  func testXPCDeepSeekRegistrationReturnsActionableArtifactFailure() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    do {
+      _ = try await client.registerAgentInstallation(
+        IPCAgentRegistrationRequest(
+          providerID: "deepseek-harness",
+          displayName: "DeepSeek Harness",
+          executablePath: "/usr/bin/false",
+          configurationPath: "/missing/deepseek/cordis.yml"
+        )
+      )
+      XCTFail("An invalid DeepSeek Harness artifact must be rejected.")
+    } catch let error as BridgeServiceIPCCodecError {
+      guard case .remoteError(let remote) = error else {
+        return XCTFail("Expected a stable remote artifact validation error.")
+      }
+      XCTAssertEqual(remote.code, "agent_artifact_invalid")
+      XCTAssertTrue(remote.message.contains("dsh-v0.1.1-rc.2"))
+      XCTAssertTrue(remote.message.contains("packages/examples/acp-demo/lib/bin.js"))
+    }
+  }
+
   func testXPCProjectManagementIgnoresReadPolicyAndDeletesAllTerminalTasks() async throws {
     let fixture = try await makeServiceHostFixture(self)
     let pair = xpcClient(composition: fixture.composition)
