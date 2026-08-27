@@ -1,5 +1,8 @@
-import BridgeProcess
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 public struct DirectProcessIdentity: Codable, Equatable, Sendable {
   public let pid: Int32
@@ -26,181 +29,324 @@ public enum DirectProcessError: Error, Equatable, Sendable {
   case sandboxUnavailable
 }
 
-public final class DirectProcessLifetime: @unchecked Sendable {
-  public let pid: Int32
-  private let process: ManagedStdioProcess
+#if canImport(Darwin)
+  public final class DirectProcessLifetime: @unchecked Sendable {
+    public let pid: Int32
+    private let output: DirectCommandOutputCollector
+    private let outputHandle: FileHandle
+    private let inputHandle: FileHandle
+    private let lock = NSLock()
+    private let inputLock = NSLock()
+    private var termination: DirectProcessTermination?
+    private var processIdentity: DirectProcessIdentity?
+    private var inputClosed = false
 
-  public var identity: DirectProcessIdentity? {
-    process.identity.map(Self.directIdentity)
-  }
-
-  public init(
-    argv: [String],
-    workingDirectory: String?,
-    environment: [String: String]?,
-    usePTY: Bool,
-    output: DirectCommandOutputCollector,
-    denyNetwork: Bool = false
-  ) throws {
-    guard let executable = argv.first, !executable.isEmpty, argv.count <= 128, !usePTY else {
-      throw DirectProcessError.invalidArgument
+    public var identity: DirectProcessIdentity? {
+      lock.lock()
+      defer { lock.unlock() }
+      return processIdentity
     }
-    let launchArgv: [String]
-    if denyNetwork {
-      guard Self.sandboxExecAvailable else { throw DirectProcessError.sandboxUnavailable }
-      launchArgv = [Self.sandboxExecPath, "-p", Self.denyNetworkProfile, "--"] + argv
-    } else {
-      launchArgv = argv
-    }
-    let environment = Self.defaultEnvironment(overrides: environment)
-    do {
-      process = try ManagedStdioProcess(
-        argv: launchArgv,
-        workingDirectory: workingDirectory,
-        environment: environment,
-        mergeStandardError: true,
-        onStandardOutput: { output.append($0) }
-      )
-    } catch let error as ManagedProcessError {
-      throw Self.directError(error)
-    }
-    pid = process.pid
-  }
 
-  public func writeStdin(_ data: Data) throws {
-    do {
-      try process.writeStdin(data)
-    } catch {
-      throw DirectProcessError.stdinUnavailable
-    }
-  }
+    public init(
+      argv: [String],
+      workingDirectory: String?,
+      environment: [String: String]?,
+      usePTY: Bool,
+      output: DirectCommandOutputCollector,
+      sandboxRoot: String? = nil,
+      requiresSandbox: Bool = true,
+      denyNetwork: Bool = false
+    ) throws {
+      _ = sandboxRoot
+      _ = requiresSandbox
+      guard let executable = argv.first, !executable.isEmpty else {
+        throw DirectProcessError.invalidArgument
+      }
+      guard argv.count <= 128 else { throw DirectProcessError.invalidArgument }
+      self.output = output
+      let launchArgv: [String]
+      if denyNetwork {
+        guard Self.sandboxExecAvailable else { throw DirectProcessError.sandboxUnavailable }
+        launchArgv = [Self.sandboxExecPath, "-p", Self.denyNetworkProfile, "--"] + argv
+      } else {
+        launchArgv = argv
+      }
+      var env = environment ?? [:]
+      env["PATH"] = env["PATH"] ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      guard !usePTY else { throw DirectProcessError.invalidArgument }
 
-  public func closeStdin() {
-    process.closeStdin()
-  }
+      let outputPipe = Pipe()
+      let inputPipe = Pipe()
+      let processID: pid_t
+      do {
+        processID = try Self.spawn(
+          argv: launchArgv,
+          workingDirectory: workingDirectory,
+          environment: env,
+          standardInput: inputPipe.fileHandleForReading.fileDescriptor,
+          standardOutput: outputPipe.fileHandleForWriting.fileDescriptor
+        )
+      } catch {
+        inputPipe.fileHandleForReading.closeFile()
+        inputPipe.fileHandleForWriting.closeFile()
+        outputPipe.fileHandleForReading.closeFile()
+        outputPipe.fileHandleForWriting.closeFile()
+        throw error
+      }
+      inputPipe.fileHandleForReading.closeFile()
+      outputPipe.fileHandleForWriting.closeFile()
+      pid = processID
+      inputHandle = inputPipe.fileHandleForWriting
+      outputHandle = outputPipe.fileHandleForReading
+      processIdentity = Self.identity(of: processID)
 
-  public func terminateGroup() {
-    process.terminateGroup()
-  }
-
-  public func killGroup() {
-    process.killGroup()
-  }
-
-  public var isRunning: Bool {
-    process.isRunning
-  }
-
-  public func reapIfExited(gracePeriod: Duration = .milliseconds(200))
-    -> DirectProcessTermination?
-  {
-    process.reapIfExited(gracePeriod: gracePeriod).map(Self.directTermination)
-  }
-
-  public func waitForExit(timeout: Duration) -> DirectProcessTermination? {
-    process.waitForExit(timeout: timeout).map(Self.directTermination)
-  }
-
-  public func terminateAndWait(
-    gracePeriod: Duration = .seconds(1),
-    killWait: Duration = .seconds(5)
-  ) -> DirectProcessTermination? {
-    process.terminateAndWait(gracePeriod: gracePeriod, killWait: killWait)
-      .map(Self.directTermination)
-  }
-
-  public func pollOutput() {}
-
-  public func drainRemainingOutput() {
-    process.drainRemainingOutput()
-  }
-
-  public func close() {
-    process.close()
-  }
-
-  public static func identity(of processID: Int32) -> DirectProcessIdentity? {
-    ManagedStdioProcess.identity(of: processID).map(directIdentity)
-  }
-
-  public static func matchesCurrentProcess(_ identity: DirectProcessIdentity) -> Bool {
-    ManagedStdioProcess.matchesCurrentProcess(
-      ManagedProcessIdentity(
-        pid: identity.pid,
-        startTimeMicros: identity.startTimeMicros,
-        processGroupID: identity.processGroupID
-      )
-    )
-  }
-
-  private static func directIdentity(_ identity: ManagedProcessIdentity) -> DirectProcessIdentity {
-    DirectProcessIdentity(
-      pid: identity.pid,
-      startTimeMicros: identity.startTimeMicros,
-      processGroupID: identity.processGroupID
-    )
-  }
-
-  private static func directTermination(
-    _ termination: ManagedProcessTermination
-  ) -> DirectProcessTermination {
-    switch termination {
-    case .exited(let code): .exited(code)
-    case .killed(let signal): .killed(signal)
-    case .notStarted: .notStarted
-    }
-  }
-
-  private static func directError(_ error: ManagedProcessError) -> DirectProcessError {
-    switch error {
-    case .invalidArgument: .invalidArgument
-    case .processLaunchFailed(let code): .processLaunchFailed(code)
-    case .stdinUnavailable: .stdinUnavailable
-    }
-  }
-
-  private static let sandboxExecPath = "/usr/bin/sandbox-exec"
-  private static let sandboxExecAvailable = FileManager.default.isExecutableFile(
-    atPath: sandboxExecPath
-  )
-  private static let denyNetworkProfile = "(version 1)(allow default)(deny network*)"
-
-  public static func defaultEnvironment(overrides: [String: String]? = nil) -> [String: String] {
-    var environment: [String: String] = [:]
-    let processEnv = ProcessInfo.processInfo.environment
-    for key in ["HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "LANG", "LC_ALL"] {
-      if let value = processEnv[key] {
-        environment[key] = value
+      outputHandle.readabilityHandler = { [weak self] handle in
+        let data = handle.availableData
+        if !data.isEmpty {
+          self?.output.append(data)
+        }
       }
     }
-    if environment["HOME"] == nil {
-      environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
-    }
-    if environment["TMPDIR"] == nil {
-      environment["TMPDIR"] = NSTemporaryDirectory()
-    }
-    let trustedDirectories = [
-      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]
-    if let currentPath = processEnv["PATH"], !currentPath.isEmpty {
-      let existing = currentPath.split(separator: ":").map(String.init)
-      var combined = existing
-      for dir in trustedDirectories where !combined.contains(dir) {
-        combined.append(dir)
+
+    public func writeStdin(_ data: Data) throws {
+      inputLock.lock()
+      defer { inputLock.unlock() }
+      guard !inputClosed else { throw DirectProcessError.stdinUnavailable }
+      do {
+        try inputHandle.write(contentsOf: data)
+      } catch {
+        throw DirectProcessError.stdinUnavailable
       }
-      environment["PATH"] = combined.joined(separator: ":")
-    } else {
-      environment["PATH"] = trustedDirectories.joined(separator: ":")
     }
-    if let overrides {
-      environment.merge(overrides) { _, replacement in replacement }
+
+    public func closeStdin() {
+      inputLock.lock()
+      defer { inputLock.unlock() }
+      guard !inputClosed else { return }
+      inputClosed = true
+      inputHandle.closeFile()
     }
-    return environment
+
+    public func terminateGroup() {
+      guard isRunning else { return }
+      _ = Darwin.kill(-pid, SIGTERM)
+    }
+
+    public func killGroup() {
+      if isRunning { _ = Darwin.kill(-pid, SIGKILL) }
+    }
+
+    public var isRunning: Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      _ = reapIfExitedLocked()
+      return termination == nil
+    }
+
+    public func reapIfExited(
+      gracePeriod: Duration = .milliseconds(200)
+    ) -> DirectProcessTermination? {
+      lock.lock()
+      if let termination = reapIfExitedLocked() {
+        lock.unlock()
+        return termination
+      }
+      lock.unlock()
+      let deadline = ContinuousClock.now.advanced(by: gracePeriod)
+      while ContinuousClock.now < deadline {
+        lock.lock()
+        let termination = reapIfExitedLocked()
+        lock.unlock()
+        if let termination { return termination }
+        Thread.sleep(forTimeInterval: 0.01)
+      }
+      return nil
+    }
+
+    public func waitForExit(timeout: Duration) -> DirectProcessTermination? {
+      let deadline = ContinuousClock.now.advanced(by: timeout)
+      while ContinuousClock.now < deadline {
+        if let termination = reapIfExited() { return termination }
+        Thread.sleep(forTimeInterval: 0.02)
+      }
+      return reapIfExited()
+    }
+
+    public func terminateAndWait(
+      gracePeriod: Duration = .seconds(1),
+      killWait: Duration = .seconds(5)
+    ) -> DirectProcessTermination? {
+      terminateGroup()
+      if let termination = waitForExit(timeout: gracePeriod) { return termination }
+      killGroup()
+      return waitForExit(timeout: killWait)
+    }
+
+    public func pollOutput() {
+    }
+
+    public func drainRemainingOutput() {
+      lock.lock()
+      let recordedTermination = termination
+      lock.unlock()
+      guard recordedTermination != nil else { return }
+      outputHandle.readabilityHandler = nil
+      var buffer = Data()
+      while true {
+        let chunk = outputHandle.readData(ofLength: 16 * 1_024)
+        if chunk.isEmpty { break }
+        buffer.append(chunk)
+      }
+      if !buffer.isEmpty { output.append(buffer) }
+    }
+
+    public func close() {
+      outputHandle.readabilityHandler = nil
+      outputHandle.closeFile()
+      closeStdin()
+    }
+
+    private func reapIfExitedLocked() -> DirectProcessTermination? {
+      if let termination { return termination }
+      var status: Int32 = 0
+      let result = Darwin.waitpid(pid, &status, WNOHANG)
+      guard result == pid else { return nil }
+      let signal = status & 0x7F
+      let recorded: DirectProcessTermination =
+        signal == 0
+        ? .exited((status >> 8) & 0xFF)
+        : .killed(signal)
+      termination = recorded
+      return recorded
+    }
+
+    private static func spawn(
+      argv: [String],
+      workingDirectory: String?,
+      environment: [String: String],
+      standardInput: Int32,
+      standardOutput: Int32
+    ) throws -> pid_t {
+      guard let executable = argv.first,
+        executable.hasPrefix("/"),
+        argv.allSatisfy({ !$0.contains("\0") }),
+        environment.allSatisfy({ !$0.key.contains("\0") && !$0.value.contains("\0") })
+      else { throw DirectProcessError.invalidArgument }
+
+      var actions: posix_spawn_file_actions_t?
+      var attributes: posix_spawnattr_t?
+      guard posix_spawn_file_actions_init(&actions) == 0 else {
+        throw DirectProcessError.processLaunchFailed(Int32(errno))
+      }
+      defer { posix_spawn_file_actions_destroy(&actions) }
+      guard posix_spawnattr_init(&attributes) == 0 else {
+        throw DirectProcessError.processLaunchFailed(Int32(errno))
+      }
+      defer { posix_spawnattr_destroy(&attributes) }
+      guard posix_spawn_file_actions_adddup2(&actions, standardInput, STDIN_FILENO) == 0,
+        posix_spawn_file_actions_adddup2(&actions, standardOutput, STDOUT_FILENO) == 0,
+        posix_spawn_file_actions_adddup2(&actions, standardOutput, STDERR_FILENO) == 0,
+        posix_spawn_file_actions_addclose(&actions, standardInput) == 0,
+        posix_spawn_file_actions_addclose(&actions, standardOutput) == 0
+      else { throw DirectProcessError.processLaunchFailed(Int32(errno)) }
+      if let workingDirectory {
+        let result: Int32
+        if #available(macOS 26.0, *) {
+          result = posix_spawn_file_actions_addchdir(&actions, workingDirectory)
+        } else {
+          result = posix_spawn_file_actions_addchdir_np(&actions, workingDirectory)
+        }
+        guard result == 0 else { throw DirectProcessError.processLaunchFailed(result) }
+      }
+      let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
+      guard posix_spawnattr_setflags(&attributes, flags) == 0,
+        posix_spawnattr_setpgroup(&attributes, 0) == 0
+      else { throw DirectProcessError.processLaunchFailed(Int32(errno)) }
+
+      let environmentEntries = environment.sorted { $0.key < $1.key }.map {
+        "\($0.key)=\($0.value)"
+      }
+      return try withCStringArray(argv) { argvPointer in
+        try withCStringArray(environmentEntries) { environmentPointer in
+          var processID: pid_t = 0
+          let result = posix_spawn(
+            &processID,
+            executable,
+            &actions,
+            &attributes,
+            argvPointer,
+            environmentPointer
+          )
+          guard result == 0, processID > 1 else {
+            throw DirectProcessError.processLaunchFailed(result)
+          }
+          return processID
+        }
+      }
+    }
+
+    private static func withCStringArray<Result>(
+      _ strings: [String],
+      _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) throws -> Result
+    ) rethrows -> Result {
+      var storage = strings.map { strdup($0) }
+      defer {
+        for pointer in storage { free(pointer) }
+      }
+      storage.append(nil)
+      return try storage.withUnsafeMutableBufferPointer { buffer in
+        try body(buffer.baseAddress!)
+      }
+    }
+
+    public static func identity(of processID: Int32) -> DirectProcessIdentity? {
+      guard processID > 1,
+        Darwin.getpgid(processID) == processID,
+        let startTimeMicros = startTimeMicros(processID)
+      else { return nil }
+      return DirectProcessIdentity(
+        pid: processID,
+        startTimeMicros: startTimeMicros,
+        processGroupID: processID
+      )
+    }
+
+    public static func matchesCurrentProcess(_ identity: DirectProcessIdentity) -> Bool {
+      guard let current = Self.identity(of: identity.pid) else { return false }
+      return current == identity
+    }
+
+    @discardableResult
+    public static func terminateIfMatches(_ identity: DirectProcessIdentity) -> Bool {
+      guard matchesCurrentProcess(identity) else { return false }
+      return Darwin.kill(-identity.processGroupID, SIGKILL) == 0
+    }
+
+    private static func startTimeMicros(_ processID: Int32) -> Int64? {
+      var info = proc_bsdinfo()
+      let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+      let result = withUnsafeMutablePointer(to: &info) { pointer in
+        proc_pidinfo(
+          processID,
+          PROC_PIDTBSDINFO,
+          0,
+          pointer,
+          expectedSize
+        )
+      }
+      guard result == expectedSize else { return nil }
+      let seconds = Int64(info.pbi_start_tvsec)
+      let micros = Int64(info.pbi_start_tvusec)
+      let (base, overflow) = seconds.multipliedReportingOverflow(by: 1_000_000)
+      guard !overflow else { return nil }
+      let (total, additionOverflow) = base.addingReportingOverflow(micros)
+      return additionOverflow ? nil : total
+    }
+
+    private static let sandboxExecPath = "/usr/bin/sandbox-exec"
+    private static let sandboxExecAvailable = FileManager.default.isExecutableFile(
+      atPath: sandboxExecPath
+    )
+    private static let denyNetworkProfile = "(version 1)(allow default)(deny network*)"
   }
-}
+#endif
