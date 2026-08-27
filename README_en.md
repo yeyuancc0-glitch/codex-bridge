@@ -11,24 +11,46 @@
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License">
 </p>
 
-**Codex Bridge** is a **zero-cloud, personal self-hosted, local-first** macOS bridge. Through the standard Model Context Protocol (MCP), it connects **ChatGPT Web**, **Qwen Studio**, and other MCP clients directly to your local **Codex** execution engine—enabling world-class cloud AI models to safely power local development and environment automation.
+**Codex Bridge** is a **zero-cloud, personal self-hosted, local-first** macOS bridge and MCP gateway.
 
-Version 0.3.0 keeps the Codex path compatible while adding an optional local **OpenCode Provider (ACP)** and improving task observability, remounted-project handling, global MCP instructions, Skill timeouts, Direct capability/credential checks, and workbench/XPC stability.
+It is dedicated to **seamlessly connecting Chat clients with local engineering workspaces and Coding Agent engines**:
+- 🌟 **Multi-Chat Client Ingress**: Connects **ChatGPT Web**, **Qwen Studio (Desktop)**, and other modern AI interfaces;
+- 📂 **Direct Project Read/Write**: Empowers Chat clients to inspect file trees, read source code, apply Unified Diff patches, and execute controlled Git commits directly;
+- 🤖 **Multi-Agent Orchestration**: Bridges local **Codex** and **OpenCode** execution engines for multi-turn autonomous coding;
+- 🎯 **Sandboxed Skill System**: Supports standard `SKILL.md` contracts and `sandbox-exec` network isolation, enabling custom automation scripts and deep web research;
+- 🛡️ **Local-Only Approvals**: Any high-risk file modifications, command executions, or Git commits require explicit manual confirmation via native macOS desktop dialogs. Code and credentials never leave your Mac.
 
 ---
 
-## 🌟 Key Highlights & Core Values
+## 🌟 Core Capability Matrix
 
-- 🔒 **Zero Cloud Footprint**: No third-party relay servers, no developer databases, and no account tracking. All code and credentials remain entirely on your local Mac.
-- ⚡ **Native Multi-Client MCP Gateway**:
-  - **ChatGPT Web**: Connects end-to-end via OpenAI's official Secure MCP Tunnel.
-  - **Qwen Studio & Local Clients**: Connects lightning-fast via a stable loopback Streamable HTTP `/mcp` endpoint with one-click JSON configuration.
-- 🤖 **Dual Execution Pathways**:
-  - **Codex Deep Mode (Recommended)**: Delegates tasks to the local Codex engine (supporting multi-turn discussions, tool execution, independent Supervisor critique, and typewriter live streaming).
-  - **Direct Mutation Mode**: Direct file edits, patch applications, controlled Git commits, and sandboxed command execution (protected by desktop prompt approvals).
-- 🧩 **Optional Agent Provider**: Register and probe a local OpenCode installation in the app, then submit OpenCode ACP Plan/Build tasks through the workbench or MCP. Every task still requires local approval.
-- 🛡️ **Local-Only Approvals**: No matter how intelligent the AI is, any dangerous file write, command execution, or Git commit **must be explicitly approved by the local Mac user via a native desktop dialog**.
-- 🖥️ **Native macOS Experience (SwiftUI + AppKit)**: Standalone LaunchAgent daemon continues running when the UI is closed; the built-in workbench features real-time streaming, collapsible reasoning blocks, and structured tool-call cards.
+```text
+  【Chat Ingress】                                          【Capabilities & Execution】
+┌──────────────────┐                                     ┌──────────────────┐
+│   ChatGPT Web    │ ──(OpenAI Secure Tunnel)───────┐   ├─► Local Codex    │ (app-server + Supervisor)
+└──────────────────┘                                │   ├──────────────────┤
+┌──────────────────┐                                ├──►│ Local OpenCode   │ (ACP Protocol + Plan/Build)
+│Qwen Studio Desktop│ ──(Local Loopback HTTP /mcp)──┘   ├──────────────────┤
+└──────────────────┘                                    ├─► Direct Mutation│ (Inspect/Edit/Patch/Git)
+                                                        ├──────────────────┤
+                                                        └─► Skill System   │ (Action Contracts/Sandbox)
+```
+
+- 🌐 **Native Multi-Chat Ingress**:
+  - **ChatGPT Web**: Connects end-to-end via OpenAI official Secure MCP Tunnel, allowing cloud models to safely drive local workspaces.
+  - **Qwen Studio (Desktop)**: Connects lightning-fast via a stable loopback Streamable HTTP `/mcp` endpoint with one-click JSON configuration.
+- 📂 **Direct Local Project Operations & Version Control**:
+  - **Directory & Source Inspection**: Chat models can directly browse authorized workspace trees, retrieve file contents, and gather context.
+  - **Atomic Edits & Unified Diff Patches**: Supports Bridge patch syntax and standard Unified Diff formats, strictly protected by desktop confirmation prompts.
+  - **Controlled Git Commits**: Isolates commits using a temporary index, checks against secret leaks, and forbids destructive `push` or history rewrites.
+- 🎯 **Sandboxed Skill Extension Ecosystem**:
+  - **Standardized Contracts**: Follows `SKILL.md` specifications with full YAML frontmatter parsing and explicit Action contracts.
+  - **Sandbox Isolation**: Integrates `sandbox-exec` network isolation, restricting network access by default for undeclared scripts.
+- 🧩 **Unified Multi-Agent Orchestration**:
+  - **Codex Deep Engine**: Communicates over official `codex app-server` stdio protocol, featuring multi-turn threads, subagent delegation, independent Supervisor critique, and typewriter live streaming.
+  - **OpenCode ACP Engine**: Communicates over standard Agent Client Protocol (ACP) stdio, supporting native Plan / Build modes and dynamic model/reasoning effort adaptation.
+- 🔒 **Zero Cloud Footprint (Zero-Cloud)**: No third-party relay servers, no developer databases, and no account tracking. All code and credentials remain strictly on your local machine.
+- 🖥️ **Native macOS Architecture (SwiftUI + AppKit + LaunchAgent)**: Standalone LaunchAgent daemon keeps tasks running uninterrupted when the UI is closed; built-in workbench features real-time streaming, collapsible reasoning blocks, and structured tool-call cards.
 
 ---
 
@@ -44,59 +66,70 @@ Version 0.3.0 keeps the Codex path compatible while adding an optional local **O
                             ▼
             ┌──────────────────────────────────────────────┐
             │        CodexBridgeService (LaunchAgent)      │
-            │  ├─ Unified MCP Gateway (Read-Only/Full)     │
-            │  ├─ Codex app-server + optional OpenCode ACP  │
-            │  ├─ Direct Process & Session Management      │
+            │  ├─ Unified MCP Gateway (ChatGPT / Qwen)     │
+            │  ├─ Agent Task Runner (Codex & OpenCode)     │
+            │  ├─ Direct Mutation & Git Tools              │
+            │  ├─ Skill Execution Engine (BridgeSkills)    │
             │  ├─ Single SQLite Store (Tasks, Projects)    │
             │  └─ Local Action Approval Center             │
-            └──────┬────────────────────────┬──────────────┘
-                   │ Mach XPC IPC           │ stdio JSON-RPC
-                   ▼                        ▼
-      ┌────────────────────────┐  ┌────────────────────────┐
-      │    CodexBridge.app     │  │   Local Codex Engine   │
-      │  (Native macOS Shell)  │  │(app-server + Supervisor│
-      └────────────────────────┘  └────────────────────────┘
+            └──────┬──────────────┬──────────────┬─────────┘
+                   │              │              │
+      Mach XPC IPC │    stdio RPC │    stdio ACP │  posix_spawn / sandbox-exec
+                   ▼              ▼              ▼         ▼
+      ┌──────────────────┐ ┌────────────┐ ┌────────────┐ ┌───────────────────┐
+      │ CodexBridge.app  │ │Local Codex │ │Local       │ │ Direct File & Git/│
+      │(Native Mac Shell)│ │(Deep Engine│ │  OpenCode  │ │ Skill Execution   │
+      │                  │ │+Supervisor)│ │(ACP Engine)│ │                   │
+      └──────────────────┘ └────────────┘ └────────────┘ └───────────────────┘
 ```
 
 ---
 
-## 🚀 Two Core Workflows
+## 🚀 Four Core Workflows
 
 ### 1. Codex Deep Execution Workflow (Primary Path)
 ```text
-ChatGPT / Qwen  ──[submit_task]──►  CodexBridgeService  ──►  Local Codex Engine
-      ▲                                                          │
-      │                                                          ▼
-  [get_task] Poll progress & final report   ◄────  Typewriter streaming / Supervisor critique
+ChatGPT / Qwen ──[submit_task]──► CodexBridgeService ──► Local Codex Engine (app-server)
+      ▲                                                         │
+      │                                                         ▼
+  [get_task] Poll live progress & report  ◄──── Typewriter streaming / Supervisor critique
 ```
-- **Best for**: Feature implementations, large refactors, multi-step debugging, and automated testing.
+- **Best for**: Complex feature implementations, large refactors, multi-step debugging, and automated testing.
 - **Features**: Automatic Codex thread binding, live reasoning chain display, tool progress visualization, and uninterrupted background execution upon app exit.
 
-### 2. Direct Agile Mutation Workflow (Instant Edits)
+### 2. OpenCode ACP Workflow
 ```text
-ChatGPT / Qwen  ──[direct_write_file]──►  Desktop Approval Sheet (Payload Digest validation)
-                                                    │
-                                           [User clicks Allow / Deny]
-                                                    │
-                                                    ▼
-                                          Atomic write to workspace file
-```
-- **Best for**: Fast configuration tweaks, small patch applications, repository inspection, and safe read-only commands.
-- **Features**: Single-use signed approval grants, cooldown flood protection, and controlled `direct_git_commit` (isolated temporary index, sensitive credential protection).
-
-### 3. OpenCode Provider Workflow (Optional)
-
-```text
-ChatGPT / Qwen / Workbench ──[provider_id=opencode]──► Local approval
+ChatGPT / Qwen / Workbench ──[provider_id=opencode]──► Local Approval Center
                                                          │
                                                          ▼
                                          OpenCode ACP (Plan / Build)
 ```
+- **Best for**: Multi-model benchmarking, standard ACP-based agent execution, and switching between Plan (read-only) and Build (workspace-write) modes.
+- **Features**: Dynamic model catalogs from ACP `session/new.configOptions`, native reasoning effort adaptation.
 
-- Register and enable OpenCode under **Settings → Local Agent Providers** before submitting a task.
-- Models come from ACP `session/new.configOptions`; use the exact returned model IDs.
-- `read-only` maps to OpenCode Plan and `workspace-write` maps to OpenCode Build. Network behavior remains controlled by OpenCode's native permissions.
-- See the [OpenCode Connection Guide](./docs/OPENCODE_CONNECTION_GUIDE.md) for setup, MCP examples, and troubleshooting.
+### 3. Direct Project Read/Write & Controlled Git Workflow
+```text
+ChatGPT / Qwen ──[direct_write_file]──► Desktop Approval Sheet (Payload Digest validation)
+                                                  │
+                                         [User clicks Allow / Deny]
+                                                  │
+                                                  ▼
+                                        Atomic write to workspace file
+```
+- **Best for**: Fast configuration tweaks, small patch applications, workspace inspection, and safe read-only commands.
+- **Features**: Single-use signed approval grants, cooldown flood protection, and controlled `direct_git_commit` (isolated temporary index, sensitive credential protection).
+
+### 4. Skill Automation & Sandbox Workflow
+```text
+ChatGPT / Qwen ──[run_skill_action]──► Sandbox Enforcement (sandbox-exec network deny)
+                                                │
+                                       [Execute Action Script]
+                                                │
+                                                ▼
+                                      Return structured receipt & output
+```
+- **Best for**: Running dedicated project helper scripts, automated data transformation, and internet research.
+- **Features**: Automatic `SKILL.md` parsing, explicit Action contracts, dynamic execution deadlines, and sandboxed isolation.
 
 ---
 
@@ -104,7 +137,9 @@ ChatGPT / Qwen / Workbench ──[provider_id=opencode]──► Local approval
 
 ### 1. Prerequisites
 - **Operating System**: macOS 14.0 (Sonoma) or later (Apple Silicon & Intel supported).
-- **Codex Environment**: Installed and logged-in **Codex Desktop** (or executable `codex` command in system PATH).
+- **Agent Environment**:
+  - **Codex**: Installed and logged-in **Codex Desktop** (or executable `codex` command in system PATH).
+  - **OpenCode (Optional)**: Installed **OpenCode** CLI in system PATH.
 - **Toolchain**: Xcode 16+ / Swift 6.0 toolchain.
 
 ### 2. Build & Launch
@@ -125,26 +160,25 @@ Scripts/with-xcode.sh xcodebuild \
 
 Launching `CodexBridge.app` will automatically register and start the bundled `CodexBridgeService` LaunchAgent.
 
-### 3. Register Local Projects
-Open the app and click **Add Project** to register your authorized workspace directories. Bridge binds the canonical path, device ID, and inode to eliminate symlink escapes.
+### 3. Register Local Projects & Skills
+Open the app and click **Add Project** to register your authorized workspace directories. Bridge binds the canonical path, device ID, and inode to eliminate symlink escapes, automatically discovering any embedded Skills.
 
-### 4. Connect Your MCP Clients
+### 4. Configure Agent Engines
+- **Codex Engine**: Ready out of the box upon detecting the local `codex` binary.
+- **OpenCode Engine**: In Bridge, open **Settings → Local Agent Providers**, register the OpenCode executable path, and enable it after a successful probe.
+
+### 5. Connect Your Chat Clients
 
 #### Option A: Connect ChatGPT Web
-1. In Bridge App's **Connections** tab, select **Secure MCP Tunnel**, and enter your OpenAI `Tunnel ID` and `Runtime Key` (securely stored in Keychain).
+1. In Bridge App’s **Connections** tab, select **Secure MCP Tunnel**, and enter your OpenAI `Tunnel ID` and `Runtime Key` (securely stored in Keychain).
 2. On ChatGPT Web → **Settings** → **Connected apps / Developer Mode** → **Add New Server**.
 3. Choose **OpenAI Secure Tunnel**, enter the matching `Tunnel ID`, and set path to `/mcp`.
 4. For step-by-step setup and prompt examples, see: [👉 ChatGPT Developer Mode Setup Guide](./docs/CHATGPT_DEVELOPER_MODE.md).
 
 #### Option B: Connect Qwen Studio (Desktop)
-1. In Bridge App's **Connections** tab, enable **Qwen Studio Support**.
+1. In Bridge App’s **Connections** tab, enable **Qwen Studio Support**.
 2. Click **Copy MCP Config JSON**.
-3. Paste the configuration into Qwen Studio's MCP settings to start chatting immediately!
-
-#### Option C: Enable the OpenCode Provider
-1. Install and sign in to OpenCode as described in the [OpenCode Connection Guide](./docs/OPENCODE_CONNECTION_GUIDE.md).
-2. In Bridge, open **Settings → Local Agent Providers**, register the OpenCode executable, and enable it after a successful probe.
-3. Refresh the model catalog in the workbench and choose Plan or Build. ChatGPT/Qwen can then set `provider_id: "opencode"` in `submit_task`.
+3. Paste the configuration into Qwen Studio’s MCP settings to start chatting immediately!
 
 ---
 
