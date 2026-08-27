@@ -66,7 +66,7 @@ actor ScriptedDeepSeekHarnessTransport: ACPTransport {
 }
 
 func deepSeekInitializationResult(id: ACPRequestID) -> ACPWireMessage {
-  ACPWireMessage(
+  return ACPWireMessage(
     id: id,
     result: .object([
       "protocolVersion": .integer(1),
@@ -78,13 +78,45 @@ func deepSeekInitializationResult(id: ACPRequestID) -> ACPWireMessage {
   )
 }
 
-func deepSeekSessionResult(id: ACPRequestID, sessionID: String = "deepseek-session")
+func deepSeekSessionResult(
+  id: ACPRequestID,
+  sessionID: String = "deepseek-session",
+  configOptions: [ACPJSONValue]? = nil
+)
   -> ACPWireMessage
 {
-  ACPWireMessage(
+  var result: [String: ACPJSONValue] = ["sessionId": .string(sessionID)]
+  if let configOptions { result["configOptions"] = .array(configOptions) }
+  return ACPWireMessage(
     id: id,
-    result: .object(["sessionId": .string(sessionID)])
+    result: .object(result)
   )
+}
+
+func deepSeekModelConfigOptions(
+  currentModel: String = "deepseek-v4-pro",
+  currentEffort: String = "high"
+) -> [ACPJSONValue] {
+  [
+    .object([
+      "id": .string("model"),
+      "category": .string("model"),
+      "currentValue": .string(currentModel),
+      "options": .array([
+        .object(["value": .string("deepseek-v4-pro"), "name": .string("DeepSeek V4 Pro")]),
+        .object(["value": .string("gateway-new"), "name": .string("Gateway New")]),
+      ]),
+    ]),
+    .object([
+      "id": .string("effort"),
+      "category": .string("thought_level"),
+      "currentValue": .string(currentEffort),
+      "options": .array([
+        .object(["value": .string("off"), "name": .string("Off")]),
+        .object(["value": .string("high"), "name": .string("High")]),
+      ]),
+    ]),
+  ]
 }
 
 func deepSeekMessageChunk(sessionID: String, text: String) -> ACPWireMessage {

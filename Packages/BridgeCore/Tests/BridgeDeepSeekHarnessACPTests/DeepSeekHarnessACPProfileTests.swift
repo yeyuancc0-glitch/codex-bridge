@@ -191,23 +191,35 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     XCTAssertEqual(try DeepSeekHarnessACPProfile.bundledConfigurationTemplate(), bundled)
   }
 
-  func testRuntimeProfileRejectsModelOutsideDeclaredProfileCatalog() throws {
-    let fixture = try makeProfileFixture(prefix: "deepseek-runtime-invalid-selection")
-    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-invalid-selection")
+  func testRuntimeProfileAcceptsBoundedEndpointDiscoveredModel() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-runtime-dynamic-selection")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-runtime-dynamic-selection")
     addTeardownBlock {
       fixture.remove()
       try? FileManager.default.removeItem(atPath: runDirectory)
     }
 
+    let path = try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
+      sourceRoot: fixture.root,
+      runDirectory: runDirectory,
+      modelID: "gateway/model-v2",
+      reasoningEffort: "high"
+    )
+    let value = try String(contentsOfFile: path, encoding: .utf8)
+    XCTAssertTrue(value.contains("model: gateway/model-v2"))
+  }
+
+  func testRuntimeProfileRejectsMalformedDynamicModelID() throws {
+    let template = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
     XCTAssertThrowsError(
-      try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
-        sourceRoot: fixture.root,
-        runDirectory: runDirectory,
-        modelID: "other-provider/model",
+      try DeepSeekHarnessACPModelCatalog.resolvedSelection(
+        configuration: template,
+        template: template,
+        modelID: "gateway model",
         reasoningEffort: "high"
       )
     ) { error in
-      XCTAssertEqual(error as? AgentRuntimeError, .modelUnavailable("other-provider/model"))
+      XCTAssertEqual(error as? AgentRuntimeError, .modelUnavailable("gateway model"))
     }
   }
 

@@ -6,6 +6,7 @@
   config:
     thinking: enabled
     reasoningEffort: max
+    modelDiscovery: endpoint
     models:
       - id: deepseek-v4-pro
 - id: sandbox

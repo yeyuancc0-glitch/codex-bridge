@@ -382,6 +382,51 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.agentModelOptions, [option])
   }
 
+  func testRefreshingDeepSeekCatalogUsesOneLiveSnapshotForModelAndEffort() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let option = IPCAgentModelSummary(
+      modelID: "gateway/model-v1",
+      displayName: "Gateway Model",
+      supportedReasoningEfforts: ["off", "high"],
+      defaultReasoningEffort: "high"
+    )
+    await client.configureAgentModels([option])
+    _ = try await client.setAgentDefaults(
+      providerID: "deepseek-harness",
+      model: option.modelID,
+      permissionMode: nil,
+      effort: "high"
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(
+      installationID: "agent-installation",
+      providerID: "deepseek-harness"
+    )
+    let requestCountBeforeRefresh = await client.agentModelRequestCountValue()
+
+    model.refreshAgentModelCatalog(
+      installationID: "agent-installation",
+      providerID: "deepseek-harness"
+    )
+
+    try await waitUntil {
+      let requestCount = await client.agentModelRequestCountValue()
+      return !model.isRefreshingAgentModels
+        && model.agentModelOptions == [option]
+        && requestCount == requestCountBeforeRefresh + 1
+    }
+    XCTAssertEqual(model.openCodeDefaultModel, option.modelID)
+    XCTAssertEqual(model.openCodeDefaultEffort, "high")
+  }
+
   func testRefreshingAgentModelsClearsRemovedEffortAndPreservesPersistedMode() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

@@ -110,8 +110,32 @@ public actor DeepSeekHarnessACPClient {
       throw DeepSeekHarnessACPError.malformedResponse
     }
     try validateIdentifier(sessionID, field: "session.id")
+    let configOptions = try Self.parseConfigOptions(response.value["configOptions"])
     activeSessionID = sessionID
-    return DeepSeekHarnessACPSession(id: sessionID)
+    return DeepSeekHarnessACPSession(id: sessionID, configOptions: configOptions)
+  }
+
+  public func setSessionConfigOption(
+    sessionID: String,
+    configID: String,
+    value: String
+  ) async throws -> [DeepSeekHarnessACPConfigOption] {
+    try requireInitialized()
+    try validateIdentifier(sessionID, field: "session.id")
+    try validateIdentifier(configID, field: "session.configID")
+    try validateIdentifier(value, field: "session.configValue")
+    try requireSession(sessionID)
+    try beginSessionOperation()
+    defer { endSessionOperation() }
+    let response = try await request(
+      method: "session/set_config_option",
+      params: .object([
+        "sessionId": .string(sessionID),
+        "configId": .string(configID),
+        "value": .string(value),
+      ])
+    )
+    return try Self.parseConfigOptions(response.value["configOptions"])
   }
 
   public func prompt(sessionID: String, text: String) async throws -> DeepSeekHarnessACPPromptResult
@@ -428,6 +452,59 @@ public actor DeepSeekHarnessACPClient {
       options: options,
       rejectOptionID: rejectOptionID
     )
+  }
+
+  private static func parseConfigOptions(_ value: ACPJSONValue?) throws
+    -> [DeepSeekHarnessACPConfigOption]
+  {
+    guard let value else { return [] }
+    guard let rawOptions = value.arrayValue, rawOptions.count <= 64 else {
+      throw DeepSeekHarnessACPError.malformedResponse
+    }
+    var seen = Set<String>()
+    return try rawOptions.map { raw in
+      guard let object = raw.objectValue,
+        let id = object["id"]?.stringValue,
+        seen.insert(id).inserted
+      else {
+        throw DeepSeekHarnessACPError.malformedResponse
+      }
+      try validateConfigText(id, maximumBytes: 256)
+      let category = object["category"]?.stringValue
+      if let category { try validateConfigText(category, maximumBytes: 64) }
+      let currentValue = object["currentValue"]?.stringValue
+      if let currentValue { try validateConfigText(currentValue, maximumBytes: 256) }
+      guard let rawValues = object["options"]?.arrayValue, rawValues.count <= 512 else {
+        throw DeepSeekHarnessACPError.malformedResponse
+      }
+      var seenValues = Set<String>()
+      let values = try rawValues.map { rawValue -> DeepSeekHarnessACPConfigValue in
+        guard let entry = rawValue.objectValue,
+          let value = entry["value"]?.stringValue,
+          let name = entry["name"]?.stringValue,
+          seenValues.insert(value).inserted
+        else {
+          throw DeepSeekHarnessACPError.malformedResponse
+        }
+        try validateConfigText(value, maximumBytes: 256)
+        try validateConfigText(name, maximumBytes: 512)
+        return DeepSeekHarnessACPConfigValue(value: value, name: name)
+      }
+      return DeepSeekHarnessACPConfigOption(
+        id: id,
+        category: category,
+        currentValue: currentValue,
+        values: values
+      )
+    }
+  }
+
+  private static func validateConfigText(_ value: String, maximumBytes: Int) throws {
+    guard !value.isEmpty, value.utf8.count <= maximumBytes, !value.contains("\0"),
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
+      throw DeepSeekHarnessACPError.malformedResponse
+    }
   }
 
   private static func isRejectOnce(_ value: String) -> Bool {

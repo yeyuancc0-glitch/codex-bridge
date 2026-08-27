@@ -59,7 +59,7 @@ extension BridgeServiceAppModel {
         let removedCount = previousIDs.subtracting(currentIDs).count
         let defaultWasRemoved = defaultModel.map { !currentIDs.contains($0) } ?? false
         let response: IPCAgentModelsResponse
-        if let defaultModel, !defaultWasRemoved {
+        if let defaultModel, !defaultWasRemoved, providerID != "deepseek-harness" {
           response = try await client.agentModels(
             installationID: installationID,
             projectID: self.selectedProjectID,

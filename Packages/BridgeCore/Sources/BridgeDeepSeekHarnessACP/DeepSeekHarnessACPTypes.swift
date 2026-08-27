@@ -83,9 +83,40 @@ public struct DeepSeekHarnessACPInitialization: Equatable, Sendable {
 
 public struct DeepSeekHarnessACPSession: Equatable, Sendable {
   public let id: String
+  public let configOptions: [DeepSeekHarnessACPConfigOption]
 
-  public init(id: String) {
+  public init(id: String, configOptions: [DeepSeekHarnessACPConfigOption] = []) {
     self.id = id
+    self.configOptions = configOptions
+  }
+}
+
+public struct DeepSeekHarnessACPConfigOption: Equatable, Sendable {
+  public let id: String
+  public let category: String?
+  public let currentValue: String?
+  public let values: [DeepSeekHarnessACPConfigValue]
+
+  public init(
+    id: String,
+    category: String?,
+    currentValue: String?,
+    values: [DeepSeekHarnessACPConfigValue]
+  ) {
+    self.id = id
+    self.category = category
+    self.currentValue = currentValue
+    self.values = values
+  }
+}
+
+public struct DeepSeekHarnessACPConfigValue: Equatable, Sendable {
+  public let value: String
+  public let name: String
+
+  public init(value: String, name: String) {
+    self.value = value
+    self.name = name
   }
 }
 

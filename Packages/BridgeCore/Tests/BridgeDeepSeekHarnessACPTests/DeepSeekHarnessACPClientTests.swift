@@ -35,7 +35,24 @@ final class DeepSeekHarnessACPClientTests: XCTestCase {
       case "initialize":
         try await transport.emit(deepSeekInitializationResult(id: id))
       case "session/new":
-        try await transport.emit(deepSeekSessionResult(id: id, sessionID: "session-1"))
+        try await transport.emit(
+          deepSeekSessionResult(
+            id: id,
+            sessionID: "session-1",
+            configOptions: deepSeekModelConfigOptions()
+          )
+        )
+      case "session/set_config_option":
+        try await transport.emit(
+          ACPWireMessage(
+            id: id,
+            result: .object([
+              "configOptions": .array(
+                deepSeekModelConfigOptions(currentModel: "gateway-new", currentEffort: "off")
+              )
+            ])
+          )
+        )
       case "session/prompt":
         try await transport.emit(deepSeekMessageChunk(sessionID: "session-1", text: "Hello "))
         try await transport.emit(deepSeekMessageChunk(sessionID: "session-1", text: "world"))
@@ -58,6 +75,19 @@ final class DeepSeekHarnessACPClientTests: XCTestCase {
     XCTAssertEqual(initialization.agentName, DeepSeekHarnessACPConstants.agentName)
     let session = try await client.newSession(cwd: "/tmp")
     XCTAssertEqual(session.id, "session-1")
+    XCTAssertEqual(session.configOptions.first?.category, "model")
+    XCTAssertEqual(
+      session.configOptions.first?.values.map(\.value),
+      [
+        "deepseek-v4-pro", "gateway-new",
+      ])
+    let changed = try await client.setSessionConfigOption(
+      sessionID: session.id,
+      configID: "model",
+      value: "gateway-new"
+    )
+    XCTAssertEqual(changed.first?.currentValue, "gateway-new")
+    XCTAssertEqual(changed.last?.currentValue, "off")
 
     let prompt = Task {
       try await client.prompt(sessionID: session.id, text: "Say hello")

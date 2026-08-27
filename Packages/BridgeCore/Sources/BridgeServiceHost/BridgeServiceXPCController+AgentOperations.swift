@@ -170,7 +170,7 @@ extension BridgeServiceXPCController {
 extension BridgeServiceXPCController {
   func handleSubmitAgentTask(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentSubmitRequest.self, from: request)
-    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     let result = try await composition.application.serviceSubmitAgentTask(
       projectID: payload.projectID,
       providerID: payload.providerID,
@@ -189,7 +189,7 @@ extension BridgeServiceXPCController {
 
   func handleListAgentModels(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentModelsRequest.self, from: request)
-    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     let items = try await composition.application.serviceListAgentModels(
       installationID: AgentInstallationID(rawValue: payload.installationID),
       projectID: payload.projectID,

@@ -51,20 +51,47 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertFalse(snapshot.enforced.contains(.oneShotApproval))
   }
 
-  func testCatalogComesFromDeepSeekProfileWithoutAnotherProvider() async throws {
-    let provider = try DeepSeekHarnessACPProvider()
+  func testCatalogComesFromHarnessACPWithoutAnotherProvider() async throws {
+    let transport = ScriptedDeepSeekHarnessTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(deepSeekInitializationResult(id: id))
+      case "session/new":
+        try await transport.emit(
+          deepSeekSessionResult(
+            id: id,
+            sessionID: "catalog-session",
+            configOptions: deepSeekModelConfigOptions()
+          )
+        )
+      default:
+        break
+      }
+    }
     let fixture = try makeCatalogInstallation()
     addTeardownBlock { try? FileManager.default.removeItem(atPath: fixture.directory) }
+    let provider = try DeepSeekHarnessACPProvider(
+      configuration: DeepSeekHarnessACPProviderConfiguration(
+        runtimeBaseDirectory: URL(fileURLWithPath: fixture.directory)
+          .appendingPathComponent("runtime").path,
+        transportFactory: { _ in transport }
+      )
+    )
 
     let models = try await provider.models(
       installation: fixture.installation,
       projectRoot: nil,
-      selectedModelID: "opencode-go/deepseek-v4-pro"
+      selectedModelID: "stale-saved-model"
     )
 
-    XCTAssertEqual(models.map(\.id), ["deepseek-v4-pro"])
+    XCTAssertEqual(models.map(\.id), ["deepseek-v4-pro", "gateway-new"])
     XCTAssertEqual(models[0].supportedReasoningEfforts, ["off", "low", "high", "max"])
     XCTAssertEqual(models[0].defaultReasoningEffort, "max")
+    let sent = await transport.sentMessages()
+    XCTAssertTrue(sent.contains { $0.method == "session/new" })
+    XCTAssertFalse(sent.contains { $0.method == "session/prompt" })
   }
 
   func testRequestValidationRejectsMutationNetworkAndUnsupportedOverrides() async throws {
@@ -113,23 +140,6 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       XCTAssertEqual(error, .invalidRequest("request.networkAccessRequested"))
     }
 
-    let modelRequest = try AgentExecutionRequest(
-      taskID: .init(rawValue: "model-task"),
-      projectID: .init(rawValue: "project"),
-      projectRoot: project,
-      prompt: "model",
-      model: "other-provider/deepseek-v4-pro",
-      mutationIntent: .readOnly,
-      workspaceStrategy: .sharedProject,
-      networkAccessRequested: false
-    )
-    do {
-      _ = try await provider.start(modelRequest, installation: installation)
-      XCTFail("Expected foreign model rejection")
-    } catch let error as AgentRuntimeError {
-      XCTAssertEqual(error, .modelUnavailable("other-provider/deepseek-v4-pro"))
-    }
-
     let effortRequest = try AgentExecutionRequest(
       taskID: .init(rawValue: "effort-task"),
       projectID: .init(rawValue: "project"),
@@ -158,19 +168,41 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       withIntermediateDirectories: false,
       attributes: [.posixPermissions: 0o700]
     )
-    let executable = URL(fileURLWithPath: directory).appendingPathComponent("dsh-acp-demo").path
-    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: URL(fileURLWithPath: executable))
+    let source = URL(fileURLWithPath: directory).appendingPathComponent("source").path
+    let profile = URL(fileURLWithPath: directory).appendingPathComponent("profile").path
+    try FileManager.default.createDirectory(atPath: source, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(atPath: profile, withIntermediateDirectories: false)
+    let node = URL(fileURLWithPath: source).appendingPathComponent("node").path
+    try Data("#!/bin/sh\necho v22.19.0\n".utf8).write(to: URL(fileURLWithPath: node))
+    XCTAssertEqual(chmod(node, 0o700), 0)
+    let executable = URL(fileURLWithPath: source).appendingPathComponent("dsh-acp-demo").path
+    try Data("#!\(node)\n".utf8).write(to: URL(fileURLWithPath: executable))
     XCTAssertEqual(chmod(executable, 0o700), 0)
-
-    var artifacts: [AgentInstallationArtifact] = []
-    for role in AgentInstallationArtifactRole.allCases {
-      let path = URL(fileURLWithPath: directory).appendingPathComponent(role.rawValue).path
-      let data =
-        role == .launchConfiguration
-        ? try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
-        : Data("fixture\n".utf8)
-      try data.write(to: URL(fileURLWithPath: path))
-      artifacts.append(try artifact(role: role, path: path, data: data))
+    let manifest = URL(fileURLWithPath: source).appendingPathComponent("package.json").path
+    let manifestData = Data(
+      "{\"version\":\"0.1.1-rc.2\",\"packageManager\":\"pnpm@11.7.0\",\"engines\":{\"node\":\"^22.19.0 || >=24.0.0\"}}"
+        .utf8
+    )
+    try manifestData.write(to: URL(fileURLWithPath: manifest))
+    let lock = URL(fileURLWithPath: source).appendingPathComponent("pnpm-lock.yaml").path
+    let lockData = Data(
+      "packages:\n  /@agentclientprotocol/sdk@0.25.1:\n    resolution: {}\n".utf8
+    )
+    try lockData.write(to: URL(fileURLWithPath: lock))
+    let modules = URL(fileURLWithPath: source)
+      .appendingPathComponent("node_modules/.pnpm/node_modules").path
+    try FileManager.default.createDirectory(atPath: modules, withIntermediateDirectories: true)
+    let configuration = URL(fileURLWithPath: profile).appendingPathComponent("cordis.yml").path
+    let configurationData = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    try configurationData.write(to: URL(fileURLWithPath: configuration))
+    let artifactInputs: [(AgentInstallationArtifactRole, String, Data)] = [
+      (.launchConfiguration, configuration, configurationData),
+      (.runtimeManifest, manifest, manifestData),
+      (.dependencyLock, lock, lockData),
+      (.nodeInterpreter, node, Data("#!/bin/sh\necho v22.19.0\n".utf8)),
+    ]
+    let artifacts = try artifactInputs.map { role, path, data in
+      try artifact(role: role, path: path, data: data)
     }
     return try (
       AgentInstallation(

@@ -170,8 +170,9 @@ enum DeepSeekHarnessACPModelCatalog {
     if profile.modelIDs.contains(modelID) { return modelID }
     if modelID.hasPrefix(legacyOpenCodePrefix) {
       let legacyWireID = String(modelID.dropFirst(legacyOpenCodePrefix.count))
-      if profile.modelIDs.contains(legacyWireID) { return legacyWireID }
+      if isValidModelID(legacyWireID) { return legacyWireID }
     }
+    if isValidModelID(modelID) { return modelID }
     throw AgentRuntimeError.modelUnavailable(modelID)
   }
 
