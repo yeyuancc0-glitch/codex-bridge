@@ -216,6 +216,12 @@ extension BridgeServiceXPCController {
       default: return "OpenCode：\(permissionMode)"
       }
     }
+    if providerID == "antigravity" {
+      switch permissionMode {
+      case "read-only": return "Antigravity + macOS 项目只读边界"
+      default: return "Antigravity 不支持：\(permissionMode)"
+      }
+    }
     return permissionMode
   }
 
@@ -225,6 +231,9 @@ extension BridgeServiceXPCController {
   ) -> String {
     if providerID == "opencode" {
       return "OpenCode 原生 permissions（network_access 不覆盖）"
+    }
+    if providerID == "antigravity" {
+      return "Antigravity 原生工具权限（network_access 不覆盖）"
     }
     guard let networkAccess else { return "未记录" }
     return networkAccess ? "已请求" : "未请求"

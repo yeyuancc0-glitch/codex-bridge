@@ -57,7 +57,7 @@ extension BridgeServiceApplication {
       capabilities.remove(.workspaceWriteInPlace)
       capabilities.remove(.workspaceWriteIsolated)
     }
-    let submissionEnabled =
+let submissionEnabled =
       policy?.taskSubmissionEnabled(
         isSelectable: record.isSelectable,
         capabilities: capabilities,

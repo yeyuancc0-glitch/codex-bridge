@@ -92,6 +92,7 @@ enum AgentProviderPresentation {
     case "codex": return "Codex"
     case "opencode": return "OpenCode"
     case "deepseek-harness": return "DeepSeek Harness"
+    case "antigravity": return "Antigravity"
     default:
       let value = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
       return value.isEmpty ? "Codex" : value
@@ -103,8 +104,61 @@ enum AgentProviderPresentation {
     case "codex": return "cpu.fill"
     case "opencode": return "chevron.left.forwardslash.chevron.right"
     case "deepseek-harness": return "lock.shield.fill"
+    case "antigravity": return "sparkles"
     default: return "point.3.connected.trianglepath.dotted"
     }
+  }
+}
+
+extension IPCAgentInstallationSummary {
+  var supportsModelSelection: Bool {
+    effectiveCapabilities.contains("selection.model")
+  }
+
+  var supportsEffortSelection: Bool {
+    effectiveCapabilities.contains("selection.effort")
+  }
+}
+
+extension BridgeServiceAppModel {
+  func selectedAgentInstallation(
+    providerID: String,
+    installationID: String?
+  ) -> IPCAgentInstallationSummary? {
+    guard let installationID else { return nil }
+    return agentInstallations.first {
+      $0.providerID == providerID && $0.installationID == installationID
+    }
+  }
+
+  func supportsAgentModelSelection(
+    providerID: String,
+    installationID: String?
+  ) -> Bool {
+    guard
+      let installation = selectedAgentInstallation(
+        providerID: providerID,
+        installationID: installationID
+      )
+    else {
+      return providerID != "antigravity"
+    }
+    return installation.supportsModelSelection
+  }
+
+  func supportsAgentEffortSelection(
+    providerID: String,
+    installationID: String?
+  ) -> Bool {
+    guard
+      let installation = selectedAgentInstallation(
+        providerID: providerID,
+        installationID: installationID
+      )
+    else {
+      return providerID != "antigravity"
+    }
+    return installation.supportsEffortSelection
   }
 }
 

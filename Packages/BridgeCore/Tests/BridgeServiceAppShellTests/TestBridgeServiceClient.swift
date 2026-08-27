@@ -142,6 +142,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     failAgentModels = fail
   }
 
+  func configureAgentInstallations(_ installations: [IPCAgentInstallationSummary]) {
+    agentInstallationsValue = installations
+  }
+
   func configureAgentDefault(_ model: String?) {
     agentModelDefaultValue = model
   }

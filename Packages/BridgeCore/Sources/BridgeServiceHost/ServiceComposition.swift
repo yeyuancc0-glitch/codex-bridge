@@ -1,4 +1,5 @@
 import BridgeAgentCore
+import BridgeAntigravityCLI
 import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDeepSeekHarnessACP
@@ -119,6 +120,7 @@ public actor ServiceComposition {
     let tasks = ServiceTaskManager(store: store)
     let settings = ServiceSettings(store: store)
     let agentProviders: [any AgentProvider] = [
+      try AntigravityCLIProvider(),
       try OpenCodeACPProvider(
         configuration: OpenCodeACPProviderConfiguration(
           persistentStateBaseDirectory: paths.agentStateURL.path

@@ -256,15 +256,29 @@ extension BridgeServiceAppModel {
       defer { self.isManagingAgents = false }
       do {
         let client = try self.currentClient()
+        let submittedModel =
+          self.supportsAgentModelSelection(
+            providerID: providerID,
+            installationID: installationID
+          )
+          ? (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
+            $0.isEmpty ? nil : $0
+          }
+          : nil
+        let submittedEffort =
+          self.supportsAgentEffortSelection(
+            providerID: providerID,
+            installationID: installationID
+          )
+          ? effort
+          : nil
         let response = try await client.submitAgentTask(
           IPCAgentSubmitRequest(
             projectID: projectID,
             providerID: providerID,
             installationID: installationID,
-            model: (model?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
-              $0.isEmpty ? nil : $0
-            },
-            effort: effort,
+            model: submittedModel,
+            effort: submittedEffort,
             permissionMode: permissionMode,
             prompt: prompt,
             threadID: threadID,

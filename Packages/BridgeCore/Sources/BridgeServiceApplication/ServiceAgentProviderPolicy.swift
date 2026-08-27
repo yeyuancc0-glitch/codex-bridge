@@ -33,6 +33,7 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
   public let registrationTrustProfile: AgentTrustProfile
   public let registrationSecurityProfileID: AgentProfileID?
   public let requiresExactRegistrationProfile: Bool
+  public let selectionsRequireObservedCapabilities: Bool
 
   public init(
     providerID: AgentProviderID,
@@ -57,7 +58,8 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
     requiredProtocolRevision: String? = nil,
     registrationTrustProfile: AgentTrustProfile = .managed,
     registrationSecurityProfileID: AgentProfileID? = nil,
-    requiresExactRegistrationProfile: Bool = false
+    requiresExactRegistrationProfile: Bool = false,
+    selectionsRequireObservedCapabilities: Bool = false
   ) {
     self.providerID = providerID
     self.displayName = displayName
@@ -82,6 +84,7 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
     self.registrationTrustProfile = registrationTrustProfile
     self.registrationSecurityProfileID = registrationSecurityProfileID
     self.requiresExactRegistrationProfile = requiresExactRegistrationProfile
+    self.selectionsRequireObservedCapabilities = selectionsRequireObservedCapabilities
   }
 
   public func effectiveCapabilities(
@@ -204,7 +207,33 @@ public enum ServiceAgentProviderPolicyRegistry {
     requiresExactRegistrationProfile: true
   )
 
-  public static let all: [ServiceAgentProviderPolicy] = [codex, openCode, deepSeekHarness]
+  public static let antigravity = ServiceAgentProviderPolicy(
+    providerID: .antigravity,
+    displayName: "Antigravity",
+    requiresInstallation: true,
+    supportsWorkspaceWrite: false,
+    supportsSessionContinuation: true,
+    supportsSteer: true,
+    supportsInteractiveApproval: true,
+    supportsModelSelection: true,
+    supportsEffortSelection: true,
+    allowsNetworkAccess: false,
+    workspaceEnforcement: "os_sandbox_read_only",
+    approvalEnforcement: "provider_soft_deny",
+    networkEnforcement: "provider_native",
+    allowedCapabilities: [
+      .sessionCreate, .interrupt, .steer, .toolLifecycle, .usage, .workspaceRead,
+      .sessionContinue, .modelSelection, .effortSelection,
+    ],
+    requiredArtifactRoles: [],
+    registrationTrustProfile: .userTrusted,
+    registrationSecurityProfileID: AgentProfileID(rawValue: "desktop-shared"),
+    requiresExactRegistrationProfile: true,
+    selectionsRequireObservedCapabilities: true
+  )
+
+  public static let all: [ServiceAgentProviderPolicy] =
+    [codex, openCode, deepSeekHarness, antigravity]
 
   private static let byID: [AgentProviderID: ServiceAgentProviderPolicy] =
     Dictionary(uniqueKeysWithValues: all.map { ($0.providerID, $0) })

@@ -5,6 +5,7 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
   private static let productionTargets = [
     "BridgeACP",
     "BridgeAgentCore",
+    "BridgeAntigravityCLI",
     "BridgeCodexRPC",
     "BridgeCodexService",
     "BridgeDirectCommand",

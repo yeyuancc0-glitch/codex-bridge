@@ -13,6 +13,7 @@ public struct AgentProviderID: AgentStringIdentifier {
   public static let codex = AgentProviderID(rawValue: "codex")
   public static let openCode = AgentProviderID(rawValue: "opencode")
   public static let deepSeekHarness = AgentProviderID(rawValue: "deepseek-harness")
+  public static let antigravity = AgentProviderID(rawValue: "antigravity")
 }
 
 public struct AgentInstallationID: AgentStringIdentifier {

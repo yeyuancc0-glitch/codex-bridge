@@ -92,7 +92,11 @@ extension MCPServiceToolCatalog {
       + "If permission_mode is omitted, Bridge uses the saved OpenCode default mode; supervisor, "
       + "and skill fields must also be omitted. To continue an OpenCode conversation, pass the "
       + "provider_session_id returned by get_task as thread_id; Bridge resumes or loads that exact "
-      + "ACP session in the selected project. The response includes wait_policy; follow "
+      + "ACP session in the selected project. For Antigravity, set provider_id=antigravity; V1 "
+      + "accepts read-only tasks only, rejects network_access overrides, and uses the registered "
+      + "official agy stream-json installation. Only request model, effort, or thread_id when "
+      + "list_agents reports the corresponding effective capability; thread_id must be a prior "
+      + "Bridge-bound Antigravity conversation from the same project and installation. The response includes wait_policy; follow "
       + "its recommended_poll_after_seconds before checking get_task again. The three profiles are "
       + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
       + "seconds, quiet long-running work). A DeepSeek Harness network_enforcement of unavailable "
@@ -108,7 +112,7 @@ extension MCPServiceToolCatalog {
         "provider_id": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit for Codex. Set to opencode or deepseek-harness only when the user explicitly selected a locally registered installation; list_agents shows availability and enforcement."
+"Omit for Codex. Set to opencode or antigravity, or deepseek-harness, only when the user explicitly selected a locally registered installation; list_agents shows availability and enforcement."
         ),
         "installation_id": nullableStringSchema(
           maximum: 256,
@@ -123,7 +127,7 @@ extension MCPServiceToolCatalog {
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the selected provider default effort. For OpenCode or DeepSeek Harness, set only a value advertised for the selected model when the user explicitly requests a per-task override."
+"Omit to use the selected provider default effort. For OpenCode or DeepSeek Harness, set only a value advertised for the selected model when the user explicitly requests a per-task override; external providers require model_override=true."
         ),
         "model_override": [
           "type": ["boolean", "null"],
@@ -144,17 +148,17 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval.",
+"For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval. Antigravity V1 accepts read-only only."
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
           "description":
-            "For OpenCode, set true only when the user's request explicitly asks for Plan/read-only or Build/workspace-write. Otherwise omit so Bridge uses the saved default mode; a supplied unmarked permission_mode is ignored.",
+            "Set true only when the user's request explicitly asks for a permission mode. OpenCode otherwise uses its saved default; Antigravity remains read-only regardless.",
         ],
         "network_access": [
           "type": "boolean",
           "description":
-            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access.",
+"Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access. For Antigravity, true is rejected."
         ],
         "acceptance_criteria": [
           "type": "array",

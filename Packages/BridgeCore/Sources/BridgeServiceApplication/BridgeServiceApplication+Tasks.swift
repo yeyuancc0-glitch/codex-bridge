@@ -381,7 +381,7 @@ extension BridgeServiceApplication {
     let permission = try Self.permissionMode(
       requestedPermissionMode,
       project: project,
-      defaultMode: defaultMode
+      defaultMode: policy.defaultPermissionMode
     )
     guard policy.supportsWorkspaceWrite || permission != .workspaceWrite else {
       throw BridgeMCPQueryError.contractRejected
@@ -398,6 +398,15 @@ extension BridgeServiceApplication {
       .sorted { $0.id.rawValue < $1.id.rawValue }
     let record = try Self.selectAgentInstallation(
       requested: submission.installationID, from: selectable)
+    if policy.selectionsRequireObservedCapabilities {
+      var requiredCapabilities = Set<AgentCapability>()
+      if submission.threadID != nil { requiredCapabilities.insert(.sessionContinue) }
+      if resolvedModel != nil { requiredCapabilities.insert(.modelSelection) }
+      if requestedEffort != nil { requiredCapabilities.insert(.effortSelection) }
+      guard record.capabilities.supports(requiredCapabilities) else {
+        throw BridgeMCPQueryError.unavailable
+      }
+    }
     if policy.supportsSessionContinuation, let requestedSessionID = submission.threadID {
       guard
         let previous = try await tasks.task(

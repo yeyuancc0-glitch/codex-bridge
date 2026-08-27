@@ -369,7 +369,10 @@ final class BridgeServiceHostTests: XCTestCase {
     }
 
     let initial = try await client.agentCatalog()
-    XCTAssertEqual(initial.providers.map(\.providerID), ["deepseek-harness", "opencode"])
+    XCTAssertEqual(
+      initial.providers.map(\.providerID),
+      ["antigravity", "deepseek-harness", "opencode"]
+    )
     XCTAssertTrue(initial.installations.isEmpty)
 
     let registered = try await client.registerAgentInstallation(
