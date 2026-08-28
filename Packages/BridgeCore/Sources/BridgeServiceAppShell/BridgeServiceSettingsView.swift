@@ -44,8 +44,6 @@ struct BridgeServiceSettingsView: View {
         supervisor: true
       )
 
-      modelCatalogSection
-
       Section {
         LabeledContent("当前守护状态", value: registrationLabel)
         Button("打开 macOS 登录项设置") {
@@ -175,28 +173,6 @@ struct BridgeServiceSettingsView: View {
     } else {
       Text("尚未读取到 Codex 模型目录，请确保 Codex app-server 正常运行。")
         .foregroundStyle(.secondary)
-    }
-  }
-
-  private var modelCatalogSection: some View {
-    Section {
-      if model.models.isEmpty {
-        modelCatalogStatus
-      } else {
-        ForEach(model.models, id: \.modelID) { item in
-          LabeledContent(item.displayName) {
-            VStack(alignment: .trailing, spacing: 2) {
-              Text(item.modelID)
-                .font(.caption.monospaced())
-              Text("支持推理强度：" + item.reasoningEfforts.map(reasoningTitle).joined(separator: "、"))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-          }
-        }
-      }
-    } header: {
-      Label("Codex 本机模型目录", systemImage: "square.stack.3d.up.fill")
     }
   }
 
