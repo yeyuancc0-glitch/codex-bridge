@@ -28,6 +28,7 @@ public actor ServiceExecutionCoordinator {
   private let execution: ExecutionManager
   private let supervision: ServiceSupervisorCoordinator
   private let conversation: TaskConversationBuffer
+  private let conversationCoordinator: ServiceExecutionConversationCoordinator
   private let agentRunner: (any AgentTaskRunning)?
   private let providerDisplayNameResolver: @Sendable (AgentProviderID) -> String
   private var collectors: [TaskID: Task<Void, Never>] = [:]
@@ -64,6 +65,10 @@ public actor ServiceExecutionCoordinator {
       conversation: conversation
     )
     self.conversation = conversation
+    self.conversationCoordinator = ServiceExecutionConversationCoordinator(
+      tasks: tasks,
+      conversation: conversation
+    )
     self.agentRunner = agentRunner
     self.providerDisplayNameResolver = providerDisplayNameResolver
   }
@@ -187,50 +192,11 @@ public actor ServiceExecutionCoordinator {
     taskID: TaskID,
     limit: Int = 200
   ) async throws -> ConversationSubscription {
-    guard let task = try await tasks.task(id: taskID) else {
-      throw ServiceStoreError.unknownTask(taskID)
-    }
-    let inMemory = await conversation.entries(taskID: taskID)
-    let persistedLimit: Int
-    if inMemory.count >= limit {
-      persistedLimit = 0
-    } else {
-      persistedLimit = max(1, limit - inMemory.count)
-    }
-    let persisted = try await tasks.messages(taskID: taskID, limit: persistedLimit)
-    let memoryKeys = Set(inMemory.map(\.key))
-    var page =
-      persisted
-      .filter { !memoryKeys.contains($0.key) }
-      .map {
-        TaskConversationBuffer.Entry(
-          key: $0.key,
-          role: $0.role,
-          kind: $0.kind,
-          content: $0.content,
-          toolName: $0.toolName,
-          toolStatus: $0.toolStatus,
-          toolArguments: $0.toolArguments,
-          isFinal: $0.isFinal(for: task.state.status)
-        )
-      }
-    page.append(contentsOf: inMemory)
-    let subscription = await conversation.subscribe(taskID: taskID)
-    let merged =
-      subscription.page.isEmpty
-      ? page
-      : page.filter { entry in
-        !subscription.page.contains(where: { $0.key == entry.key })
-      } + subscription.page
-    return ConversationSubscription(
-      subscriptionID: subscription.subscriptionID,
-      page: Array(merged.suffix(limit)),
-      updates: subscription.updates
-    )
+    try await conversationCoordinator.subscribe(taskID: taskID, limit: limit)
   }
 
   public func unsubscribeConversation(taskID: TaskID, subscriptionID: Int) async {
-    await conversation.unsubscribe(taskID: taskID, subscriptionID: subscriptionID)
+    await conversationCoordinator.unsubscribe(taskID: taskID, subscriptionID: subscriptionID)
   }
 
   public func conversationPage(
@@ -238,10 +204,7 @@ public actor ServiceExecutionCoordinator {
     beforeMessageID: Int64? = nil,
     limit: Int = 200
   ) async throws -> [ServiceTaskMessageRecord] {
-    guard try await tasks.task(id: taskID) != nil else {
-      throw ServiceStoreError.unknownTask(taskID)
-    }
-    return try await tasks.messages(
+    try await conversationCoordinator.page(
       taskID: taskID,
       beforeMessageID: beforeMessageID,
       limit: limit
@@ -251,14 +214,11 @@ public actor ServiceExecutionCoordinator {
   public func liveConversationEntries(
     taskID: TaskID
   ) async throws -> [TaskConversationBuffer.Entry] {
-    guard try await tasks.task(id: taskID) != nil else {
-      throw ServiceStoreError.unknownTask(taskID)
-    }
-    return await conversation.entries(taskID: taskID)
+    try await conversationCoordinator.liveEntries(taskID: taskID)
   }
 
   public func purgeConversation(taskID: TaskID) async {
-    await conversation.purge(taskID: taskID)
+    await conversationCoordinator.purge(taskID: taskID)
   }
 
   public func resolveApproval(
