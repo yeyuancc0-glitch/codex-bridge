@@ -22,6 +22,7 @@ else
 fi
 readonly trusted_unsigned_sha256
 readonly require_helper="${REQUIRE_TUNNEL_HELPER:-NO}"
+readonly helper_architecture="${TUNNEL_HELPER_ARCHITECTURE:-universal}"
 readonly helpers_destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
 readonly resources_destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/TunnelClient"
 readonly staged_helper="${helpers_destination}/tunnel-client"
@@ -57,6 +58,13 @@ fi
   print -u2 "TUNNEL_HELPER_UNSIGNED_SHA256 must be 64 lowercase hexadecimal characters."
   exit 64
 }
+case "${helper_architecture}" in
+  universal|arm64|x86_64) ;;
+  *)
+    print -u2 "TUNNEL_HELPER_ARCHITECTURE must be universal, arm64, or x86_64."
+    exit 64
+    ;;
+esac
 
 readonly resolved_helper_directory="${helper_directory:A}"
 /bin/zsh "${script_directory}/verify-tunnel-helper.sh" \
@@ -77,7 +85,15 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-/usr/bin/install -m 0755 "${resolved_helper_directory}/tunnel-client" "${temporary_helper}"
+if [[ "${helper_architecture}" == "universal" ]]; then
+  /usr/bin/install -m 0755 "${resolved_helper_directory}/tunnel-client" "${temporary_helper}"
+else
+  /usr/bin/lipo \
+    "${resolved_helper_directory}/tunnel-client" \
+    -thin "${helper_architecture}" \
+    -output "${temporary_helper}"
+  /bin/chmod 0755 "${temporary_helper}"
+fi
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && \
   -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" && \
   "${EXPANDED_CODE_SIGN_IDENTITY}" != "-" ]]
@@ -103,6 +119,14 @@ for name in LICENSE NOTICE tunnel-client.manifest; do
     "${resources_destination}/${name}"
 done
 
-/usr/bin/lipo "${staged_helper}" -verify_arch arm64
-/usr/bin/lipo "${staged_helper}" -verify_arch x86_64
-print "Staged verified Universal 2 tunnel-client into ${CONTENTS_FOLDER_PATH}/Helpers."
+if [[ "${helper_architecture}" == "universal" ]]; then
+  /usr/bin/lipo "${staged_helper}" -verify_arch arm64
+  /usr/bin/lipo "${staged_helper}" -verify_arch x86_64
+else
+  /usr/bin/lipo "${staged_helper}" -verify_arch "${helper_architecture}"
+  [[ "$(/usr/bin/lipo -archs "${staged_helper}")" == "${helper_architecture}" ]] || {
+    print -u2 "Staged tunnel helper contains an unexpected architecture."
+    exit 65
+  }
+fi
+print "Staged verified ${helper_architecture} tunnel-client into ${CONTENTS_FOLDER_PATH}/Helpers."

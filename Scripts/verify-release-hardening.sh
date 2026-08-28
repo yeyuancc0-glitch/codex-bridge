@@ -7,6 +7,7 @@ if (( $# != 1 )); then
 fi
 
 readonly app="${1:A}"
+readonly app_binary="${app}/Contents/MacOS/CodexBridge"
 readonly service="${app}/Contents/Resources/CodexBridgeService"
 readonly helper="${app}/Contents/Helpers/tunnel-client"
 readonly deepseek_bundle="${app}/Contents/Resources/BridgeCore_BridgeDeepSeekHarnessACP.bundle"
@@ -28,6 +29,7 @@ readonly details="$(/usr/bin/codesign -dvv "${app}" 2>&1)"
 
 readonly app_team="${details##*TeamIdentifier=}"
 readonly app_team_id="${app_team%%$'\n'*}"
+readonly expected_architectures="$(/usr/bin/lipo -archs "${app_binary}" | /usr/bin/tr ' ' '\n' | /usr/bin/sort | /usr/bin/tr '\n' ' ')"
 for component in "${service}" "${helper}"; do
   component_details="$(/usr/bin/codesign -dvv "${component}" 2>&1)"
   component_team="${component_details##*TeamIdentifier=}"
@@ -36,7 +38,11 @@ for component in "${service}" "${helper}"; do
     print -u2 "Component team identifier does not match the app: ${component}"; exit 65;
   }
   /usr/bin/codesign --verify --strict --verbose=2 "${component}"
-  /usr/bin/lipo "${component}" -verify_arch arm64 -verify_arch x86_64
+  component_architectures="$(/usr/bin/lipo -archs "${component}" | /usr/bin/tr ' ' '\n' | /usr/bin/sort | /usr/bin/tr '\n' ' ')"
+  [[ "${component_architectures}" == "${expected_architectures}" ]] || {
+    print -u2 "Component architectures do not match the app: ${component}"
+    exit 65
+  }
 done
 
 print "Release hardening verified for ${app} (Team ID ${app_team_id})."

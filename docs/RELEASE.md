@@ -1,6 +1,6 @@
 # Release Process
 
-v0.3.0 的公开包按开源预览方案发布：保持 Universal 2，但不配置 Apple Developer ID、不公证，也不上传签名凭据。下载者首次打开 App 时需要手动确认 Gatekeeper 提示。本文同时保留未来配置证书后的签名流程，避免把两种发布边界混在一起。
+v0.3.0 的公开包按开源预览方案发布：`arm64` 与 `x86_64` 分别打包，不配置 Apple Developer ID、不公证，也不上传签名凭据。下载者首次打开 App 时需要手动确认 Gatekeeper 提示。本文同时保留未来配置证书后的签名流程，避免把两种发布边界混在一起。
 
 ## 1. Prepare and verify the pinned helper
 
@@ -15,15 +15,22 @@ Scripts/verify-tunnel-helper.sh "$helper_root/tunnel" "$helper_sha"
 
 Do not derive the trusted digest from the helper manifest inside an untrusted input directory. The separate value is part of the supply-chain boundary.
 
-## 2. Build an unsigned local release candidate
+## 2. Build unsigned architecture-specific release candidates
 
-The output path must not exist. This command archives both architectures, stages the verified helper and its post-stage digest, verifies the App and helper slices, generates an SPDX 2.3 dependency SBOM, then creates ZIP, DMG and SHA-256 files.
+The output path must not exist. By default this command creates separate `arm64` and `x86_64` ZIP/DMG packages. Pass one architecture as the fourth argument for a local single-architecture build. Each package contains only the selected App, Service and helper slice. The command also generates an SPDX 2.3 dependency SBOM and SHA-256 files.
 
 ```bash
 Scripts/build-release-candidate.sh \
   /absolute/output/CodexBridge-0.3.0-candidate \
   "$helper_root/tunnel" \
   "$helper_sha"
+
+# Apple Silicon local build only:
+Scripts/build-release-candidate.sh \
+  /absolute/output/CodexBridge-0.3.0-arm64-candidate \
+  "$helper_root/tunnel" \
+  "$helper_sha" \
+  arm64
 ```
 
 The generated files use the product version in their names and include a `RELEASE-CANDIDATE.txt` warning. v0.3.0 上传 Release 时只上传 DMG、ZIP、SBOM 和 `SHA256SUMS`；警告文件不作为下载资产上传。
@@ -72,4 +79,4 @@ Test both Apple Silicon and Intel when available:
 - sleep/wake, Tunnel reconnect, explicit background-Service disable and uninstall;
 - Gatekeeper assessment with no quarantine bypass.
 
-For the unsigned v0.3.0 package, record the Universal 2 structure, helper digest, archive checksums, clean launch path and the user-owned ChatGPT/Tunnel acceptance separately. A local build or CI result does not claim a signed/notarized Gatekeeper result.
+For the unsigned v0.3.0 packages, record each package architecture, helper digest, archive checksums, clean launch path and the user-owned ChatGPT/Tunnel acceptance separately. A local build or CI result does not claim a signed/notarized Gatekeeper result.
