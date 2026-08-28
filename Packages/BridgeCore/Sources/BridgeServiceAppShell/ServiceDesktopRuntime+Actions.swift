@@ -161,6 +161,14 @@ extension BridgeServiceAppModel {
   }
 
   public func openThread(_ threadID: String, inProject projectID: String? = nil) {
+    openThread(threadID, inProject: projectID, preferredTaskID: nil)
+  }
+
+  private func openThread(
+    _ threadID: String,
+    inProject projectID: String?,
+    preferredTaskID: String?
+  ) {
     let targetProjectID =
       projectID ?? selectedProjectID
       ?? tasks.first(where: { $0.threadID == threadID })?.projectID
@@ -173,11 +181,19 @@ extension BridgeServiceAppModel {
     }
     selectedThreadID = threadID
 
-    let relatedTask = tasks.first(where: { $0.threadID == threadID && $0.isCodexTask })
+    let relatedTask = tasks.first(where: {
+      $0.threadID == threadID && $0.isCodexTask
+        && (preferredTaskID == nil || $0.taskID == preferredTaskID)
+    })
     selectedTaskID = relatedTask?.taskID
 
-    // Check if there is an active task on this thread to stream live conversation
-    if let activeTask = tasks.first(where: {
+    if let preferredTaskID {
+      if relatedTask?.isActive == true {
+        openConversation(taskID: preferredTaskID)
+      } else {
+        closeConversation()
+      }
+    } else if let activeTask = tasks.first(where: {
       $0.threadID == threadID && $0.isCodexTask && $0.isRunning
     }) {
       openConversation(taskID: activeTask.taskID)
@@ -211,7 +227,7 @@ extension BridgeServiceAppModel {
     selectedThreadID = task.isCodexTask ? task.threadID : nil
 
     if task.isCodexTask, let threadID = task.threadID {
-      openThread(threadID, inProject: task.projectID)
+      openThread(threadID, inProject: task.projectID, preferredTaskID: task.taskID)
     } else {
       openConversation(taskID: task.taskID)
     }

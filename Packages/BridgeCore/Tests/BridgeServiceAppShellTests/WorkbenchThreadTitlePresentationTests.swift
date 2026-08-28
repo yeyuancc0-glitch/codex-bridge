@@ -38,6 +38,30 @@ final class WorkbenchThreadTitlePresentationTests: XCTestCase {
     )
   }
 
+  func testUnifiedAgentPickerKeepsTasksAndOnlyAddsOrphanThreads() {
+    let codexTask = task(taskID: "codex-task", providerID: "codex", threadID: "thread-1")
+    let openCodeTask = task(taskID: "opencode-task", providerID: "opencode")
+    let threads = [
+      MCPThreadSummary(threadID: "thread-1", title: "Linked", status: "idle"),
+      MCPThreadSummary(threadID: "thread-2", title: "Orphan", status: "idle"),
+    ]
+
+    XCTAssertEqual(
+      WorkbenchAgentTaskPickerContent.orphanThreads(
+        tasks: [codexTask, openCodeTask],
+        threads: threads
+      ).map(\.threadID),
+      ["thread-2"]
+    )
+    XCTAssertEqual(
+      WorkbenchAgentTaskPickerContent.itemCount(
+        tasks: [codexTask, openCodeTask],
+        threads: threads
+      ),
+      3
+    )
+  }
+
   func testExternalTaskCardDoesNotRenderTheFullResultSummary() {
     let task = MCPServiceTaskSnapshot(
       taskID: "opencode-task",
@@ -113,5 +137,22 @@ final class WorkbenchThreadTitlePresentationTests: XCTestCase {
     }
     XCTAssertEqual(preview.count, 240)
     XCTAssertTrue(preview.hasSuffix("…"))
+  }
+
+  private func task(
+    taskID: String,
+    providerID: String,
+    threadID: String? = nil
+  ) -> MCPServiceTaskSnapshot {
+    MCPServiceTaskSnapshot(
+      taskID: taskID,
+      projectID: "project-1",
+      status: "completed",
+      providerID: providerID,
+      threadID: threadID,
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-28T00:00:00Z"
+    )
   }
 }

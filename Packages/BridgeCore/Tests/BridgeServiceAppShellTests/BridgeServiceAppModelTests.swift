@@ -1413,7 +1413,18 @@ final class BridgeServiceAppModelTests: XCTestCase {
       localApprovalRequired: false,
       updatedAt: "2026-08-21T00:00:00Z"
     )
-    await client.setTaskSnapshots([codexTask])
+    let earlierTask = MCPServiceTaskSnapshot(
+      taskID: "earlier-codex-task",
+      projectID: "project-1",
+      status: "running",
+      providerID: "codex",
+      threadID: "thread-1",
+      turnID: "earlier-turn",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-20T00:00:00Z"
+    )
+    await client.setTaskSnapshots([earlierTask, codexTask])
     let model = BridgeServiceAppModel(
       registration: registration,
       clientFactory: { client },

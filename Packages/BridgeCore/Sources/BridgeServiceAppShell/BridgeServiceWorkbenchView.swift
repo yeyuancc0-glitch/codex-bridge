@@ -242,17 +242,19 @@ struct BridgeServiceWorkbenchView: View {
         .accessibilityLabel("当前任务实际使用模型：\(modelLabel)")
       }
 
-      if !externalAgentTasks.isEmpty {
-        HStack(spacing: 6) {
-          WorkbenchProviderTaskPicker(model: model, tasks: externalAgentTasks)
-          Spacer()
-          if let activeTask = currentActiveTask, canInterrupt(activeTask) {
-            Button("中断", role: .destructive) {
-              model.interruptTask(activeTask)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
+      HStack(spacing: 6) {
+        WorkbenchAgentTaskPicker(
+          model: model,
+          tasks: projectTasks,
+          threads: model.threads
+        )
+        Spacer()
+        if let activeTask = currentActiveTask, canInterrupt(activeTask) {
+          Button("中断", role: .destructive) {
+            model.interruptTask(activeTask)
           }
+          .buttonStyle(.bordered)
+          .controlSize(.mini)
         }
       }
 
@@ -272,66 +274,6 @@ struct BridgeServiceWorkbenchView: View {
         .help("该 Provider 会在当前轮完成后，将补充指令作为同一会话的下一次输入")
       }
 
-      if currentTask?.isExternalAgentTask != true {
-        // Codex thread selector & status
-        HStack(spacing: 6) {
-          Image(systemName: "bubble.left.and.text.bubble.right")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-
-          if model.threads.isEmpty {
-            Text("暂无已保存会话")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          } else {
-            Menu {
-              ForEach(model.threads, id: \.threadID) { thread in
-                let title = thread.title ?? thread.preview ?? thread.threadID
-                let compactTitle = WorkbenchThreadTitlePresentation.compact(
-                  title,
-                  maximumCharacters: 48
-                )
-                Button {
-                  model.openThread(thread.threadID)
-                } label: {
-                  if thread.threadID == model.selectedThreadID {
-                    Label(compactTitle, systemImage: "checkmark")
-                      .accessibilityLabel(title)
-                  } else {
-                    Text(compactTitle)
-                      .accessibilityLabel(title)
-                  }
-                }
-              }
-            } label: {
-              Text(
-                WorkbenchThreadTitlePresentation.compact(
-                  currentSelectedThreadTitle,
-                  maximumCharacters: 28
-                )
-              )
-              .font(.caption.weight(.medium))
-              .lineLimit(1)
-              .truncationMode(.tail)
-              .frame(maxWidth: 220, alignment: .leading)
-            }
-            .menuStyle(.borderlessButton)
-            .frame(maxWidth: 220, alignment: .leading)
-            .help(currentSelectedThreadTitle)
-            .accessibilityLabel("当前会话：\(currentSelectedThreadTitle)")
-          }
-
-          Spacer()
-
-          if let activeTask = currentActiveTask, canInterrupt(activeTask) {
-            Button("中断", role: .destructive) {
-              model.interruptTask(activeTask)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-          }
-        }
-      }
     }
     .padding(12)
     .background(Color(nsColor: .windowBackgroundColor))
@@ -537,10 +479,9 @@ struct BridgeServiceWorkbenchView: View {
     return currentActiveTask
   }
 
-  private var externalAgentTasks: [MCPServiceTaskSnapshot] {
+  private var projectTasks: [MCPServiceTaskSnapshot] {
     model.tasks.filter { task in
-      task.isExternalAgentTask
-        && (model.selectedProjectID == nil || task.projectID == model.selectedProjectID)
+      model.selectedProjectID == nil || task.projectID == model.selectedProjectID
     }
   }
 
@@ -577,13 +518,6 @@ struct BridgeServiceWorkbenchView: View {
       task: currentTask ?? currentActiveTask,
       activity: model.conversation?.activity ?? .idle
     )
-  }
-
-  private var currentSelectedThreadTitle: String {
-    guard let threadID = model.selectedThreadID else { return "选择会话" }
-    return model.threads.first(where: { $0.threadID == threadID })?.title
-      ?? model.threads.first(where: { $0.threadID == threadID })?.preview
-      ?? threadID.prefix(8) + "…"
   }
 
   private var pendingApprovalIDs: [String] {
