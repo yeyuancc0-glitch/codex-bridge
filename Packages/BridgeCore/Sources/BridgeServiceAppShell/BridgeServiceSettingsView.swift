@@ -201,10 +201,6 @@ struct BridgeServiceSettingsView: View {
         HStack {
           Label("后台运行与远程 Agent 授权", systemImage: "server.rack")
             .font(.headline)
-
-          Spacer()
-
-          StatusBadge(registrationLabel, tone: registrationTone)
         }
 
         Toggle(
@@ -457,24 +453,6 @@ struct BridgeServiceSettingsView: View {
     case "high": "高"
     case "xhigh", "extra_high": "极高"
     default: effort
-    }
-  }
-
-  private var registrationLabel: String {
-    switch model.registrationStatus {
-    case .notRegistered: "未注册"
-    case .enabled: "已启用"
-    case .requiresApproval: "等待批准"
-    case .notFound: "配置缺失"
-    }
-  }
-
-  private var registrationTone: StatusTone {
-    switch model.registrationStatus {
-    case .enabled: .success
-    case .requiresApproval: .warning
-    case .notRegistered: .neutral
-    case .notFound: .error
     }
   }
 
