@@ -353,6 +353,38 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(runningStatus.pendingApprovalCount, 0)
   }
 
+  func testConfiguredPolicyAutomaticallyApprovesRemoteTaskStart() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.setTaskStartApprovalMode(.auto)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Start using the configured local approval policy."
+      ),
+      deadline: deadline
+    )
+
+    XCTAssertEqual(receipt.status, ServiceTaskStatus.running.rawValue)
+    XCTAssertFalse(receipt.localApprovalRequired)
+    let pendingApprovals = try await application.pendingTaskStartApprovals()
+    XCTAssertTrue(pendingApprovals.isEmpty)
+    let events = try await fixture.tasks.events(
+      taskID: TaskID(rawValue: receipt.taskID),
+      limit: 20
+    )
+    XCTAssertEqual(events.map(\.kind), [.taskCreated, .taskApproved, .executionStarted])
+    XCTAssertEqual(
+      events.first(where: { $0.kind == .taskApproved })?.summary,
+      "The configured local policy automatically approved this provider invocation."
+    )
+  }
+
   func testDenyingChatGPTTaskStartApprovalDoesNotStartCodex() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let application = makeServiceApplication(

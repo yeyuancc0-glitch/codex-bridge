@@ -71,7 +71,10 @@ public actor ServiceTaskManager {
   }
 
   @discardableResult
-  public func approveAndBegin(taskID: TaskID) async throws -> ServiceTaskRecord {
+  public func approveAndBegin(
+    taskID: TaskID,
+    summary: String = "The local user approved this provider invocation."
+  ) async throws -> ServiceTaskRecord {
     try await mutate(
       taskID: taskID,
       patch: StatePatch(
@@ -79,7 +82,7 @@ public actor ServiceTaskManager {
         supervisorStatus: try await supervisorStartStatus(taskID: taskID)
       ),
       eventKind: .taskApproved,
-      summary: "The local user approved this provider invocation.",
+      summary: summary,
       expectedStatus: .awaitingLocalApproval
     )
   }

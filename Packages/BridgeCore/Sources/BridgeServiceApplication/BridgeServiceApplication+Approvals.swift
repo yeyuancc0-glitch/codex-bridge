@@ -51,6 +51,21 @@ extension BridgeServiceApplication {
     try await settings.setDirectApprovalMode(mode)
   }
 
+  public func serviceTaskStartApprovalMode(
+    deadline: ContinuousClock.Instant
+  ) async throws -> ServiceTaskStartApprovalMode {
+    try Self.checkDeadline(deadline)
+    return try await settings.taskStartApprovalMode()
+  }
+
+  public func serviceSetTaskStartApprovalMode(
+    _ mode: ServiceTaskStartApprovalMode,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setTaskStartApprovalMode(mode)
+  }
+
   public func serviceApproveDirectApproval(
     approvalID: String,
     deadline: ContinuousClock.Instant

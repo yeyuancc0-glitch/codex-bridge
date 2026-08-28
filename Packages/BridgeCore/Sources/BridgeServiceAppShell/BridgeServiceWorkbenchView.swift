@@ -507,10 +507,10 @@ struct BridgeServiceWorkbenchView: View {
 
   private var providerSubtitle: String {
     guard let task = currentTask, task.isExternalAgentTask else {
-      return "GPT 调用 Codex 时，默认在当前选择的项目中执行"
+      return "远程 MCP 调用 Codex 或外部 Agent 时，默认在当前选择的项目中执行"
     }
     let permission = WorkbenchAgentPermissionPresentation.title(task.permissionMode)
-    return "\(task.providerDisplayName) 原生 \(permission)，并在此处显示实时结果"
+    return "\(task.providerDisplayName) 原生 \(permission)，在当前项目执行并在此处显示实时结果"
   }
 
   private var activity: CodexActivityPresentation {

@@ -89,6 +89,22 @@ public struct IPCDirectApprovalModeResponse: Codable, Equatable, Sendable {
   }
 }
 
+public struct IPCTaskStartApprovalModeRequest: Codable, Equatable, Sendable {
+  public let mode: String
+
+  public init(mode: String) {
+    self.mode = mode
+  }
+}
+
+public struct IPCTaskStartApprovalModeResponse: Codable, Equatable, Sendable {
+  public let mode: String
+
+  public init(mode: String) {
+    self.mode = mode
+  }
+}
+
 public struct IPCModelCatalogResponse: Codable, Equatable, Sendable {
   public let models: [MCPModelSummary]
   public let preferences: IPCModelPreferences

@@ -822,6 +822,45 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     )
   }
 
+  func testAgentSubmissionWithoutProjectUsesWorkbenchSelection() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.setTaskStartApprovalMode(.auto)
+    let provider = try ScriptedAgentProvider()
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    try await application.serviceSetWorkbenchProjectID(
+      fixture.project.id.rawValue,
+      deadline: deadline
+    )
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        prompt: "Use the selected workbench project for this agent task.",
+        providerID: AgentProviderID.openCode.rawValue,
+        permissionMode: "read-only"
+      ),
+      deadline: deadline
+    )
+
+    let stored = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(stored?.projectID, fixture.project.id)
+    XCTAssertEqual(stored?.providerID, AgentProviderID.openCode.rawValue)
+    XCTAssertEqual(stored?.state.status, .running)
+    XCTAssertFalse(receipt.localApprovalRequired)
+    XCTAssertEqual(provider.startedRequests.count, 1)
+    XCTAssertEqual(provider.startedRequests[0].projectID, fixture.project.id)
+    XCTAssertEqual(provider.startedRequests[0].projectRoot, fixture.project.root.canonicalPath)
+  }
+
   func testAgentModelRefreshCanIgnoreDeletedStoredDefault() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     try await fixture.settings.set("opencode/deleted", for: .openCodeDefaultModel)

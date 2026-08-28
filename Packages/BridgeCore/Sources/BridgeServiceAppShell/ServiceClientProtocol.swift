@@ -101,6 +101,8 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func denyDirectApproval(approvalID: String) async throws -> Bool
   func directApprovalMode() async throws -> String
   func setDirectApprovalMode(_ mode: String) async throws
+  func taskStartApprovalMode() async throws -> String
+  func setTaskStartApprovalMode(_ mode: String) async throws
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws
   func mcpClients() async throws -> [IPCMCPClientStatus]
   func setMCPClientEnabled(clientID: String, enabled: Bool) async throws

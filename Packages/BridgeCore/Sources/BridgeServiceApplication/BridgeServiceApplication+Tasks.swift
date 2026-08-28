@@ -192,6 +192,13 @@ extension BridgeServiceApplication {
       prepared.request,
       projectID: prepared.projectID
     )
+    if try await settings.taskStartApprovalMode() == .auto,
+      let submitted = try await tasks.task(id: result.task.id),
+      submitted.state.status == .awaitingLocalApproval,
+      submitted.requiresLocalStartApproval
+    {
+      try await approveAndStartTask(submitted.id, automatically: true)
+    }
     let task = try await tasks.task(id: result.task.id)
     let latest = task ?? result.task
     return MCPServiceTaskSubmissionReceipt(
@@ -625,10 +632,19 @@ extension BridgeServiceApplication {
     }
   }
 
-  private func approveAndStartTask(_ taskID: TaskID) async throws {
+  private func approveAndStartTask(
+    _ taskID: TaskID,
+    automatically: Bool = false
+  ) async throws {
     let started: ServiceTaskRecord
     do {
-      started = try await tasks.approveAndBegin(taskID: taskID)
+      started = try await tasks.approveAndBegin(
+        taskID: taskID,
+        summary:
+          automatically
+          ? "The configured local policy automatically approved this provider invocation."
+          : "The local user approved this provider invocation."
+      )
     } catch ServiceStoreError.invalidTaskTransition {
       throw BridgeMCPQueryError.approvalExpired
     } catch let storeError as ServiceStoreError {

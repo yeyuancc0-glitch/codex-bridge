@@ -251,6 +251,21 @@ public actor BridgeServiceClient {
     )
   }
 
+  public func taskStartApprovalMode() async throws -> String {
+    let response: IPCTaskStartApprovalModeResponse = try await call(
+      operation: .getTaskStartApprovalMode,
+      payload: Optional<IPCMutationResponse>.none
+    )
+    return response.mode
+  }
+
+  public func setTaskStartApprovalMode(_ mode: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setTaskStartApprovalMode,
+      payload: IPCTaskStartApprovalModeRequest(mode: mode)
+    )
+  }
+
   public func threads(_ request: IPCThreadListRequest) async throws -> MCPThreadPage {
     try await call(operation: .listThreads, payload: request)
   }

@@ -34,6 +34,13 @@ extension BridgeServiceAppModel {
     connectionState = .idle
   }
 
+  public func shutdownForApplicationTermination() async {
+    if !keepServiceRunningAfterAppExit {
+      await disableBackgroundService()
+    }
+    await shutdownUI()
+  }
+
   func enableBackgroundService() async {
     guard !stopped else { return }
     errorMessage = nil
@@ -110,6 +117,7 @@ extension BridgeServiceAppModel {
       isManagingAgents = false
       tasks = []
       approvals = []
+      taskStartApprovalMode = "require"
       resolvingApprovalKeys = []
       resolvedTaskApprovalKeys = []
       resolvedDirectApprovalKeys = []
@@ -254,6 +262,9 @@ extension BridgeServiceAppModel {
     async let approvalResult = optional { try await client.approvals(taskID: nil) }
     async let directApprovalResult = optional { try await client.pendingDirectApprovals() }
     async let directApprovalModeResult = optional { try await client.directApprovalMode() }
+    async let taskStartApprovalModeResult = optional {
+      try await client.taskStartApprovalMode()
+    }
     async let mcpClientResult = optional { try await client.mcpClients() }
 
     if let value = await projectResult, projects != value {
@@ -331,6 +342,9 @@ extension BridgeServiceAppModel {
     }
     if let value = await directApprovalModeResult, directApprovalMode != value {
       directApprovalMode = value
+    }
+    if let value = await taskStartApprovalModeResult, taskStartApprovalMode != value {
+      taskStartApprovalMode = value
     }
     if let value = await mcpClientResult, mcpClients != value {
       mcpClients = value

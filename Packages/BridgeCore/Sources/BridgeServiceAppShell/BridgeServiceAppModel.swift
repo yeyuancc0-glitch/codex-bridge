@@ -113,6 +113,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var directApprovals: [IPCPendingDirectApproval] = []
   @Published public internal(set) var resolvingApprovalKeys: Set<String> = []
   @Published public internal(set) var directApprovalMode = "require"
+  @Published public internal(set) var taskStartApprovalMode = "require"
   @Published public internal(set) var mcpClients: [IPCMCPClientStatus] = []
   @Published public internal(set) var models: [MCPModelSummary] = []
   @Published public internal(set) var modelPreferences: IPCModelPreferences?
@@ -139,7 +140,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var toast: ToastNotice?
   @Published public var isChatBrowserEnabled: Bool {
     didSet {
-      UserDefaults.standard.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
+      userDefaults.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
       if isChatBrowserEnabled {
         updateChatBrowserVisibility()
       } else {
@@ -148,9 +149,18 @@ public final class BridgeServiceAppModel: ObservableObject {
       }
     }
   }
+  @Published public var keepServiceRunningAfterAppExit: Bool {
+    didSet {
+      userDefaults.set(
+        keepServiceRunningAfterAppExit,
+        forKey: Self.keepServiceRunningAfterAppExitKey
+      )
+    }
+  }
 
   let registration: any BridgeServiceRegistrationManaging
   let clientFactory: BridgeServiceClientFactory
+  let userDefaults: UserDefaults
   let pollInterval: Duration?
   let connectionRetryDelay: Duration
   let maximumConnectionAttempts: Int
@@ -182,6 +192,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   var stopped = false
 
   private static let chatBrowserEnabledKey = "chatBrowserEnabled"
+  private static let keepServiceRunningAfterAppExitKey =
+    "keepServiceRunningAfterAppExit"
 
   public convenience init() {
     self.init(
@@ -196,7 +208,8 @@ public final class BridgeServiceAppModel: ObservableObject {
     pollInterval: Duration? = .seconds(2),
     connectionRetryDelay: Duration = .milliseconds(200),
     maximumConnectionAttempts: Int = 20,
-    chatBrowserSleepDelay: Duration = .seconds(180)
+    chatBrowserSleepDelay: Duration = .seconds(180),
+    userDefaults: UserDefaults = .standard
   ) {
     precondition(maximumConnectionAttempts > 0)
     self.registration = registration
@@ -205,9 +218,13 @@ public final class BridgeServiceAppModel: ObservableObject {
     self.connectionRetryDelay = connectionRetryDelay
     self.maximumConnectionAttempts = maximumConnectionAttempts
     self.chatBrowserSleepDelay = chatBrowserSleepDelay
+    self.userDefaults = userDefaults
     registrationStatus = registration.status
     isChatBrowserEnabled =
-      UserDefaults.standard.object(forKey: Self.chatBrowserEnabledKey)
+      userDefaults.object(forKey: Self.chatBrowserEnabledKey)
+      as? Bool ?? true
+    keepServiceRunningAfterAppExit =
+      userDefaults.object(forKey: Self.keepServiceRunningAfterAppExitKey)
       as? Bool ?? true
   }
 

@@ -895,6 +895,28 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.modelPreferences?.fastModeEnabled, true)
   }
 
+  func testTaskStartApprovalModeReachesServiceClient() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    XCTAssertEqual(model.taskStartApprovalMode, "require")
+
+    model.setTaskStartApprovalMode("auto")
+
+    try await waitUntil {
+      let mode = try? await client.taskStartApprovalMode()
+      return mode == "auto"
+    }
+    XCTAssertEqual(model.taskStartApprovalMode, "auto")
+  }
+
   func testShutdownClosesOnlyUIClientAndLeavesServiceRegistered() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -915,6 +937,67 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(registration.unregisterCount, 0)
     XCTAssertEqual(registration.status, .enabled)
     XCTAssertEqual(model.connectionState, .idle)
+  }
+
+  func testApplicationTerminationUnregistersServiceWhenBackgroundPersistenceIsOff()
+    async throws
+  {
+    let suiteName = "BridgeServiceAppModelTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1,
+      userDefaults: defaults
+    )
+    XCTAssertTrue(model.keepServiceRunningAfterAppExit)
+    model.keepServiceRunningAfterAppExit = false
+    await model.startAsync()
+
+    await model.shutdownForApplicationTermination()
+
+    XCTAssertEqual(registration.unregisterCount, 1)
+    XCTAssertEqual(registration.status, .notRegistered)
+    let closeCount = await client.closeCount()
+    XCTAssertEqual(closeCount, 1)
+    let reloaded = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      userDefaults: defaults
+    )
+    XCTAssertFalse(reloaded.keepServiceRunningAfterAppExit)
+  }
+
+  func testApplicationTerminationLeavesServiceRegisteredWhenBackgroundPersistenceIsOn()
+    async throws
+  {
+    let suiteName = "BridgeServiceAppModelTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1,
+      userDefaults: defaults
+    )
+    await model.startAsync()
+
+    await model.shutdownForApplicationTermination()
+
+    XCTAssertEqual(registration.unregisterCount, 0)
+    XCTAssertEqual(registration.status, .enabled)
+    let closeCount = await client.closeCount()
+    XCTAssertEqual(closeCount, 1)
   }
 
   func testRequiresApprovalDoesNotCreateAnXPCClient() async {

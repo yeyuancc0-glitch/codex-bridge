@@ -44,7 +44,7 @@ struct BridgeServiceSettingsView: View {
         }
 
         VStack(alignment: .leading, spacing: 12) {
-          Text("后台常驻服务与系统守护")
+          Text("后台运行与远程授权")
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
@@ -199,13 +199,45 @@ struct BridgeServiceSettingsView: View {
     NativeCard {
       VStack(alignment: .leading, spacing: 14) {
         HStack {
-          Label("LaunchAgent 系统常驻守护", systemImage: "server.rack")
+          Label("后台运行与远程 Agent 授权", systemImage: "server.rack")
             .font(.headline)
 
           Spacer()
 
           StatusBadge(registrationLabel, tone: registrationTone)
         }
+
+        Toggle(
+          "自动批准远程 Agent 启动请求",
+          isOn: Binding(
+            get: { model.taskStartApprovalMode == "auto" },
+            set: { model.setTaskStartApprovalMode($0 ? "auto" : "require") }
+          )
+        )
+        .toggleStyle(.switch)
+        .disabled(model.connectionState != .connected)
+
+        Text(
+          "默认关闭。开启后，ChatGPT 或 Qwen 提交的 Codex、OpenCode、DeepSeek Harness、Antigravity 任务无需逐次本机批准即可启动；Provider 工具审批和 Direct 高风险操作仍遵循各自策略。"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+        Divider()
+
+        Toggle(
+          "退出 App 后保持后台服务运行",
+          isOn: $model.keepServiceRunningAfterAppExit
+        )
+        .toggleStyle(.switch)
+
+        Text(
+          model.keepServiceRunningAfterAppExit
+            ? "退出可视化 App 后，LaunchAgent、远程 MCP 连接和进行中的任务继续运行。"
+            : "按 ⌘Q 退出 App 时将注销 LaunchAgent，并停止远程连接和进行中的任务。"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
         HStack {
           Text("本机 XPC 通信：")
@@ -219,7 +251,10 @@ struct BridgeServiceSettingsView: View {
         case .notRegistered:
           CalloutBanner(
             title: "后台服务尚未注册",
-            message: "注册后台服务后，Codex Bridge 可以在 App 关闭后持续响应已启用的 MCP 客户端并维持任务执行。",
+            message:
+              model.keepServiceRunningAfterAppExit
+              ? "注册后台服务后，Codex Bridge 可以在 App 退出后持续响应已启用的 MCP 客户端并维持任务执行。"
+              : "注册后台服务后，Codex Bridge 会在 App 打开期间响应已启用的 MCP 客户端；按 ⌘Q 退出时停止。",
             symbol: "info.circle",
             tone: .info,
             actionTitle: "立即注册后台 Service"
@@ -280,7 +315,9 @@ struct BridgeServiceSettingsView: View {
         CalloutBanner(
           title: "生命周期保障说明",
           message:
-            "关闭或退出当前可视化 App 只会断开本机 XPC 客户端，不会主动停止后台 Service、Codex 或外部 Provider。只有点击“停用后台服务”才会注销系统 LaunchAgent 守护。",
+            model.keepServiceRunningAfterAppExit
+            ? "关闭窗口不影响 App 与后台 Service；退出 App 只断开本机 XPC 客户端，不会停止 Codex 或外部 Provider。"
+            : "关闭窗口不会停止后台 Service；按 ⌘Q 退出 App 时会注销 LaunchAgent 并停止 Codex 或外部 Provider。",
           symbol: "info.circle",
           tone: .neutral
         )

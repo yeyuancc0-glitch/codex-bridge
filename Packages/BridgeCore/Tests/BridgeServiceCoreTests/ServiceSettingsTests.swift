@@ -2,6 +2,20 @@ import BridgeServiceCore
 import XCTest
 
 final class ServiceSettingsTests: XCTestCase {
+  func testTaskStartApprovalRequiresLocalApprovalByDefaultAndPersistsAutoMode() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let settings = ServiceSettings(store: try SimpleServiceStore(path: fixture.databasePath))
+
+    let defaultMode = try await settings.taskStartApprovalMode()
+    XCTAssertEqual(defaultMode, .require)
+
+    try await settings.setTaskStartApprovalMode(.auto)
+
+    let persistedMode = try await settings.taskStartApprovalMode()
+    XCTAssertEqual(persistedMode, .auto)
+  }
+
   func testAntigravityDefaultsToWorkspaceWriteAndPersistsBuildPlanValues() async throws {
     let fixture = try ServiceCoreFixture()
     defer { fixture.remove() }

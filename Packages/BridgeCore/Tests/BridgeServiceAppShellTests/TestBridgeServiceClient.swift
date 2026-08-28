@@ -762,6 +762,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   private var directApprovalModeValue = "require"
+  private var taskStartApprovalModeValue = "require"
 
   func directApprovalMode() async throws -> String {
     directApprovalModeValue
@@ -769,6 +770,14 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setDirectApprovalMode(_ mode: String) async throws {
     directApprovalModeValue = mode
+  }
+
+  func taskStartApprovalMode() async throws -> String {
+    taskStartApprovalModeValue
+  }
+
+  func setTaskStartApprovalMode(_ mode: String) async throws {
+    taskStartApprovalModeValue = mode
   }
 
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws {

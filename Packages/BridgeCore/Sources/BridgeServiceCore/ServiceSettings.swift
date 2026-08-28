@@ -10,6 +10,11 @@ public enum ServiceDirectApprovalMode: String, Codable, CaseIterable, Sendable {
   case auto
 }
 
+public enum ServiceTaskStartApprovalMode: String, Codable, CaseIterable, Sendable {
+  case require
+  case auto
+}
+
 public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case customInstructions = "mcp.custom_instructions"
   case mcpExposureMode = "mcp.exposure_mode"
@@ -17,6 +22,7 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case qwenStudioEnabled = "mcp.client.qwen-studio.enabled"
   case qwenStudioExposureMode = "mcp.client.qwen-studio.exposure_mode"
   case directApprovalMode = "direct.approval_mode"
+  case taskStartApprovalMode = "tasks.start_approval_mode"
   case defaultExecutionModel = "models.execution.default"
   case defaultExecutionEffort = "models.execution.effort"
   case defaultSupervisorModel = "models.supervisor.default"
@@ -162,6 +168,18 @@ public actor ServiceSettings {
 
   public func setDirectApprovalMode(_ mode: ServiceDirectApprovalMode) async throws {
     try await set(mode.rawValue, for: .directApprovalMode)
+  }
+
+  public func taskStartApprovalMode() async throws -> ServiceTaskStartApprovalMode {
+    guard let value = try await string(for: .taskStartApprovalMode) else { return .require }
+    guard let mode = ServiceTaskStartApprovalMode(rawValue: value) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return mode
+  }
+
+  public func setTaskStartApprovalMode(_ mode: ServiceTaskStartApprovalMode) async throws {
+    try await set(mode.rawValue, for: .taskStartApprovalMode)
   }
 
   public func setModelPreferences(_ preferences: ServiceModelPreferences) async throws {

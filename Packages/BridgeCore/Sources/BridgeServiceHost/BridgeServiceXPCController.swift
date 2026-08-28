@@ -179,6 +179,10 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleGetDirectApprovalMode(request)
     case .setDirectApprovalMode:
       return try await handleSetDirectApprovalMode(request)
+    case .getTaskStartApprovalMode:
+      return try await handleGetTaskStartApprovalMode(request)
+    case .setTaskStartApprovalMode:
+      return try await handleSetTaskStartApprovalMode(request)
     case .submitAgentTask:
       return try await handleSubmitAgentTask(request)
     case .listAgentModels:

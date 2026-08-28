@@ -3,6 +3,19 @@ import BridgeMCP
 import Foundation
 
 extension BridgeServiceAppModel {
+  func setTaskStartApprovalMode(_ mode: String) {
+    guard mode == "require" || mode == "auto" else { return }
+    runMutation { [weak self] client in
+      try await client.setTaskStartApprovalMode(mode)
+      self?.taskStartApprovalMode = mode
+      self?.postToast(
+        mode == "auto"
+          ? "远程 Agent 启动请求将自动批准"
+          : "远程 Agent 启动请求恢复为本机批准"
+      )
+    }
+  }
+
   func saveCustomInstructions(_ instructions: String) {
     guard !isSavingCustomInstructions else { return }
     isSavingCustomInstructions = true
