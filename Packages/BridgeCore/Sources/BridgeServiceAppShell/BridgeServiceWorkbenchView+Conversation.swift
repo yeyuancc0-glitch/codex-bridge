@@ -1,8 +1,62 @@
+import BridgeMCP
 import SwiftUI
+
+struct BridgeServiceWorkbenchInspectorLiveRegion: View {
+  @ObservedObject var model: BridgeServiceAppModel
+  let context: BridgeServiceWorkbenchInspectorContext
+
+  @ViewBuilder
+  var body: some View {
+    if let conversation = model.conversation {
+      BridgeServiceWorkbenchObservedLiveRegion(
+        model: model,
+        conversation: conversation,
+        context: context
+      )
+      .id(conversation.taskID)
+    } else {
+      BridgeServiceWorkbenchInspectorBody(
+        model: model,
+        context: context,
+        conversation: nil,
+        activity: context.activity
+      )
+      .frame(minHeight: 0, maxHeight: .infinity)
+      Divider()
+      BridgeServiceWorkbenchInspectorFooter(model: model, activity: context.activity)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+}
+
+private struct BridgeServiceWorkbenchObservedLiveRegion: View {
+  @ObservedObject var model: BridgeServiceAppModel
+  @ObservedObject var conversation: TaskConversationModel
+  let context: BridgeServiceWorkbenchInspectorContext
+
+  var body: some View {
+    let activity = CodexActivityPresentation(
+      task: context.currentTask ?? context.currentActiveTask,
+      activity: conversation.activity
+    )
+    BridgeServiceWorkbenchInspectorBody(
+      model: model,
+      context: context,
+      conversation: conversation,
+      activity: activity
+    )
+    .frame(minHeight: 0, maxHeight: .infinity)
+    Divider()
+    BridgeServiceWorkbenchInspectorFooter(model: model, activity: activity)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+}
 
 struct BridgeServiceWorkbenchInspectorBody: View {
   @ObservedObject var model: BridgeServiceAppModel
   let context: BridgeServiceWorkbenchInspectorContext
+  let conversation: TaskConversationModel?
+  let activity: CodexActivityPresentation
 
   var body: some View {
     ScrollViewReader { proxy in
@@ -30,19 +84,18 @@ struct BridgeServiceWorkbenchInspectorBody: View {
           }
 
           BridgeServiceWorkbenchConversationStream(
-            model: model,
-            activity: context.activity
+            conversation: conversation,
+            selectedThread: model.selectedThread,
+            activity: activity
           )
         }
         .padding(12)
       }
       .frame(minHeight: 0, maxHeight: .infinity)
       .clipped()
-      .onChange(of: model.conversation?.scrollAnchor) { _, anchor in
-        guard let anchor else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
-          proxy.scrollTo(anchor, anchor: .bottom)
-        }
+      .onChange(of: conversation?.scrollRevision) { _, _ in
+        guard let anchor = conversation?.scrollAnchor else { return }
+        proxy.scrollTo(anchor, anchor: .bottom)
       }
     }
     .frame(minHeight: 0, maxHeight: .infinity)
@@ -51,11 +104,12 @@ struct BridgeServiceWorkbenchInspectorBody: View {
 }
 
 struct BridgeServiceWorkbenchConversationStream: View {
-  @ObservedObject var model: BridgeServiceAppModel
+  let conversation: TaskConversationModel?
+  let selectedThread: MCPThreadReadPage?
   let activity: CodexActivityPresentation
 
   var body: some View {
-    if let conversation = model.conversation, !conversation.entries.isEmpty {
+    if let conversation, !conversation.entries.isEmpty {
       LazyVStack(alignment: .leading, spacing: 10) {
         ForEach(conversation.entries) { entry in
           MessageBubble(entry: entry, streaming: entry.role == "agent" && !entry.isFinal)
@@ -70,7 +124,7 @@ struct BridgeServiceWorkbenchConversationStream: View {
           .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }
       }
-    } else if let selectedThread = model.selectedThread, !selectedThread.entries.isEmpty {
+    } else if let selectedThread, !selectedThread.entries.isEmpty {
       let groups = ThreadTurnGroup.group(entries: selectedThread.entries)
       LazyVStack(alignment: .leading, spacing: 12) {
         ForEach(groups) { group in

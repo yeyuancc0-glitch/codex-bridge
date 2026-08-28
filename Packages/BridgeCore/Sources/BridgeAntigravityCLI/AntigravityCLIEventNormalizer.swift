@@ -18,6 +18,7 @@ public enum AntigravityPermissionEvidence {
       "soft denied",
       "permission denied",
       "permission was denied",
+      "denied permission",
       "requires approval",
       "could not obtain approval",
       "not allowed by permission",
@@ -52,8 +53,10 @@ public actor AntigravityCLIEventNormalizer {
 
   public func normalize(_ update: AntigravityStepUpdate) throws -> [AgentEventEnvelope] {
     try validateSession(update.conversationID)
-    guard update.stepIndex >= 0,
+    let isKnownState =
       update.state == "ACTIVE" || update.state == "DONE"
+      || (update.state == "ERROR" && update.stepType == "tool")
+    guard update.stepIndex >= 0, isKnownState
     else {
       throw AntigravityCLIError.invalidMessage
     }
@@ -172,9 +175,10 @@ public actor AntigravityCLIEventNormalizer {
 
   private func tool(_ update: AntigravityStepUpdate) throws -> AgentEventEnvelope {
     let info = update.toolInfo
+    let error = info?.error ?? update.error
     let name = Self.safeIdentifier(info?.name ?? update.toolName) ?? "tool"
     let status: AgentToolStatus
-    if info?.error != nil {
+    if update.state == "ERROR" || error != nil {
       status = .failed
     } else {
       status = update.state == "DONE" ? .completed : .inProgress
@@ -186,7 +190,7 @@ public actor AntigravityCLIEventNormalizer {
       kind: name,
       status: status,
       arguments: Self.safeArguments(info?.parameters),
-      output: Self.safeOutput(info?.error?.message ?? info?.output),
+      output: Self.safeOutput(error?.message ?? info?.output),
       locations: locations(in: info?.parameters)
     )
     return try envelope(.tool(payload))

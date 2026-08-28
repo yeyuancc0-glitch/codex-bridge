@@ -170,6 +170,7 @@ public struct AntigravityStepUpdate: Codable, Equatable, Sendable {
   public let durationSeconds: Double?
   public let usage: AntigravityUsage?
   public let toolInfo: AntigravityToolInfo?
+  public let error: AntigravityToolError?
   public let subagentInfo: AntigravitySubagentInfo?
 
   private enum CodingKeys: String, CodingKey {
@@ -182,6 +183,7 @@ public struct AntigravityStepUpdate: Codable, Equatable, Sendable {
     case durationSeconds = "duration_seconds"
     case usage
     case toolInfo = "tool_info"
+    case error
     case subagentInfo = "subagent_info"
   }
 }

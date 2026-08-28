@@ -40,6 +40,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private let failThreadList: Bool
   private var statusDelay: Duration = .zero
   private var failSubscription = false
+  private var subscriptionDelay: Duration = .zero
   private var threadListCalls = 0
   private var threadReadCalls = 0
   private var skillsValue: [MCPServiceSkill] = []
@@ -119,6 +120,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setFailSubscription(_ fail: Bool) {
     failSubscription = fail
+  }
+
+  func setSubscriptionDelay(_ delay: Duration) {
+    subscriptionDelay = delay
   }
 
   func setStatusDelay(_ delay: Duration) {
@@ -692,6 +697,9 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     limit _: Int
   ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>) {
     subscribeCalls += 1
+    if subscriptionDelay > .zero {
+      try await Task.sleep(for: subscriptionDelay)
+    }
     if failSubscription {
       throw BridgeServiceClientError.unavailable
     }

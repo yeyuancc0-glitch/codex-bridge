@@ -83,15 +83,21 @@ extension BridgeServiceClient {
     limit: Int = 200
   ) async throws -> (IPCTaskConversationSubscription, AsyncStream<IPCTaskConversationPush>) {
     guard !invalidated else { throw BridgeServiceClientError.unavailable }
-    let updates = streamHub.register(taskID: taskID)
+    let registration = streamHub.registerWithToken(taskID: taskID)
     do {
       let subscription: IPCTaskConversationSubscription = try await call(
         operation: .subscribeTaskConversation,
         payload: IPCTaskConversationRequest(taskID: taskID, limit: limit)
       )
-      return (subscription, updates)
+      guard subscription.subscriptionID >= 0 else {
+        streamHub.unregister(taskID: taskID, token: registration.token)
+        return (subscription, registration.stream)
+      }
+      conversationStreamTokens[taskID, default: [:]][subscription.subscriptionID] =
+        registration.token
+      return (subscription, registration.stream)
     } catch {
-      streamHub.unregisterAll(taskID: taskID)
+      streamHub.unregister(taskID: taskID, token: registration.token)
       throw error
     }
   }
@@ -100,6 +106,14 @@ extension BridgeServiceClient {
     taskID: String,
     subscriptionID: Int
   ) async throws {
+    defer {
+      if let token = conversationStreamTokens[taskID]?.removeValue(forKey: subscriptionID) {
+        streamHub.unregister(taskID: taskID, token: token)
+      }
+      if conversationStreamTokens[taskID]?.isEmpty == true {
+        conversationStreamTokens[taskID] = nil
+      }
+    }
     let _: IPCMutationResponse = try await call(
       operation: .unsubscribeTaskConversation,
       payload: IPCTaskConversationUnsubscribeRequest(
@@ -107,7 +121,6 @@ extension BridgeServiceClient {
         subscriptionID: subscriptionID
       )
     )
-    streamHub.unregisterAll(taskID: taskID)
   }
 
   public func approvals(taskID: String? = nil) async throws -> [IPCApprovalSummary] {

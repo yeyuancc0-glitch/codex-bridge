@@ -56,11 +56,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   @Published public private(set) var isLoadingEarlier = false
   @Published public var autoScroll = true
   @Published public private(set) var scrollAnchor: String?
+  @Published public private(set) var scrollRevision: UInt64 = 0
 
   public let taskID: String
   public private(set) var subscriptionID = -1
 
-  private static let pushBatchDelay: Duration = .milliseconds(40)
+  private static let pushBatchDelay: Duration = .milliseconds(24)
 
   private let client: any BridgeTaskConversationClient
   private var index: [String: Int] = [:]
@@ -70,6 +71,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private var resyncTask: Task<Void, Never>?
   private var pendingPushes: [IPCTaskConversationPush] = []
   private var pendingResyncPushes: [IPCTaskConversationPush] = []
+  private var lifecycleGeneration: UInt64 = 0
 
   private static let maximumPendingPushes = 256
   private static let resyncRetryDelays: [Duration] = [
@@ -90,11 +92,21 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   }
 
   func start() async {
+    let generation = lifecycleGeneration
     do {
       let (subscription, updates) = try await client.subscribeTaskConversation(
         taskID: taskID,
         limit: 200
       )
+      guard lifecycleGeneration == generation else {
+        if subscription.subscriptionID >= 0 {
+          try? await client.unsubscribeTaskConversation(
+            taskID: taskID,
+            subscriptionID: subscription.subscriptionID
+          )
+        }
+        return
+      }
       subscriptionID = subscription.subscriptionID
       applyPage(subscription.page)
       hasAppliedPage = true
@@ -106,6 +118,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         self?.flushPendingPushes()
       }
     } catch {
+      guard lifecycleGeneration == generation else { return }
       errorMessage = BridgeServiceAppModel.message(error)
       do {
         let page = try await client.taskConversation(
@@ -119,6 +132,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   }
 
   func cancel() {
+    lifecycleGeneration &+= 1
     streamingTask?.cancel()
     streamingTask = nil
     pushFlushTask?.cancel()
@@ -161,7 +175,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     entries = page.messages.map { Entry($0, isFinal: $0.final) }
     rebuildIndex()
     refreshStreamingState()
-    scrollAnchor = entries.last?.key
+    requestAutoScroll()
   }
 
   private func enqueuePush(_ push: IPCTaskConversationPush) {
@@ -257,9 +271,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     entries = updatedEntries
     index = updatedIndex
     refreshStreamingState()
-    if autoScroll {
-      scrollAnchor = entries.last?.key
-    }
+    requestAutoScroll()
   }
 
   private func scheduleConversationResync() {
@@ -337,9 +349,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     entries = refreshedEntries
     index = refreshedIndex
     refreshStreamingState()
-    if autoScroll {
-      scrollAnchor = entries.last?.key
-    }
+    requestAutoScroll()
   }
 
   private func rebuildIndex() {
@@ -347,6 +357,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     for (position, entry) in entries.enumerated() {
       index[entry.key] = position
     }
+  }
+
+  private func requestAutoScroll() {
+    guard autoScroll, let key = entries.last?.key else { return }
+    scrollAnchor = key
+    scrollRevision &+= 1
   }
 
   private func refreshStreamingState() {

@@ -155,6 +155,40 @@ final class AntigravityCLIExecutionTests: XCTestCase {
     XCTAssertEqual(code, "antigravity_permission_denied")
   }
 
+  func testAgyErrorStatePermissionDenialFailsInsteadOfProtocolViolation() async throws {
+    let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
+      prefix: "agy-error-state-denial")
+    defer { try? FileManager.default.removeItem(atPath: projectRoot) }
+    let transport = ScriptedAntigravityTransport()
+    let execution = makeExecution(projectRoot: projectRoot, transport: transport)
+    await execution.start()
+    try await transport.emit(
+      AntigravityCLITestSupport.initializationFrame(cwd: projectRoot)
+    )
+    _ = try await execution.waitForBinding(timeout: .seconds(1))
+    let eventsTask = collectEvents(from: execution.events)
+    try await transport.emit(
+      AntigravityCLITestSupport.data(
+        """
+        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":4,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"twitter search Tibo"}},"error":{"type":"TOOL_ERROR","message":"permission check failed: user denied permission to run command"}}}
+        """
+      )
+    )
+    try await transport.emit(
+      AntigravityCLITestSupport.resultFrame(response: "The command was skipped.")
+    )
+
+    let events = await eventsTask.value
+    guard case .tool(let tool) = events.first?.event,
+      case .failed(let code, _) = events.last?.event
+    else {
+      return XCTFail("Expected failed tool and permission-denied terminal event")
+    }
+    XCTAssertEqual(tool.status, .failed)
+    XCTAssertEqual(code, "antigravity_permission_denied")
+    XCTAssertFalse(events.contains { if case .completed = $0.event { true } else { false } })
+  }
+
   func testInterruptRequestsProviderAndEndsWithInterruptedEvent() async throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-interrupt")
     defer { try? FileManager.default.removeItem(atPath: projectRoot) }

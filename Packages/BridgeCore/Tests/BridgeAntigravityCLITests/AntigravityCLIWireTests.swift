@@ -54,6 +54,19 @@ final class AntigravityCLIWireTests: XCTestCase {
     XCTAssertEqual(subagent.workspaceURIs, ["file:///tmp/project"])
   }
 
+  func testDecodesToolErrorStateWithTopLevelError() throws {
+    let frame = AntigravityCLITestSupport.data(
+      """
+      {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":4,"state":"ERROR","step_type":"tool","tool_name":"run_command","error":{"type":"TOOL_ERROR","message":"user denied permission to run command"}}}
+      """
+    )
+
+    let update = try XCTUnwrap(AntigravityWireCodec.decode(frame).stepUpdate)
+    XCTAssertEqual(update.state, "ERROR")
+    XCTAssertEqual(update.error?.type, "TOOL_ERROR")
+    XCTAssertEqual(update.error?.message, "user denied permission to run command")
+  }
+
   func testEncodesTrimmedUserMessageWithStableWireShape() throws {
     let encoded = try AntigravityWireCodec.encodeUserMessage("  inspect the project  \n")
     let object = try XCTUnwrap(

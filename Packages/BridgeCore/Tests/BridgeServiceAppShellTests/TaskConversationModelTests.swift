@@ -58,6 +58,7 @@ final class TaskConversationModelTests: XCTestCase {
     try await waitUntil { model.entries.count == 2 && model.entries[1].content == "I will inspect" }
     XCTAssertTrue(model.isStreaming)
     XCTAssertFalse(model.entries[1].isFinal)
+    let firstScrollRevision = model.scrollRevision
 
     await client.pushConversation(
       IPCTaskConversationPush(
@@ -71,6 +72,7 @@ final class TaskConversationModelTests: XCTestCase {
       )
     )
     try await waitUntil { model.entries[1].content == "I will inspect the parser." }
+    XCTAssertGreaterThan(model.scrollRevision, firstScrollRevision)
 
     await client.pushConversation(
       IPCTaskConversationPush(
@@ -536,6 +538,21 @@ final class TaskConversationModelTests: XCTestCase {
     )
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertEqual(model.entries.count, 1)
+  }
+
+  func testCancelWhileSubscriptionStartsCleansUpLateSubscription() async throws {
+    let client = TestBridgeServiceClient()
+    await client.setSubscriptionDelay(.milliseconds(100))
+    let model = TaskConversationModel(taskID: "task-1", client: client)
+    let start = Task { await model.start() }
+
+    try await Task.sleep(for: .milliseconds(20))
+    model.cancel()
+    await start.value
+
+    XCTAssertEqual(model.subscriptionID, -1)
+    let unsubscribed = await client.unsubscribedSubscriptionIDsValue()
+    XCTAssertEqual(unsubscribed, [7])
   }
 
   func testThreadTurnGroupGrouping() {

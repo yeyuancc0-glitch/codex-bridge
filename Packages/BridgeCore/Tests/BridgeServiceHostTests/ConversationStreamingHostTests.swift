@@ -139,6 +139,64 @@ final class ConversationStreamingHostTests: XCTestCase {
     controller.stopStreaming()
   }
 
+  func testStaleConversationUnsubscribeDoesNotCancelReplacement() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let projectRoot = fixture.root.appending(path: "Stale Unsubscribe", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectRoot, withIntermediateDirectories: false)
+    let project = try await fixture.composition.projects.register(
+      name: "Stale Unsubscribe",
+      rootURL: projectRoot
+    )
+    let task = try await fixture.composition.tasks.submit(
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .macOSApp,
+        prompt: "Exercise stale unsubscribe handling.",
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .readOnly
+      )
+    )
+    let controller = BridgeServiceXPCController(
+      composition: fixture.composition,
+      streamProxy: TestConversationStreamProxy()
+    )
+    let taskID = task.task.id.rawValue
+    let first = try await subscribe(controller, taskID: taskID, requestID: "subscribe-first")
+    let second = try await subscribe(controller, taskID: taskID, requestID: "subscribe-second")
+    XCTAssertNotEqual(first.subscriptionID, second.subscriptionID)
+    XCTAssertEqual(controller.streams.count(), 1)
+
+    let staleRequest = try BridgeServiceIPCCodec.request(
+      operation: .unsubscribeTaskConversation,
+      payload: IPCTaskConversationUnsubscribeRequest(
+        taskID: taskID,
+        subscriptionID: first.subscriptionID
+      ),
+      requestID: "unsubscribe-stale"
+    )
+    _ = await performXPC(controller, request: staleRequest)
+    XCTAssertEqual(controller.streams.count(), 1)
+    controller.stopStreaming()
+  }
+
+  private func subscribe(
+    _ controller: BridgeServiceXPCController,
+    taskID: String,
+    requestID: String
+  ) async throws -> IPCTaskConversationSubscription {
+    let request = try BridgeServiceIPCCodec.request(
+      operation: .subscribeTaskConversation,
+      payload: IPCTaskConversationRequest(taskID: taskID),
+      requestID: requestID
+    )
+    return try BridgeServiceIPCCodec.decodeResponse(
+      IPCTaskConversationSubscription.self,
+      data: await performXPC(controller, request: request),
+      requestID: requestID
+    )
+  }
+
   func testConversationSubscriptionResponseFailureReclaimsForwarder() async throws {
     let fixture = try await makeServiceHostFixture(self)
     let projectRoot = fixture.root.appending(path: "Oversized Project", directoryHint: .isDirectory)

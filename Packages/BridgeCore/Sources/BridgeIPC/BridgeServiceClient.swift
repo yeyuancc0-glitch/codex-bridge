@@ -21,6 +21,7 @@ public actor BridgeServiceClient {
   private let connection: NSXPCConnection
   let streamHub = CodexBridgeTaskStreamHub()
   var invalidated = false
+  var conversationStreamTokens: [String: [Int: UUID]] = [:]
 
   public init(machServiceName: String = BridgeServiceIPC.machServiceName) {
     precondition(!machServiceName.isEmpty)
@@ -49,6 +50,7 @@ public actor BridgeServiceClient {
     guard !invalidated else { return }
     invalidated = true
     connection.invalidate()
+    conversationStreamTokens.removeAll(keepingCapacity: false)
     streamHub.clear()
   }
 

@@ -151,8 +151,15 @@ public actor DeepSeekHarnessACPExecution {
         let result = try await client.prompt(sessionID: sessionID, text: nextPrompt)
         try await waitUntilConsumed(result.eventSequenceBarrier)
         guard !terminal else { return }
-        if interruptRequested || result.stopReason == "cancelled" {
+        if interruptRequested {
           await finishInterrupted()
+          return
+        }
+        if result.stopReason == "cancelled" {
+          await failExecution(
+            code: "deepseek_harness_provider_cancelled",
+            summary: "DeepSeek Harness cancelled the task without a local interrupt request."
+          )
           return
         }
         if let queued = try await nextPromptOrTerminal(stopReason: result.stopReason) {
@@ -162,11 +169,15 @@ public actor DeepSeekHarnessACPExecution {
         return
       }
     } catch is CancellationError {
-      guard claimTerminal() else { return }
-      if let interrupted = try? await normalizer.interrupted() {
-        _ = emit(interrupted)
+      guard !terminal else { return }
+      if interruptRequested {
+        await finishInterrupted()
+      } else {
+        await failExecution(
+          code: "deepseek_harness_execution_cancelled",
+          summary: "DeepSeek Harness execution was cancelled unexpectedly."
+        )
       }
-      await closeStream()
     } catch {
       guard !terminal else { return }
       await failExecution(

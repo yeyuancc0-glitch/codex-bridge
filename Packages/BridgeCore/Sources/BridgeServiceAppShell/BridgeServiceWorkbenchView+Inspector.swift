@@ -126,12 +126,8 @@ struct BridgeServiceWorkbenchInspectorPane: View {
           .layoutPriority(2)
         Divider()
       }
-      BridgeServiceWorkbenchInspectorBody(model: model, context: context)
-        .frame(minHeight: 0, maxHeight: .infinity)
+      BridgeServiceWorkbenchInspectorLiveRegion(model: model, context: context)
         .layoutPriority(1)
-      Divider()
-      BridgeServiceWorkbenchInspectorFooter(model: model, activity: context.activity)
-        .fixedSize(horizontal: false, vertical: true)
     }
     .frame(minHeight: 0, maxHeight: .infinity)
     .background(Color(nsColor: .controlBackgroundColor))

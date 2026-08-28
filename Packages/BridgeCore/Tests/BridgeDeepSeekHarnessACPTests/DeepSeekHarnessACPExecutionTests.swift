@@ -40,6 +40,20 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
     }
   }
 
+  func testProviderCancellationWithoutLocalInterruptIsFailure() async throws {
+    let events = try await runScenario(stopReason: "cancelled", text: "partial")
+
+    XCTAssertFalse(
+      events.contains { event in
+        if case .interrupted = event.event { return true }
+        return false
+      })
+    guard case .failed(let code, _) = events.last?.event else {
+      return XCTFail("Expected provider cancellation to fail")
+    }
+    XCTAssertEqual(code, "deepseek_harness_provider_cancelled")
+  }
+
   func testInterruptMapsToInterruptedAndSendsCancel() async throws {
     let transport = ScriptedDeepSeekHarnessTransport()
     let promptState = PromptRequestState()

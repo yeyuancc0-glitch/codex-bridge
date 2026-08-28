@@ -1409,6 +1409,54 @@ final class BridgeServiceAppModelTests: XCTestCase {
     await model.shutdownUI()
   }
 
+  func testRefreshKeepsUserSelectedAgentTaskWhileOtherTasksRemainActive() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let first = MCPServiceTaskSnapshot(
+      taskID: "agent-task-a",
+      projectID: "project-1",
+      status: "running",
+      providerID: "opencode",
+      providerRunID: "run-a",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-28T12:00:00Z"
+    )
+    let second = MCPServiceTaskSnapshot(
+      taskID: "agent-task-b",
+      projectID: "project-1",
+      status: "running",
+      providerID: "deepseek-harness",
+      providerRunID: "run-b",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-28T11:59:00Z"
+    )
+    await client.setTaskSnapshots([first, second])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    try await waitUntil { model.conversation?.taskID == first.taskID }
+
+    model.openTask(second.taskID)
+    try await waitUntil {
+      model.selectedTaskID == second.taskID && model.conversation?.taskID == second.taskID
+    }
+    await client.setTaskSnapshots([second, first])
+    await model.refresh(silent: true, includeCatalog: false)
+
+    XCTAssertEqual(model.selectedTaskID, second.taskID)
+    XCTAssertEqual(model.conversation?.taskID, second.taskID)
+    let subscribeCalls = await client.subscribeCallsValue()
+    XCTAssertEqual(subscribeCalls, 2)
+    await model.shutdownUI()
+  }
+
   func testTaskControlsUseProviderSpecificLiveBindingAndFailClosedWithoutOne() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

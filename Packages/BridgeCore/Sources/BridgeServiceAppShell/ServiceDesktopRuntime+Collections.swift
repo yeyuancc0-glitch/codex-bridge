@@ -88,8 +88,9 @@ extension BridgeServiceAppModel {
       tasks = value
       reconcileTaskSelection()
     }
+    guard selectedTaskID == nil, selectedThreadID == nil, conversation == nil else { return }
     if let activeAgentTask = value.first(where: { $0.isExternalAgentTask && $0.isActive }),
-      selectedTaskID != activeAgentTask.taskID || conversation?.taskID != activeAgentTask.taskID
+      conversation?.taskID != activeAgentTask.taskID
     {
       selectedProjectID = activeAgentTask.projectID
       persistWorkbenchProjectSelection(activeAgentTask.projectID)
@@ -99,7 +100,7 @@ extension BridgeServiceAppModel {
       openConversation(taskID: activeAgentTask.taskID)
     } else if let activeTask = value.first(where: \.isRunning),
       let threadID = activeTask.threadID,
-      selectedThreadID != threadID || conversation?.taskID != activeTask.taskID
+      conversation?.taskID != activeTask.taskID
     {
       selectedProjectID = activeTask.projectID
       persistWorkbenchProjectSelection(activeTask.projectID)

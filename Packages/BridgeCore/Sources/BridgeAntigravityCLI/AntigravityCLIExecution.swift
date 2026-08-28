@@ -186,7 +186,9 @@ public actor AntigravityCLIExecution {
         guard let update = envelope.stepUpdate, let normalizer else {
           throw AntigravityCLIError.invalidMessage
         }
-        if AntigravityPermissionEvidence.detected(in: update.toolInfo?.error?.message) {
+        if AntigravityPermissionEvidence.detected(
+          in: update.toolInfo?.error?.message ?? update.error?.message
+        ) {
           permissionDenied = true
         }
         for event in try await normalizer.normalize(update) {

@@ -43,38 +43,38 @@ struct WorkbenchApprovalCard: View {
         StatusBadge(approval.kind, tone: .warning)
       }
 
-      Text(approval.summary)
-        .font(.caption)
+      ScrollView(.vertical) {
+        VStack(alignment: .leading, spacing: 6) {
+          Text(approval.summary)
+            .font(.caption)
 
-      if let reason = approval.reason {
-        Text(reason)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-      }
+          if let reason = approval.reason {
+            Text(reason)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
 
-      if let displayCommand = approval.displayCommand {
-        CodeSnippetBlock(
-          text: displayCommand,
-          label: approval.kind == "permissions" ? "请求的权限范围" : "即将执行的终端命令"
-        )
-      }
+          if let displayCommand = approval.displayCommand {
+            CodeSnippetBlock(
+              text: displayCommand,
+              label: approval.kind == "permissions" ? "请求的权限范围" : "即将执行的终端命令"
+            )
+          }
 
-      if !approval.relativePaths.isEmpty {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("目标文件路径")
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
+          if !approval.relativePaths.isEmpty {
+            Text("目标文件路径")
+              .font(.caption2.weight(.medium))
+              .foregroundStyle(.secondary)
 
-          ForEach(approval.relativePaths, id: \.self) { path in
-            Text(path)
-              .font(.system(size: 10, design: .monospaced))
-              .textSelection(.enabled)
+            ForEach(approval.relativePaths, id: \.self) { path in
+              Text(path)
+                .font(.system(size: 10, design: .monospaced))
+                .textSelection(.enabled)
+            }
           }
         }
-        .padding(6)
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
       }
+      .frame(maxHeight: 72)
 
       Divider()
 
@@ -85,6 +85,7 @@ struct WorkbenchApprovalCard: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .disabled(isResolving)
+        .accessibilityIdentifier("workbench.approval.\(approval.approvalID).deny")
 
         Spacer()
 
@@ -105,6 +106,7 @@ struct WorkbenchApprovalCard: View {
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
           .disabled(isResolving)
+          .accessibilityIdentifier("workbench.approval.\(approval.approvalID).allow")
         } else {
           Menu {
             ForEach(allowDecisions, id: \.self) { decision in
@@ -122,8 +124,10 @@ struct WorkbenchApprovalCard: View {
           .menuStyle(.borderlessButton)
           .fixedSize()
           .disabled(isResolving)
+          .accessibilityIdentifier("workbench.approval.\(approval.approvalID).allow")
         }
       }
+      .fixedSize(horizontal: false, vertical: true)
     }
     .padding(10)
     .background(Color(nsColor: .controlBackgroundColor))
@@ -165,9 +169,13 @@ struct WorkbenchDirectApprovalCard: View {
           .foregroundStyle(.secondary)
       }
 
-      Text(approval.summary)
-        .font(.caption)
-        .fixedSize(horizontal: false, vertical: true)
+      ScrollView(.vertical) {
+        Text(approval.summary)
+          .font(.caption)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .frame(maxHeight: 56)
 
       HStack {
         Text("项目 \(approval.projectID)")
@@ -188,6 +196,7 @@ struct WorkbenchDirectApprovalCard: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .disabled(isResolving)
+        .accessibilityIdentifier("workbench.approval.\(approval.approvalID).deny")
 
         Spacer()
 
@@ -207,7 +216,9 @@ struct WorkbenchDirectApprovalCard: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
         .disabled(isResolving)
+        .accessibilityIdentifier("workbench.approval.\(approval.approvalID).allow")
       }
+      .fixedSize(horizontal: false, vertical: true)
     }
     .padding(10)
     .background(Color(nsColor: .controlBackgroundColor))
