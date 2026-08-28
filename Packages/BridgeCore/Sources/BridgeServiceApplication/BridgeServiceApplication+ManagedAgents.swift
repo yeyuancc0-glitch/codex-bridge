@@ -179,7 +179,7 @@ extension BridgeServiceApplication {
     let selectedModelID: String?
     if let modelID {
       selectedModelID = modelID
-} else if useStoredDefault {
+    } else if useStoredDefault {
       guard let installation = try await registry.installation(id: installationID) else {
         throw BridgeMCPQueryError.unavailable
       }

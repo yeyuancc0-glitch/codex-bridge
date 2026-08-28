@@ -191,7 +191,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(request.model, "opencode/x-preview-f-free")
   }
 
-func testAgentTaskSubmissionCarriesMCPSubmissionFields() async throws {
+  func testAgentTaskSubmissionCarriesMCPSubmissionFields() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
     let model = BridgeServiceAppModel(

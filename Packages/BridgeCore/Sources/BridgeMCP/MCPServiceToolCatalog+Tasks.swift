@@ -112,7 +112,7 @@ extension MCPServiceToolCatalog {
         "provider_id": nullableStringSchema(
           maximum: 64,
           description:
-"Omit for Codex. Set to opencode or antigravity, or deepseek-harness, only when the user explicitly selected a locally registered installation; list_agents shows availability and enforcement."
+            "Omit for Codex. Set to opencode or antigravity, or deepseek-harness, only when the user explicitly selected a locally registered installation; list_agents shows availability and enforcement."
         ),
         "installation_id": nullableStringSchema(
           maximum: 256,
@@ -127,7 +127,7 @@ extension MCPServiceToolCatalog {
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-"Omit to use the selected provider default effort. For OpenCode or DeepSeek Harness, set only a value advertised for the selected model when the user explicitly requests a per-task override; external providers require model_override=true."
+            "Omit to use the selected provider default effort. For OpenCode or DeepSeek Harness, set only a value advertised for the selected model when the user explicitly requests a per-task override; external providers require model_override=true."
         ),
         "model_override": [
           "type": ["boolean", "null"],
@@ -148,7 +148,7 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-"For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval. Antigravity V1 accepts read-only only."
+            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval. Antigravity V1 accepts read-only only.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
@@ -158,7 +158,7 @@ extension MCPServiceToolCatalog {
         "network_access": [
           "type": "boolean",
           "description":
-"Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access. For Antigravity, true is rejected."
+            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access. For Antigravity, true is rejected.",
         ],
         "acceptance_criteria": [
           "type": "array",
