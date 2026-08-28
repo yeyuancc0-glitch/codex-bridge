@@ -370,7 +370,6 @@ extension BridgeServiceApplication {
       configuredEffort = nil
       defaultMode = policy.defaultPermissionMode
     }
-    let resolvedModel = try Self.validatedAgentModel(requestedModel ?? configuredModel)
     if !policy.supportsWorkspaceWrite,
       submission.permissionMode == ServicePermissionMode.workspaceWrite.rawValue
     {
@@ -398,15 +397,26 @@ extension BridgeServiceApplication {
       .sorted { $0.id.rawValue < $1.id.rawValue }
     let record = try Self.selectAgentInstallation(
       requested: submission.installationID, from: selectable)
+    let effectiveCapabilities = policy.effectiveCapabilities(
+      record.capabilities.effective,
+      projectAllowsWorkspaceWrite: project.accessPolicy.write != .denied
+    )
+    let supportsModelSelection = effectiveCapabilities.contains(.modelSelection)
+    if requestedModel != nil, !supportsModelSelection {
+      throw BridgeMCPQueryError.unavailable
+    }
     if policy.selectionsRequireObservedCapabilities {
       var requiredCapabilities = Set<AgentCapability>()
       if submission.threadID != nil { requiredCapabilities.insert(.sessionContinue) }
-      if resolvedModel != nil { requiredCapabilities.insert(.modelSelection) }
+      if requestedModel != nil { requiredCapabilities.insert(.modelSelection) }
       if requestedEffort != nil { requiredCapabilities.insert(.effortSelection) }
-      guard record.capabilities.supports(requiredCapabilities) else {
+      guard effectiveCapabilities.isSuperset(of: requiredCapabilities) else {
         throw BridgeMCPQueryError.unavailable
       }
     }
+    let resolvedModel = try Self.validatedAgentModel(
+      supportsModelSelection ? (requestedModel ?? configuredModel) : nil
+    )
     if policy.supportsSessionContinuation, let requestedSessionID = submission.threadID {
       guard
         let previous = try await tasks.task(
@@ -423,7 +433,7 @@ extension BridgeServiceApplication {
       }
     }
     let modelCatalog: [AgentModelDescriptor]?
-    if policy.supportsModelSelection {
+    if supportsModelSelection {
       modelCatalog = try? await serviceAgentModelCatalog(
         registry: registry,
         installationID: record.id,
@@ -475,7 +485,9 @@ extension BridgeServiceApplication {
     )
     let accessMode = try await settings.accessMode()
     let executionModel =
-      selectedDescriptor?.id ?? resolvedModel ?? serviceDefaultProviderExecutionModel
+      supportsModelSelection
+      ? selectedDescriptor?.id ?? resolvedModel ?? serviceDefaultProviderExecutionModel
+      : serviceDefaultProviderExecutionModel
     return PreparedTaskSubmission(
       projectID: project.id,
       request: ServiceTaskRequest(

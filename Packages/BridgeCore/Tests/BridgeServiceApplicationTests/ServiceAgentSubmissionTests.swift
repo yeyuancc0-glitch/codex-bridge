@@ -1616,6 +1616,72 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertNil(completed.state.codexThreadID)
   }
 
+  func testAgentDefaultSubmissionKeepsProviderDefaultWithoutEffectiveModelCapability()
+    async throws
+  {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let provider = try ScriptedAgentProvider(
+      providerID: .antigravity,
+      capabilities: [.workspaceRead]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.antigravity: provider]
+      )
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    let storedInstallation = try await registry.installation(id: provider.installationID)
+    let installation = try XCTUnwrap(storedInstallation)
+    XCTAssertFalse(installation.capabilities.effective.contains(.modelSelection))
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Review the repository without changing files.",
+        providerID: AgentProviderID.antigravity.rawValue,
+        clientRequestID: "antigravity-provider-default"
+      ),
+      deadline: deadline
+    )
+    let storedPending = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let pending = try XCTUnwrap(storedPending)
+    XCTAssertEqual(pending.executionModel, serviceDefaultProviderExecutionModel)
+    XCTAssertEqual(pending.executionEffort, serviceDefaultProviderExecutionEffort)
+    XCTAssertTrue(provider.modelSelectionsValue().isEmpty)
+
+    let taskID = TaskID(rawValue: receipt.taskID)
+    try await application.resolveTaskStartApproval(
+      taskID: taskID,
+      approvalID: BridgeServiceApplication.PendingTaskStartApproval.approvalID(for: taskID),
+      approved: true,
+      deadline: deadline
+    )
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .running
+    }
+
+    let request = try XCTUnwrap(provider.startedRequests.first)
+    XCTAssertNil(request.model)
+    XCTAssertNil(request.effort)
+    XCTAssertFalse(request.requiredCapabilities.contains(.modelSelection))
+
+    try emit(
+      provider,
+      taskID: taskID,
+      sequence: 1,
+      event: .completed(summary: "Review complete.", stopReason: nil)
+    )
+    provider.finish(taskID: taskID)
+    _ = try await waitForTask(fixture, taskID: receipt.taskID) {
+      $0.state.status == .completed
+    }
+  }
+
   func testAntigravityRejectsWorkspaceWriteAndNetworkAdmission() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider(providerID: .antigravity)
