@@ -9,6 +9,41 @@ import Foundation
 import XCTest
 
 final class ServiceAgentProviderPolicyTests: XCTestCase {
+  func testAntigravityPolicyExposesSandboxedWriteContinuationAndQueuedSteerContract() {
+    let policy = ServiceAgentProviderPolicyRegistry.antigravity
+
+    XCTAssertEqual(policy.providerID, .antigravity)
+    XCTAssertEqual(policy.displayName, "Antigravity")
+    XCTAssertTrue(policy.supportsWorkspaceWrite)
+    XCTAssertTrue(policy.supportsSessionContinuation)
+    XCTAssertTrue(policy.supportsSteer)
+    XCTAssertFalse(policy.supportsInteractiveApproval)
+    XCTAssertTrue(policy.supportsModelSelection)
+    XCTAssertTrue(policy.supportsEffortSelection)
+    XCTAssertTrue(policy.supportsSkillSelection)
+    XCTAssertFalse(policy.supportsSupervisor)
+    XCTAssertFalse(policy.allowsNetworkAccess)
+    XCTAssertEqual(policy.workspaceEnforcement, "bridge_workspace_sandbox")
+    XCTAssertEqual(policy.approvalEnforcement, "provider_soft_deny")
+    XCTAssertEqual(policy.networkEnforcement, "provider_native")
+
+    let reported = Set(AgentCapability.allCases)
+    XCTAssertEqual(
+      policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: true),
+      [
+        .sessionCreate, .sessionContinue, .interrupt, .steer, .toolLifecycle, .usage,
+        .workspaceRead, .workspaceWriteInPlace, .modelSelection, .effortSelection,
+      ]
+    )
+    XCTAssertEqual(
+      policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: false),
+      [
+        .sessionCreate, .sessionContinue, .interrupt, .steer, .toolLifecycle, .usage,
+        .workspaceRead, .modelSelection, .effortSelection,
+      ]
+    )
+  }
+
   func testDeepSeekPolicyExposesNativeWriteAndOneShotApprovalFreshSessionContract() {
     let policy = ServiceAgentProviderPolicyRegistry.deepSeekHarness
 

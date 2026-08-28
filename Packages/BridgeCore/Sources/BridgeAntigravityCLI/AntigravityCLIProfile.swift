@@ -70,6 +70,69 @@ public struct AntigravityCLICompatibility: Equatable, Sendable {
   }
 }
 
+struct AntigravityCLIHelpFacts: Equatable, Sendable {
+  let supportsStreamJSON: Bool
+  let supportsPlanMode: Bool
+  let supportsAcceptEditsMode: Bool
+  let supportsConversation: Bool
+  let supportsModel: Bool
+  let supportsEffort: Bool
+  let supportsQueuedTurns: Bool
+
+  var observedCapabilities: Set<AgentCapability> {
+    var result: Set<AgentCapability> = []
+    if supportsStreamJSON {
+      result.insert(.sessionCreate)
+    }
+    if supportsPlanMode && supportsStreamJSON {
+      result.insert(.workspaceRead)
+    }
+    if supportsAcceptEditsMode && supportsStreamJSON {
+      result.insert(.workspaceWriteInPlace)
+    }
+    if supportsConversation {
+      result.insert(.sessionContinue)
+    }
+    if supportsModel {
+      result.insert(.modelSelection)
+    }
+    if supportsEffort {
+      result.insert(.effortSelection)
+    }
+    if supportsQueuedTurns {
+      result.insert(.steer)
+    }
+    return result
+  }
+
+  static func parse(_ output: String) -> Self {
+    let plain = output.replacingOccurrences(
+      of: "\u{001B}\\[[0-9;]*m",
+      with: "",
+      options: .regularExpression
+    )
+    let lines = plain.split(separator: "\n", omittingEmptySubsequences: false).map {
+      $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+    let inputLine = lines.first(where: { $0.contains("--input-format") }) ?? ""
+    let outputLine = lines.first(where: { $0.contains("--output-format") }) ?? ""
+    let modeLine = lines.first(where: { $0.contains("--mode") }) ?? ""
+    let effortLine = lines.first(where: { $0.contains("--effort") }) ?? ""
+    let streamJSON = inputLine.contains("stream-json") && outputLine.contains("stream-json")
+    let queuedTurns = inputLine.contains("runs a turn for each")
+    return Self(
+      supportsStreamJSON: streamJSON,
+      supportsPlanMode: modeLine.contains("plan"),
+      supportsAcceptEditsMode: modeLine.contains("accept-edits"),
+      supportsConversation: lines.contains(where: { $0.contains("--conversation") }),
+      supportsModel: lines.contains(where: { $0.contains("--model") }),
+      supportsEffort: effortLine.contains("--effort")
+        && ["low", "medium", "high"].allSatisfy(effortLine.contains),
+      supportsQueuedTurns: streamJSON && queuedTurns
+    )
+  }
+}
+
 public struct AntigravityCLICommandResult: Equatable, Sendable {
   public let standardOutput: BoundedProcessOutput
   public let standardError: BoundedProcessOutput
@@ -211,6 +274,11 @@ public struct AntigravityCLILaunchBuilder: Sendable {
     guard installation.providerID == .antigravity else {
       throw AgentRuntimeError.invalidRequest("installation.providerID")
     }
+    let expectedStrategy: AgentWorkspaceStrategy =
+      request.mutationIntent == .readOnly ? .sharedProject : .exclusiveProject
+    guard request.workspaceStrategy == expectedStrategy else {
+      throw AgentRuntimeError.invalidRequest("request.workspaceStrategy")
+    }
     let executable = try Self.resolveExecutable(installation.executablePath)
     let projectRoot = try Self.canonicalExistingDirectory(
       request.projectRoot,
@@ -229,6 +297,8 @@ public struct AntigravityCLILaunchBuilder: Sendable {
       "--output-format",
       "stream-json",
     ]
+    let readOnly = request.mutationIntent == .readOnly
+    providerArgv.append(contentsOf: ["--mode", readOnly ? "plan" : "accept-edits"])
     if let sessionID = request.requestedSessionID {
       providerArgv.append(contentsOf: ["--conversation", sessionID])
     }
@@ -242,17 +312,16 @@ public struct AntigravityCLILaunchBuilder: Sendable {
       providerArgv.append(contentsOf: ["--effort", effort])
     }
 
-    let readOnly = request.mutationIntent == .readOnly
-    let argv: [String]
-    if readOnly {
-      guard FileManager.default.isExecutableFile(atPath: sandboxExecutablePath) else {
-        throw AgentRuntimeError.processUnavailable
-      }
-      let profile = try Self.readOnlyProfile(projectRoot: projectRoot)
-      argv = [sandboxExecutablePath, "-p", profile, "--"] + providerArgv
-    } else {
-      argv = providerArgv
+    guard FileManager.default.isExecutableFile(atPath: sandboxExecutablePath) else {
+      throw AgentRuntimeError.processUnavailable
     }
+    providerArgv.append(contentsOf: ["--add-dir", projectRoot])
+    let profile = try Self.sandboxProfile(
+      projectRoot: projectRoot,
+      runDirectory: runtime,
+      allowsWorkspaceWrites: !readOnly
+    )
+    let argv = [sandboxExecutablePath, "-p", profile, "--"] + providerArgv
     return AntigravityCLILaunchConfiguration(
       process: AntigravityCLIProcessConfiguration(
         argv: argv,
@@ -287,15 +356,31 @@ public struct AntigravityCLILaunchBuilder: Sendable {
     try? FileManager.default.removeItem(atPath: path)
   }
 
-  private static func readOnlyProfile(projectRoot: String) throws -> String {
-    guard projectRoot.rangeOfCharacter(from: .controlCharacters) == nil else {
+  private static func sandboxProfile(
+    projectRoot: String,
+    runDirectory: String,
+    allowsWorkspaceWrites: Bool
+  ) throws -> String {
+    guard projectRoot.rangeOfCharacter(from: .controlCharacters) == nil,
+      runDirectory.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
       throw AgentRuntimeError.invalidRequest("request.projectRoot")
     }
-    let escaped =
-      projectRoot
+    let escapedProjectRoot = escapedProfilePath(projectRoot)
+    let escapedRunDirectory = escapedProfilePath(runDirectory)
+    var profile =
+      "(version 1)(allow default)(deny file-write*)"
+      + "(allow file-write* (subpath \"\(escapedRunDirectory)\"))"
+    if allowsWorkspaceWrites {
+      profile += "(allow file-write* (subpath \"\(escapedProjectRoot)\"))"
+    }
+    return profile
+  }
+
+  private static func escapedProfilePath(_ path: String) -> String {
+    path
       .replacingOccurrences(of: "\\", with: "\\\\")
       .replacingOccurrences(of: "\"", with: "\\\"")
-    return "(version 1)(allow default)(deny file-write* (subpath \"\(escaped)\"))"
   }
 
   private static func environment(

@@ -365,6 +365,11 @@ extension BridgeServiceApplication {
       configuredEffort = try await settings.string(for: .deepSeekHarnessDefaultEffort)
       let configuredMode = try await settings.deepSeekHarnessDefaultPermissionMode()
       defaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
+    } else if policy.providerID == .antigravity {
+      configuredModel = try await settings.antigravityDefaultModel()
+      configuredEffort = try await settings.antigravityDefaultEffort()
+      let configuredMode = try await settings.antigravityDefaultPermissionMode()
+      defaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
     } else {
       configuredModel = nil
       configuredEffort = nil
@@ -380,7 +385,7 @@ extension BridgeServiceApplication {
     let permission = try Self.permissionMode(
       requestedPermissionMode,
       project: project,
-      defaultMode: policy.defaultPermissionMode
+      defaultMode: defaultMode
     )
     guard policy.supportsWorkspaceWrite || permission != .workspaceWrite else {
       throw BridgeMCPQueryError.contractRejected

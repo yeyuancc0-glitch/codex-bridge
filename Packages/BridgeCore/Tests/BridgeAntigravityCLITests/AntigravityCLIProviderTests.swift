@@ -72,13 +72,22 @@ final class AntigravityCLIProviderTests: XCTestCase {
       try? FileManager.default.removeItem(atPath: projectRoot)
       try? FileManager.default.removeItem(atPath: home)
     }
-    let version = "agy version 1.1.21\n"
+    let versionAndHelp =
+      """
+      agy version 1.1.21
+      --mode Set the agent execution mode (accept-edits, plan)
+      --conversation Resume a previous conversation by ID
+      --model Model for the current CLI session
+      --effort Reasoning effort for the current CLI session (low|medium|high)
+      --input-format stream-json reads one NDJSON message per line and runs a turn for each
+      --output-format stream-json
+      """
     let commandRunner = RecordingAntigravityCommandRunner(
       result: AntigravityCLICommandResult(
         standardOutput: BoundedProcessOutput(
-          head: version,
-          tail: version,
-          byteCount: version.utf8.count,
+          head: versionAndHelp,
+          tail: versionAndHelp,
+          byteCount: versionAndHelp.utf8.count,
           truncated: false
         ),
         standardError: BoundedProcessOutput(head: "", tail: "", byteCount: 0, truncated: false),
@@ -109,11 +118,16 @@ final class AntigravityCLIProviderTests: XCTestCase {
     XCTAssertEqual(result.installation.protocolRevision, "stream-json-v1")
     XCTAssertEqual(result.installation.executablePath, "/bin/echo")
     XCTAssertTrue(result.capabilities.advertised.contains(.sessionContinue))
-    XCTAssertFalse(result.capabilities.observed.contains(.sessionContinue))
-    XCTAssertEqual(result.capabilities.effective, [.workspaceRead])
+    XCTAssertTrue(result.capabilities.observed.contains(.sessionContinue))
+    XCTAssertTrue(result.capabilities.effective.contains(.workspaceRead))
+    XCTAssertTrue(result.capabilities.effective.contains(.sessionContinue))
+    XCTAssertTrue(result.capabilities.effective.contains(.modelSelection))
+    XCTAssertTrue(result.capabilities.effective.contains(.effortSelection))
+    XCTAssertTrue(result.capabilities.effective.contains(.steer))
+    XCTAssertTrue(result.capabilities.effective.contains(.workspaceWriteInPlace))
     XCTAssertFalse(result.capabilities.effective.contains(.textDelta))
     let calls = await commandRunner.calls()
-    XCTAssertEqual(calls.map(\.argv), [["/bin/echo", "--version"]])
+    XCTAssertEqual(calls.map(\.argv), [["/bin/echo", "--version"], ["/bin/echo", "--help"]])
   }
 
   func testProbeMarksUnsupportedVersionForReview() async throws {
@@ -160,7 +174,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     XCTAssertTrue(result.unavailableReason?.contains("incompatible") == true)
   }
 
-  func testStartRejectsWriteAndNetworkRequestsBeforeLaunching() async throws {
+  func testStartBuildsWorkspaceWriteAndRejectsNetworkRequestsBeforeLaunching() async throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
       prefix: "agy-admission-project")
     let home = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-admission-home")
@@ -171,11 +185,23 @@ final class AntigravityCLIProviderTests: XCTestCase {
       try? FileManager.default.removeItem(atPath: home)
       try? FileManager.default.removeItem(atPath: runtime)
     }
+    let transport = ScriptedAntigravityTransport()
     let provider = try AntigravityCLIProvider(
       configuration: AntigravityCLIProviderConfiguration(
         launchBuilder: AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo"),
         runtimeBaseDirectory: runtime,
-        sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot]
+        sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot],
+        transportFactory: { _ in
+          Task {
+            try? await transport.emit(
+              AntigravityCLITestSupport.initializationFrame(
+                cwd: projectRoot,
+                model: "gemini-test"
+              )
+            )
+          }
+          return transport
+        }
       )
     )
     let installation = try AgentInstallation(
@@ -189,7 +215,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
       projectRoot: projectRoot,
       prompt: "Write a file",
       mutationIntent: .workspaceWrite,
-      workspaceStrategy: .sharedProject,
+      workspaceStrategy: .exclusiveProject,
       networkAccessRequested: false
     )
     let networkRequest = try AgentExecutionRequest(
@@ -202,11 +228,10 @@ final class AntigravityCLIProviderTests: XCTestCase {
       networkAccessRequested: true
     )
 
-    do {
-      _ = try await provider.start(writeRequest, installation: installation)
-      XCTFail("Expected workspace-write to be rejected")
-    } catch {
-      XCTAssertEqual(error as? AgentRuntimeError, .capabilityUnavailable(.workspaceWriteInPlace))
+    let writeHandle = try await provider.start(writeRequest, installation: installation)
+    XCTAssertTrue(writeHandle.capabilities.effective.contains(.workspaceWriteInPlace))
+    if let shutdown = writeHandle.control.shutdown {
+      await shutdown()
     }
     do {
       _ = try await provider.start(networkRequest, installation: installation)
@@ -216,7 +241,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     }
   }
 
-  func testStartRejectsCapabilitiesNotObservedByVersionProbe() async throws {
+  func testStartUsesSelectionAndContinuationCapabilitiesAfterAdmission() async throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
       prefix: "agy-capability-project")
     let home = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-capability-home")
@@ -227,11 +252,24 @@ final class AntigravityCLIProviderTests: XCTestCase {
       try? FileManager.default.removeItem(atPath: home)
       try? FileManager.default.removeItem(atPath: runtime)
     }
+    let transport = ScriptedAntigravityTransport()
     let provider = try AntigravityCLIProvider(
       configuration: AntigravityCLIProviderConfiguration(
         launchBuilder: AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo"),
         runtimeBaseDirectory: runtime,
-        sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot]
+        sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot],
+        transportFactory: { _ in
+          Task {
+            try? await transport.emit(
+              AntigravityCLITestSupport.initializationFrame(
+                conversationID: "conversation-1",
+                cwd: projectRoot,
+                model: "gemini-test"
+              )
+            )
+          }
+          return transport
+        }
       )
     )
     let installation = try AgentInstallation(
@@ -239,30 +277,25 @@ final class AntigravityCLIProviderTests: XCTestCase {
       providerID: .antigravity,
       executablePath: "/bin/echo"
     )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "task-agy-capability"),
+      projectID: ProjectID(rawValue: "project-agy-capability"),
+      projectRoot: projectRoot,
+      prompt: "Inspect",
+      requestedSessionID: "conversation-1",
+      model: "gemini-test",
+      effort: "high",
+      mutationIntent: .readOnly,
+      workspaceStrategy: .sharedProject,
+      networkAccessRequested: false
+    )
 
-    for (taskSuffix, sessionID, model, effort, expected) in [
-      ("continue", "conversation-1", nil, nil, AgentCapability.sessionContinue),
-      ("model", nil, "gemini-pro", nil, AgentCapability.modelSelection),
-      ("effort", nil, nil, "high", AgentCapability.effortSelection),
-    ] {
-      let request = try AgentExecutionRequest(
-        taskID: TaskID(rawValue: "task-agy-\(taskSuffix)"),
-        projectID: ProjectID(rawValue: "project-agy-capability"),
-        projectRoot: projectRoot,
-        prompt: "Inspect",
-        requestedSessionID: sessionID,
-        model: model,
-        effort: effort,
-        mutationIntent: .readOnly,
-        workspaceStrategy: .sharedProject,
-        networkAccessRequested: false
-      )
-      do {
-        _ = try await provider.start(request, installation: installation)
-        XCTFail("Expected unobserved capability to be rejected")
-      } catch {
-        XCTAssertEqual(error as? AgentRuntimeError, .capabilityUnavailable(expected))
-      }
+    let handle = try await provider.start(request, installation: installation)
+    XCTAssertTrue(handle.capabilities.effective.contains(.sessionContinue))
+    XCTAssertTrue(handle.capabilities.effective.contains(.modelSelection))
+    XCTAssertTrue(handle.capabilities.effective.contains(.effortSelection))
+    if let shutdown = handle.control.shutdown {
+      await shutdown()
     }
   }
 }

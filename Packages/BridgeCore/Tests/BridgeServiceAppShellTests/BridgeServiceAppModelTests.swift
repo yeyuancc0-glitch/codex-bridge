@@ -372,6 +372,81 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertNil(openCode.effort)
   }
 
+  func testAntigravityDefaultsHydrateAndPersistBuildPlanState() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let installation = IPCAgentInstallationSummary(
+      installationID: "antigravity-installation",
+      providerID: "antigravity",
+      displayName: "Antigravity",
+      executablePath: "/tmp/agy",
+      version: "1.1.21",
+      protocolRevision: "stream-json-v1",
+      adapterRevision: 1,
+      trustProfile: "user_trusted",
+      securityProfileID: "desktop-shared",
+      isEnabled: true,
+      availability: "available",
+      effectiveCapabilities: [
+        "workspace.read", "workspace.write_in_place", "selection.model", "selection.effort",
+      ],
+      lastProbedAt: "2026-08-27T00:00:00Z",
+      updatedAt: "2026-08-27T00:00:00Z"
+    )
+    let option = IPCAgentModelSummary(
+      modelID: "antigravity/model",
+      displayName: "Antigravity Model",
+      supportedReasoningEfforts: ["low", "high"],
+      defaultReasoningEffort: "high"
+    )
+    await client.configureAgentInstallations([installation])
+    await client.configureAgentModels([option])
+    _ = try await client.setAgentDefaults(
+      providerID: "antigravity",
+      model: option.modelID,
+      permissionMode: "workspace-write",
+      effort: "high"
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    XCTAssertTrue(
+      model.supportsAgentModelSelection(
+        providerID: "antigravity",
+        installationID: installation.installationID
+      )
+    )
+    XCTAssertTrue(
+      model.supportsAgentEffortSelection(
+        providerID: "antigravity",
+        installationID: installation.installationID
+      )
+    )
+
+    await model.hydrateAgentModelState(
+      installationID: installation.installationID,
+      providerID: "antigravity"
+    )
+    let hydrated = model.agentModelDefault(for: "antigravity")
+    XCTAssertEqual(hydrated.model, option.modelID)
+    XCTAssertEqual(hydrated.permissionMode, "workspace-write")
+    XCTAssertEqual(hydrated.effort, "high")
+
+    model.saveAgentPermissionMode("plan", providerID: "antigravity")
+    model.saveAgentEffort("low", providerID: "antigravity")
+    try await waitUntil {
+      let persisted = try? await client.agentModelDefault(providerID: "antigravity")
+      return persisted?.permissionMode == "plan" && persisted?.effort == "low"
+    }
+    await model.shutdownUI()
+  }
+
   func testStaleAgentDefaultLoadCannotOverwriteNewSave() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

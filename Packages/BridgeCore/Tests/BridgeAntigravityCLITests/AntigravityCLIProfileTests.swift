@@ -34,6 +34,39 @@ final class AntigravityCLIProfileTests: XCTestCase {
     )
   }
 
+  func testHelpFactsObserveSupportedModesSelectionsAndContinuation() {
+    let facts = AntigravityCLIHelpFacts.parse(
+      """
+      --mode Set the agent execution mode (accept-edits, plan)
+      --conversation Resume a previous conversation by ID
+      --model Model for the current CLI session
+      --effort Reasoning effort for the current CLI session (low|medium|high)
+      --input-format stream-json reads one NDJSON message per line and runs a turn for each
+      --output-format stream-json
+      """
+    )
+
+    XCTAssertTrue(facts.supportsStreamJSON)
+    XCTAssertTrue(facts.supportsPlanMode)
+    XCTAssertTrue(facts.supportsAcceptEditsMode)
+    XCTAssertTrue(facts.supportsConversation)
+    XCTAssertTrue(facts.supportsModel)
+    XCTAssertTrue(facts.supportsEffort)
+    XCTAssertTrue(facts.supportsQueuedTurns)
+    XCTAssertEqual(
+      facts.observedCapabilities,
+      [
+        .sessionCreate,
+        .sessionContinue,
+        .steer,
+        .workspaceRead,
+        .workspaceWriteInPlace,
+        .modelSelection,
+        .effortSelection,
+      ]
+    )
+  }
+
   func testLaunchBuilderUsesStreamJSONAndReadOnlyProjectBoundary() throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-project")
     let home = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-home")
@@ -85,7 +118,10 @@ final class AntigravityCLIProfileTests: XCTestCase {
     )
     XCTAssertEqual(launch.process.argv[1], "-p")
     XCTAssertTrue(launch.process.argv[2].contains("deny file-write*"))
-    XCTAssertTrue(launch.process.argv[2].contains(projectRoot))
+    XCTAssertTrue(launch.process.argv[2].contains(runDirectory))
+    XCTAssertFalse(
+      launch.process.argv[2].contains("(allow file-write* (subpath \"\(projectRoot)\"))")
+    )
     XCTAssertEqual(launch.process.argv[3], "--")
     XCTAssertEqual(
       Array(launch.process.argv.dropFirst(4)),
@@ -95,12 +131,16 @@ final class AntigravityCLIProfileTests: XCTestCase {
         "stream-json",
         "--output-format",
         "stream-json",
+        "--mode",
+        "plan",
         "--conversation",
         "conversation-1",
         "--model",
         "gemini-test",
         "--effort",
         "high",
+        "--add-dir",
+        projectRoot,
       ]
     )
     XCTAssertEqual(launch.process.environment["HOME"], home)
@@ -112,6 +152,61 @@ final class AntigravityCLIProfileTests: XCTestCase {
     )
     XCTAssertNil(launch.process.environment["AWS_SECRET_ACCESS_KEY"])
     XCTAssertNil(launch.process.environment["OPENCODE_API_KEY"])
+    XCTAssertFalse(launch.process.argv.contains("--dangerously-skip-permissions"))
+  }
+
+  func testLaunchBuilderUsesAcceptEditsModeForExclusiveWorkspaceWrite() throws {
+    let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-write-project")
+    let home = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-write-home")
+    let runDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agy-write-runtime-\(UUID().uuidString)", isDirectory: true).path
+    addTeardownBlock {
+      for path in [projectRoot, home, runDirectory] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+
+    let installation = try AgentInstallation(
+      id: AgentInstallationID(rawValue: "agy-write-test"),
+      providerID: .antigravity,
+      executablePath: "/bin/echo"
+    )
+    let request = try AgentExecutionRequest(
+      taskID: TaskID(rawValue: "task-agy-write-launch"),
+      projectID: ProjectID(rawValue: "project-agy-write-launch"),
+      projectRoot: projectRoot,
+      prompt: "Update the repository.",
+      mutationIntent: .workspaceWrite,
+      workspaceStrategy: .exclusiveProject,
+      networkAccessRequested: false
+    )
+
+    let launch = try AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo").make(
+      installation: installation,
+      request: request,
+      runDirectory: runDirectory,
+      sourceEnvironment: ["HOME": home]
+    )
+
+    XCTAssertFalse(launch.readOnlySandboxed)
+    XCTAssertEqual(launch.process.argv[0], "/bin/echo")
+    XCTAssertTrue(launch.process.argv[2].contains("deny file-write*"))
+    XCTAssertTrue(launch.process.argv[2].contains(projectRoot))
+    XCTAssertTrue(launch.process.argv[2].contains(runDirectory))
+    XCTAssertEqual(
+      Array(launch.process.argv.dropFirst(4)),
+      [
+        "/bin/echo",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--mode",
+        "accept-edits",
+        "--add-dir",
+        projectRoot,
+      ]
+    )
     XCTAssertFalse(launch.process.argv.contains("--dangerously-skip-permissions"))
   }
 

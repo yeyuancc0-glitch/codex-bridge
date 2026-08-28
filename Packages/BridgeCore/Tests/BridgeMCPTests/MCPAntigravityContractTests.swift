@@ -5,7 +5,7 @@ import XCTest
 @testable import BridgeMCP
 
 final class MCPAntigravityContractTests: XCTestCase {
-  func testSubmitTaskSchemaPublishesAntigravityReadOnlyBoundary() throws {
+  func testSubmitTaskSchemaPublishesAntigravityExecutionModesAndCapabilities() throws {
     let definitions = MCPServiceToolCatalog(exposureMode: .full).definitions
     let submit = try XCTUnwrap(definitions.first { $0.name == "submit_task" })
     let properties = try XCTUnwrap(
@@ -18,7 +18,8 @@ final class MCPAntigravityContractTests: XCTestCase {
       [.string("string"), .string("null")]
     )
     XCTAssertTrue(
-      provider["description"]?.stringValue?.contains("opencode or antigravity") == true
+      provider["description"]?.stringValue?.contains("opencode, deepseek-harness, or antigravity")
+        == true
     )
 
     let permission = try XCTUnwrap(properties["permission_mode"]?.objectValue)
@@ -27,8 +28,19 @@ final class MCPAntigravityContractTests: XCTestCase {
       [.string("read-only"), .string("workspace-write"), .null]
     )
     XCTAssertTrue(
-      permission["description"]?.stringValue?.contains("Antigravity V1 accepts read-only only")
+      permission["description"]?.stringValue?.contains("read-only selects Plan") == true
+    )
+    XCTAssertTrue(
+      permission["description"]?.stringValue?.contains("workspace-write selects Accept Edits")
         == true
+    )
+    XCTAssertTrue(
+      properties["execution_model"]?.objectValue?["description"]?.stringValue?
+        .contains("Antigravity") == true
+    )
+    XCTAssertTrue(
+      properties["execution_effort"]?.objectValue?["description"]?.stringValue?
+        .contains("Antigravity") == true
     )
 
     let network = try XCTUnwrap(properties["network_access"]?.objectValue)
@@ -39,8 +51,15 @@ final class MCPAntigravityContractTests: XCTestCase {
     let description = submit.description ?? ""
     for marker in [
       "provider_id=antigravity",
-      "V1 accepts read-only tasks only",
       "official agy stream-json installation",
+      "native plan/accept-edits modes",
+      "Plan/read-only",
+      "Accept Edits/workspace-write",
+      "agy mode: plan",
+      "agy mode: accept-edits",
+      "session continuation",
+      "steer_task queues follow-up",
+      "interactive provider approval",
       "same project and installation",
     ] {
       XCTAssertTrue(description.contains(marker), "submit_task is missing: \(marker)")
@@ -63,14 +82,21 @@ final class MCPAntigravityContractTests: XCTestCase {
 
     for marker in [
       "explicitly set provider_id to antigravity",
-      "V1 is read-only only",
-      "never request workspace-write",
-      "do not set network_access=true",
+      "native plan/accept-edits modes",
+      "Plan/read-only",
+      "Accept Edits/workspace-write",
+      "agy mode: plan",
+      "agy mode: accept-edits",
+      "queued steer",
+      "interactive provider approval",
+      "network_access=true",
       "provider_session_id returned by get_task",
       "same project and installation",
     ] {
       XCTAssertTrue(instructions.contains(marker), "instructions are missing: \(marker)")
     }
+    XCTAssertFalse(instructions.contains("read-only only"))
+    XCTAssertFalse(instructions.contains("never request workspace-write"))
   }
 
   func testAntigravityProviderAndSessionFieldsRoundTripThroughSubmissionContract() throws {

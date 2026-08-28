@@ -55,7 +55,7 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     descriptor = try AgentProviderDescriptor(
       providerID: .antigravity,
       displayName: "Antigravity CLI",
-      adapterRevision: 1
+      adapterRevision: 2
     )
   }
 
@@ -100,6 +100,25 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
       guard configuration.compatibility.accepts(version) else {
         throw AntigravityCLIError.unsupportedVersion(version.stringValue)
       }
+      let help = try await configuration.commandRunner.run(
+        argv: [resolved, "--help"],
+        workingDirectory: request.projectRoot,
+        environment: environment,
+        timeout: configuration.requestTimeout
+      )
+      guard !help.timedOut else { throw AntigravityCLIError.requestTimedOut }
+      guard Self.succeeded(help.termination) else {
+        throw Self.processError(help.termination)
+      }
+      guard !help.standardOutput.truncated, !help.standardError.truncated else {
+        throw AgentRuntimeError.unsupportedProtocol("antigravity-help-output")
+      }
+      let facts = AntigravityCLIHelpFacts.parse(
+        help.standardOutput.tail + "\n" + help.standardError.tail
+      )
+      guard facts.supportsStreamJSON, facts.supportsPlanMode else {
+        throw AgentRuntimeError.unsupportedProtocol("antigravity-stream-json-plan")
+      }
       let installation = try AgentInstallation(
         id: request.installation.id,
         providerID: .antigravity,
@@ -110,7 +129,7 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
       return AgentProbeResult(
         installation: installation,
         available: true,
-        capabilities: Self.probeCapabilities
+        capabilities: Self.capabilities(observed: facts.observedCapabilities)
       )
     } catch {
       return unavailableProbe(
@@ -135,7 +154,7 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
   public func models(
     installation: AgentInstallation,
     projectRoot: String?,
-    selectedModelID _: String?
+    selectedModelID: String?
   ) async throws -> [AgentModelDescriptor] {
     guard installation.providerID == .antigravity else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
@@ -159,6 +178,9 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     guard !models.isEmpty else {
       throw AgentRuntimeError.capabilityUnavailable(.modelSelection)
     }
+    if let selectedModelID, !models.contains(where: { $0.id == selectedModelID }) {
+      throw AgentRuntimeError.modelUnavailable(selectedModelID)
+    }
     return models
   }
 
@@ -168,10 +190,13 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
   ) async throws -> AgentExecutionHandle {
     try validate(request: request, installation: installation)
     var requiredCapabilities = request.requiredCapabilities
+    requiredCapabilities.insert(
+      request.mutationIntent == .readOnly ? .workspaceRead : .workspaceWriteInPlace
+    )
     if request.requestedSessionID != nil { requiredCapabilities.insert(.sessionContinue) }
     if request.model != nil { requiredCapabilities.insert(.modelSelection) }
     if request.effort != nil { requiredCapabilities.insert(.effortSelection) }
-    try require(requiredCapabilities, from: Self.probeCapabilities)
+    try require(requiredCapabilities, from: Self.runtimeCapabilities)
     let runDirectory = try makeRunDirectory()
     var execution: AntigravityCLIExecution?
 
@@ -200,7 +225,7 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
       execution = active
       await active.start()
       let binding = try await active.waitForBinding(timeout: configuration.requestTimeout)
-      var observed = Self.probeCapabilities.observed
+      var observed = Self.runtimeCapabilities.observed
       observed.insert(.sessionCreate)
       let runCapabilities = Self.capabilities(observed: observed)
       let steer: (@Sendable (String) async throws -> Void)?
@@ -234,8 +259,9 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     guard installation.providerID == .antigravity else {
       throw AgentRuntimeError.providerUnavailable(installation.providerID)
     }
-    guard request.mutationIntent == .readOnly,
-      request.workspaceStrategy == .sharedProject
+    let expectedStrategy: AgentWorkspaceStrategy =
+      request.mutationIntent == .readOnly ? .sharedProject : .exclusiveProject
+    guard request.workspaceStrategy == expectedStrategy
     else {
       throw AgentRuntimeError.capabilityUnavailable(.workspaceWriteInPlace)
     }
@@ -298,6 +324,7 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     .toolLifecycle,
     .usage,
     .workspaceRead,
+    .workspaceWriteInPlace,
     .modelSelection,
     .effortSelection,
   ]
@@ -310,13 +337,22 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     .toolLifecycle,
     .usage,
     .workspaceRead,
+    .workspaceWriteInPlace,
     .modelSelection,
     .effortSelection,
   ]
 
-  // The version Probe proves compatibility, not runtime behavior. Keep initial
-  // task admission to the read-only boundary until a real run observes more.
-  private static let probeCapabilities = capabilities(observed: [.workspaceRead])
+  private static let runtimeCapabilities = capabilities(
+    observed: [
+      .sessionCreate,
+      .sessionContinue,
+      .steer,
+      .workspaceRead,
+      .workspaceWriteInPlace,
+      .modelSelection,
+      .effortSelection,
+    ]
+  )
 
   private static func capabilities(
     observed: Set<AgentCapability>
@@ -350,12 +386,29 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
         fields.count == 2
         ? String(fields[1]).trimmingCharacters(in: .whitespacesAndNewlines)
         : slug
+      let efforts = Self.efforts(slug: slug, displayName: displayName)
       return try? AgentModelDescriptor(
         id: slug,
         displayName: displayName.isEmpty ? slug : displayName,
-        supportedReasoningEfforts: ["low", "medium", "high"]
+        supportedReasoningEfforts: efforts,
+        defaultReasoningEffort: efforts.count == 1 ? efforts[0] : nil
       )
     }
+  }
+
+  private static func efforts(slug: String, displayName: String) -> [String] {
+    let values = ["low", "medium", "high"]
+    let lowerSlug = slug.lowercased()
+    if let effort = values.first(where: { lowerSlug.hasSuffix("-\($0)") }) {
+      return [effort]
+    }
+    let lowerDisplayName = displayName.lowercased()
+    if let effort = values.first(where: {
+      lowerDisplayName.contains("(\($0))") || lowerDisplayName.hasSuffix(" \($0)")
+    }) {
+      return [effort]
+    }
+    return values
   }
 
   private static func succeeded(_ termination: ManagedProcessTermination) -> Bool {
@@ -377,13 +430,15 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     case AntigravityCLIError.unsupportedVersion(let version):
       "Antigravity CLI version is incompatible: \(version)."
     case AntigravityCLIError.requestTimedOut:
-      "Antigravity CLI version Probe timed out."
+      "Antigravity CLI capability Probe timed out."
+    case AgentRuntimeError.unsupportedProtocol(let protocolID):
+      "Antigravity CLI does not support the required protocol surface: \(protocolID)."
     case AgentRuntimeError.installationUnavailable:
       "The Antigravity CLI executable is unavailable or unsafe."
     case AntigravityCLIError.processExited(let code):
-      "Antigravity CLI version Probe exited with code \(code.map(String.init) ?? "unknown")."
+      "Antigravity CLI capability Probe exited with code \(code.map(String.init) ?? "unknown")."
     default:
-      "Antigravity CLI version Probe failed."
+      "Antigravity CLI capability Probe failed."
     }
   }
 

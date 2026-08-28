@@ -1542,9 +1542,12 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(provider.shutdownCount, 1)
   }
 
-  func testAntigravitySubmissionDefaultsToReadOnlySharedProject() async throws {
+  func testAntigravitySubmissionDefaultsToWorkspaceWriteExclusiveProject() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
-    let provider = try ScriptedAgentProvider(providerID: .antigravity)
+    let provider = try ScriptedAgentProvider(
+      providerID: .antigravity,
+      supportsWorkspaceWrite: true
+    )
     let registry = try await Self.makeRegistry(
       fixture: fixture,
       provider: provider,
@@ -1565,9 +1568,9 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     let receipt = try await application.serviceSubmitTask(
       MCPServiceTaskSubmission(
         projectID: fixture.project.id.rawValue,
-        prompt: "Review the repository without changing files.",
+        prompt: "Update the repository.",
         providerID: "antigravity",
-        clientRequestID: "antigravity-read-only"
+        clientRequestID: "antigravity-workspace-write"
       ),
       deadline: deadline
     )
@@ -1579,7 +1582,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     let pending = try XCTUnwrap(pendingRecord)
     XCTAssertEqual(pending.providerID, AgentProviderID.antigravity.rawValue)
     XCTAssertEqual(pending.installationID, "ainst-route-antigravity")
-    XCTAssertEqual(pending.permissionMode, .readOnly)
+    XCTAssertEqual(pending.permissionMode, .workspaceWrite)
     XCTAssertFalse(pending.networkAllowed)
     XCTAssertEqual(pending.selectionMode, .explicit)
 
@@ -1594,11 +1597,10 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     }
 
     let request = try XCTUnwrap(provider.startedRequests.first)
-    XCTAssertEqual(request.mutationIntent, .readOnly)
-    XCTAssertEqual(request.workspaceStrategy, .sharedProject)
+    XCTAssertEqual(request.mutationIntent, .workspaceWrite)
+    XCTAssertEqual(request.workspaceStrategy, .exclusiveProject)
     XCTAssertFalse(request.networkAccessRequested)
-    XCTAssertTrue(request.requiredCapabilities.contains(.workspaceRead))
-    XCTAssertFalse(request.requiredCapabilities.contains(.workspaceWriteInPlace))
+    XCTAssertTrue(request.requiredCapabilities.contains(.workspaceWriteInPlace))
     XCTAssertEqual(request.profileID, AgentProfileID(rawValue: "desktop-shared"))
 
     try emit(
@@ -1620,6 +1622,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     async throws
   {
     let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.setAntigravityDefaultPermissionMode("read-only")
     let provider = try ScriptedAgentProvider(
       providerID: .antigravity,
       capabilities: [.workspaceRead]
@@ -1682,9 +1685,12 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     }
   }
 
-  func testAntigravityRejectsWorkspaceWriteAndNetworkAdmission() async throws {
+  func testAntigravityAcceptsWorkspaceWriteAndRejectsNetworkAdmission() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
-    let provider = try ScriptedAgentProvider(providerID: .antigravity)
+    let provider = try ScriptedAgentProvider(
+      providerID: .antigravity,
+      supportsWorkspaceWrite: true
+    )
     let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
     let application = makeServiceApplication(
       fixture: fixture,
@@ -1697,19 +1703,18 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     )
     let projectID = fixture.project.id.rawValue
 
-    try await assertRejected(
-      application,
-      submission: MCPServiceTaskSubmission(
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
         projectID: projectID,
         prompt: "Modify the repository.",
         providerID: "antigravity",
         permissionMode: "workspace-write",
         permissionModeOverride: true,
-        clientRequestID: "antigravity-write-rejected"
+        clientRequestID: "antigravity-write-accepted"
       ),
-      expected: .contractRejected,
-      reason: "Antigravity V1 is read-only"
+      deadline: ContinuousClock.now.advanced(by: .seconds(10))
     )
+    XCTAssertEqual(receipt.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
     try await assertRejected(
       application,
       submission: MCPServiceTaskSubmission(
@@ -1725,7 +1730,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     )
 
     let projectTasks = try await fixture.tasks.tasks(projectID: fixture.project.id)
-    XCTAssertTrue(projectTasks.isEmpty)
+    XCTAssertEqual(projectTasks.map(\.id.rawValue), [receipt.taskID])
     XCTAssertTrue(provider.startedRequests.isEmpty)
   }
 
@@ -1823,7 +1828,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(agent.installationID, "ainst-route-antigravity")
     XCTAssertTrue(agent.taskSubmissionEnabled)
     XCTAssertEqual(agent.effectiveCapabilities, [AgentCapability.workspaceRead.rawValue])
-    XCTAssertEqual(agent.workspaceEnforcement, "os_sandbox_read_only")
+    XCTAssertEqual(agent.workspaceEnforcement, "bridge_workspace_sandbox")
     XCTAssertEqual(agent.approvalEnforcement, "provider_soft_deny")
     XCTAssertEqual(agent.networkEnforcement, "provider_native")
   }

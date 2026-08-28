@@ -259,6 +259,8 @@ extension BridgeServiceApplication {
       permissionMode = try await settings.openCodeDefaultPermissionMode()
     } else if providerID == .deepSeekHarness {
       permissionMode = try await settings.deepSeekHarnessDefaultPermissionMode()
+    } else if providerID == .antigravity {
+      permissionMode = try await settings.antigravityDefaultPermissionMode()
     } else {
       permissionMode = "read-only"
     }
@@ -322,6 +324,17 @@ extension BridgeServiceApplication {
           throw BridgeMCPQueryError.contractRejected
         }
         try await settings.setDeepSeekHarnessDefaultPermissionMode(normalized)
+      } else if providerID == .antigravity {
+        let normalized: String
+        switch permissionMode {
+        case "build", "workspace-write":
+          normalized = "workspace-write"
+        case "plan", "read-only":
+          normalized = "read-only"
+        default:
+          throw BridgeMCPQueryError.contractRejected
+        }
+        try await settings.setAntigravityDefaultPermissionMode(normalized)
       } else {
         throw BridgeMCPQueryError.contractRejected
       }
@@ -392,6 +405,7 @@ extension BridgeServiceApplication {
   {
     if providerID == .openCode { return .openCodeDefaultModel }
     if providerID == .deepSeekHarness { return .deepSeekHarnessDefaultModel }
+    if providerID == .antigravity { return .antigravityDefaultModel }
     throw BridgeMCPQueryError.contractRejected
   }
 
@@ -400,6 +414,7 @@ extension BridgeServiceApplication {
   {
     if providerID == .openCode { return .openCodeDefaultEffort }
     if providerID == .deepSeekHarness { return .deepSeekHarnessDefaultEffort }
+    if providerID == .antigravity { return .antigravityDefaultEffort }
     throw BridgeMCPQueryError.contractRejected
   }
 }

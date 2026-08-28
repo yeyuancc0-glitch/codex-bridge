@@ -92,11 +92,18 @@ extension MCPServiceToolCatalog {
       + "If permission_mode is omitted, Bridge uses the saved OpenCode default mode; supervisor, "
       + "and skill fields must also be omitted. To continue an OpenCode conversation, pass the "
       + "provider_session_id returned by get_task as thread_id; Bridge resumes or loads that exact "
-      + "ACP session in the selected project. For Antigravity, set provider_id=antigravity; V1 "
-      + "accepts read-only tasks only, rejects network_access overrides, and uses the registered "
-      + "official agy stream-json installation. Only request model, effort, or thread_id when "
-      + "list_agents reports the corresponding effective capability; thread_id must be a prior "
-      + "Bridge-bound Antigravity conversation from the same project and installation. The response includes wait_policy; follow "
+      + "ACP session in the selected project. For Antigravity, set provider_id=antigravity; it "
+      + "uses the registered official agy stream-json installation and supports native plan/accept-edits "
+      + "modes: Plan/read-only "
+      + "(agy mode: plan) or Accept Edits/workspace-write (agy mode: accept-edits) in-place modes. "
+      + "Model, effort, and session continuation are "
+      + "available only when list_agents reports the corresponding effective capability; thread_id "
+      + "must be a prior Bridge-bound Antigravity conversation from the same project and installation. "
+      + "steer_task queues follow-up input on the same Antigravity session after the current prompt, "
+      + "not real-time insertion. Bridge can inject an explicitly requested skill_name. Antigravity "
+      + "does not support Supervisor, interactive provider approval, or network_access=true; a provider "
+      + "permission denial is reported as task "
+      + "failure. The response includes wait_policy; follow "
       + "its recommended_poll_after_seconds before checking get_task again. The three profiles are "
       + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
       + "seconds, quiet long-running work). A DeepSeek Harness network_enforcement of unavailable "
@@ -112,7 +119,7 @@ extension MCPServiceToolCatalog {
         "provider_id": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit for Codex. Set to opencode or antigravity, or deepseek-harness, only when the user explicitly selected a locally registered installation; list_agents shows availability and enforcement."
+            "Omit for Codex. Set to opencode, deepseek-harness, or antigravity only when the user explicitly selected a locally registered installation; list_agents shows availability, effective capabilities, and enforcement."
         ),
         "installation_id": nullableStringSchema(
           maximum: 256,
@@ -122,12 +129,12 @@ extension MCPServiceToolCatalog {
         "execution_model": nullableStringSchema(
           maximum: 256,
           description:
-            "Omit to use the Codex Bridge default or the selected provider default. For OpenCode or DeepSeek Harness, use only a model advertised by the local Provider catalog."
+            "Omit to use the Codex Bridge default or the selected provider default. For OpenCode, DeepSeek Harness, or Antigravity, use only a model advertised by the local Provider catalog when selection.model is effective."
         ),
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the selected provider default effort. For OpenCode or DeepSeek Harness, set only a value advertised for the selected model when the user explicitly requests a per-task override; external providers require model_override=true."
+            "Omit to use the selected provider default effort. For OpenCode, DeepSeek Harness, or Antigravity, set only a value advertised for the selected model when the user explicitly requests a per-task override and selection.effort is effective; external providers require model_override=true."
         ),
         "model_override": [
           "type": ["boolean", "null"],
@@ -148,17 +155,17 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval. Antigravity V1 accepts read-only only.",
+            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval. For Antigravity, read-only selects Plan (agy mode: plan) and workspace-write selects Accept Edits (agy mode: accept-edits) for in-place execution; interactive provider approval is unavailable and a permission denial fails the task.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
           "description":
-            "Set true only when the user's request explicitly asks for a permission mode. OpenCode otherwise uses its saved default; Antigravity remains read-only regardless.",
+            "Set true only when the user's request explicitly asks for a permission mode. OpenCode otherwise uses its saved default. For Antigravity, use it to select Plan/read-only or Accept Edits/workspace-write only when list_agents reports the matching effective capability.",
         ],
         "network_access": [
           "type": "boolean",
           "description":
-            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access. For Antigravity, true is rejected.",
+            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access. Antigravity has no Bridge network grant and true is rejected.",
         ],
         "acceptance_criteria": [
           "type": "array",
@@ -195,7 +202,7 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.steerTask.rawValue,
     title: "Steer task",
     description:
-      "Send bounded corrective input to the exact active provider run. For Codex this is sent to the active Turn; for OpenCode and DeepSeek Harness, pass provider_run_id from get_task as expected_turn_id and the input is queued as the next prompt on the same ACP session. This is a queued follow-up for those ACP providers, not real-time insertion into the current prompt.",
+      "Send bounded corrective input to the exact active provider run. For Codex this is sent to the active Turn; for OpenCode, DeepSeek Harness, and Antigravity, pass provider_run_id from get_task as expected_turn_id and the input is queued as the next prompt on the same session. This is a queued follow-up for those providers, not real-time insertion into the current prompt.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
@@ -217,7 +224,7 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.interruptTask.rawValue,
     title: "Interrupt task",
     description:
-      "Request interruption of the exact active provider run. For Codex, expected_turn_id is the active Turn ID; for OpenCode and DeepSeek Harness, use provider_run_id from get_task.",
+      "Request interruption of the exact active provider run. For Codex, expected_turn_id is the active Turn ID; for OpenCode, DeepSeek Harness, and Antigravity, use provider_run_id from get_task.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),

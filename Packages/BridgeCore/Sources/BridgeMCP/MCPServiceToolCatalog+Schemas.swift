@@ -33,7 +33,7 @@ extension MCPServiceToolCatalog {
       "provider_id": [
         "type": "string",
         "description":
-          "Provider identifier. deepseek-harness is experimental, supports fresh sessions with provider-native read-only or workspace-write modes, and requires explicit selection.",
+          "Provider identifier. Omit for Codex. Set to opencode, deepseek-harness, or antigravity only when the user explicitly selected a registered installation; list_agents is authoritative for effective capabilities and enforcement. Antigravity supports native plan/accept-edits modes: Plan/read-only (agy mode: plan) and Accept Edits/workspace-write (agy mode: accept-edits), plus exact session continuation, model/effort selection, and queued steer when those capabilities are effective.",
       ],
       "installation_id": stringSchema,
       "display_name": stringSchema,
@@ -49,7 +49,7 @@ extension MCPServiceToolCatalog {
         "type": "array",
         "items": stringSchema,
         "description":
-          "Capabilities enforced for this installation. DeepSeek Harness may expose session_create, interrupt, lifecycle.steer, text_delta, workspace.read, workspace.write_in_place, approval.one_shot, approval.structured_payload, selection.model, and selection.effort.",
+          "Capabilities actually available after provider observation and service policy. DeepSeek Harness may expose session_create, interrupt, lifecycle.steer, text_delta, workspace.read, workspace.write_in_place, approval.one_shot, approval.structured_payload, selection.model, and selection.effort. Antigravity may expose lifecycle.session_continue, lifecycle.steer (queued follow-up), workspace.write_in_place, selection.model, and selection.effort. An absent capability is unsupported; Antigravity does not expose interactive provider approval, Supervisor, or a Bridge network grant.",
       ],
       "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
       "security_profile_id": stringSchema,

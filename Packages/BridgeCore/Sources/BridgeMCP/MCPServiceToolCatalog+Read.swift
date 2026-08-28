@@ -60,10 +60,16 @@ extension MCPServiceToolCatalog {
       + "A selectable OpenCode installation can receive tasks through submit_task; DeepSeek "
       + "Harness is experimental and supports fresh sessions with provider-native read-only or "
       + "workspace-write modes. Selectable OpenCode and Antigravity installations can receive "
-      + "explicit provider tasks through submit_task. The local user still approves each task "
+      + "explicit provider tasks through submit_task. Antigravity supports native plan/accept-edits "
+      + "modes, mapping Plan/read-only "
+      + "(agy mode: plan) and Accept Edits/workspace-write (agy mode: accept-edits) to its native "
+      + "in-place modes, and may expose exact "
+      + "session continuation and queued steer when effective_capabilities reports them. "
+      + "Antigravity has no interactive provider approval or Supervisor support; a headless "
+      + "permission denial is reported as task failure. The local user still approves each task "
       + "before execution, while "
       + "DeepSeek execution-time permission requests are surfaced for one-shot local approval; "
-      + "steer input is queued as a follow-up on the same session. "
+      + "steer input for ACP and Antigravity providers is queued as a follow-up on the same session. "
       + "Inspect network_enforcement: unavailable means network_access=false "
       + "does not guarantee blocking the Provider model control plane or shell-tool network.",
     inputSchema: objectSchema(

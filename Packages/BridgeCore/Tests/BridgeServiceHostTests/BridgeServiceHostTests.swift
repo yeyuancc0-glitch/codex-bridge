@@ -114,6 +114,37 @@ final class BridgeServiceHostTests: XCTestCase {
     XCTAssertEqual(value["client_request_id"] as? String, "request-1")
   }
 
+  func testXPCAntigravityDefaultsRoundTripThroughProviderScopedDTO() async throws {
+    let fixture = try await makeServiceHostFixture(self)
+    let pair = xpcClient(composition: fixture.composition)
+    let client = pair.0
+    let listener = pair.1
+    defer {
+      listener.invalidate()
+      Task { await client.invalidate() }
+    }
+
+    let initial = try await client.agentModelDefault(providerID: "antigravity")
+    XCTAssertEqual(initial.providerID, "antigravity")
+    XCTAssertEqual(initial.permissionMode, "workspace-write")
+    XCTAssertNil(initial.model)
+    XCTAssertNil(initial.effort)
+
+    let saved = try await client.setAgentDefaults(
+      providerID: "antigravity",
+      model: "antigravity/model",
+      permissionMode: "build",
+      effort: "high"
+    )
+    XCTAssertEqual(saved.providerID, "antigravity")
+    XCTAssertEqual(saved.model, "antigravity/model")
+    XCTAssertEqual(saved.permissionMode, "workspace-write")
+    XCTAssertEqual(saved.effort, "high")
+
+    let reloaded = try await client.agentModelDefault(providerID: "antigravity")
+    XCTAssertEqual(reloaded, saved)
+  }
+
   func testTaskControlRequestsCarryExpectedBinding() throws {
     let steer = IPCTaskSteerRequest(
       taskID: "task-1",

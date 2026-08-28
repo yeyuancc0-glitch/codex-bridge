@@ -31,6 +31,9 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case deepSeekHarnessDefaultModel = "agent.deepseek-harness.default_model"
   case deepSeekHarnessDefaultPermissionMode = "agent.deepseek-harness.default_permission_mode"
   case deepSeekHarnessDefaultEffort = "agent.deepseek-harness.default_effort"
+  case antigravityDefaultModel = "agent.antigravity.default_model"
+  case antigravityDefaultPermissionMode = "agent.antigravity.default_permission_mode"
+  case antigravityDefaultEffort = "agent.antigravity.default_effort"
   case tunnelID = "tunnel.id"
   case tunnelEnabled = "tunnel.enabled"
 }
@@ -273,6 +276,48 @@ public actor ServiceSettings {
       throw ServiceStoreError.invalidArgument("agent.deepseek-harness.default_permission_mode")
     }
     try await set(mode, for: .deepSeekHarnessDefaultPermissionMode)
+  }
+
+  public func antigravityDefaultPermissionMode() async throws -> String {
+    guard let value = try await string(for: .antigravityDefaultPermissionMode) else {
+      return "workspace-write"
+    }
+    guard value == "workspace-write" || value == "read-only" else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return value
+  }
+
+  public func setAntigravityDefaultPermissionMode(_ mode: String) async throws {
+    guard mode == "workspace-write" || mode == "read-only" else {
+      throw ServiceStoreError.invalidArgument(
+        "agent.antigravity.default_permission_mode"
+      )
+    }
+    try await set(mode, for: .antigravityDefaultPermissionMode)
+  }
+
+  public func antigravityDefaultModel() async throws -> String? {
+    try await string(for: .antigravityDefaultModel)
+  }
+
+  public func setAntigravityDefaultModel(_ model: String?) async throws {
+    try await set(model, for: .antigravityDefaultModel)
+  }
+
+  public func antigravityDefaultEffort() async throws -> String? {
+    try await string(for: .antigravityDefaultEffort)
+  }
+
+  public func setAntigravityDefaultEffort(_ effort: String?) async throws {
+    if let effort {
+      try ServiceValidation.identifier(
+        effort,
+        field: "agent.antigravity.default_effort",
+        maximumBytes: 64
+      )
+    }
+    try await set(effort, for: .antigravityDefaultEffort)
   }
 
   public func openCodeDefaultEffort() async throws -> String? {
