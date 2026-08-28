@@ -23,6 +23,16 @@ struct BridgeServiceSettingsView: View {
         description: "MCP 客户端提交新任务时，若未显式指定模型，将默认使用该配置。"
       )
 
+      ForEach(
+        ["opencode", "deepseek-harness", "antigravity"],
+        id: \.self
+      ) { providerID in
+        BridgeServiceAgentDefaultsSection(
+          model: model,
+          providerID: providerID
+        )
+      }
+
       CustomInstructionsEditor(model: model)
 
       BridgeServiceAgentSettingsSection(model: model)

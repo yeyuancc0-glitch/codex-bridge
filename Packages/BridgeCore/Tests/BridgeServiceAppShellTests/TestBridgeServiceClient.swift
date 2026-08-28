@@ -69,13 +69,16 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentInstallationsValue: [IPCAgentInstallationSummary] = []
   private var agentActions: [String] = []
   private var agentModelOptionsValue: [IPCAgentModelSummary] = []
+  private var agentModelOptionsByInstallation: [String: [IPCAgentModelSummary]] = [:]
   private var agentModelDefaultValue: String?
   private var agentModelDefaultPermissionMode = "build"
   private var agentModelDefaultEffort: String?
   private var agentModelDefaultWrites: [String?] = []
   private var agentDefaultsByProvider: [String: IPCAgentModelDefaultResponse] = [:]
   private var agentModelDefaultReadDelay: Duration = .zero
+  private var agentModelDefaultReadDelaysByProvider: [String: Duration] = [:]
   private var agentModelDefaultReadCount = 0
+  private var agentModelDefaultReadCountsByProvider: [String: Int] = [:]
   private var agentModelRequestCount = 0
   private var failAgentModels = false
   private var submittedAgentRequestValue: IPCAgentSubmitRequest?
@@ -136,9 +139,14 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func configureAgentModels(
     _ models: [IPCAgentModelSummary],
+    installationID: String? = nil,
     fail: Bool = false
   ) {
-    agentModelOptionsValue = models
+    if let installationID {
+      agentModelOptionsByInstallation[installationID] = models
+    } else {
+      agentModelOptionsValue = models
+    }
     failAgentModels = fail
   }
 
@@ -164,8 +172,16 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     agentModelDefaultReadDelay = delay
   }
 
+  func setAgentDefaultReadDelay(_ delay: Duration, providerID: String) {
+    agentModelDefaultReadDelaysByProvider[providerID] = delay
+  }
+
   func agentModelDefaultReadCountValue() -> Int {
     agentModelDefaultReadCount
+  }
+
+  func agentModelDefaultReadCountValue(providerID: String) -> Int {
+    agentModelDefaultReadCountsByProvider[providerID, default: 0]
   }
 
   func setAgentModelsFailure(_ fail: Bool) {
@@ -429,17 +445,20 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     return IPCAgentSubmitResponse(taskID: "tsk-test-agent", status: "awaiting_local_approval")
   }
 
-  func agentModels(installationID _: String) async throws -> IPCAgentModelsResponse {
+  func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
     agentModelRequestCount += 1
     guard !failAgentModels else { throw BridgeServiceClientError.unavailable }
-    return IPCAgentModelsResponse(models: agentModelOptionsValue)
+    return IPCAgentModelsResponse(
+      models: agentModelOptionsByInstallation[installationID] ?? agentModelOptionsValue
+    )
   }
 
   func agentModelDefault() async throws -> IPCAgentModelDefaultResponse {
     agentModelDefaultReadCount += 1
     let value = agentModelDefaultValue
-    if agentModelDefaultReadDelay > .zero {
-      try await Task.sleep(for: agentModelDefaultReadDelay)
+    let delay = agentModelDefaultReadDelaysByProvider["opencode"] ?? agentModelDefaultReadDelay
+    if delay > .zero {
+      try await Task.sleep(for: delay)
     }
     return IPCAgentModelDefaultResponse(
       model: value,
@@ -450,6 +469,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse {
     if providerID == "opencode" { return try await agentModelDefault() }
+    agentModelDefaultReadCountsByProvider[providerID, default: 0] += 1
+    if let delay = agentModelDefaultReadDelaysByProvider[providerID], delay > .zero {
+      try await Task.sleep(for: delay)
+    }
     return agentDefaultsByProvider[providerID]
       ?? IPCAgentModelDefaultResponse(
         providerID: providerID, model: nil, permissionMode: "read-only")

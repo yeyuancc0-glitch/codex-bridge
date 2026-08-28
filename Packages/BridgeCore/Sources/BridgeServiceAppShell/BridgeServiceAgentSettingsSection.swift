@@ -290,16 +290,6 @@ struct BridgeServiceAgentSettingsSection: View {
           .foregroundStyle(.secondary)
       }
 
-      if supportsWorkspaceWrite {
-        Picker("默认执行模式", selection: agentPermissionModeBinding) {
-          Text("工作区可写").tag("build")
-          Text("只读").tag("plan")
-        }
-        .pickerStyle(.menu)
-        .disabled(model.isRefreshingAgentModels)
-        .help("仅当任务没有显式 permission_mode 时使用；项目权限仍会限制写入")
-      }
-
       if selectable.isEmpty {
         Text("该 Provider 暂无已启用的可用安装")
           .font(.caption)
@@ -326,102 +316,6 @@ struct BridgeServiceAgentSettingsSection: View {
         .help("将已加载的项目 Skill 注入本次任务")
       }
 
-      if supportsModelSelection {
-        Picker("默认模型", selection: agentModelDefaultBinding) {
-          Text("Provider 默认").tag("")
-          if let current = providerDefault.model,
-            !model.agentModelOptions.contains(where: { $0.modelID == current })
-          {
-            Text("当前设置 · \(current)").tag(current)
-          }
-          ForEach(model.agentModelOptions, id: \.modelID) { item in
-            Text(item.displayName).tag(item.modelID)
-          }
-        }
-        .pickerStyle(.menu)
-        .disabled(model.isRefreshingAgentModels)
-        .task(
-          id: AgentModelHydrationID(
-            providerID: submitProviderID,
-            installationID: chosenInstallation?.installationID,
-            projectID: model.selectedProjectID,
-            modelID: providerDefault.model
-          )
-        ) {
-          guard
-            !model.consumeAgentModelHydrationSuppression(
-              providerID: submitProviderID,
-              installationID: chosenInstallation?.installationID,
-              projectID: model.selectedProjectID,
-              modelID: providerDefault.model
-            )
-          else { return }
-          await model.hydrateAgentModelState(
-            installationID: chosenInstallation?.installationID,
-            providerID: submitProviderID
-          )
-        }
-
-        HStack(spacing: 10) {
-          Button {
-            model.refreshAgentModelCatalog(
-              installationID: chosenInstallation?.installationID,
-              providerID: submitProviderID
-            )
-          } label: {
-            if model.isRefreshingAgentModels {
-              ProgressView()
-                .controlSize(.small)
-              Text("正在刷新模型列表…")
-            } else {
-              Label("刷新模型列表", systemImage: "arrow.clockwise")
-            }
-          }
-          .controlSize(.small)
-          .disabled(
-            selectable.isEmpty
-              || model.isRefreshingAgentModels
-              || model.isManagingAgents
-          )
-          .accessibilityLabel("刷新 \(providerDisplayName(submitProviderID)) 模型列表")
-          .accessibilityHint("从当前 Provider 安装重新读取模型目录")
-
-          if !model.agentModelOptions.isEmpty {
-            Text("\(model.agentModelOptions.count) 个模型")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-
-        if let refreshError = model.agentModelRefreshError {
-          Label(refreshError, systemImage: "exclamationmark.triangle.fill")
-            .font(.caption)
-            .foregroundStyle(.orange)
-            .textSelection(.enabled)
-        }
-      }
-
-      if supportsEffortSelection {
-        Picker("默认推理强度", selection: agentDefaultEffortBinding) {
-          Text("Provider 默认").tag("")
-          if let current = selectedAgentModel,
-            !current.supportedReasoningEfforts.isEmpty
-          {
-            ForEach(current.supportedReasoningEfforts, id: \.self) { effort in
-              Text(effort).tag(effort)
-            }
-          }
-        }
-        .pickerStyle(.menu)
-        .disabled(model.isRefreshingAgentModels)
-        .help("所选推理强度会应用到该 Provider 的后续任务")
-        if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
-          Text("当前模型不提供可选推理强度，使用 Provider 默认")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      }
-
       TextField("任务描述", text: $submitPrompt, axis: .vertical)
         .textFieldStyle(.roundedBorder)
         .lineLimit(2...4)
@@ -434,7 +328,8 @@ struct BridgeServiceAgentSettingsSection: View {
             providerID: submitProviderID,
             installationID: chosenInstallation?.installationID,
             model: supportsModelSelection ? providerDefault.model : nil,
-            effort: supportsEffortSelection ? selectedExecutionEffort : nil,
+            effort: supportsEffortSelection
+              ? model.agentExecutionEffort(for: submitProviderID) : nil,
             permissionMode: supportsWorkspaceWrite ? nil : "read-only",
             prompt: submitPrompt,
             skillName: selectedSkillName
@@ -523,55 +418,6 @@ struct BridgeServiceAgentSettingsSection: View {
     guard provider?.supportsWorkspaceWrite == true, let installation else { return false }
     return installation.effectiveCapabilities.contains("workspace.write_in_place")
       || installation.effectiveCapabilities.contains("workspace.write_isolated")
-  }
-
-  private var agentModelDefaultBinding: Binding<String> {
-    Binding(
-      get: { model.agentModelDefault(for: submitProviderID).model ?? "" },
-      set: { value in
-        let selected = value.isEmpty ? nil : value
-        guard selected != model.agentModelDefault(for: submitProviderID).model else { return }
-        model.saveAgentModelDefault(selected, providerID: submitProviderID)
-      }
-    )
-  }
-
-  private var agentPermissionModeBinding: Binding<String> {
-    Binding(
-      get: {
-        let mode = model.agentModelDefault(for: submitProviderID).permissionMode
-        return mode == "plan" || mode == "read-only" ? "plan" : "build"
-      },
-      set: { value in
-        let current = model.agentModelDefault(for: submitProviderID).permissionMode
-        let normalized = current == "plan" || current == "read-only" ? "plan" : "build"
-        guard value == "build" || value == "plan", value != normalized
-        else { return }
-        model.saveAgentPermissionMode(value, providerID: submitProviderID)
-      }
-    )
-  }
-
-  private var agentDefaultEffortBinding: Binding<String> {
-    Binding(
-      get: { model.agentModelDefault(for: submitProviderID).effort ?? "" },
-      set: { value in
-        let selected = value.isEmpty ? nil : value
-        guard selected != model.agentModelDefault(for: submitProviderID).effort else { return }
-        model.saveAgentEffort(selected, providerID: submitProviderID)
-      }
-    )
-  }
-
-  private var selectedAgentModel: IPCAgentModelSummary? {
-    if let modelID = model.agentModelDefault(for: submitProviderID).model {
-      return model.agentModelOptions.first(where: { $0.modelID == modelID })
-    }
-    return model.agentModelOptions.first
-  }
-
-  private var selectedExecutionEffort: String? {
-    model.agentExecutionEffort(for: submitProviderID)
   }
 
   private var selectedSkillName: String? {

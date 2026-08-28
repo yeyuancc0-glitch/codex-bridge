@@ -447,6 +447,180 @@ final class BridgeServiceAppModelTests: XCTestCase {
     await model.shutdownUI()
   }
 
+  func testConcurrentProviderHydrationKeepsCatalogsAndDefaultsIsolated() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let providers = [
+      (providerID: "opencode", installationID: "installation-opencode", modelID: "opencode/model"),
+      (
+        providerID: "deepseek-harness",
+        installationID: "installation-deepseek",
+        modelID: "deepseek/model"
+      ),
+      (
+        providerID: "antigravity",
+        installationID: "installation-antigravity",
+        modelID: "antigravity/model"
+      ),
+    ]
+    await client.configureAgentModels(
+      [IPCAgentModelSummary(modelID: providers[0].modelID, displayName: "OpenCode")],
+      installationID: providers[0].installationID
+    )
+    await client.configureAgentModels(
+      [IPCAgentModelSummary(modelID: providers[1].modelID, displayName: "DeepSeek")],
+      installationID: providers[1].installationID
+    )
+    await client.configureAgentModels(
+      [IPCAgentModelSummary(modelID: providers[2].modelID, displayName: "Antigravity")],
+      installationID: providers[2].installationID
+    )
+    _ = try await client.setAgentDefaults(
+      providerID: providers[0].providerID,
+      model: providers[0].modelID,
+      permissionMode: "build",
+      effort: nil
+    )
+    _ = try await client.setAgentDefaults(
+      providerID: providers[1].providerID,
+      model: providers[1].modelID,
+      permissionMode: "read-only",
+      effort: "high"
+    )
+    _ = try await client.setAgentDefaults(
+      providerID: providers[2].providerID,
+      model: providers[2].modelID,
+      permissionMode: "workspace-write",
+      effort: "low"
+    )
+    await client.setAgentDefaultReadDelay(.milliseconds(10), providerID: providers[1].providerID)
+    await client.setAgentDefaultReadDelay(.milliseconds(5), providerID: providers[2].providerID)
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    await withTaskGroup(of: Void.self) { group in
+      for provider in providers {
+        group.addTask {
+          await model.hydrateAgentModelState(
+            installationID: provider.installationID,
+            providerID: provider.providerID
+          )
+        }
+      }
+    }
+
+    for provider in providers {
+      XCTAssertEqual(
+        model.agentModelOptions(for: provider.providerID).map(\.modelID),
+        [provider.modelID]
+      )
+      XCTAssertEqual(model.agentModelDefault(for: provider.providerID).model, provider.modelID)
+    }
+    XCTAssertEqual(model.agentModelOptions.map(\.modelID), [providers[0].modelID])
+  }
+
+  func testConcurrentProviderDefaultSavesDoNotCancelEachOther() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    _ = try await client.setAgentDefaults(
+      providerID: "opencode",
+      model: "opencode/model",
+      permissionMode: "build",
+      effort: "low"
+    )
+    _ = try await client.setAgentDefaults(
+      providerID: "deepseek-harness",
+      model: "deepseek/model",
+      permissionMode: "read-only",
+      effort: "medium"
+    )
+    _ = try await client.setAgentDefaults(
+      providerID: "antigravity",
+      model: "antigravity/model",
+      permissionMode: "workspace-write",
+      effort: "high"
+    )
+    await client.setAgentDefaultReadDelay(.milliseconds(25), providerID: "opencode")
+    await client.setAgentDefaultReadDelay(.milliseconds(10), providerID: "deepseek-harness")
+    await client.setAgentDefaultReadDelay(.milliseconds(5), providerID: "antigravity")
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(installationID: nil, providerID: "opencode")
+    await model.hydrateAgentModelState(installationID: nil, providerID: "deepseek-harness")
+    await model.hydrateAgentModelState(installationID: nil, providerID: "antigravity")
+
+    model.saveAgentEffort("xhigh", providerID: "opencode")
+    model.saveAgentEffort("high", providerID: "deepseek-harness")
+    model.saveAgentEffort("low", providerID: "antigravity")
+
+    try await waitUntil {
+      let openCode = try? await client.agentModelDefault(providerID: "opencode")
+      let deepSeek = try? await client.agentModelDefault(providerID: "deepseek-harness")
+      let antigravity = try? await client.agentModelDefault(providerID: "antigravity")
+      return openCode?.effort == "xhigh"
+        && deepSeek?.effort == "high"
+        && antigravity?.effort == "low"
+        && model.agentModelDefault(for: "opencode").effort == "xhigh"
+        && model.agentModelDefault(for: "deepseek-harness").effort == "high"
+        && model.agentModelDefault(for: "antigravity").effort == "low"
+    }
+  }
+
+  func testChangingInstallationClearsStaleCatalogUntilHydrationCompletes() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let first = IPCAgentModelSummary(modelID: "deepseek/first", displayName: "First")
+    let second = IPCAgentModelSummary(modelID: "deepseek/second", displayName: "Second")
+    await client.configureAgentModels([first], installationID: "deepseek-first")
+    await client.configureAgentModels([second], installationID: "deepseek-second")
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(
+      installationID: "deepseek-first",
+      providerID: "deepseek-harness"
+    )
+    XCTAssertEqual(model.agentModelOptions(for: "deepseek-harness"), [first])
+    await client.setAgentDefaultReadDelay(
+      .milliseconds(100),
+      providerID: "deepseek-harness"
+    )
+
+    let hydration = Task { @MainActor in
+      await model.hydrateAgentModelState(
+        installationID: "deepseek-second",
+        providerID: "deepseek-harness"
+      )
+    }
+    try await waitUntil {
+      model.isRefreshingAgentModels(for: "deepseek-harness")
+    }
+
+    XCTAssertTrue(model.isRefreshingAgentModels(for: "deepseek-harness"))
+    XCTAssertTrue(model.agentModelOptions(for: "deepseek-harness").isEmpty)
+
+    await hydration.value
+    XCTAssertFalse(model.isRefreshingAgentModels(for: "deepseek-harness"))
+    XCTAssertEqual(model.agentModelOptions(for: "deepseek-harness"), [second])
+  }
+
   func testStaleAgentDefaultLoadCannotOverwriteNewSave() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -614,8 +788,8 @@ final class BridgeServiceAppModelTests: XCTestCase {
 
     try await waitUntil {
       let requestCount = await client.agentModelRequestCountValue()
-      return !model.isRefreshingAgentModels
-        && model.agentModelOptions == [option]
+      return !model.isRefreshingAgentModels(for: "deepseek-harness")
+        && model.agentModelOptions(for: "deepseek-harness") == [option]
         && requestCount == requestCountBeforeRefresh + 1
     }
     XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").model, option.modelID)

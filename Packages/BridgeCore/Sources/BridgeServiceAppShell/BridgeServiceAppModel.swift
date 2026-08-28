@@ -75,6 +75,11 @@ public enum BridgeServiceConnectionState: Equatable, Sendable {
 public typealias BridgeServiceClientFactory =
   @MainActor @Sendable () -> any BridgeServiceClientProtocol
 
+struct AgentModelCatalogScope: Equatable {
+  let installationID: String?
+  let projectID: String?
+}
+
 @MainActor
 public final class BridgeServiceAppModel: ObservableObject {
   @Published public var selection: BridgeServiceNavigation? = .overview {
@@ -87,9 +92,16 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var projectDetails: [String: MCPProjectDetail] = [:]
   @Published public internal(set) var agentProviders: [IPCAgentProviderSummary] = []
   @Published public internal(set) var agentInstallations: [IPCAgentInstallationSummary] = []
-  @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = []
+  @Published public internal(set) var agentModelOptionsByProvider:
+    [String: [IPCAgentModelSummary]] = [:]
+  @Published public internal(set) var agentModelRefreshingProviders: Set<String> = []
+  @Published public internal(set) var agentModelRefreshErrorsByProvider: [String: String] = [:]
+  @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = [] {
+    didSet { agentModelOptionsByProvider["opencode"] = agentModelOptions }
+  }
   @Published public internal(set) var agentModelDefaults: [String: IPCAgentModelDefaultResponse] =
     [:]
+  @Published public internal(set) var agentModelHydratingProviders: Set<String> = []
   @Published public internal(set) var openCodeDefaultModel: String?
   @Published public internal(set) var openCodeDefaultPermissionMode = "build"
   @Published public internal(set) var openCodeDefaultEffort: String?
@@ -149,12 +161,14 @@ public final class BridgeServiceAppModel: ObservableObject {
   var chatWebViewSleepTask: Task<Void, Never>?
   var toastDismissTask: Task<Void, Never>?
   var workbenchProjectSyncTask: Task<Void, Never>?
-  var agentModelCatalogGeneration: UInt64 = 0
-  var agentModelRefreshGeneration: UInt64 = 0
-  var agentModelHydrationSuppression: AgentModelHydrationID?
-  var agentModelDefaultLoadGeneration: UInt64 = 0
-  var agentModelDefaultRevision: UInt64 = 0
-  var agentModelDefaultMutationTask: Task<Void, Never>?
+  var agentModelCatalogGenerations: [String: UInt64] = [:]
+  var agentModelCatalogScopes: [String: AgentModelCatalogScope] = [:]
+  var agentModelHydrationGenerations: [String: UInt64] = [:]
+  var agentModelRefreshGenerations: [String: UInt64] = [:]
+  var agentModelHydrationSuppressions: [String: AgentModelHydrationID] = [:]
+  var agentModelDefaultLoadGenerations: [String: UInt64] = [:]
+  var agentModelDefaultRevisions: [String: UInt64] = [:]
+  var agentModelDefaultMutationTasks: [String: Task<Void, Never>] = [:]
   var resolvedTaskApprovalKeys: Set<String> = []
   var resolvedDirectApprovalKeys: Set<String> = []
   var chatBrowserResumeURL = URL(string: "https://chatgpt.com")!
@@ -197,7 +211,9 @@ public final class BridgeServiceAppModel: ObservableObject {
     chatWebViewSleepTask?.cancel()
     toastDismissTask?.cancel()
     workbenchProjectSyncTask?.cancel()
-    agentModelDefaultMutationTask?.cancel()
+    for task in agentModelDefaultMutationTasks.values {
+      task.cancel()
+    }
   }
 
   public func projectName(for projectID: String) -> String {
@@ -224,13 +240,27 @@ public final class BridgeServiceAppModel: ObservableObject {
       )
   }
 
+  func agentModelOptions(for providerID: String) -> [IPCAgentModelSummary] {
+    agentModelOptionsByProvider[providerID]
+      ?? (providerID == "opencode" ? agentModelOptions : [])
+  }
+
+  func isRefreshingAgentModels(for providerID: String) -> Bool {
+    agentModelRefreshingProviders.contains(providerID)
+      || agentModelHydratingProviders.contains(providerID)
+  }
+
+  func agentModelRefreshError(for providerID: String) -> String? {
+    agentModelRefreshErrorsByProvider[providerID]
+  }
+
   func agentExecutionEffort(for providerID: String) -> String? {
     let value = agentModelDefault(for: providerID)
     guard let effort = value.effort else { return nil }
     let selectedModel =
       value.model.flatMap { modelID in
-        agentModelOptions.first(where: { $0.modelID == modelID })
-      } ?? (value.model == nil ? agentModelOptions.first : nil)
+        agentModelOptions(for: providerID).first(where: { $0.modelID == modelID })
+      } ?? (value.model == nil ? agentModelOptions(for: providerID).first : nil)
     guard selectedModel?.supportedReasoningEfforts.contains(effort) == true else {
       return nil
     }

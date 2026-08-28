@@ -85,7 +85,28 @@ extension BridgeServiceAppModel {
       projects = []
       agentProviders = []
       agentInstallations = []
+      agentModelOptions = []
+      agentModelOptionsByProvider = [:]
+      agentModelRefreshingProviders = []
+      agentModelHydratingProviders = []
+      agentModelRefreshErrorsByProvider = [:]
+      agentModelCatalogGenerations = [:]
+      agentModelCatalogScopes = [:]
+      agentModelHydrationGenerations = [:]
+      agentModelRefreshGenerations = [:]
+      agentModelHydrationSuppressions = [:]
+      agentModelDefaultLoadGenerations = [:]
+      agentModelDefaultRevisions = [:]
+      for task in agentModelDefaultMutationTasks.values {
+        task.cancel()
+      }
+      agentModelDefaultMutationTasks = [:]
       agentModelDefaults = [:]
+      openCodeDefaultModel = nil
+      openCodeDefaultPermissionMode = "build"
+      openCodeDefaultEffort = nil
+      isRefreshingAgentModels = false
+      agentModelRefreshError = nil
       isManagingAgents = false
       tasks = []
       approvals = []
