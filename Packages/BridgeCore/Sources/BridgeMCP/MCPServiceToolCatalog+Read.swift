@@ -19,6 +19,8 @@ extension MCPServiceToolCatalog {
         "app_version": stringSchema,
         "mcp_state": stringSchema,
         "tunnel_state": stringSchema,
+        "codex_version": stringSchema,
+        "login_mode": stringSchema,
         "execution_state": stringSchema,
         "supervisor_state": stringSchema,
         "degradations": arraySchema(stringSchema),

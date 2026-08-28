@@ -13,7 +13,8 @@ struct BridgeMCPInspectorFixture {
     )
     let server = MCPBridgeServer(
       appVersion: "inspector-fixture",
-      queries: InspectorQueries(),
+      service: InspectorService(),
+      exposureMode: .readOnly,
       httpConfiguration: httpConfiguration,
       sessionLimits: .init(maximumSessions: 8)
     )
@@ -117,8 +118,8 @@ private enum FixtureError: Error {
   case randomnessUnavailable
 }
 
-private struct InspectorQueries: BridgeMCPQueries {
-  func statusSnapshot(deadline: ContinuousClock.Instant) async throws -> BridgeStatusSnapshot {
+private struct InspectorService: BridgeMCPServiceAPI {
+  func serviceStatus(deadline: ContinuousClock.Instant) async throws -> BridgeStatusSnapshot {
     BridgeStatusSnapshot(
       appVersion: "inspector-fixture",
       mcpState: "ready",
@@ -131,7 +132,7 @@ private struct InspectorQueries: BridgeMCPQueries {
     )
   }
 
-  func listMCPVisibleProjects(
+  func serviceProjects(
     cursor: String?,
     limit: Int,
     deadline: ContinuousClock.Instant
@@ -152,7 +153,7 @@ private struct InspectorQueries: BridgeMCPQueries {
     )
   }
 
-  func listThreads(
+  func serviceThreads(
     projectID: String,
     cursor: String?,
     limit: Int,
@@ -165,7 +166,7 @@ private struct InspectorQueries: BridgeMCPQueries {
     return MCPThreadPage(threads: [])
   }
 
-  func readThread(
+  func serviceReadThread(
     projectID: String,
     threadID: String,
     detail: MCPThreadDetail,
@@ -179,7 +180,7 @@ private struct InspectorQueries: BridgeMCPQueries {
     throw BridgeMCPQueryError.threadNotFound
   }
 
-  func listModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList {
+  func serviceModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList {
     MCPModelList(
       models: [
         MCPModelSummary(
@@ -190,5 +191,180 @@ private struct InspectorQueries: BridgeMCPQueries {
         )
       ]
     )
+  }
+
+  func serviceProject(
+    projectID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectDetail {
+    guard projectID == "prj_inspector_fixture" else {
+      throw BridgeMCPQueryError.projectNotFound
+    }
+    return MCPProjectDetail(
+      projectID: projectID,
+      name: "Inspector fixture",
+      capabilities: MCPProjectCapabilities(
+        read: "allowed",
+        write: "local_approval",
+        network: "denied"
+      ),
+      gitState: "clean"
+    )
+  }
+
+  func serviceProjectCommands(
+    projectID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectCommands {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceSearchProjectFiles(
+    projectID: String,
+    query: String,
+    relativeDirectory: String?,
+    caseSensitive: Bool,
+    cursor: String?,
+    limit: Int,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectFileSearchPage {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceReadProjectFile(
+    projectID: String,
+    relativePath: String,
+    startLine: Int,
+    lineCount: Int,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectFileReadPage {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceListSkills(
+    projectID: String?,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceSkillList {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceReadSkill(
+    skillName: String,
+    projectID: String?,
+    subpath: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceSkillDocument {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceRunSkillAction(
+    _ request: MCPRunSkillActionRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceTask(
+    taskID: String,
+    recentEventLimit: Int,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceTaskSnapshot {
+    throw BridgeMCPQueryError.taskNotFound
+  }
+
+  func serviceSubmitTask(
+    _ submission: MCPServiceTaskSubmission,
+    invocationContext: MCPInvocationContext,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceTaskSubmissionReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceSteerTask(
+    taskID: String,
+    expectedTurnID: String,
+    input: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceInterruptTask(
+    taskID: String,
+    expectedTurnID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceProjectChanges(
+    projectID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPProjectChanges {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectWriteFile(
+    _ request: MCPDirectWriteRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectWriteReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectEditFile(
+    _ request: MCPDirectEditRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectEditReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectApplyPatch(
+    _ request: MCPDirectPatchRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectPatchReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectManagePath(
+    _ request: MCPDirectManagePathRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectManagePathReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectExecCommand(
+    _ request: MCPDirectExecRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandReceipt {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectReadCommand(
+    sessionID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandOutput {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectWriteStdin(
+    sessionID: String,
+    data: String,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectInterruptCommand(
+    sessionID: String,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectCommandOutput {
+    throw BridgeMCPQueryError.unavailable
+  }
+
+  func serviceDirectGitCommit(
+    _ request: MCPDirectGitCommitRequest,
+    deadline: ContinuousClock.Instant
+  ) async throws -> MCPDirectGitCommitReceipt {
+    throw BridgeMCPQueryError.unavailable
   }
 }

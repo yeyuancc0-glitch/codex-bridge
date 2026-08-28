@@ -1,34 +1,5 @@
 import Foundation
 
-public protocol BridgeMCPQueries: Sendable {
-  func statusSnapshot(deadline: ContinuousClock.Instant) async throws -> BridgeStatusSnapshot
-
-  func listMCPVisibleProjects(
-    cursor: String?,
-    limit: Int,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPProjectPage
-
-  func listThreads(
-    projectID: String,
-    cursor: String?,
-    limit: Int,
-    search: String?,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPThreadPage
-
-  func readThread(
-    projectID: String,
-    threadID: String,
-    detail: MCPThreadDetail,
-    cursor: String?,
-    limit: Int,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPThreadReadPage
-
-  func listModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList
-}
-
 public enum MCPCommandDenialReason: String, Codable, Equatable, Sendable {
   case commandModeDenied = "command_mode_denied"
   case commandNotRegistered = "command_not_registered"

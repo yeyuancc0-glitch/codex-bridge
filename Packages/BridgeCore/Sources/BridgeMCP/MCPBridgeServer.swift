@@ -43,29 +43,6 @@ public actor MCPBridgeServer {
 
   public init(
     appVersion: String,
-    queries: any BridgeMCPQueries,
-    taskOperations: (any BridgeMCPTaskOperations)? = nil,
-    projectOperations: (any BridgeMCPProjectOperations)? = nil,
-    httpConfiguration: MCPHTTPConfiguration,
-    sessionLimits: MCPSessionRegistry.Limits = .init(),
-    clientAdmission: MCPClientAdmissionGate? = nil
-  ) {
-    precondition(!appVersion.isEmpty)
-    let factory = MCPServerFactory(
-      appVersion: appVersion,
-      queries: queries,
-      taskOperations: taskOperations,
-      projectOperations: projectOperations
-    )
-    makeServer = { _ in await factory.makeServer() }
-    discoveryInstructions = nil
-    self.httpConfiguration = httpConfiguration
-    self.sessionLimits = sessionLimits
-    self.clientAdmission = clientAdmission
-  }
-
-  public init(
-    appVersion: String,
     service: any BridgeMCPServiceAPI,
     exposureMode: MCPServiceExposureMode,
     httpConfiguration: MCPHTTPConfiguration,

@@ -152,9 +152,18 @@ if (
 const expectedNames = [
   "bridge_status",
   "list_projects",
+  "list_agents",
+  "get_project",
+  "search_project_files",
+  "read_project_file",
   "list_threads",
   "read_thread",
   "list_models",
+  "list_skills",
+  "read_skill",
+  "get_task",
+  "get_project_changes",
+  "list_project_commands",
 ];
 const names = toolResult.tools.map((tool) => tool.name);
 if (JSON.stringify(names) !== JSON.stringify(expectedNames)) {

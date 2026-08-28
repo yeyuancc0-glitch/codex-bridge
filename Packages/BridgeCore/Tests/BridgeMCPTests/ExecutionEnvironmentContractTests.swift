@@ -57,16 +57,6 @@ final class ExecutionEnvironmentContractTests: XCTestCase {
       XCTAssertNotNil(properties["scope"])
     }
 
-    let legacyDefinitions = Dictionary(
-      uniqueKeysWithValues: MCPToolCatalog().definitions.map { ($0.name, $0) }
-    )
-    let legacyStatus = try environmentProperties(
-      tool: "bridge_status",
-      definitions: legacyDefinitions
-    )
-    XCTAssertNotNil(legacyStatus["xcodebuild_nested_sandbox"])
-    XCTAssertNotNil(legacyStatus["loopback_bind"])
-    XCTAssertNotNil(legacyStatus["scope"])
   }
 
   private func environmentProperties(

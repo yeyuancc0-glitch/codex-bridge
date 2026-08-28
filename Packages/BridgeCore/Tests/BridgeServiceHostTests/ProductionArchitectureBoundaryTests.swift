@@ -2,40 +2,15 @@ import Foundation
 import XCTest
 
 final class ProductionArchitectureBoundaryTests: XCTestCase {
-  private static let productionTargets = [
-    "BridgeACP",
-    "BridgeAgentCore",
-    "BridgeAntigravityCLI",
-    "BridgeCodexRPC",
-    "BridgeCodexService",
-    "BridgeDirectCommand",
-    "BridgeDeepSeekHarnessACP",
-    "BridgeDomain",
-    "BridgeFiles",
-    "BridgeGit",
-    "BridgeIPC",
-    "BridgeLegacyImport",
-    "BridgeMCP",
-    "BridgeOpenCodeACP",
-    "BridgeProcess",
-    "BridgeProjects",
-    "BridgeSecurity",
-    "BridgeServiceApplication",
-    "BridgeServiceAppShell",
-    "BridgeServiceCore",
-    "BridgeServiceHost",
-    "BridgeSkills",
-    "BridgeSupervisor",
-    "BridgeTunnel",
-  ]
-
-  private static let legacyControlPlaneTargets: Set<String> = [
+  private static let retiredControlPlaneTargets: Set<String> = [
     "BridgeAppModel",
     "BridgeApplication",
     "BridgeAppShell",
     "BridgeCoordinator",
+    "BridgeExecution",
     "BridgePersistence",
     "BridgePipeline",
+    "BridgePolicy",
     "BridgePresentation",
     "BridgeReporting",
     "BridgeRepositories",
@@ -43,20 +18,24 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     "BridgeVerification",
   ]
 
-  func testProductionTargetsDoNotImportLegacyControlPlane() throws {
+  func testRetiredControlPlaneTargetsAreAbsent() throws {
     let sourcesRoot = Self.packageRoot.appending(path: "Sources", directoryHint: .isDirectory)
-    for target in Self.productionTargets {
-      let targetRoot = sourcesRoot.appending(path: target, directoryHint: .isDirectory)
-      let sourceFiles = try Self.swiftFiles(in: targetRoot)
-      XCTAssertFalse(sourceFiles.isEmpty, "Missing production target sources: \(target)")
-      for sourceFile in sourceFiles {
-        let imports = try Self.internalImports(in: sourceFile)
-        let forbidden = imports.intersection(Self.legacyControlPlaneTargets)
-        XCTAssertTrue(
-          forbidden.isEmpty,
-          "\(target) imports legacy control-plane modules \(forbidden.sorted()) in \(sourceFile.lastPathComponent)"
-        )
-      }
+    let testsRoot = Self.packageRoot.appending(path: "Tests", directoryHint: .isDirectory)
+    let manifest = try String(
+      contentsOf: Self.packageRoot.appending(path: "Package.swift"),
+      encoding: .utf8
+    )
+
+    for target in Self.retiredControlPlaneTargets {
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: sourcesRoot.appending(path: target).path),
+        "Retired source target was restored: \(target)"
+      )
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: testsRoot.appending(path: "\(target)Tests").path),
+        "Retired test target was restored: \(target)Tests"
+      )
+      XCTAssertFalse(manifest.contains("name: \"\(target)\""))
     }
   }
 

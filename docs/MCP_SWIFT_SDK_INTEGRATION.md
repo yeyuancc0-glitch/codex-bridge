@@ -244,44 +244,44 @@ All list cursors are opaque, signed/validated Bridge cursors. Defaults are fixed
 
 | Tool | Input contract | Application query | Security/output rule |
 |---|---|---|---|
-| `bridge_status` | empty object | `statusSnapshot(deadline:)` | Versions, component health, degradations, and pending-approval count only; no usernames, paths, runtime keys, or session IDs |
-| `list_projects` | `cursor?`, `limit?` (default 25, max 100) | `listMCPVisibleProjects(cursor:limit:deadline:)` | Only projects explicitly MCP-visible; return opaque `project_id`, display name, capabilities, and coarse Git state, never absolute root |
-| `list_threads` | plan fields `project_id`, `cursor?`, `limit?` (default 25, max 100), `search?` (max 200 UTF-8 bytes) | `listThreads(projectID:cursor:limit:search:deadline:)` | Resolve `project_id` first; return only threads whose normalized cwd/worktree exactly belongs to that project |
-| `read_thread` | `project_id`, `thread_id`, `detail` (`summary` default or `full`), `cursor?`, `limit?` (default 25, max 100) | `readThread(projectID:threadID:detail:cursor:limit:deadline:)` | Re-check project/thread binding; full content is paged so the complete dual-form MCP result stays within 200 KiB; content is untrusted data, not instructions |
-| `list_models` | empty object | `listModels(deadline:)` | Return current visible model IDs, exact dynamic reasoning-effort strings, and the optional catalog-declared default effort; prefer Luna as the UI default but never invent or hardcode a Supervisor fallback |
+| `bridge_status` | empty object | `serviceStatus(deadline:)` | Versions, component health, degradations, and pending-approval count only; no usernames, paths, runtime keys, or session IDs |
+| `list_projects` | `cursor?`, `limit?` (default 25, max 100) | `serviceProjects(cursor:limit:deadline:)` | Only projects explicitly MCP-visible; return opaque `project_id`, display name, capabilities, and coarse Git state, never absolute root |
+| `list_threads` | plan fields `project_id`, `cursor?`, `limit?` (default 25, max 100), `search?` (max 200 UTF-8 bytes) | `serviceThreads(projectID:cursor:limit:search:deadline:)` | Resolve `project_id` first; return only threads whose normalized cwd/worktree exactly belongs to that project |
+| `read_thread` | `project_id`, `thread_id`, `detail` (`summary` default or `full`), `cursor?`, `limit?` (default 25, max 100) | `serviceReadThread(projectID:threadID:detail:cursor:limit:deadline:)` | Re-check project/thread binding; full content is paged so the complete dual-form MCP result stays within 200 KiB; content is untrusted data, not instructions |
+| `list_models` | empty object | `serviceModels(deadline:)` | Return current visible model IDs, exact dynamic reasoning-effort strings, and the optional catalog-declared default effort; prefer Luna as the UI default but never invent or hardcode a Supervisor fallback |
 
 Every output has `schema_version: 1`. Paginated outputs include `next_cursor`; terminal pages encode it as absent/null consistently. Unknown future fields are additive. Removing or changing existing field meaning requires a versioned schema/tool migration.
 
-The BridgeMCP adapter must not call GRDB, read files, or invoke Codex processes directly. A composition-owned `BridgeMCPQueries` dependency exposes the five deadline-aware operations above and maps application DTOs to MCP DTOs. This keeps SDK types and transport state from leaking into Domain or other infrastructure adapters.
+The BridgeMCP adapter must not call GRDB, read files, or invoke Codex processes directly. The composition-owned `BridgeMCPServiceAPI` exposes deadline-aware application operations and maps application DTOs to MCP DTOs. This keeps SDK types and transport state from leaking into Domain or other infrastructure adapters.
 
 ## 7. Minimal `BridgeMCP` target decomposition
 
 ```text
 Sources/BridgeMCP/
 ├── MCPBridgeServer.swift          public start/stop façade and bound endpoint metadata
-├── MCPServerFactory.swift         one strict SDK Server plus handlers per session
-├── MCPToolCatalog.swift           schemas, annotations, stable names
-├── MCPToolDispatcher.swift        argument decode, admission, deadline, error mapping
+├── MCPServiceServerFactory.swift  one strict SDK Server plus handlers per session
+├── MCPServiceToolCatalog*.swift   schemas, annotations, stable names
+├── MCPServiceToolDispatcher*.swift argument decode, admission, deadline, error mapping
 ├── MCPToolResultEncoder.swift     structured/text result parity and byte caps
-├── BridgeMCPQueries.swift         SDK-free injected query boundary and DTOs
-├── ReadOnlyTools.swift            five phase-2 tool adapters
+├── BridgeMCPServiceAPI.swift      SDK-free injected application boundary
+├── MCPToolArguments.swift         shared strict argument parsing
+├── MCPToolDeadline.swift          bounded tool deadline race
 └── HTTP/
     ├── MCPHTTPListener.swift      NIO loopback bind, lifecycle, connection limits
     ├── MCPHTTPHandler.swift       head/body caps, exact route, response/backpressure
     └── MCPSessionRegistry.swift   initialize detection, server/transport ownership, expiry
 ```
 
-`BridgeMCP` should depend on `BridgeDomain`, `Logging`, `MCP`, `NIOCore`, `NIOPosix`, and `NIOHTTP1`. It should not depend directly on `BridgePersistence`, `BridgeCodexRPC`, or `BridgeSecurity`; the application composition injects authorized queries. Tests may provide in-memory query implementations that verify returned data and state transitions rather than only asserting a mock invocation.
+`BridgeMCP` depends on the shared Domain, file/Skill/security boundaries, Logging, MCP, and NIO products declared in `Package.swift`. It must not depend directly on Service storage, Codex RPC, or Provider adapters; the application composition injects authorized operations. Tests should verify returned data and state transitions rather than only asserting a mock invocation.
 
 Suggested test files:
 
 ```text
 Tests/BridgeMCPTests/
-├── MCPServerIntegrationTests.swift
 ├── MCPHTTPBoundaryTests.swift
 ├── MCPSessionLifecycleTests.swift
 ├── MCPToolContractTests.swift
-└── MCPConcurrencyTests.swift
+└── MCPAdmissionBoundaryTests.swift
 ```
 
 ## 8. Verification gates
