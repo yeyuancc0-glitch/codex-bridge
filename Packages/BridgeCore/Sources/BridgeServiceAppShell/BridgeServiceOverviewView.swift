@@ -9,7 +9,7 @@ struct BridgeServiceOverviewView: View {
       VStack(alignment: .leading, spacing: 20) {
         SectionHeader(
           "概览",
-          subtitle: "监控后台 Service、本地 MCP、Secure Tunnel 与任务执行状态。",
+          subtitle: "全景监控后台 Service、本地 MCP、Secure Tunnel 与任务执行状态。",
           icon: "gauge.with.needle"
         )
 
@@ -24,7 +24,7 @@ struct BridgeServiceOverviewView: View {
         }
 
         VStack(alignment: .leading, spacing: 12) {
-          Text("连接与服务状态")
+          Text("连接与服务拓扑全景")
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
@@ -83,24 +83,13 @@ struct BridgeServiceOverviewView: View {
   }
 
   private var metricsGrid: some View {
-    LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 240), spacing: 14)], spacing: 14)
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170, maximum: 220), spacing: 14)], spacing: 14)
     {
-      MetricCard(
-        title: "注册项目",
-        value: "\(model.projects.count)",
-        symbol: "folder.fill",
-        subtitle: "点击管理本地目录",
-        tint: .blue,
-        action: {
-          model.selection = .projects
-        }
-      )
-
       MetricCard(
         title: "运行中任务",
         value: "\(model.runningTaskCount)",
         symbol: "bolt.fill",
-        subtitle: model.runningTaskCount > 0 ? "点击进入工作台查看" : "当前空闲",
+        subtitle: model.runningTaskCount > 0 ? "点击进入工作台" : "当前空闲",
         tint: model.runningTaskCount > 0 ? .green : .secondary,
         action: {
           model.selection = .workbench
@@ -115,6 +104,30 @@ struct BridgeServiceOverviewView: View {
         tint: model.approvals.isEmpty ? .secondary : .orange,
         action: {
           model.selection = .workbench
+        }
+      )
+
+      MetricCard(
+        title: "注册项目",
+        value: "\(model.projects.count)",
+        symbol: "folder.fill",
+        subtitle: "管理本地目录",
+        tint: .blue,
+        action: {
+          model.selection = .projects
+        }
+      )
+
+      MetricCard(
+        title: "本机 Agent",
+        value: "\(enabledAgentCount)",
+        symbol: "cpu.fill",
+        subtitle: model.agentInstallations.isEmpty
+          ? "未连接外部 Agent"
+          : "共 \(model.agentInstallations.count) 个已登记",
+        tint: enabledAgentCount > 0 ? .teal : .secondary,
+        action: {
+          model.selection = .connections
         }
       )
 
@@ -135,7 +148,7 @@ struct BridgeServiceOverviewView: View {
     NativeCard {
       VStack(spacing: 10) {
         ServiceStatusLabel(
-          title: "后台 Service",
+          title: "后台常驻 Service",
           value: model.connectionState.label,
           symbol: model.connectionState.symbol,
           tone: serviceTone
@@ -144,7 +157,7 @@ struct BridgeServiceOverviewView: View {
         Divider()
 
         ServiceStatusLabel(
-          title: "本地 MCP",
+          title: "本地 MCP 通道",
           value: model.serviceStatus?.status.mcpState ?? "未知",
           symbol: model.serviceStatus?.status.mcpState == "ready"
             ? "checkmark.circle.fill"
@@ -155,7 +168,7 @@ struct BridgeServiceOverviewView: View {
         Divider()
 
         ServiceStatusLabel(
-          title: "Secure Tunnel",
+          title: "远程 Secure Tunnel",
           value: tunnelStatusLabel,
           symbol: tunnelSymbol,
           tone: tunnelTone
@@ -164,16 +177,16 @@ struct BridgeServiceOverviewView: View {
         Divider()
 
         ServiceStatusLabel(
-          title: "MCP 工具权限模式",
-          value: model.exposureMode.localizedTitle,
-          symbol: model.exposureMode == .full ? "wrench.and.screwdriver.fill" : "eye.fill",
-          tone: model.exposureMode == .full ? .info : .neutral
+          title: "本机 Agent 引擎",
+          value: "\(enabledAgentCount) 个可用 / 共 \(model.agentInstallations.count) 个",
+          symbol: "cpu.fill",
+          tone: enabledAgentCount > 0 ? .success : .neutral
         )
 
         Divider()
 
         HStack {
-          Button("管理连接与凭据 →") {
+          Button("管理连接与 Agent →") {
             model.selection = .connections
           }
           .buttonStyle(.link)
@@ -181,7 +194,7 @@ struct BridgeServiceOverviewView: View {
 
           Spacer()
 
-          Button("配置模型与监督偏好 →") {
+          Button("配置模型与执行偏好 →") {
             model.selection = .settings
           }
           .buttonStyle(.link)
@@ -274,6 +287,10 @@ struct BridgeServiceOverviewView: View {
     if tunnel.lifecycle == "ready" { return "checkmark.circle.fill" }
     if tunnel.actionRequired { return "exclamationmark.triangle.fill" }
     return "link"
+  }
+
+  private var enabledAgentCount: Int {
+    model.agentInstallations.filter { $0.isEnabled && $0.availability == "available" }.count
   }
 
   private var lastRefreshSubtitle: String {

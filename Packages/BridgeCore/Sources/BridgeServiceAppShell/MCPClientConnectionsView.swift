@@ -23,8 +23,6 @@ struct MCPClientConnectionsView: View {
         clientRow(chatGPTProfile, isQwen: false)
         Divider()
         clientRow(qwenProfile, isQwen: true)
-        Divider()
-        directApproval
       }
     }
     .confirmationDialog(
@@ -54,7 +52,7 @@ struct MCPClientConnectionsView: View {
 
   private var serviceHeader: some View {
     HStack {
-      Label("本地 MCP 服务", systemImage: "network.badge.shield.half.filled")
+      Label("本地 MCP 客户端通道", systemImage: "network.badge.shield.half.filled")
         .font(.headline)
       Spacer()
       StatusBadge(
@@ -71,7 +69,7 @@ struct MCPClientConnectionsView: View {
         model.postToast("已复制本地 MCP Endpoint")
       }
       HStack {
-        Text("仅监听 127.0.0.1；凭证不会进入普通状态、日志或 SQLite。")
+        Text("仅监听 127.0.0.1；凭证由 macOS Keychain 管理，不进明文状态或 SQLite。")
           .font(.caption2)
           .foregroundStyle(.secondary)
         Spacer()
@@ -137,7 +135,7 @@ struct MCPClientConnectionsView: View {
 
       Text(
         profile.exposureMode == .full
-          ? "向该 MCP 客户端暴露 Codex 任务与 Direct 工具；项目权限、workspace gate、网络限制和本机审批仍然生效。"
+          ? "向该客户端暴露 Codex 任务与 Direct 工具；项目权限、workspace gate 与本机安全审批仍然生效。"
           : "仅暴露项目、文件、任务、Thread、模型与 Skill 查询工具。"
       )
       .font(.caption)
@@ -171,26 +169,10 @@ struct MCPClientConnectionsView: View {
           .buttonStyle(.bordered)
           .disabled(!profile.enabled)
         }
-        Text("复制内容包含本机访问凭证；请直接粘贴到 Qwen Studio 的“使用 JSON 添加”，不要保存到文档或 Git。")
+        Text("复制内容包含本机访问凭证；请直接粘贴到 Qwen Studio 的“使用 JSON 添加”，不要保存到公开文档或 Git。")
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
-    }
-  }
-
-  private var directApproval: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Toggle(
-        "MCP Direct 操作自动批准",
-        isOn: Binding(
-          get: { model.directApprovalMode == "auto" },
-          set: { model.setDirectApprovalMode($0 ? "auto" : "require") }
-        )
-      )
-      .toggleStyle(.switch)
-      Text("这是所有 MCP 客户端共享的本机策略；关闭时每次危险 Direct 操作仍要求本机批准。")
-        .font(.caption)
-        .foregroundStyle(.secondary)
     }
   }
 

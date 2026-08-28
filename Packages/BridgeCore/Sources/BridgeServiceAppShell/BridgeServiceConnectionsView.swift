@@ -13,33 +13,35 @@ struct BridgeServiceConnectionsView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         SectionHeader(
-          "连接与服务",
-          subtitle: "后台 LaunchAgent Service 持有 MCP 与 Secure Tunnel，关闭可视化 App 不会停止任务。",
+          "连接与集成",
+          subtitle: "统一管理远程 AI 客户端、本地 MCP 客户端通道与本机已连接 Agent 引擎实例。",
           icon: "point.3.connected.trianglepath.dotted"
         )
 
-        VStack(alignment: .leading, spacing: 12) {
-          Text("后台守护服务 (Service)")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.secondary)
-
-          serviceSection
-        }
+        connectionSummaryStrip
 
         VStack(alignment: .leading, spacing: 12) {
-          Text("本地 MCP 通道")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.secondary)
-
-          mcpSection
-        }
-
-        VStack(alignment: .leading, spacing: 12) {
-          Text("OpenAI Secure MCP Tunnel")
+          Text("远程 AI 客户端 (OpenAI Secure Tunnel)")
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
 
           tunnelSection
+        }
+
+        VStack(alignment: .leading, spacing: 12) {
+          Text("本地 MCP 客户端通道")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          MCPClientConnectionsView(model: model)
+        }
+
+        VStack(alignment: .leading, spacing: 12) {
+          Text("本机 Agent 引擎连接")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          BridgeServiceAgentSettingsSection(model: model)
         }
       }
       .padding(28)
@@ -58,72 +60,78 @@ struct BridgeServiceConnectionsView: View {
     }
   }
 
-  private var serviceSection: some View {
-    NativeCard {
-      VStack(alignment: .leading, spacing: 14) {
-        HStack(alignment: .center) {
-          Label("LaunchAgent 进程", systemImage: "server.rack")
-            .font(.headline)
+  private var connectionSummaryStrip: some View {
+    HStack(spacing: 12) {
+      summaryItem(
+        title: "XPC 本机通信",
+        value: model.connectionState.label,
+        symbol: model.connectionState.symbol,
+        tone: serviceTone
+      )
 
-          Spacer()
+      Divider()
+        .frame(height: 24)
 
-          StatusBadge(registrationLabel, tone: registrationTone)
-        }
+      summaryItem(
+        title: "本地 MCP 端点",
+        value: model.serviceStatus?.status.mcpState == "ready" ? "已就绪" : "待检查",
+        symbol: model.serviceStatus?.status.mcpState == "ready"
+          ? "checkmark.circle.fill"
+          : "circle.dashed",
+        tone: model.serviceStatus?.status.mcpState == "ready" ? .success : .neutral
+      )
 
-        HStack {
-          Text("本机 XPC 通信：")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-          StatusBadge(
-            model.connectionState.label, symbol: model.connectionState.symbol, tone: serviceTone)
-        }
+      Divider()
+        .frame(height: 24)
 
-        switch model.registrationStatus {
-        case .notRegistered:
-          CalloutBanner(
-            title: "后台服务尚未注册",
-            message: "注册后台服务后，Codex Bridge 可以在 App 关闭后持续响应已启用的 MCP 客户端并维持任务执行。",
-            symbol: "info.circle",
-            tone: .info,
-            actionTitle: "立即注册后台 Service"
-          ) {
-            model.registerService()
-          }
+      summaryItem(
+        title: "远程 Secure Tunnel",
+        value: tunnelStatus.lifecycle,
+        symbol: tunnelStatus.lifecycle == "ready" ? "checkmark.circle.fill" : "link",
+        tone: tunnelTone
+      )
 
-        case .requiresApproval:
-          CalloutBanner(
-            title: "等待 macOS 登录项批准",
-            message: "系统已登记后台项，请前往“系统设置 → 通用 → 登录项”允许 Codex Bridge 在后台运行。",
-            symbol: "exclamationmark.triangle.fill",
-            tone: .warning,
-            actionTitle: "打开系统设置"
-          ) {
-            model.openSystemSettings()
-          }
+      Divider()
+        .frame(height: 24)
 
-        case .notFound:
-          CalloutBanner(
-            title: "LaunchAgent 配置缺失",
-            message: "当前 App Bundle 中未检测到打包的 Service plist 配置，请重新构建项目。",
-            symbol: "xmark.circle.fill",
-            tone: .error
-          )
-
-        case .enabled:
-          HStack(spacing: 6) {
-            Image(systemName: "checkmark.shield.fill")
-              .foregroundStyle(.green)
-            Text("后台 LaunchAgent 服务正在受监管运行中。")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-      }
+      summaryItem(
+        title: "本机 Agent 引擎",
+        value: "\(enabledAgentCount) 个可用",
+        symbol: "cpu.fill",
+        tone: enabledAgentCount > 0 ? .success : .neutral
+      )
     }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+    .background(Color(nsColor: .controlBackgroundColor))
+    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.3), lineWidth: 0.8)
+    )
   }
 
-  private var mcpSection: some View {
-    MCPClientConnectionsView(model: model)
+  private func summaryItem(
+    title: String,
+    value: String,
+    symbol: String,
+    tone: StatusTone
+  ) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: symbol)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(tone.foregroundColor)
+
+      VStack(alignment: .leading, spacing: 1) {
+        Text(title)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+        Text(value)
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(.primary)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var tunnelSection: some View {
@@ -278,15 +286,6 @@ struct BridgeServiceConnectionsView: View {
     }
   }
 
-  private var registrationTone: StatusTone {
-    switch model.registrationStatus {
-    case .enabled: .success
-    case .requiresApproval: .warning
-    case .notRegistered: .neutral
-    case .notFound: .error
-    }
-  }
-
   private var tunnelTone: StatusTone {
     if tunnelStatus.lifecycle == "ready" { return .success }
     if tunnelStatus.actionRequired { return .warning }
@@ -294,12 +293,7 @@ struct BridgeServiceConnectionsView: View {
     return .neutral
   }
 
-  private var registrationLabel: String {
-    switch model.registrationStatus {
-    case .notRegistered: "未注册"
-    case .enabled: "已启用"
-    case .requiresApproval: "等待系统批准"
-    case .notFound: "配置缺失"
-    }
+  private var enabledAgentCount: Int {
+    model.agentInstallations.filter { $0.isEnabled && $0.availability == "available" }.count
   }
 }

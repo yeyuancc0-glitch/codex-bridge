@@ -9,31 +9,20 @@ struct BridgeServiceAgentSettingsSection: View {
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
 
   var body: some View {
-    Section {
-      HStack(alignment: .top, spacing: 12) {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("只有在这里明确登记并通过 Probe 的本机安装才会出现在 list_agents。")
-            .font(.caption)
-          Text("已启用且 Probe 通过的安装可以通过 submit_task 提交任务；每个任务仍需本机批准，具体能力以 Provider 有效能力为准。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
-        providerRegistrationMenu
-      }
+    NativeCard {
+      VStack(alignment: .leading, spacing: 16) {
+        headerRow
 
-      if model.agentInstallations.isEmpty {
-        Label("尚未登记外部 Agent 安装", systemImage: "externaldrive.badge.questionmark")
-          .foregroundStyle(.secondary)
-          .padding(.vertical, 8)
-      } else {
-        ForEach(model.agentInstallations, id: \.installationID) { installation in
-          installationRow(installation)
+        if model.agentInstallations.isEmpty {
+          emptyStateView
+        } else {
+          VStack(spacing: 12) {
+            ForEach(model.agentInstallations, id: \.installationID) { installation in
+              installationCard(installation)
+            }
+          }
         }
       }
-
-    } header: {
-      Label("本机 Agent Provider", systemImage: "point.3.connected.trianglepath.dotted")
     }
     .alert(
       "接受二进制替换并重新验证？",
@@ -82,27 +71,37 @@ struct BridgeServiceAgentSettingsSection: View {
     }
   }
 
-  @ViewBuilder
-  private var providerRegistrationMenu: some View {
-    if model.agentProviders.isEmpty {
-      Text("没有可登记的 Provider Adapter")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    } else {
-      Menu {
-        ForEach(model.agentProviders, id: \.providerID) { provider in
-          Button(provider.displayName) {
-            chooseExecutable(for: provider)
-          }
-        }
-      } label: {
-        Label("登记安装", systemImage: "plus")
-      }
-      .disabled(model.isManagingAgents)
+  private var headerRow: some View {
+    HStack(alignment: .center) {
+      Label("本机 Agent 引擎连接", systemImage: "cpu.fill")
+        .font(.headline)
+
+      Spacer()
+
+      providerRegistrationMenu
     }
   }
 
-  private func installationRow(_ installation: IPCAgentInstallationSummary) -> some View {
+  private var emptyStateView: some View {
+    VStack(spacing: 8) {
+      Image(systemName: "externaldrive.badge.plus")
+        .font(.system(size: 28))
+        .foregroundStyle(.secondary)
+      Text("尚未连接本机外部 Agent")
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.primary)
+      Text("点击右上角“登记 Agent”，可连接本机的 OpenCode、DeepSeek Harness 或 Antigravity 实例。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 20)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+  }
+
+  private func installationCard(_ installation: IPCAgentInstallationSummary) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 10) {
         Image(systemName: availabilitySymbol(installation.availability))
@@ -110,7 +109,7 @@ struct BridgeServiceAgentSettingsSection: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text(installation.displayName)
-            .font(.body.weight(.semibold))
+            .font(.subheadline.weight(.semibold))
           Text(installation.providerID + " · " + installation.installationID)
             .font(.caption2.monospaced())
             .foregroundStyle(.secondary)
@@ -142,28 +141,26 @@ struct BridgeServiceAgentSettingsSection: View {
         )
       }
 
-      Text(installation.executablePath)
-        .font(.caption.monospaced())
-        .foregroundStyle(.secondary)
-        .textSelection(.enabled)
-        .lineLimit(2)
+      CodeSnippetBlock(text: installation.executablePath, label: "可执行路径")
 
       HStack(spacing: 16) {
         LabeledContent("版本", value: installation.version ?? "未识别")
-        LabeledContent("ACP", value: installation.protocolRevision ?? "未协商")
+        LabeledContent("ACP 协议", value: installation.protocolRevision ?? "未协商")
         LabeledContent("Adapter", value: "r\(installation.adapterRevision)")
-        LabeledContent("能力", value: "\(installation.effectiveCapabilities.count) 项")
+        LabeledContent("有效能力", value: "\(installation.effectiveCapabilities.count) 项")
       }
       .font(.caption)
 
       if let error = installation.lastProbeError {
-        Text(error)
-          .font(.caption)
-          .foregroundStyle(.orange)
-          .textSelection(.enabled)
+        CalloutBanner(
+          title: "Probe 探测异常",
+          message: error,
+          symbol: "exclamationmark.triangle.fill",
+          tone: .warning
+        )
       }
 
-      HStack {
+      HStack(spacing: 10) {
         Button("重新 Probe") {
           model.reprobeAgentInstallation(
             installation.installationID,
@@ -181,14 +178,40 @@ struct BridgeServiceAgentSettingsSection: View {
 
         Spacer()
 
-        Button("移除", role: .destructive) {
+        Button("移除登记", role: .destructive) {
           installationPendingRemoval = installation
         }
         .disabled(model.isManagingAgents)
       }
       .controlSize(.small)
     }
-    .padding(.vertical, 8)
+    .padding(12)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 0.8)
+    )
+  }
+
+  @ViewBuilder
+  private var providerRegistrationMenu: some View {
+    if model.agentProviders.isEmpty {
+      Text("暂无可登记的 Provider")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    } else {
+      Menu {
+        ForEach(model.agentProviders, id: \.providerID) { provider in
+          Button(provider.displayName) {
+            chooseExecutable(for: provider)
+          }
+        }
+      } label: {
+        Label("登记 Agent", systemImage: "plus")
+      }
+      .disabled(model.isManagingAgents)
+    }
   }
 
   private func chooseExecutable(for provider: IPCAgentProviderSummary) {

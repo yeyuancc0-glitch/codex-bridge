@@ -5,71 +5,55 @@ struct BridgeServiceSettingsView: View {
   @State private var showDisableConfirmation = false
 
   var body: some View {
-    Form {
-      Section {
-        HStack(spacing: 8) {
-          Image(systemName: "checkmark.circle.fill")
-            .foregroundStyle(.green)
-          Text("模型偏好会自动同步；自定义指令点击保存后生效。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-      }
-
-      modelDefaultsSection(
-        title: "执行任务默认偏好",
-        icon: "cpu",
-        description: "MCP 客户端提交新任务时，若未显式指定模型，将默认使用该配置。"
-      )
-
-      ForEach(
-        ["opencode", "deepseek-harness", "antigravity"],
-        id: \.self
-      ) { providerID in
-        BridgeServiceAgentDefaultsSection(
-          model: model,
-          providerID: providerID
+    ScrollView {
+      VStack(alignment: .leading, spacing: 24) {
+        SectionHeader(
+          "偏好与策略设置",
+          subtitle: "配置 AI 模型的默认推理强度、Supervisor 监督、全局安全审批策略与后台常驻服务。",
+          icon: "gearshape"
         )
-      }
 
-      CustomInstructionsEditor(model: model)
+        VStack(alignment: .leading, spacing: 12) {
+          Text("模型与执行默认偏好")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
 
-      BridgeServiceAgentSettingsSection(model: model)
+          codexDefaultsCard
 
-      modelDefaultsSection(
-        title: "Supervisor 只读监督",
-        icon: "eye.fill",
-        description: "启用后，新任务会启动独立的只读 Supervisor 进行合规与执行监督；Supervisor 无权替本机用户批准操作。",
-        supervisor: true
-      )
+          supervisorDefaultsCard
 
-      Section {
-        LabeledContent("当前守护状态", value: registrationLabel)
-        Button("打开 macOS 登录项设置") {
-          model.openSystemSettings()
+          ForEach(
+            ["opencode", "deepseek-harness", "antigravity"],
+            id: \.self
+          ) { providerID in
+            BridgeServiceAgentDefaultsSection(
+              model: model,
+              providerID: providerID
+            )
+          }
         }
-        Button("停用后台 Service", role: .destructive) {
-          showDisableConfirmation = true
-        }
-        .disabled(model.registrationStatus == .notRegistered)
-      } header: {
-        Label("后台常驻服务", systemImage: "server.rack")
-      }
 
-      Section {
-        Text("关闭或退出当前可视化 App 只会断开本机 XPC 客户端，不会主动停止后台 Service、Codex 或 Supervisor。")
-          .font(.caption)
-        Text("只有在此处点击“停用后台 Service”才会注销系统 LaunchAgent 守护。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      } header: {
-        Label("生命周期说明", systemImage: "info.circle")
+        VStack(alignment: .leading, spacing: 12) {
+          Text("安全策略与全局指令")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          directApprovalCard
+
+          CustomInstructionsEditor(model: model)
+        }
+
+        VStack(alignment: .leading, spacing: 12) {
+          Text("后台常驻服务与系统守护")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          backgroundServiceCard
+        }
       }
+      .padding(28)
+      .frame(maxWidth: 960, alignment: .leading)
     }
-    .formStyle(.grouped)
-    .padding(24)
-    .frame(maxWidth: 960, alignment: .leading)
     .navigationTitle("设置")
     .alert("停用后台 Service？", isPresented: $showDisableConfirmation) {
       Button("停用后台服务", role: .destructive) {
@@ -81,49 +65,37 @@ struct BridgeServiceSettingsView: View {
     }
   }
 
-  @ViewBuilder
-  private func modelDefaultsSection(
-    title: String,
-    icon: String? = nil,
-    description: String,
-    supervisor: Bool = false
-  ) -> some View {
-    Section {
-      if supervisor {
-        Toggle("启用 Supervisor 只读监督", isOn: supervisorEnabledBinding)
-      }
-      if model.models.isEmpty {
-        modelCatalogStatus
-      } else if model.modelPreferences == nil {
-        ProgressView("正在从 Service 同步模型偏好…")
-      } else {
-        VStack(alignment: .leading, spacing: 12) {
-          Picker(
-            "默认模型",
-            selection: supervisor ? supervisorModelBinding : executionModelBinding
-          ) {
-            modelOptions(
-              selectedID: supervisor
-                ? model.modelPreferences?.supervisorModel
-                : model.modelPreferences?.executionModel
-            )
-          }
+  private var codexDefaultsCard: some View {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Label("Codex 执行默认偏好", systemImage: "cpu.fill")
+            .font(.headline)
 
-          Picker(
-            "推理强度",
-            selection: supervisor ? supervisorEffortBinding : executionEffortBinding
-          ) {
-            effortOptions(
-              modelID: supervisor
-                ? model.modelPreferences?.supervisorModel
-                : model.modelPreferences?.executionModel,
-              selectedEffort: supervisor
-                ? model.modelPreferences?.supervisorEffort
-                : model.modelPreferences?.executionEffort
-            )
-          }
+          Spacer()
 
-          if !supervisor {
+          if let executionModel = model.modelPreferences?.executionModel, !executionModel.isEmpty {
+            StatusBadge(executionModel, tone: .neutral)
+          }
+        }
+
+        if model.models.isEmpty {
+          modelCatalogStatus
+        } else if model.modelPreferences == nil {
+          ProgressView("正在从 Service 同步模型偏好…")
+        } else {
+          VStack(alignment: .leading, spacing: 12) {
+            Picker("默认模型", selection: executionModelBinding) {
+              modelOptions(selectedID: model.modelPreferences?.executionModel)
+            }
+
+            Picker("推理强度", selection: executionEffortBinding) {
+              effortOptions(
+                modelID: model.modelPreferences?.executionModel,
+                selectedEffort: model.modelPreferences?.executionEffort
+              )
+            }
+
             Picker("访问权限", selection: accessModeBinding) {
               accessModeOptions(selected: model.modelPreferences?.accessMode)
             }
@@ -139,22 +111,181 @@ struct BridgeServiceSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-          }
 
-          Text(description)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            Text("MCP 客户端提交新任务时，若未显式指定模型，将默认使用该配置。")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
         }
-        .disabled(supervisor && !(model.modelPreferences?.supervisorEnabled ?? true))
-      }
-    } header: {
-      if let icon {
-        Label(title, systemImage: icon)
-      } else {
-        Text(title)
       }
     }
-    .disabled(model.models.isEmpty || model.modelPreferences == nil)
+  }
+
+  private var supervisorDefaultsCard: some View {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Label("Supervisor 只读监督", systemImage: "eye.fill")
+            .font(.headline)
+
+          Spacer()
+
+          Toggle(
+            "启用",
+            isOn: supervisorEnabledBinding
+          )
+          .toggleStyle(.switch)
+        }
+
+        if model.models.isEmpty {
+          modelCatalogStatus
+        } else if model.modelPreferences == nil {
+          ProgressView("正在从 Service 同步监督偏好…")
+        } else {
+          VStack(alignment: .leading, spacing: 12) {
+            Picker("监督模型", selection: supervisorModelBinding) {
+              modelOptions(selectedID: model.modelPreferences?.supervisorModel)
+            }
+
+            Picker("推理强度", selection: supervisorEffortBinding) {
+              effortOptions(
+                modelID: model.modelPreferences?.supervisorModel,
+                selectedEffort: model.modelPreferences?.supervisorEffort
+              )
+            }
+
+            Text("启用后，新任务会启动独立的只读 Supervisor 进行合规与执行监督；Supervisor 无权替本机用户批准操作。")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+          .disabled(!(model.modelPreferences?.supervisorEnabled ?? true))
+        }
+      }
+    }
+  }
+
+  private var directApprovalCard: some View {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Label("MCP Direct 操作审批策略", systemImage: "shield.lefthalf.filled")
+            .font(.headline)
+
+          Spacer()
+
+          StatusBadge(
+            model.directApprovalMode == "auto" ? "自动批准" : "要求本机批准",
+            tone: model.directApprovalMode == "auto" ? .warning : .success
+          )
+        }
+
+        Toggle(
+          "MCP Direct 操作自动批准",
+          isOn: Binding(
+            get: { model.directApprovalMode == "auto" },
+            set: { model.setDirectApprovalMode($0 ? "auto" : "require") }
+          )
+        )
+        .toggleStyle(.switch)
+
+        Text("这是所有 MCP 客户端共享的本机安全策略；关闭时每次文件写操作或终端命令执行均需本机确认，开启时仅对高风险操作阻断。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private var backgroundServiceCard: some View {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Label("LaunchAgent 系统常驻守护", systemImage: "server.rack")
+            .font(.headline)
+
+          Spacer()
+
+          StatusBadge(registrationLabel, tone: registrationTone)
+        }
+
+        HStack {
+          Text("本机 XPC 通信：")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+          StatusBadge(
+            model.connectionState.label, symbol: model.connectionState.symbol, tone: serviceTone)
+        }
+
+        switch model.registrationStatus {
+        case .notRegistered:
+          CalloutBanner(
+            title: "后台服务尚未注册",
+            message: "注册后台服务后，Codex Bridge 可以在 App 关闭后持续响应已启用的 MCP 客户端并维持任务执行。",
+            symbol: "info.circle",
+            tone: .info,
+            actionTitle: "立即注册后台 Service"
+          ) {
+            model.registerService()
+          }
+
+        case .requiresApproval:
+          CalloutBanner(
+            title: "等待 macOS 登录项批准",
+            message: "系统已登记后台项，请前往“系统设置 → 通用 → 登录项”允许 Codex Bridge 在后台运行。",
+            symbol: "exclamationmark.triangle.fill",
+            tone: .warning,
+            actionTitle: "打开系统设置"
+          ) {
+            model.openSystemSettings()
+          }
+
+        case .notFound:
+          CalloutBanner(
+            title: "LaunchAgent 配置缺失",
+            message: "当前 App Bundle 中未检测到打包的 Service plist 配置，请重新构建项目。",
+            symbol: "xmark.circle.fill",
+            tone: .error
+          )
+
+        case .enabled:
+          HStack(spacing: 6) {
+            Image(systemName: "checkmark.shield.fill")
+              .foregroundStyle(.green)
+            Text("后台 LaunchAgent 服务正在受监管运行中。")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Divider()
+
+        HStack(spacing: 12) {
+          Button("打开 macOS 登录项设置") {
+            model.openSystemSettings()
+          }
+          .buttonStyle(.bordered)
+
+          if model.registrationStatus == .notRegistered {
+            Button("注册后台服务") {
+              model.registerService()
+            }
+            .buttonStyle(.borderedProminent)
+          } else if model.registrationStatus == .enabled {
+            Button("停用后台服务", role: .destructive) {
+              showDisableConfirmation = true
+            }
+            .buttonStyle(.bordered)
+          }
+        }
+
+        CalloutBanner(
+          title: "生命周期保障说明",
+          message:
+            "关闭或退出当前可视化 App 只会断开本机 XPC 客户端，不会主动停止后台 Service、Codex 或外部 Provider。只有点击“停用后台服务”才会注销系统 LaunchAgent 守护。",
+          symbol: "info.circle",
+          tone: .neutral
+        )
+      }
+    }
   }
 
   @ViewBuilder
@@ -300,6 +431,24 @@ struct BridgeServiceSettingsView: View {
     case .notFound: "配置缺失"
     }
   }
+
+  private var registrationTone: StatusTone {
+    switch model.registrationStatus {
+    case .enabled: .success
+    case .requiresApproval: .warning
+    case .notRegistered: .neutral
+    case .notFound: .error
+    }
+  }
+
+  private var serviceTone: StatusTone {
+    switch model.connectionState {
+    case .connected: .success
+    case .registering, .connecting: .running
+    case .requiresApproval: .warning
+    case .idle, .unavailable: .error
+    }
+  }
 }
 
 private struct CustomInstructionsEditor: View {
@@ -310,35 +459,55 @@ private struct CustomInstructionsEditor: View {
   private let maximumBytes = 32_768
 
   var body: some View {
-    Section {
-      if model.customInstructions == nil {
-        ProgressView("正在从 Service 读取自定义指令…")
-      } else {
-        TextEditor(text: $draft)
-          .font(.body)
-          .frame(minHeight: 150, maxHeight: 220)
-          .accessibilityLabel("全局自定义指令")
-
+    NativeCard {
+      VStack(alignment: .leading, spacing: 14) {
         HStack {
-          Text(
-            "ChatGPT 网页版和 Qwen 会在调用 Codex Bridge 插件前收到这段指令；不会传给 Codex。保存后 Qwen 重新连接即可应用；ChatGPT 还需在插件详情中刷新，并在新对话中重新添加插件。安全策略与本机审批始终优先。"
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          Label("全局自定义指令 (Custom Instructions)", systemImage: "text.badge.checkmark")
+            .font(.headline)
+
           Spacer()
-          Text("\(draft.utf8.count) / \(maximumBytes) 字节")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(isWithinLimit ? Color.secondary : Color.red)
-          Button("保存") {
-            model.saveCustomInstructions(draft)
+
+          if isWithinLimit && !draft.isEmpty {
+            StatusBadge("\(draft.utf8.count) 字节", tone: .neutral)
           }
-          .disabled(
-            draft == savedValue || !isWithinLimit || model.isSavingCustomInstructions
-          )
+        }
+
+        if model.customInstructions == nil {
+          ProgressView("正在从 Service 读取自定义指令…")
+        } else {
+          TextEditor(text: $draft)
+            .font(.system(size: 13, design: .monospaced))
+            .frame(minHeight: 120, maxHeight: 180)
+            .padding(6)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 0.8)
+            )
+            .accessibilityLabel("全局自定义指令")
+
+          HStack(alignment: .center) {
+            Text(
+              "ChatGPT 网页版与 Qwen 会在调用 Codex Bridge 插件前收到该指令（不传给 Codex/Agent 内核）。保存后 Qwen 重新连接即可生效；ChatGPT 还需在插件详情中刷新。"
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 16)
+
+            Button("保存指令") {
+              model.saveCustomInstructions(draft)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(
+              draft == savedValue || !isWithinLimit || model.isSavingCustomInstructions
+            )
+          }
         }
       }
-    } header: {
-      Label("全局自定义指令", systemImage: "text.badge.checkmark")
     }
     .onAppear { synchronizeDraft(model.customInstructions) }
     .onChange(of: model.customInstructions) { _, value in synchronizeDraft(value) }

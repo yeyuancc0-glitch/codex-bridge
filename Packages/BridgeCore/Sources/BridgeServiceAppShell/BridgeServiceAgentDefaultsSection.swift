@@ -8,13 +8,27 @@ struct BridgeServiceAgentDefaultsSection: View {
   @State private var selectedInstallationID = ""
 
   var body: some View {
-    Section {
-      VStack(alignment: .leading, spacing: 12) {
+    NativeCard {
+      VStack(alignment: .leading, spacing: 14) {
+        HStack {
+          Label(
+            "\(providerDisplayName) 执行默认偏好",
+            systemImage: AgentProviderPresentation.systemImage(providerID)
+          )
+          .font(.headline)
+
+          Spacer()
+
+          if canSelectModels, let selectedModel {
+            StatusBadge(selectedModel.displayName, tone: .neutral)
+          }
+        }
+
         installationSelection
 
         if selectableInstallations.isEmpty {
           Label(
-            "尚未登记可用安装，请在“本机 Agent Provider”区域登记并 Probe。",
+            "尚未登记可用安装，请前往“连接”页面登记并 Probe。",
             systemImage: "externaldrive.badge.questionmark"
           )
           .font(.caption)
@@ -40,15 +54,10 @@ struct BridgeServiceAgentDefaultsSection: View {
 
         permissionSelection
 
-        Text("MCP 客户端未显式指定配置时，任务将使用此 Provider 的默认设置。")
+        Text("MCP 客户端未显式指定配置时，任务将默认使用此配置。")
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
-    } header: {
-      Label(
-        "\(providerDisplayName) 执行任务默认偏好",
-        systemImage: AgentProviderPresentation.systemImage(providerID)
-      )
     }
     .task(id: hydrationID) {
       guard
