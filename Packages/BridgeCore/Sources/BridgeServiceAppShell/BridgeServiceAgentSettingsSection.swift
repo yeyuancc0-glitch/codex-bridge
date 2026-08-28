@@ -251,11 +251,12 @@ struct BridgeServiceAgentSettingsSection: View {
       installation: chosenInstallation,
       capability: "selection.model"
     )
-    let supportsEffortSelection = supports(
-      provider?.supportsEffortSelection,
-      installation: chosenInstallation,
-      capability: "selection.effort"
-    )
+    let supportsEffortSelection =
+      provider?.supportsEffortSelection == true
+      && model.supportsAgentEffortSelection(
+        providerID: submitProviderID,
+        installationID: chosenInstallation?.installationID
+      )
     let supportsSkillSelection = supports(
       provider?.supportsSkillSelection,
       installation: chosenInstallation

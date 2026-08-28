@@ -175,15 +175,21 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
       let session = try await connected.newSession(cwd: launch.process.workingDirectory)
       let options: [OpenCodeACPConfigOption]
       let selectedModel: String?
-      let modelToSelect = selectedModelID ?? Self.currentModelID(in: session)
-      if let modelToSelect {
-        let model = try Self.resolveModel(modelToSelect, from: session)
+      if let selectedModelID {
+        let model = try Self.resolveModel(selectedModelID, from: session)
         options = try await connected.setSessionConfigOption(
           sessionID: session.id,
           configID: "model",
           value: model
         )
         selectedModel = model
+      } else if let currentModel = Self.availableCurrentModelID(in: session) {
+        options = try await connected.setSessionConfigOption(
+          sessionID: session.id,
+          configID: "model",
+          value: currentModel
+        )
+        selectedModel = currentModel
       } else {
         options = session.configOptions
         selectedModel = nil
@@ -252,7 +258,9 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
           configID: "model",
           value: model
         )
-      } else if request.effort != nil, let model = Self.currentModelID(in: session) {
+      } else if request.effort != nil,
+        let model = Self.availableCurrentModelID(in: session)
+      {
         configOptions = try await connected.setSessionConfigOption(
           sessionID: session.id,
           configID: "model",
@@ -477,6 +485,14 @@ public struct OpenCodeACPProvider: AgentProvider, Sendable {
 
   private static func currentModelID(in session: OpenCodeACPSession) -> String? {
     session.configOptions.first(where: { $0.id == "model" })?.currentValue
+  }
+
+  private static func availableCurrentModelID(in session: OpenCodeACPSession) -> String? {
+    guard let option = session.configOptions.first(where: { $0.id == "model" }),
+      let currentValue = option.currentValue,
+      option.values.contains(where: { $0.value == currentValue })
+    else { return nil }
+    return currentValue
   }
 
   private static func modeValue(

@@ -245,6 +245,14 @@ public final class BridgeServiceAppModel: ObservableObject {
       ?? (providerID == "opencode" ? agentModelOptions : [])
   }
 
+  func agentSelectedModel(for providerID: String) -> IPCAgentModelSummary? {
+    let options = agentModelOptions(for: providerID)
+    if let modelID = agentModelDefault(for: providerID).model {
+      return options.first(where: { $0.modelID == modelID })
+    }
+    return options.first(where: { !$0.supportedReasoningEfforts.isEmpty }) ?? options.first
+  }
+
   func isRefreshingAgentModels(for providerID: String) -> Bool {
     agentModelRefreshingProviders.contains(providerID)
       || agentModelHydratingProviders.contains(providerID)
@@ -257,10 +265,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   func agentExecutionEffort(for providerID: String) -> String? {
     let value = agentModelDefault(for: providerID)
     guard let effort = value.effort else { return nil }
-    let selectedModel =
-      value.model.flatMap { modelID in
-        agentModelOptions(for: providerID).first(where: { $0.modelID == modelID })
-      } ?? (value.model == nil ? agentModelOptions(for: providerID).first : nil)
+    let selectedModel = agentSelectedModel(for: providerID)
     guard selectedModel?.supportedReasoningEfforts.contains(effort) == true else {
       return nil
     }

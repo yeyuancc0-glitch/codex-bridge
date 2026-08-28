@@ -437,6 +437,50 @@ final class OpenCodeACPProviderTests: XCTestCase {
     XCTAssertEqual(models.first?.defaultReasoningEffort, "high")
   }
 
+  func testModelsIgnoreRemovedProviderDefaultAndReturnFreshSessionCatalog() async throws {
+    let transport = ScriptedACPTransport()
+    let sourceHome = try makeTemporaryDirectory(prefix: "removed-default-home")
+    addTeardownBlock { try? FileManager.default.removeItem(atPath: sourceHome) }
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(ACPWireMessage(id: id, result: Self.initializationResult()))
+      case "session/new":
+        var session =
+          Self.sessionResult(
+            id: "session-removed-default",
+            models: [("openai/gpt-5.6-sol", "GPT-5.6 Sol")]
+          ).objectValue ?? [:]
+        var configOptions = session["configOptions"]?.arrayValue ?? []
+        var modelOption = configOptions[0].objectValue ?? [:]
+        modelOption["currentValue"] = .string("opencode-go/ox-alpha-free")
+        configOptions[0] = .object(modelOption)
+        session["configOptions"] = .array(configOptions)
+        try await transport.emit(ACPWireMessage(id: id, result: .object(session)))
+      case "session/set_config_option":
+        XCTFail("A removed provider default must not be selected while refreshing the catalog")
+      default:
+        break
+      }
+    }
+    let provider = try OpenCodeACPProvider(
+      configuration: OpenCodeACPProviderConfiguration(
+        sourceEnvironment: ["HOME": sourceHome],
+        transportFactory: { _ in transport }
+      )
+    )
+
+    let models = try await provider.models(
+      installation: makeInstallation(id: "removed-default-installation"),
+      projectRoot: nil
+    )
+
+    XCTAssertEqual(models.map(\.id), ["openai/gpt-5.6-sol"])
+    let sent = await transport.sentMessages()
+    XCTAssertFalse(sent.contains { $0.method == "session/set_config_option" })
+  }
+
   func testAppliesDynamicEffortForProviderDefaultModel() async throws {
     let transport = ScriptedACPTransport()
     let captured = LockedValue<OpenCodeACPLaunchConfiguration>()

@@ -368,11 +368,26 @@ extension BridgeServiceAppModel {
     let persistedDefault = try? await client.agentModelDefault(providerID: providerID)
     let modelResponse: IPCAgentModelsResponse?
     if let installationID = normalizedInstallationID {
-      modelResponse = try? await client.agentModels(
+      let rawResponse = try? await client.agentModels(
         installationID: installationID,
         projectID: projectID,
-        modelID: persistedDefault?.model
+        modelID: nil,
+        useStoredDefault: false
       )
+      if let rawResponse,
+        let defaultModel = persistedDefault?.model,
+        rawResponse.models.contains(where: { $0.modelID == defaultModel })
+      {
+        modelResponse =
+          (try? await client.agentModels(
+            installationID: installationID,
+            projectID: projectID,
+            modelID: defaultModel,
+            useStoredDefault: false
+          )) ?? rawResponse
+      } else {
+        modelResponse = rawResponse
+      }
     } else {
       modelResponse = nil
     }

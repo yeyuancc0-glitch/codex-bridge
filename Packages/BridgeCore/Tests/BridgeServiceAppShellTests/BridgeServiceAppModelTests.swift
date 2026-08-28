@@ -306,6 +306,95 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(request.permissionMode, "read-only")
   }
 
+  func testOpenCodeDynamicEffortDoesNotRequireStaticInstallationCapability() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let installation = IPCAgentInstallationSummary(
+      installationID: "opencode-installation",
+      providerID: "opencode",
+      displayName: "OpenCode",
+      executablePath: "/tmp/opencode",
+      version: "1.18.22",
+      protocolRevision: "1",
+      adapterRevision: 1,
+      trustProfile: "user_trusted",
+      securityProfileID: "desktop-shared",
+      isEnabled: true,
+      availability: "available",
+      effectiveCapabilities: ["workspace.read", "selection.model"],
+      lastProbedAt: "2026-08-28T00:00:00Z",
+      updatedAt: "2026-08-28T00:00:00Z"
+    )
+    let option = IPCAgentModelSummary(
+      modelID: "openai/gpt-5.6-sol",
+      displayName: "GPT-5.6 Sol",
+      supportedReasoningEfforts: ["low", "high"],
+      defaultReasoningEffort: "high"
+    )
+    await client.configureAgentInstallations([installation])
+    await client.configureAgentModels([option])
+    await client.configureOpenCodeDefault(
+      model: option.modelID,
+      permissionMode: "plan",
+      effort: "high"
+    )
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    await model.hydrateAgentModelState(installationID: installation.installationID)
+
+    XCTAssertTrue(
+      model.supportsAgentEffortSelection(
+        providerID: "opencode",
+        installationID: installation.installationID
+      )
+    )
+
+    model.submitAgentTask(
+      projectID: "project-1",
+      providerID: "opencode",
+      installationID: installation.installationID,
+      model: option.modelID,
+      effort: "high",
+      permissionMode: "read-only",
+      prompt: "Review the project."
+    )
+
+    try await waitUntil {
+      await client.submittedAgentRequest() != nil && !model.isManagingAgents
+    }
+    let submittedRequest = await client.submittedAgentRequest()
+    let request = try XCTUnwrap(submittedRequest)
+    XCTAssertEqual(request.model, option.modelID)
+    XCTAssertEqual(request.effort, "high")
+  }
+
+  func testOpenCodeProviderDefaultUsesCatalogModelThatAdvertisesDynamicEffort() async throws {
+    let model = BridgeServiceAppModel(
+      registration: TestServiceRegistration(status: .enabled),
+      clientFactory: { TestBridgeServiceClient() },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    model.agentModelOptions = [
+      IPCAgentModelSummary(modelID: "provider/first", displayName: "First"),
+      IPCAgentModelSummary(
+        modelID: "provider/current",
+        displayName: "Current",
+        supportedReasoningEfforts: ["low", "high"],
+        defaultReasoningEffort: "high"
+      ),
+    ]
+
+    XCTAssertEqual(model.agentSelectedModel(for: "opencode")?.modelID, "provider/current")
+  }
+
   func testHydratingAgentDefaultUsesServiceValueWithoutWritingBack() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -324,6 +413,41 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.openCodeDefaultModel, "opencode/x-preview-f-free")
     let writes = await client.agentDefaultWrites()
     XCTAssertTrue(writes.isEmpty)
+  }
+
+  func testHydrationReadsFreshCatalogBeforeEnrichingStoredDefault() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let current = IPCAgentModelSummary(
+      modelID: "opencode/current",
+      displayName: "Current"
+    )
+    await client.configureAgentModels([current])
+    await client.configureAgentDefault("opencode/removed")
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    await model.hydrateAgentModelState(installationID: "opencode-installation")
+
+    XCTAssertEqual(model.agentModelOptions, [current])
+    let queries = await client.agentModelsQueriesValue()
+    XCTAssertEqual(
+      queries,
+      [
+        TestBridgeServiceClient.AgentModelsQuery(
+          installationID: "opencode-installation",
+          projectID: "project-1",
+          modelID: nil,
+          useStoredDefault: false
+        )
+      ]
+    )
   }
 
   func testDeepSeekDefaultsDoNotOverwriteOpenCodeDefaults() async throws {

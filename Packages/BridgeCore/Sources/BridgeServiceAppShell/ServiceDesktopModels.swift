@@ -150,6 +150,15 @@ extension BridgeServiceAppModel {
     providerID: String,
     installationID: String?
   ) -> Bool {
+    if providerID == "opencode" {
+      guard
+        selectedAgentInstallation(
+          providerID: providerID,
+          installationID: installationID
+        ) != nil
+      else { return false }
+      return agentSelectedModel(for: providerID)?.supportedReasoningEfforts.isEmpty == false
+    }
     guard
       let installation = selectedAgentInstallation(
         providerID: providerID,

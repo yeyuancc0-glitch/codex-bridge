@@ -257,11 +257,7 @@ struct BridgeServiceAgentDefaultsSection: View {
   }
 
   private var selectedModel: IPCAgentModelSummary? {
-    let options = model.agentModelOptions(for: providerID)
-    if let modelID = providerDefault.model {
-      return options.first(where: { $0.modelID == modelID })
-    }
-    return options.first
+    model.agentSelectedModel(for: providerID)
   }
 
   private var supportedEfforts: [String] {
@@ -270,8 +266,10 @@ struct BridgeServiceAgentDefaultsSection: View {
 
   private var canSelectEffort: Bool {
     guard provider?.supportsEffortSelection == true else { return false }
-    guard let installation = selectedInstallation else { return false }
-    return installation.effectiveCapabilities.contains("selection.effort")
+    return model.supportsAgentEffortSelection(
+      providerID: providerID,
+      installationID: selectedInstallation?.installationID
+    )
   }
 
   private var canSelectWorkspaceWrite: Bool {

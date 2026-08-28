@@ -6,6 +6,13 @@ import Foundation
 @testable import BridgeServiceAppShell
 
 actor TestBridgeServiceClient: BridgeServiceClientProtocol {
+  struct AgentModelsQuery: Equatable, Sendable {
+    let installationID: String
+    let projectID: String?
+    let modelID: String?
+    let useStoredDefault: Bool
+  }
+
   struct MutationSnapshot: Sendable {
     let approvalDecisions: [String]
     let configuredTunnelIDs: [String]
@@ -80,6 +87,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentModelDefaultReadCount = 0
   private var agentModelDefaultReadCountsByProvider: [String: Int] = [:]
   private var agentModelRequestCount = 0
+  private var agentModelsQueries: [AgentModelsQuery] = []
   private var failAgentModels = false
   private var submittedAgentRequestValue: IPCAgentSubmitRequest?
   private var registrationRequestValue: IPCAgentRegistrationRequest?
@@ -190,6 +198,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func agentModelRequestCountValue() -> Int {
     agentModelRequestCount
+  }
+
+  func agentModelsQueriesValue() -> [AgentModelsQuery] {
+    agentModelsQueries
   }
 
   func setApprovalResolutionDelay(_ delay: Duration) {
@@ -446,7 +458,29 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
+    try await agentModels(
+      installationID: installationID,
+      projectID: nil,
+      modelID: nil,
+      useStoredDefault: true
+    )
+  }
+
+  func agentModels(
+    installationID: String,
+    projectID: String?,
+    modelID: String?,
+    useStoredDefault: Bool
+  ) async throws -> IPCAgentModelsResponse {
     agentModelRequestCount += 1
+    agentModelsQueries.append(
+      AgentModelsQuery(
+        installationID: installationID,
+        projectID: projectID,
+        modelID: modelID,
+        useStoredDefault: useStoredDefault
+      )
+    )
     guard !failAgentModels else { throw BridgeServiceClientError.unavailable }
     return IPCAgentModelsResponse(
       models: agentModelOptionsByInstallation[installationID] ?? agentModelOptionsValue
