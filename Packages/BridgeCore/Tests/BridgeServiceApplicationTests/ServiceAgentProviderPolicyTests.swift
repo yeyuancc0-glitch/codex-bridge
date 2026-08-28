@@ -98,6 +98,10 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
       "DeepSeek Harness"
     )
     XCTAssertEqual(
+      ServiceAgentProviderPolicyRegistry.displayName(for: .antigravity),
+      "Antigravity"
+    )
+    XCTAssertEqual(
       ServiceAgentProviderPolicyRegistry.displayName(for: AgentProviderID(rawValue: "custom")),
       "custom"
     )

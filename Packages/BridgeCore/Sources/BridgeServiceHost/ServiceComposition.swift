@@ -163,7 +163,10 @@ public actor ServiceComposition {
       projects: projects,
       execution: execution,
       supervisor: supervisor,
-      agentRunner: agentRunner
+      agentRunner: agentRunner,
+      providerDisplayNameResolver: {
+        ServiceAgentProviderPolicyRegistry.displayName(for: $0)
+      }
     )
     let catalog = ServiceCodexCatalog(
       configuration: ServiceCodexCatalogConfiguration(

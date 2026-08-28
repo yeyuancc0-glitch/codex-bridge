@@ -4,13 +4,43 @@ import Foundation
 import MCP
 
 extension MCPServiceToolDispatcher {
+  private struct SubmissionProviderSelection {
+    let providerID: String?
+    let installationID: String?
+  }
+
+  private struct SubmissionContent {
+    let prompt: String
+    let acceptanceCriteria: [String]
+  }
+
+  private struct SubmissionExecutionPolicy {
+    let permissionMode: String?
+    let permissionModeOverride: Bool
+    let supervisorModel: String?
+    let supervisorEffort: String?
+  }
+
   func parseSubmission(_ arguments: [String: Value]?) throws
     -> MCPServiceTaskSubmission
   {
+    let values = try submissionArguments(arguments)
+    let provider = try parseSubmissionProvider(values)
+    let content = try parseSubmissionContent(values)
+    let execution = try parseSubmissionExecutionPolicy(values)
+    return try makeSubmission(
+      values: values,
+      provider: provider,
+      content: content,
+      execution: execution
+    )
+  }
+
+  private func submissionArguments(_ arguments: [String: Value]?) throws -> StrictToolArguments {
     guard try JSONEncoder().encode(Value.object(arguments ?? [:])).count <= 96 * 1_024 else {
       throw MCPError.invalidParams("The task request is too large.")
     }
-    let values = try StrictToolArguments(
+    return try StrictToolArguments(
       arguments,
       allowed: [
         "project_id", "prompt", "thread_id", "provider_id", "installation_id",
@@ -22,6 +52,11 @@ extension MCPServiceToolDispatcher {
       ],
       required: ["prompt"]
     )
+  }
+
+  private func parseSubmissionProvider(
+    _ values: StrictToolArguments
+  ) throws -> SubmissionProviderSelection {
     let providerID = try values.optionalIdentifier("provider_id", maximumUTF8Bytes: 64)
     let installationID = try values.optionalIdentifier("installation_id", maximumUTF8Bytes: 256)
     guard installationID == nil || providerID != nil else {
@@ -29,6 +64,12 @@ extension MCPServiceToolDispatcher {
         "Argument 'installation_id' requires 'provider_id'."
       )
     }
+    return SubmissionProviderSelection(providerID: providerID, installationID: installationID)
+  }
+
+  private func parseSubmissionContent(
+    _ values: StrictToolArguments
+  ) throws -> SubmissionContent {
     let prompt = try values.requiredText("prompt", maximumUTF8Bytes: 32 * 1_024)
     let criteria = try values.optionalStringArray(
       "acceptance_criteria",
@@ -38,6 +79,12 @@ extension MCPServiceToolDispatcher {
     guard ([prompt] + criteria).allSatisfy(OutboundContentSecurity.isSafe) else {
       throw BridgeMCPQueryError.unsafeContentDetected
     }
+    return SubmissionContent(prompt: prompt, acceptanceCriteria: criteria)
+  }
+
+  private func parseSubmissionExecutionPolicy(
+    _ values: StrictToolArguments
+  ) throws -> SubmissionExecutionPolicy {
     let permissionMode = try values.optionalIdentifier(
       "permission_mode",
       maximumUTF8Bytes: 32
@@ -61,13 +108,27 @@ extension MCPServiceToolDispatcher {
         "Supervisor model and effort must be supplied together."
       )
     }
+    return SubmissionExecutionPolicy(
+      permissionMode: permissionMode,
+      permissionModeOverride: permissionModeOverride,
+      supervisorModel: supervisorModel,
+      supervisorEffort: supervisorEffort
+    )
+  }
+
+  private func makeSubmission(
+    values: StrictToolArguments,
+    provider: SubmissionProviderSelection,
+    content: SubmissionContent,
+    execution: SubmissionExecutionPolicy
+  ) throws -> MCPServiceTaskSubmission {
     return MCPServiceTaskSubmission(
       projectID: try values.optionalIdentifier("project_id", maximumUTF8Bytes: 128),
-      prompt: prompt,
+      prompt: content.prompt,
       skillName: try values.optionalIdentifier("skill_name", maximumUTF8Bytes: 128),
       threadID: try values.optionalIdentifier("thread_id", maximumUTF8Bytes: 1_024),
-      providerID: providerID,
-      installationID: installationID,
+      providerID: provider.providerID,
+      installationID: provider.installationID,
       executionModel: try values.optionalIdentifier(
         "execution_model",
         maximumUTF8Bytes: 256
@@ -77,12 +138,12 @@ extension MCPServiceToolDispatcher {
         maximumUTF8Bytes: 64
       ),
       modelOverride: try values.optionalBoolean("model_override"),
-      supervisorModel: supervisorModel,
-      supervisorEffort: supervisorEffort,
-      permissionMode: permissionMode,
-      permissionModeOverride: permissionModeOverride,
+      supervisorModel: execution.supervisorModel,
+      supervisorEffort: execution.supervisorEffort,
+      permissionMode: execution.permissionMode,
+      permissionModeOverride: execution.permissionModeOverride,
       networkAccess: try values.optionalBoolean("network_access") ?? false,
-      acceptanceCriteria: criteria,
+      acceptanceCriteria: content.acceptanceCriteria,
       clientRequestID: try values.optionalIdentifier(
         "client_request_id",
         maximumUTF8Bytes: 512

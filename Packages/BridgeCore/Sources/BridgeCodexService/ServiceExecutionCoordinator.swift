@@ -26,11 +26,11 @@ public actor ServiceExecutionCoordinator {
   private let tasks: ServiceTaskManager
   private let projects: ServiceProjectService
   private let execution: ExecutionManager
-  private let supervisor: SupervisorManager?
+  private let supervision: ServiceSupervisorCoordinator
   private let conversation: TaskConversationBuffer
   private let agentRunner: (any AgentTaskRunning)?
+  private let providerDisplayNameResolver: @Sendable (AgentProviderID) -> String
   private var collectors: [TaskID: Task<Void, Never>] = [:]
-  private var supervisorCollectors: [TaskID: Task<Void, Never>] = [:]
   private var activeAgentRuns: [TaskID: ActiveAgentRun] = [:]
   private var pendingAgentApprovals: [String: PendingAgentApproval] = [:]
   private var finishedRuns: Set<TaskID> = []
@@ -44,14 +44,28 @@ public actor ServiceExecutionCoordinator {
     execution: ExecutionManager,
     supervisor: SupervisorManager? = nil,
     conversation: TaskConversationBuffer? = nil,
-    agentRunner: (any AgentTaskRunning)? = nil
+    agentRunner: (any AgentTaskRunning)? = nil,
+    providerDisplayNameResolver: @escaping @Sendable (AgentProviderID) -> String = {
+      if $0 == .codex { return "Codex" }
+      if $0 == .openCode { return "OpenCode" }
+      if $0 == .deepSeekHarness { return "DeepSeek Harness" }
+      if $0 == .antigravity { return "Antigravity" }
+      return $0.rawValue
+    }
   ) {
+    let conversation = conversation ?? TaskConversationBuffer(tasks: tasks)
     self.tasks = tasks
     self.projects = projects
     self.execution = execution
-    self.supervisor = supervisor
-    self.conversation = conversation ?? TaskConversationBuffer(tasks: tasks)
+    self.supervision = ServiceSupervisorCoordinator(
+      tasks: tasks,
+      execution: execution,
+      supervisor: supervisor,
+      conversation: conversation
+    )
+    self.conversation = conversation
     self.agentRunner = agentRunner
+    self.providerDisplayNameResolver = providerDisplayNameResolver
   }
 
   @discardableResult
@@ -77,7 +91,7 @@ public actor ServiceExecutionCoordinator {
     }
     try ensureStartIsActive(taskID)
 
-    await launchSupervisor(for: task)
+    await supervision.launch(task: task)
     let handle: ExecutionHandle
     do {
       handle = try await execution.start(try ExecutionRequest(task: task, project: project))
@@ -90,7 +104,7 @@ public actor ServiceExecutionCoordinator {
       await conversation.appendUserMessage(taskID: taskID, content: task.prompt)
     } catch {
       await execution.stop(taskID: taskID)
-      await stopSupervisor(taskID: taskID)
+      await supervision.stop(taskID: taskID)
       let conversationPersisted = await conversation.close(taskID: taskID)
       _ = try? await tasks.fail(
         taskID: taskID,
@@ -160,7 +174,7 @@ public actor ServiceExecutionCoordinator {
     let codex = await execution.pendingApprovals(taskID: taskID)
     let agents = pendingAgentApprovals.values
       .filter { taskID == nil || $0.request.taskID == taskID }
-      .compactMap { try? Self.executionApproval(from: $0.request) }
+      .compactMap { try? executionApproval(from: $0.request) }
     return (codex + agents).sorted { lhs, rhs in
       if lhs.taskID.rawValue == rhs.taskID.rawValue {
         return lhs.id < rhs.id
@@ -274,7 +288,7 @@ public actor ServiceExecutionCoordinator {
         approvalID: approvalID,
         committed: true
       )
-      await observeSupervisor(
+      await supervision.observe(
         task: updated,
         kind: .progress,
         summary: decision == .allow
@@ -332,7 +346,7 @@ public actor ServiceExecutionCoordinator {
         taskID: taskID,
         approved: decision.isApproval
       )
-      await observeSupervisor(
+      await supervision.observe(
         task: updated,
         kind: .progress,
         summary: decision.isApproval
@@ -398,7 +412,7 @@ public actor ServiceExecutionCoordinator {
     collectors.removeValue(forKey: taskID)?.cancel()
     await stopAgentRun(taskID: taskID)
     await execution.stop(taskID: taskID)
-    await stopSupervisor(taskID: taskID)
+    await supervision.stop(taskID: taskID)
     if await conversation.close(taskID: taskID) {
       _ = try? await tasks.interrupt(taskID: taskID, summary: summary)
     } else {
@@ -416,19 +430,17 @@ public actor ServiceExecutionCoordinator {
     finishedRuns.formUnion(activeAgentRuns.keys)
     startingTasks.removeAll(keepingCapacity: false)
     let executionTasks = collectors.values
-    let supervisorTasks = supervisorCollectors.values
     collectors.removeAll(keepingCapacity: false)
-    supervisorCollectors.removeAll(keepingCapacity: false)
     pendingAgentApprovals.removeAll(keepingCapacity: false)
     for task in executionTasks { task.cancel() }
-    for task in supervisorTasks { task.cancel() }
+    await supervision.beginShutdown()
     let shutdowns = activeAgentRuns.values.map(\.shutdown)
     activeAgentRuns.removeAll(keepingCapacity: false)
     for shutdown in shutdowns {
       await shutdown()
     }
     await execution.shutdown()
-    await supervisor?.shutdown()
+    await supervision.shutdown()
     let failedConversationTasks = await conversation.closeAll()
     for taskID in failedConversationTasks {
       _ = try? await tasks.fail(
@@ -458,7 +470,7 @@ public actor ServiceExecutionCoordinator {
       switch event {
       case .planUpdated(let currentStep, let steps):
         let updated = try await tasks.updatePlan(taskID: taskID, currentStep: currentStep)
-        await observeSupervisor(
+        await supervision.observe(
           task: updated,
           kind: .progress,
           summary: "Codex updated its plan with \(steps.count) step(s)."
@@ -471,7 +483,7 @@ public actor ServiceExecutionCoordinator {
           taskID: taskID,
           summary: summary
         )
-        await observeSupervisor(task: updated, kind: .progress, summary: summary)
+        await supervision.observe(task: updated, kind: .progress, summary: summary)
 
       case .filesChanged(let relativePaths, let status):
         let changed = status == .completed ? relativePaths : []
@@ -482,11 +494,11 @@ public actor ServiceExecutionCoordinator {
           relativePaths: changed,
           summary: summary
         )
-        await observeSupervisor(task: updated, kind: .progress, summary: summary)
+        await supervision.observe(task: updated, kind: .progress, summary: summary)
 
       case .approvalRequested(let approval):
         let updated = try await tasks.markWaitingForCodexApproval(taskID: taskID)
-        await observeSupervisor(
+        await supervision.observe(
           task: updated,
           kind: .progress,
           summary: "Codex requested local approval for \(approval.kind.rawValue)."
@@ -521,7 +533,7 @@ public actor ServiceExecutionCoordinator {
           resultSummary: resultSummary,
           changedFiles: current.state.changedFiles
         )
-        await observeSupervisor(
+        await supervision.observe(
           task: completed,
           kind: .final,
           summary: "Codex completed the task."
@@ -533,7 +545,7 @@ public actor ServiceExecutionCoordinator {
           taskID: taskID,
           summary: "Codex confirmed that the active Turn was interrupted."
         )
-        await observeSupervisor(
+        await supervision.observe(
           task: interrupted,
           kind: .final,
           summary: "Codex was interrupted before normal completion."
@@ -547,11 +559,11 @@ public actor ServiceExecutionCoordinator {
           failureCode: code,
           summary: summary
         )
-        await observeSupervisor(task: failed, kind: .final, summary: summary)
+        await supervision.observe(task: failed, kind: .final, summary: summary)
       }
     } catch {
       await execution.stop(taskID: taskID)
-      await stopSupervisor(taskID: taskID)
+      await supervision.stop(taskID: taskID)
       _ = await conversation.close(taskID: taskID)
       _ = try? await tasks.fail(
         taskID: taskID,
@@ -828,7 +840,7 @@ public actor ServiceExecutionCoordinator {
     guard pendingAgentApprovals[approval.approvalID] == nil else {
       throw AgentRuntimeError.malformedEvent("agent.approval.duplicate")
     }
-    _ = try Self.executionApproval(from: approval)
+    _ = try executionApproval(from: approval)
     let updated = try await tasks.markWaitingForCodexApproval(taskID: taskID)
     guard !finishedRuns.contains(taskID),
       activeAgentRuns[taskID]?.effectiveRunID == run.effectiveRunID
@@ -962,7 +974,7 @@ public actor ServiceExecutionCoordinator {
     return String(decoding: trimmed.utf8.prefix(512), as: UTF8.self)
   }
 
-  private static func executionApproval(
+  private func executionApproval(
     from approval: AgentApprovalRequest
   ) throws -> ExecutionApprovalRequest {
     let sessionID = approval.binding.providerSessionID ?? approval.taskID.rawValue
@@ -972,7 +984,7 @@ public actor ServiceExecutionCoordinator {
       turnID: "agent:\(runID)"
     )
     let title = String(decoding: approval.title.utf8.prefix(512), as: UTF8.self)
-    let providerName = Self.providerDisplayName(approval.binding.providerID)
+    let providerName = providerDisplayNameResolver(approval.binding.providerID)
     let summary: String
     if let command = approval.normalizedCommand, !command.isEmpty {
       summary = String(
@@ -988,13 +1000,13 @@ public actor ServiceExecutionCoordinator {
     } else {
       summary = String(decoding: approval.title.utf8.prefix(4 * 1_024), as: UTF8.self)
     }
-    let availableDecisions = try agentApprovalDecisions(options: approval.options)
+    let availableDecisions = try Self.agentApprovalDecisions(options: approval.options)
     return try ExecutionApprovalRequest(
       id: approval.approvalID,
       taskID: approval.taskID,
       binding: binding,
       itemID: approval.providerItemID,
-      kind: executionApprovalKind(approval.kind),
+      kind: Self.executionApprovalKind(approval.kind),
       title: title,
       summary: summary,
       displayCommand: approval.normalizedCommand,
@@ -1002,13 +1014,6 @@ public actor ServiceExecutionCoordinator {
       reason: approval.networkTarget.map { "Network target: \($0)" },
       availableDecisions: availableDecisions
     )
-  }
-
-  private static func providerDisplayName(_ providerID: AgentProviderID) -> String {
-    if providerID == .codex { return "Codex" }
-    if providerID == .openCode { return "OpenCode" }
-    if providerID == .deepSeekHarness { return "DeepSeek Harness" }
-    return providerID.rawValue
   }
 
   private static func executionApprovalKind(_ kind: AgentApprovalKind)
@@ -1109,122 +1114,6 @@ public actor ServiceExecutionCoordinator {
     return "The service could not persist \(provider) task progress: \(detail)"
   }
 
-  private func launchSupervisor(for task: ServiceTaskRecord) async {
-    guard let supervisor else { return }
-    do {
-      guard let handle = try await supervisor.launch(task: task) else { return }
-      let events = handle.events
-      supervisorCollectors[task.id] = Task { [weak self] in
-        for await event in events {
-          guard let self else { return }
-          await self.consumeSupervisor(event, taskID: task.id)
-        }
-        await self?.supervisorCollectorFinished(task.id)
-      }
-    } catch {
-      _ = try? await tasks.updateSupervisor(
-        taskID: task.id,
-        status: .degraded,
-        summary: "Supervisor could not start; Codex execution continues."
-      )
-    }
-  }
-
-  private func consumeSupervisor(_ event: SupervisorEvent, taskID: TaskID) async {
-    switch event {
-    case .started:
-      _ = try? await tasks.updateSupervisor(taskID: taskID, status: .running, summary: nil)
-
-    case .decision(let decision):
-      _ = try? await tasks.updateSupervisor(
-        taskID: taskID,
-        status: .running,
-        summary: decision.summary
-      )
-
-    case .steer(let instruction, let summary):
-      _ = try? await tasks.updateSupervisor(
-        taskID: taskID,
-        status: .running,
-        summary: summary
-      )
-      await applySupervisorSteer(taskID: taskID, instruction: instruction)
-
-    case .attention(let summary):
-      _ = try? await tasks.updateSupervisor(
-        taskID: taskID,
-        status: .running,
-        summary: summary
-      )
-
-    case .completed(let summary):
-      _ = try? await tasks.updateSupervisor(
-        taskID: taskID,
-        status: .completed,
-        summary: summary
-      )
-
-    case .degraded(_, let summary):
-      _ = try? await tasks.updateSupervisor(
-        taskID: taskID,
-        status: .degraded,
-        summary: summary
-      )
-    }
-  }
-
-  private func applySupervisorSteer(taskID: TaskID, instruction: String) async {
-    do {
-      let task = try await requiredTask(taskID)
-      guard task.state.status == .running, let turnID = task.state.codexTurnID else {
-        throw ExecutionServiceError.sessionUnavailable(taskID)
-      }
-      try await execution.steer(
-        taskID: taskID,
-        expectedTurnID: turnID,
-        text: instruction
-      )
-      await conversation.appendUserMessage(taskID: taskID, content: instruction)
-    } catch {
-      _ = try? await tasks.updateSupervisor(
-        taskID: taskID,
-        status: .degraded,
-        summary: "Supervisor steer could not be applied; Codex execution continues."
-      )
-    }
-  }
-
-  private func observeSupervisor(
-    task: ServiceTaskRecord,
-    kind: SupervisorObservationKind,
-    summary: String
-  ) async {
-    guard let supervisor else { return }
-    let observation = try? SupervisorObservation(
-      kind: kind,
-      taskID: task.id,
-      goal: task.prompt,
-      currentStep: task.state.currentStep,
-      summary: summary,
-      changedFiles: task.state.changedFiles,
-      resultSummary: task.state.resultSummary
-    )
-    guard let observation else {
-      _ = try? await tasks.updateSupervisor(
-        taskID: task.id,
-        status: .degraded,
-        summary: "Supervisor observation validation failed; Codex execution continues."
-      )
-      return
-    }
-    await supervisor.observe(observation)
-  }
-
-  private func stopSupervisor(taskID: TaskID) async {
-    supervisorCollectors.removeValue(forKey: taskID)?.cancel()
-    await supervisor?.stop(taskID: taskID)
-  }
-
   private func requiredTask(_ taskID: TaskID) async throws -> ServiceTaskRecord {
     guard let task = try await tasks.task(id: taskID) else {
       throw ServiceStoreError.unknownTask(taskID)
@@ -1234,9 +1123,5 @@ public actor ServiceExecutionCoordinator {
 
   private func collectorFinished(_ taskID: TaskID) {
     collectors[taskID] = nil
-  }
-
-  private func supervisorCollectorFinished(_ taskID: TaskID) {
-    supervisorCollectors[taskID] = nil
   }
 }

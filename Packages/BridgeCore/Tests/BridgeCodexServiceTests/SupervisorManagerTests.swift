@@ -4,6 +4,40 @@ import BridgeSupervisor
 import XCTest
 
 final class SupervisorManagerTests: XCTestCase {
+  func testCoordinatorShutdownStopsSupervisorSession() async throws {
+    let fixture = try await makeExecutionFixture(self)
+    let task = try await submitStartedExecutionTask(
+      fixture: fixture,
+      taskID: "tsk-supervisor-shutdown",
+      supervisorModel: "supervisor-model",
+      supervisorEffort: "medium"
+    )
+    let decision = supervisorDecisionJSON(
+      decision: "continue",
+      summary: "The task remains scoped."
+    )
+    let execution = makeExecutionManager(script: newThreadProgressScript(root: fixture.root.path))
+    let supervisor = try makeSupervisorManager(
+      fixture: fixture,
+      script: supervisorScript(decisions: [decision], firstReviewDelay: 10)
+    )
+    let coordinator = ServiceExecutionCoordinator(
+      tasks: fixture.tasks,
+      projects: fixture.projects,
+      execution: execution,
+      supervisor: supervisor
+    )
+
+    _ = try await coordinator.start(taskID: task.id)
+    let wasActive = await supervisor.hasActiveSession(taskID: task.id)
+    XCTAssertTrue(wasActive)
+
+    await coordinator.shutdown()
+
+    let remainsActive = await supervisor.hasActiveSession(taskID: task.id)
+    XCTAssertFalse(remainsActive)
+  }
+
   func testUnavailableSupervisorDegradesWithoutStoppingExecution() async throws {
     let fixture = try await makeExecutionFixture(self)
     let task = try await submitStartedExecutionTask(

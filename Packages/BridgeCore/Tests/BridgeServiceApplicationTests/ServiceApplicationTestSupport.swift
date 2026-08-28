@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeCodexRPC
 import BridgeCodexService
 import BridgeDomain
@@ -87,7 +88,10 @@ func makeServiceApplication(
   fixture: ServiceApplicationFixture,
   catalogScript: String,
   agentRegistry: ServiceAgentRegistry? = nil,
-  agentRunner: (any AgentTaskRunning)? = nil
+  agentRunner: (any AgentTaskRunning)? = nil,
+  providerDisplayNameResolver: @escaping @Sendable (AgentProviderID) -> String = {
+    ServiceAgentProviderPolicyRegistry.displayName(for: $0)
+  }
 ) -> BridgeServiceApplication {
   let execution = ExecutionManager(
     configuration: ExecutionManagerConfiguration(
@@ -102,7 +106,8 @@ func makeServiceApplication(
     tasks: fixture.tasks,
     projects: fixture.projects,
     execution: execution,
-    agentRunner: agentRunner
+    agentRunner: agentRunner,
+    providerDisplayNameResolver: providerDisplayNameResolver
   )
   return BridgeServiceApplication(
     appVersion: "0.2.0",
