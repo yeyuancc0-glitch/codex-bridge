@@ -82,10 +82,9 @@ extension MCPServiceToolCatalog {
       + "supervisor_model and supervisor_effort, and use an explicitly requested model, effort, "
       + "permission mode, or Skill only when it is supported by the registered installation. "
       + "Its execution-time permission requests are surfaced for one-shot local approval. For "
-      + "OpenCode, omit permission_mode to use the saved Bridge default. Set "
-      + "permission_mode_override=true together with permission_mode only when the user explicitly "
-      + "asks for native ACP Plan/read-only or native ACP Build/workspace-write; an unmarked client-selected "
-      + "mode is ignored. OpenCode network access follows its native permissions; the "
+      + "OpenCode, omit permission_mode to use the saved Bridge default. A read-only value may "
+      + "always narrow that default. Set permission_mode_override=true with workspace-write only "
+      + "when the user explicitly asks for native ACP Build. OpenCode network access follows its native permissions; the "
       + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
       + "Codex. For OpenCode, execution_effort accepts only the selected model's ACP effort values; "
       + "when omitted, Bridge uses the saved OpenCode default when supported and otherwise the Provider default. "
@@ -155,12 +154,12 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build. DeepSeek Harness applies read-only or workspace-write to a private provider profile and surfaces execution-time permission requests for one-shot local approval. For Antigravity, read-only selects Plan (agy mode: plan) and workspace-write selects Accept Edits (agy mode: accept-edits) for in-place execution; interactive provider approval is unavailable and a permission denial fails the task.",
+            "For Codex, selects the native sandbox. For external agents, read-only may always narrow the saved mode; workspace-write requires permission_mode_override=true. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for one-shot local approval. Antigravity selects agy Plan or Accept Edits; interactive provider approval is unavailable and a permission denial fails the task.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
           "description":
-            "Set true only when the user's request explicitly asks for a permission mode. OpenCode otherwise uses its saved default. For Antigravity, use it to select Plan/read-only or Accept Edits/workspace-write only when list_agents reports the matching effective capability.",
+            "Set true only when the user explicitly requests workspace-write or another per-task permission override. Read-only may be supplied without this marker to narrow an external agent's saved mode.",
         ],
         "network_access": [
           "type": "boolean",

@@ -11,7 +11,7 @@ import XCTest
 final class MCPAdmissionBoundaryTests: XCTestCase {
   private let secret = String(repeating: "A", count: 43)
 
-  // MARK: - 8/2 tool admission limits
+  // MARK: - 8/4 tool admission limits
 
   func testConcurrentGlobalAdmissionRejectsBeyondEightDistinctSessions() async {
     let admission = MCPToolAdmission()
@@ -39,10 +39,10 @@ final class MCPAdmissionBoundaryTests: XCTestCase {
     XCTAssertTrue(reacquired)
   }
 
-  func testConcurrentPerSessionAdmissionRejectsBeyondTwoForSameSession() async {
+  func testConcurrentPerSessionAdmissionAllowsFourRequests() async {
     let admission = MCPToolAdmission()
     let results = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
-      for _ in 0..<6 {
+      for _ in 0..<12 {
         group.addTask {
           await admission.acquire(sessionID: "shared-session")
         }
@@ -54,11 +54,12 @@ final class MCPAdmissionBoundaryTests: XCTestCase {
       return collected
     }
 
-    XCTAssertEqual(results.filter { $0 }.count, 2)
-    XCTAssertEqual(results.filter { !$0 }.count, 4)
+    XCTAssertEqual(results.filter { $0 }.count, 4)
+    XCTAssertEqual(results.filter { !$0 }.count, 8)
 
-    await admission.release(sessionID: "shared-session")
-    await admission.release(sessionID: "shared-session")
+    for _ in 0..<4 {
+      await admission.release(sessionID: "shared-session")
+    }
     let reacquired = await admission.acquire(sessionID: "shared-session")
     XCTAssertTrue(reacquired)
   }
@@ -67,30 +68,26 @@ final class MCPAdmissionBoundaryTests: XCTestCase {
     let admission = MCPToolAdmission()
 
     for _ in 0..<4 {
-      // Six distinct sessions plus two shared-session slots = exactly 8 global.
-      for index in 0..<6 {
+      // Four distinct sessions plus four shared-session slots = exactly 8 global.
+      for index in 0..<4 {
         let acquired = await admission.acquire(sessionID: "session-\(index)")
         XCTAssertTrue(acquired)
       }
-      let firstShared = await admission.acquire(sessionID: "shared")
-      let secondShared = await admission.acquire(sessionID: "shared")
-      XCTAssertTrue(firstShared)
-      XCTAssertTrue(secondShared)
+      for _ in 0..<4 {
+        let shared = await admission.acquire(sessionID: "shared")
+        XCTAssertTrue(shared)
+      }
 
       // Global full: the ninth distinct session is rejected.
       let globalOverflow = await admission.acquire(sessionID: "overflow")
       XCTAssertFalse(globalOverflow)
-      // Per-session full: the third shared slot is rejected.
-      let sharedOverflow = await admission.acquire(sessionID: "shared")
-      XCTAssertFalse(sharedOverflow)
-
       // Release all eight; the extra shared release must be an idempotent no-op.
-      for index in 0..<6 {
+      for index in 0..<4 {
         await admission.release(sessionID: "session-\(index)")
       }
-      await admission.release(sessionID: "shared")
-      await admission.release(sessionID: "shared")
-      await admission.release(sessionID: "shared")
+      for _ in 0..<5 {
+        await admission.release(sessionID: "shared")
+      }
     }
 
     // A fresh fill reaches the exact same boundary, proving no residual leak.

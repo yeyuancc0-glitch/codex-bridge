@@ -638,7 +638,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.installationID, "ainst-route-opencode")
     XCTAssertEqual(task.selectionMode, .explicit)
     XCTAssertEqual(task.executionModel, serviceDefaultProviderExecutionModel)
-    XCTAssertEqual(task.permissionMode, .readOnly)
+    XCTAssertEqual(task.permissionMode, .workspaceWrite)
 
     // A read-only remote task keeps waiting across recovery and never holds
     // the project write slot.
@@ -983,10 +983,10 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.clientRequestID, "managed-agent-request-1")
     XCTAssertEqual(task.executionModel, "opencode/x-preview-f-free")
     XCTAssertEqual(task.executionEffort, "high")
-    XCTAssertEqual(task.permissionMode, .workspaceWrite)
+    XCTAssertEqual(task.permissionMode, .readOnly)
   }
 
-  func testOpenCodeSubmissionIgnoresUnmarkedClientPermissionMode() async throws {
+  func testOpenCodeSubmissionHonorsUnmarkedReadOnlyNarrowing() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
     let provider = try ScriptedAgentProvider(supportsWorkspaceWrite: true)
@@ -1013,7 +1013,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       deadline: ContinuousClock.now.advanced(by: .seconds(10))
     )
     let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
-    XCTAssertEqual(storedTask?.permissionMode, .workspaceWrite)
+    XCTAssertEqual(storedTask?.permissionMode, .readOnly)
   }
 
   func testOpenCodeSubmissionHonorsExplicitPermissionModeOverride() async throws {

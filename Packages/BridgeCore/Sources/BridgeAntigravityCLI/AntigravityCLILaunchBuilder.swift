@@ -46,6 +46,7 @@ public struct AntigravityCLILaunchBuilder: Sendable {
     )
     var providerArgv = [
       executable,
+      "--sandbox",
       "--input-format",
       "stream-json",
       "--output-format",

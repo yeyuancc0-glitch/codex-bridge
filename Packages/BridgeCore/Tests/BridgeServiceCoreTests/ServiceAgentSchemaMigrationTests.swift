@@ -7,6 +7,101 @@ import XCTest
 @testable import BridgeServiceCore
 
 final class ServiceAgentSchemaMigrationTests: XCTestCase {
+  func testVersionThirteenAcceptsDeclinedAndCancelledToolMessagesAfterMigration()
+    async throws
+  {
+    let directory = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-message-schema-v14-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    let databasePath = directory.appending(path: "service.sqlite").path
+
+    do {
+      let legacy = try DatabaseQueue(path: databasePath)
+      try await legacy.writeWithoutTransaction { db in
+        try db.execute(
+          sql: """
+            CREATE TABLE grdb_migrations (identifier TEXT PRIMARY KEY NOT NULL);
+            INSERT INTO grdb_migrations (identifier) VALUES
+              ('BridgeServiceCore.v1'), ('BridgeServiceCore.v2'),
+              ('BridgeServiceCore.v3'), ('BridgeServiceCore.v4'),
+              ('BridgeServiceCore.v5'), ('BridgeServiceCore.v6'),
+              ('BridgeServiceCore.v7'), ('BridgeServiceCore.v8'),
+              ('BridgeServiceCore.v9'), ('BridgeServiceCore.v10'),
+              ('BridgeServiceCore.v11'), ('BridgeServiceCore.v12'),
+              ('BridgeServiceCore.v13');
+            """)
+        try ServiceStoreSchema.createVersionOne(in: db)
+        try ServiceStoreSchema.createVersionTwo(in: db)
+        try ServiceStoreSchema.createVersionThree(in: db)
+        try ServiceStoreSchema.createVersionFour(in: db)
+        try ServiceStoreSchema.createVersionFive(in: db)
+        try ServiceStoreSchema.createVersionSix(in: db)
+        try ServiceStoreSchema.createVersionSeven(in: db)
+        try ServiceStoreSchema.createVersionEight(in: db)
+        try ServiceStoreSchema.createVersionNine(in: db)
+        try ServiceStoreSchema.createVersionTen(in: db)
+        try ServiceStoreSchema.createVersionEleven(in: db)
+        try ServiceStoreSchema.createVersionTwelve(in: db)
+        try ServiceStoreSchema.createVersionThirteen(in: db)
+        try db.execute(
+          sql: """
+            INSERT INTO bridge_service_projects (
+              project_id, name, canonical_path, root_device, root_inode,
+              read_permission, write_permission, network_permission, created_at, updated_at
+            ) VALUES ('prj-v13', 'Legacy', '/tmp/v13', '1', '2',
+              'allowed', 'allowed', 'denied', 1, 2);
+            INSERT INTO bridge_service_tasks (
+              task_id, project_id, source, source_client_id, prompt, status,
+              supervisor_status, execution_model, execution_effort, permission_mode,
+              network_allowed, access_mode, fast_mode, changed_files_json,
+              created_at, updated_at
+            ) VALUES ('tsk-v13', 'prj-v13', 'mcp.client', 'chatgpt', 'Legacy task',
+              'running', 'disabled', 'legacy-model', 'medium', 'read-only', 0,
+              'request-approval', 0, CAST('[]' AS BLOB), 1, 2);
+            INSERT INTO bridge_service_task_messages (
+              task_id, message_key, role, kind, content, tool_name, tool_status,
+              created_at, updated_at
+            ) VALUES (
+              'tsk-v13', 'tool:existing', 'agent', 'tool_call', 'Read file',
+              'view_file', 'completed', 3, 3
+            );
+            """)
+      }
+    }
+
+    let store = try SimpleServiceStore(path: databasePath)
+    for status in ["declined", "cancelled"] {
+      let message = try ServiceTaskMessageDraft(
+        key: "tool:\(status)",
+        role: .agent,
+        content: "Tool \(status)",
+        createdAt: Date(timeIntervalSince1970: 4),
+        kind: .toolCall,
+        toolName: "run_command",
+        toolStatus: status
+      )
+      try await store.upsertTaskMessage(message, taskID: TaskID(rawValue: "tsk-v13"))
+    }
+    let messages = try await store.taskMessages(taskID: TaskID(rawValue: "tsk-v13"))
+    XCTAssertEqual(messages.map(\.toolStatus), ["completed", "declined", "cancelled"])
+
+    let backupPath = databasePath + ".pre-v14"
+    var metadata = stat()
+    XCTAssertEqual(lstat(backupPath, &metadata), 0)
+    XCTAssertEqual(metadata.st_mode & 0o777, 0o600)
+    let backup = try DatabaseQueue(path: backupPath)
+    let backupVersion = try await backup.read { db in
+      try Int.fetchOne(
+        db,
+        sql: "SELECT schema_version FROM bridge_service_meta WHERE singleton = 1"
+      )
+    }
+    XCTAssertEqual(backupVersion, 13)
+  }
+
   func testVersionElevenAddsMessageActivityTimestampWithPrivateBackup() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(
       path: "bridge-message-schema-v12-\(UUID().uuidString)",
@@ -126,7 +221,7 @@ final class ServiceAgentSchemaMigrationTests: XCTestCase {
       let exists = try db.tableExists("bridge_service_agent_installations")
       return (version, exists)
     }
-    XCTAssertEqual(schema.0, 13)
+    XCTAssertEqual(schema.0, 14)
     XCTAssertTrue(schema.1)
 
     let backupPath = databasePath + ".pre-v10"
@@ -252,7 +347,7 @@ final class ServiceAgentSchemaMigrationTests: XCTestCase {
       )
       return (version, columns, foreignKeys.count)
     }
-    XCTAssertEqual(result.0, 13)
+    XCTAssertEqual(result.0, 14)
     XCTAssertEqual(
       result.1,
       [

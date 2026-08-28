@@ -20,7 +20,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 13
+  static let version: Int64 = 14
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -35,9 +35,11 @@ enum ServiceStoreSchema {
   static let migrationV11 = "BridgeServiceCore.v11"
   static let migrationV12 = "BridgeServiceCore.v12"
   static let migrationV13 = "BridgeServiceCore.v13"
+  static let migrationV14 = "BridgeServiceCore.v14"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
     migrationV8, migrationV9, migrationV10, migrationV11, migrationV12, migrationV13,
+    migrationV14,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -72,6 +74,7 @@ enum ServiceStoreSchema {
     case 10: backupSuffix = ".pre-v11"
     case 11: backupSuffix = ".pre-v12"
     case 12: backupSuffix = ".pre-v13"
+    case 13: backupSuffix = ".pre-v14"
     default: return
     }
     let backupPath = sourcePath + backupSuffix
@@ -145,6 +148,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV13) { db in
       try createVersionThirteen(in: db)
+    }
+    migrator.registerMigration(migrationV14) { db in
+      try createVersionFourteen(in: db)
     }
     return migrator
   }
@@ -807,6 +813,66 @@ enum ServiceStoreSchema {
 
         UPDATE bridge_service_meta SET schema_version = 13 WHERE singleton = 1;
         """)
+  }
+
+  static func createVersionFourteen(in db: Database) throws {
+    let messageCount =
+      try Int.fetchOne(
+        db,
+        sql: "SELECT COUNT(*) FROM bridge_service_task_messages"
+      ) ?? 0
+    try db.execute(
+      sql: """
+        CREATE TABLE bridge_service_task_messages_v14_staging (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            message_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
+            content TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'agent'
+              CHECK (kind IN ('user', 'agent', 'reasoning', 'tool_call')),
+            tool_name TEXT,
+            tool_status TEXT CHECK (tool_status IN (
+              'inProgress', 'completed', 'failed', 'declined', 'cancelled'
+            )),
+            tool_arguments TEXT,
+            updated_at REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (task_id)
+              REFERENCES bridge_service_tasks(task_id) ON DELETE CASCADE,
+            UNIQUE (task_id, message_key),
+            CHECK (length(CAST(task_id AS BLOB)) BETWEEN 1 AND 128),
+            CHECK (length(CAST(message_key AS BLOB)) BETWEEN 1 AND 256),
+            CHECK (length(CAST(content AS BLOB)) BETWEEN 1 AND 262144)
+        );
+
+        INSERT INTO bridge_service_task_messages_v14_staging (
+          message_id, task_id, message_key, role, content, created_at, kind,
+          tool_name, tool_status, tool_arguments, updated_at
+        )
+        SELECT
+          message_id, task_id, message_key, role, content, created_at, kind,
+          tool_name, tool_status, tool_arguments, updated_at
+        FROM bridge_service_task_messages;
+
+        DROP TABLE bridge_service_task_messages;
+        ALTER TABLE bridge_service_task_messages_v14_staging
+          RENAME TO bridge_service_task_messages;
+
+        CREATE INDEX bridge_service_task_messages_task
+        ON bridge_service_task_messages(task_id, message_id);
+        CREATE INDEX bridge_service_task_messages_activity
+        ON bridge_service_task_messages(task_id, updated_at DESC, message_id DESC);
+
+        UPDATE bridge_service_meta SET schema_version = 14 WHERE singleton = 1;
+        """)
+    guard
+      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM bridge_service_task_messages")
+        == messageCount,
+      try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty
+    else {
+      throw ServiceStoreError.corruptSchema
+    }
   }
 
   static func createVersionOne(in db: Database) throws {

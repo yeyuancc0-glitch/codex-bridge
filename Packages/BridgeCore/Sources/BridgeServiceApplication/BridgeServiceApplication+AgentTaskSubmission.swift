@@ -81,8 +81,11 @@ extension BridgeServiceApplication {
     {
       throw BridgeMCPQueryError.contractRejected
     }
+    let narrowsToReadOnly =
+      submission.permissionMode == ServicePermissionMode.readOnly.rawValue
     let requestedPermissionMode =
-      submission.permissionModeOverride == false ? nil : submission.permissionMode
+      narrowsToReadOnly || submission.permissionModeOverride == true
+      ? submission.permissionMode : nil
     let permission = try Self.permissionMode(
       requestedPermissionMode,
       project: project,

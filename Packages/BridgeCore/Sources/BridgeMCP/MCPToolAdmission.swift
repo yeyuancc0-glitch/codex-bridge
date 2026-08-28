@@ -5,7 +5,7 @@ public actor MCPToolAdmission {
   private var activeCount = 0
   private var activeBySession: [String: Int] = [:]
 
-  public init(globalLimit: Int = 8, perSessionLimit: Int = 2) {
+  public init(globalLimit: Int = 8, perSessionLimit: Int = 4) {
     precondition(globalLimit > 0)
     precondition(perSessionLimit > 0 && perSessionLimit <= globalLimit)
     self.globalLimit = globalLimit

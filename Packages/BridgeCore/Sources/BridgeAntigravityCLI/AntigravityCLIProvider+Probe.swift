@@ -66,7 +66,7 @@ extension AntigravityCLIProvider {
       let facts = AntigravityCLIHelpFacts.parse(
         help.standardOutput.tail + "\n" + help.standardError.tail
       )
-      guard facts.supportsStreamJSON, facts.supportsPlanMode else {
+      guard facts.supportsStreamJSON, facts.supportsPlanMode, facts.supportsSandbox else {
         throw AgentRuntimeError.unsupportedProtocol("antigravity-stream-json-plan")
       }
       let installation = try AgentInstallation(
