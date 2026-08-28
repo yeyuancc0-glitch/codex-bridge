@@ -38,6 +38,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var customInstructionsValue = "Fixture global instructions"
   private let failModelCatalog: Bool
   private let failThreadList: Bool
+  private var statusDelay: Duration = .zero
   private var failSubscription = false
   private var threadListCalls = 0
   private var threadReadCalls = 0
@@ -89,7 +90,6 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var agentModelRequestCount = 0
   private var agentModelsQueries: [AgentModelsQuery] = []
   private var failAgentModels = false
-  private var submittedAgentRequestValue: IPCAgentSubmitRequest?
   private var registrationRequestValue: IPCAgentRegistrationRequest?
   private var approvalResolutionDelay: Duration = .zero
   private var failApprovalReplyAfterResolution = false
@@ -119,6 +119,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setFailSubscription(_ fail: Bool) {
     failSubscription = fail
+  }
+
+  func setStatusDelay(_ delay: Duration) {
+    statusDelay = delay
   }
 
   func setSubscriptionPage(_ page: IPCTaskConversationPage) {
@@ -216,16 +220,15 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     agentModelDefaultWrites
   }
 
-  func submittedAgentRequest() -> IPCAgentSubmitRequest? {
-    submittedAgentRequestValue
-  }
-
   func registrationRequest() -> IPCAgentRegistrationRequest? {
     registrationRequestValue
   }
 
   func status() async throws -> IPCServiceStatusResponse {
-    IPCServiceStatusResponse(
+    if statusDelay > .zero {
+      try await Task.sleep(for: statusDelay)
+    }
+    return IPCServiceStatusResponse(
       status: BridgeStatusSnapshot(
         appVersion: "test",
         mcpState: "ready",
@@ -447,14 +450,6 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func removeAgentInstallation(installationID: String) async throws {
     agentActions.append("remove:\(installationID)")
     agentInstallationsValue.removeAll { $0.installationID == installationID }
-  }
-
-  func submitAgentTask(
-    _ request: IPCAgentSubmitRequest
-  ) async throws -> IPCAgentSubmitResponse {
-    submittedAgentRequestValue = request
-    agentActions.append("submit:\(request.providerID):\(request.model ?? "default")")
-    return IPCAgentSubmitResponse(taskID: "tsk-test-agent", status: "awaiting_local_approval")
   }
 
   func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {

@@ -36,7 +36,7 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 
 ## 3. 刷新模型和设置默认模式
 
-在工作台的“本机 Agent 任务”区域选择 OpenCode：
+在“设置”中的 OpenCode 执行任务默认偏好区域：
 
 1. 点击“刷新模型列表”。模型目录来自当前项目根启动的 ACP `session/new.configOptions`，不是 `opencode models` CLI 的输出。
 2. 选择 ACP 返回的精确模型 ID。不要手动在 `opencode-go/...` 与 `opencode/...` 之间改名或使用别名。
@@ -47,11 +47,7 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 
 模型目录只在用户点击刷新时读取。刷新失败会保留已有列表和默认设置；如果 OpenCode 删除了当前默认模型或 effort，Bridge 会清空失效的默认值。
 
-## 4. 从工作台测试
-
-确保 OpenCode 安装已启用、项目已选中后，在“本机 Agent 任务”卡片中选择模型并提交任务。任务仍会先进入本机审批，批准后才启动 OpenCode。OpenCode 通过 ACP 请求文件、命令、网络或其他权限时，也会回到 Bridge 工作台等待本机用户审批。
-
-## 5. 从 ChatGPT 或 Qwen 通过 MCP 使用
+## 4. 从 ChatGPT 或 Qwen 通过 MCP 使用
 
 先调用 `list_projects` 获取不透明的项目 ID，再调用 `list_agents` 确认 OpenCode 安装满足：
 
@@ -108,7 +104,7 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 - 新建 OpenCode 会话时省略 `thread_id`；继续已有会话时，将上一任务 `get_task` 返回的 `provider_session_id` 作为 `submit_task.thread_id`。不要携带 `skill_name`、`supervisor_model` 或 `supervisor_effort`。
 - 项目本身禁止写入时，默认 Build 会安全收窄为只读，不会越过项目策略。
 
-## 6. 审批、查询和继续任务
+## 5. 审批、查询和继续任务
 
 `submit_task` 通常先返回 `awaiting_local_approval`。本机用户在 Bridge 工作台批准后，任务才进入 `starting` 和 `running`。使用 `get_task` 查询阶段、`result_summary`、`failure_code`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 以及 Provider 绑定字段；进入终态后调用 `get_final_report` 获取结构化最终报告。
 
@@ -126,14 +122,14 @@ OpenCode 的 `steer_task` 和 `interrupt_task` 使用 `get_task` 返回的 `prov
 
 Bridge 会在同一个 ACP Session 中把 steer 内容排队为后续 prompt；中断会优先处理并丢弃尚未执行的 steer 队列。
 
-## 7. 权限和数据隔离
+## 6. 权限和数据隔离
 
 - Bridge 的 Plan/Build 只映射 OpenCode 的原生执行模式，不会伪造或绕过 OpenCode 权限。
 - OpenCode 的全局 XDG 配置、认证和插件由 OpenCode 自己管理；每个 Bridge 任务的 `HOME`、cache、state、runtime 和 `OPENCODE_DB` 都使用隔离目录。
 - Bridge 不读取或回传 OpenCode auth 文件、Token、Cookie 或 Runtime Key。
 - 远程客户端不能批准任务或 ACP 权限请求，所有批准都必须由本机用户完成。
 
-## 8. 常见问题
+## 7. 常见问题
 
 | 状态或问题 | 处理方式 |
 |---|---|

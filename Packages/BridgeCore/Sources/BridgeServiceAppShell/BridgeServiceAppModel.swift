@@ -156,8 +156,13 @@ public final class BridgeServiceAppModel: ObservableObject {
   let maximumConnectionAttempts: Int
   let chatBrowserSleepDelay: Duration
   let threadCatalogRefreshInterval: TimeInterval = 60
+  let idlePollInterval: Duration = .seconds(10)
   var client: (any BridgeServiceClientProtocol)?
   var pollingTask: Task<Void, Never>?
+  var refreshInProgress = false
+  var pendingRefresh = false
+  var pendingVisibleRefresh = false
+  var pendingCatalogRefresh = false
   var chatWebViewSleepTask: Task<Void, Never>?
   var toastDismissTask: Task<Void, Never>?
   var workbenchProjectSyncTask: Task<Void, Never>?
@@ -260,16 +265,6 @@ public final class BridgeServiceAppModel: ObservableObject {
 
   func agentModelRefreshError(for providerID: String) -> String? {
     agentModelRefreshErrorsByProvider[providerID]
-  }
-
-  func agentExecutionEffort(for providerID: String) -> String? {
-    let value = agentModelDefault(for: providerID)
-    guard let effort = value.effort else { return nil }
-    let selectedModel = agentSelectedModel(for: providerID)
-    guard selectedModel?.supportedReasoningEfforts.contains(effort) == true else {
-      return nil
-    }
-    return effort
   }
 
   public var exposureMode: MCPServiceExposureMode {

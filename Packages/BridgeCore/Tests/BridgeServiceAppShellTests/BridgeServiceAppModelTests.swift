@@ -160,152 +160,6 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.modelPreferences?.executionEffort, "low")
   }
 
-  func testAgentTaskSubmissionCarriesNativePermissionMode() async throws {
-    let registration = TestServiceRegistration(status: .enabled)
-    let client = TestBridgeServiceClient()
-    let model = BridgeServiceAppModel(
-      registration: registration,
-      clientFactory: { client },
-      pollInterval: nil,
-      connectionRetryDelay: .milliseconds(1),
-      maximumConnectionAttempts: 1
-    )
-    await model.startAsync()
-
-    model.submitAgentTask(
-      projectID: "project-1",
-      providerID: "opencode",
-      installationID: "agent-installation-1",
-      model: "opencode/x-preview-f-free",
-      permissionMode: "workspace-write",
-      prompt: "Build the project."
-    )
-
-    try await waitUntil {
-      await client.submittedAgentRequest() != nil && !model.isManagingAgents
-    }
-    let requestValue = await client.submittedAgentRequest()
-    let request = try XCTUnwrap(requestValue)
-    XCTAssertEqual(request.providerID, "opencode")
-    XCTAssertEqual(request.permissionMode, "workspace-write")
-    XCTAssertEqual(request.model, "opencode/x-preview-f-free")
-  }
-
-  func testAgentTaskSubmissionCarriesMCPSubmissionFields() async throws {
-    let registration = TestServiceRegistration(status: .enabled)
-    let client = TestBridgeServiceClient()
-    let model = BridgeServiceAppModel(
-      registration: registration,
-      clientFactory: { client },
-      pollInterval: nil,
-      connectionRetryDelay: .milliseconds(1),
-      maximumConnectionAttempts: 1
-    )
-    await model.startAsync()
-
-    model.submitAgentTask(
-      projectID: "project-1",
-      providerID: "opencode",
-      installationID: "agent-installation-1",
-      model: "opencode/model",
-      effort: "high",
-      permissionMode: "workspace-write",
-      prompt: "Continue the task.",
-      threadID: "session-1",
-      skillName: "review",
-      networkAccess: true,
-      modelOverride: true,
-      permissionModeOverride: true,
-      acceptanceCriteria: ["Tests pass"],
-      clientRequestID: "request-1"
-    )
-
-    try await waitUntil {
-      await client.submittedAgentRequest() != nil && !model.isManagingAgents
-    }
-    let requestValue = await client.submittedAgentRequest()
-    let request = try XCTUnwrap(requestValue)
-    XCTAssertEqual(request.threadID, "session-1")
-    XCTAssertEqual(request.skillName, "review")
-    XCTAssertEqual(request.networkAccess, true)
-    XCTAssertEqual(request.modelOverride, true)
-    XCTAssertEqual(request.permissionModeOverride, true)
-    XCTAssertEqual(request.acceptanceCriteria, ["Tests pass"])
-    XCTAssertEqual(request.clientRequestID, "request-1")
-  }
-
-  func testAntigravityWithoutObservedSelectionCapabilitiesHidesCatalogAndStripsOverrides()
-    async throws
-  {
-    let registration = TestServiceRegistration(status: .enabled)
-    let client = TestBridgeServiceClient()
-    let installation = IPCAgentInstallationSummary(
-      installationID: "antigravity-installation",
-      providerID: "antigravity",
-      displayName: "Antigravity",
-      executablePath: "/tmp/agy",
-      version: "1.1.21",
-      protocolRevision: "stream-json-v1",
-      adapterRevision: 1,
-      trustProfile: "user_trusted",
-      securityProfileID: "desktop-shared",
-      isEnabled: true,
-      availability: "available",
-      effectiveCapabilities: ["workspace.read"],
-      lastProbedAt: "2026-08-27T00:00:00Z",
-      updatedAt: "2026-08-27T00:00:00Z"
-    )
-    let option = IPCAgentModelSummary(
-      modelID: "antigravity/model",
-      displayName: "Antigravity Model",
-      supportedReasoningEfforts: ["high"],
-      defaultReasoningEffort: "high"
-    )
-    await client.configureAgentInstallations([installation])
-    await client.configureAgentModels([option])
-    let model = BridgeServiceAppModel(
-      registration: registration,
-      clientFactory: { client },
-      pollInterval: nil,
-      connectionRetryDelay: .milliseconds(1),
-      maximumConnectionAttempts: 1
-    )
-    await model.startAsync()
-
-    XCTAssertFalse(
-      model.supportsAgentModelSelection(
-        providerID: "antigravity",
-        installationID: installation.installationID
-      )
-    )
-    XCTAssertFalse(
-      model.supportsAgentEffortSelection(
-        providerID: "antigravity",
-        installationID: installation.installationID
-      )
-    )
-
-    model.agentModelOptions = [option]
-    model.submitAgentTask(
-      projectID: "project-1",
-      providerID: "antigravity",
-      installationID: installation.installationID,
-      model: option.modelID,
-      effort: "high",
-      permissionMode: "read-only",
-      prompt: "Review the project."
-    )
-
-    try await waitUntil {
-      await client.submittedAgentRequest() != nil && !model.isManagingAgents
-    }
-    let requestValue = await client.submittedAgentRequest()
-    let request = try XCTUnwrap(requestValue)
-    XCTAssertNil(request.model)
-    XCTAssertNil(request.effort)
-    XCTAssertEqual(request.permissionMode, "read-only")
-  }
-
   func testOpenCodeDynamicEffortDoesNotRequireStaticInstallationCapability() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -354,24 +208,6 @@ final class BridgeServiceAppModelTests: XCTestCase {
         installationID: installation.installationID
       )
     )
-
-    model.submitAgentTask(
-      projectID: "project-1",
-      providerID: "opencode",
-      installationID: installation.installationID,
-      model: option.modelID,
-      effort: "high",
-      permissionMode: "read-only",
-      prompt: "Review the project."
-    )
-
-    try await waitUntil {
-      await client.submittedAgentRequest() != nil && !model.isManagingAgents
-    }
-    let submittedRequest = await client.submittedAgentRequest()
-    let request = try XCTUnwrap(submittedRequest)
-    XCTAssertEqual(request.model, option.modelID)
-    XCTAssertEqual(request.effort, "high")
   }
 
   func testOpenCodeProviderDefaultUsesCatalogModelThatAdvertisesDynamicEffort() async throws {
@@ -540,12 +376,6 @@ final class BridgeServiceAppModelTests: XCTestCase {
     )
     await model.startAsync()
 
-    XCTAssertTrue(
-      model.supportsAgentModelSelection(
-        providerID: "antigravity",
-        installationID: installation.installationID
-      )
-    )
     XCTAssertTrue(
       model.supportsAgentEffortSelection(
         providerID: "antigravity",
@@ -918,38 +748,6 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
     XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").model, option.modelID)
     XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").effort, "high")
-  }
-
-  func testProviderDefaultEffortFallsBackWhenModelHasNoVariants() async throws {
-    let registration = TestServiceRegistration(status: .enabled)
-    let client = TestBridgeServiceClient()
-    let option = IPCAgentModelSummary(
-      modelID: "gateway/model-v1",
-      displayName: "Gateway Model"
-    )
-    await client.configureAgentModels([option])
-    _ = try await client.setAgentDefaults(
-      providerID: "deepseek-harness",
-      model: option.modelID,
-      permissionMode: nil,
-      effort: "high"
-    )
-    let model = BridgeServiceAppModel(
-      registration: registration,
-      clientFactory: { client },
-      pollInterval: nil,
-      connectionRetryDelay: .milliseconds(1),
-      maximumConnectionAttempts: 1
-    )
-
-    await model.startAsync()
-    await model.hydrateAgentModelState(
-      installationID: "agent-installation",
-      providerID: "deepseek-harness"
-    )
-
-    XCTAssertEqual(model.agentModelDefault(for: "deepseek-harness").effort, "high")
-    XCTAssertNil(model.agentExecutionEffort(for: "deepseek-harness"))
   }
 
   func testRefreshingAgentModelsClearsRemovedEffortAndPreservesPersistedMode() async throws {
@@ -1377,6 +1175,94 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(calls.list, 1)
     XCTAssertEqual(calls.read, 0)
     await model.shutdownUI()
+  }
+
+  func testSilentRefreshDoesNotPublishVisibleRefreshState() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    let previousRefreshAt = model.lastRefreshAt
+    await client.setStatusDelay(.milliseconds(100))
+
+    let refresh = Task { @MainActor in
+      await model.refresh(silent: true, includeCatalog: false)
+    }
+    try await Task.sleep(for: .milliseconds(20))
+
+    XCTAssertTrue(model.refreshInProgress)
+    XCTAssertFalse(model.isRefreshing)
+    XCTAssertEqual(model.lastRefreshAt, previousRefreshAt)
+    await refresh.value
+    XCTAssertFalse(model.refreshInProgress)
+    XCTAssertFalse(model.isRefreshing)
+    XCTAssertEqual(model.lastRefreshAt, previousRefreshAt)
+  }
+
+  func testVisibleRefreshQueuedBehindSilentRefreshIsNotDropped() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+    let previousRefreshAt = model.lastRefreshAt
+    await client.setStatusDelay(.milliseconds(100))
+
+    let silentRefresh = Task { @MainActor in
+      await model.refresh(silent: true, includeCatalog: false)
+    }
+    try await Task.sleep(for: .milliseconds(20))
+    await model.refresh(silent: false, includeCatalog: false)
+    await silentRefresh.value
+
+    XCTAssertFalse(model.refreshInProgress)
+    XCTAssertFalse(model.isRefreshing)
+    XCTAssertNotEqual(model.lastRefreshAt, previousRefreshAt)
+  }
+
+  func testIdlePollingBacksOffUntilLiveUpdatesAreNeeded() async throws {
+    let model = BridgeServiceAppModel(
+      registration: TestServiceRegistration(status: .enabled),
+      clientFactory: { TestBridgeServiceClient() },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    let base = Duration.seconds(2)
+
+    model.tasks = []
+    model.approvals = []
+    model.directApprovals = []
+    XCTAssertEqual(model.nextPollingDelay(base: base), .seconds(10))
+
+    model.approvals = [
+      IPCApprovalSummary(
+        approvalID: "approval-1",
+        taskID: "task-1",
+        threadID: "thread-1",
+        turnID: "turn-1",
+        itemID: "item-1",
+        kind: "command",
+        title: "Run command",
+        summary: "Run a bounded command."
+      )
+    ]
+    XCTAssertEqual(model.nextPollingDelay(base: base), base)
+
+    model.approvals = []
+    model.resolvingApprovalKeys = ["approval-1"]
+    XCTAssertEqual(model.nextPollingDelay(base: base), base)
   }
 
   func testOpenCodeTaskWithoutThreadIsSelectedAndStreamsSharedConversation() async throws {

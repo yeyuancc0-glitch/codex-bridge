@@ -111,10 +111,6 @@ enum AgentProviderPresentation {
 }
 
 extension IPCAgentInstallationSummary {
-  var supportsModelSelection: Bool {
-    effectiveCapabilities.contains("selection.model")
-  }
-
   var supportsEffortSelection: Bool {
     effectiveCapabilities.contains("selection.effort")
   }
@@ -129,21 +125,6 @@ extension BridgeServiceAppModel {
     return agentInstallations.first {
       $0.providerID == providerID && $0.installationID == installationID
     }
-  }
-
-  func supportsAgentModelSelection(
-    providerID: String,
-    installationID: String?
-  ) -> Bool {
-    guard
-      let installation = selectedAgentInstallation(
-        providerID: providerID,
-        installationID: installationID
-      )
-    else {
-      return providerID != "antigravity"
-    }
-    return installation.supportsModelSelection
   }
 
   func supportsAgentEffortSelection(

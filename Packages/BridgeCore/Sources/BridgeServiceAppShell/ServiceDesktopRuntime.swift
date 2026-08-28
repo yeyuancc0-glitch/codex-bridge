@@ -134,7 +134,13 @@ extension BridgeServiceAppModel {
     silent: Bool,
     includeCatalog: Bool
   ) async {
-    guard !stopped, !isRefreshing else { return }
+    guard !stopped else { return }
+    if refreshInProgress {
+      pendingRefresh = true
+      pendingVisibleRefresh = pendingVisibleRefresh || !silent
+      pendingCatalogRefresh = pendingCatalogRefresh || includeCatalog
+      return
+    }
     registrationStatus = registration.status
     guard registrationStatus == .enabled else {
       connectionState =
@@ -148,12 +154,13 @@ extension BridgeServiceAppModel {
       return
     }
 
-    isRefreshing = true
-    defer { isRefreshing = false }
+    refreshInProgress = true
+    if !silent { isRefreshing = true }
     do {
-      serviceStatus = try await client.status()
-      connectionState = .connected
-      lastRefreshAt = Date()
+      let refreshedStatus = try await client.status()
+      if serviceStatus != refreshedStatus { serviceStatus = refreshedStatus }
+      if connectionState != .connected { connectionState = .connected }
+      if !silent { lastRefreshAt = Date() }
       if !silent { errorMessage = nil }
       await refreshCollections(
         client: client,
@@ -162,9 +169,22 @@ extension BridgeServiceAppModel {
       )
     } catch {
       await closeClient()
-      connectionState = .unavailable
+      if connectionState != .unavailable { connectionState = .unavailable }
       if !silent { errorMessage = Self.message(error) }
     }
+    refreshInProgress = false
+    if !silent { isRefreshing = false }
+    await runPendingRefreshIfNeeded()
+  }
+
+  private func runPendingRefreshIfNeeded() async {
+    guard pendingRefresh, !stopped else { return }
+    let visible = pendingVisibleRefresh
+    let includeCatalog = pendingCatalogRefresh
+    pendingRefresh = false
+    pendingVisibleRefresh = false
+    pendingCatalogRefresh = false
+    await refresh(silent: !visible, includeCatalog: includeCatalog)
   }
 
   func connect(includeCatalog: Bool) async {
@@ -236,7 +256,7 @@ extension BridgeServiceAppModel {
     async let directApprovalModeResult = optional { try await client.directApprovalMode() }
     async let mcpClientResult = optional { try await client.mcpClients() }
 
-    if let value = await projectResult {
+    if let value = await projectResult, projects != value {
       projects = value
       reconcileProjectSelection()
       if selectedProjectID == nil {
@@ -247,8 +267,8 @@ extension BridgeServiceAppModel {
     }
 
     if let value = await agentCatalogResult {
-      agentProviders = value.providers
-      agentInstallations = value.installations
+      if agentProviders != value.providers { agentProviders = value.providers }
+      if agentInstallations != value.installations { agentInstallations = value.installations }
     }
 
     if let projectID = selectedProjectID, projectDetails[projectID] == nil,
@@ -262,8 +282,10 @@ extension BridgeServiceAppModel {
     if let value = await taskResult {
       shouldRefreshThreads =
         shouldRefreshThreads || Self.taskCatalogChanged(from: tasks, to: value)
-      tasks = value
-      reconcileTaskSelection()
+      if tasks != value {
+        tasks = value
+        reconcileTaskSelection()
+      }
       if let activeAgentTask = value.first(where: { $0.isExternalAgentTask && $0.isActive }),
         selectedTaskID != activeAgentTask.taskID || conversation?.taskID != activeAgentTask.taskID
       {
@@ -307,10 +329,10 @@ extension BridgeServiceAppModel {
     if let value = await directApprovalResult {
       applyDirectApprovalSnapshot(value)
     }
-    if let value = await directApprovalModeResult {
+    if let value = await directApprovalModeResult, directApprovalMode != value {
       directApprovalMode = value
     }
-    if let value = await mcpClientResult {
+    if let value = await mcpClientResult, mcpClients != value {
       mcpClients = value
     }
     if includeCatalog {
@@ -356,9 +378,10 @@ extension BridgeServiceAppModel {
       resolvedTaskApprovalKeys.formIntersection(incomingKeys)
     }
     let hiddenKeys = resolvingApprovalKeys.union(resolvedTaskApprovalKeys)
-    approvals = value.filter {
+    let visible = value.filter {
       !hiddenKeys.contains(WorkbenchApprovalResolutionKey.task($0.approvalID))
     }
+    if approvals != visible { approvals = visible }
   }
 
   func applyDirectApprovalSnapshot(_ value: [IPCPendingDirectApproval]) {
@@ -367,9 +390,10 @@ extension BridgeServiceAppModel {
       resolvedDirectApprovalKeys.formIntersection(incomingKeys)
     }
     let hiddenKeys = resolvingApprovalKeys.union(resolvedDirectApprovalKeys)
-    directApprovals = value.filter {
+    let visible = value.filter {
       !hiddenKeys.contains(WorkbenchApprovalResolutionKey.direct($0.approvalID))
     }
+    if directApprovals != visible { directApprovals = visible }
   }
 
   func updateChatBrowserVisibility() {
@@ -486,15 +510,24 @@ extension BridgeServiceAppModel {
     guard let pollInterval, pollingTask == nil else { return }
     pollingTask = Task { [weak self] in
       while !Task.isCancelled {
+        guard let self, !self.stopped else { return }
+        let delay = self.nextPollingDelay(base: pollInterval)
         do {
-          try await Task.sleep(for: pollInterval)
+          try await Task.sleep(for: delay)
         } catch {
           return
         }
-        guard let self, !self.stopped else { return }
+        guard !self.stopped else { return }
         await self.refresh(silent: true, includeCatalog: false)
       }
     }
+  }
+
+  func nextPollingDelay(base: Duration) -> Duration {
+    let needsLiveUpdates =
+      tasks.contains(where: \.isActive) || !approvals.isEmpty || !directApprovals.isEmpty
+      || !resolvingApprovalKeys.isEmpty
+    return needsLiveUpdates ? base : max(base, idlePollInterval)
   }
 
   private func threadCatalogRefreshDue(now: Date = Date()) -> Bool {
