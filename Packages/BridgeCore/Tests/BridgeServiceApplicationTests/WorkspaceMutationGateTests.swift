@@ -5,7 +5,7 @@ import BridgeMCP
 import BridgeProjects
 import BridgeServiceApplication
 import BridgeServiceCore
-import CryptoKit
+import Crypto
 import Foundation
 import XCTest
 

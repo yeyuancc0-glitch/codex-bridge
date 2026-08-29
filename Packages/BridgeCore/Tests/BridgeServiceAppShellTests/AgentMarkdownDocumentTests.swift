@@ -102,7 +102,7 @@ final class AgentMarkdownDocumentTests: XCTestCase {
   }
 
   func testSafeFallbackRemovesSyntaxButKeepsCodeLiterals() {
-    let fallback = AgentMarkdownText.safePlainTextFallback(
+    let fallback = AgentMarkdownFallback.safePlainTextFallback(
       from: "**失败 `*.swift` 和 #selector"
     )
 

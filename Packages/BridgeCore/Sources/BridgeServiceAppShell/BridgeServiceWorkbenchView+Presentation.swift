@@ -1,3 +1,4 @@
+import BridgeServiceAppCore
 package enum WorkbenchApprovalPresentation {
   package static func shouldReveal(previous: [String], current: [String]) -> Bool {
     guard !current.isEmpty else { return false }

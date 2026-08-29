@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceSettingsDirectApprovalCard: View {
   @ObservedObject var model: BridgeServiceAppModel

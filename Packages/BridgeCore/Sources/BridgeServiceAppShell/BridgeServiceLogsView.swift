@@ -1,6 +1,7 @@
 import AppKit
 import BridgeMCP
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceLogsView: View {
   @ObservedObject var model: BridgeServiceAppModel

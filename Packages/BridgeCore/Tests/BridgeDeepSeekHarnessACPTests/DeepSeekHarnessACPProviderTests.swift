@@ -1,7 +1,7 @@
 import BridgeACP
 import BridgeAgentCore
 import BridgeDomain
-import CryptoKit
+import Crypto
 import Darwin
 import Foundation
 import XCTest

@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceSettingsCodexDefaultsCard: View {
   @ObservedObject var model: BridgeServiceAppModel

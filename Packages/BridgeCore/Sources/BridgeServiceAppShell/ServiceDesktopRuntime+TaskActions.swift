@@ -1,6 +1,7 @@
 import BridgeIPC
 import BridgeMCP
 import Foundation
+import BridgeServiceAppCore
 
 extension BridgeServiceAppModel {
   public func stopTask(_ taskID: String) {

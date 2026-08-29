@@ -4,6 +4,7 @@ import BridgeMCP
 import Foundation
 import SwiftUI
 import WebKit
+import BridgeServiceAppCore
 
 public enum BridgeServiceNavigation: String, CaseIterable, Identifiable, Sendable {
   case overview

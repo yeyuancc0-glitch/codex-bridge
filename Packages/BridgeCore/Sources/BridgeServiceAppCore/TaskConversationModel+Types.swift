@@ -21,7 +21,7 @@ extension TaskConversationModel {
 
     public var id: String { key }
 
-    init(_ message: IPCTaskConversationMessage, isFinal: Bool) {
+    public init(_ message: IPCTaskConversationMessage, isFinal: Bool) {
       key = message.key
       role = message.role
       kind = message.kind
@@ -33,7 +33,7 @@ extension TaskConversationModel {
       self.isFinal = isFinal
     }
 
-    init(key: String, role: String, kind: String, content: String, isFinal: Bool) {
+    public init(key: String, role: String, kind: String, content: String, isFinal: Bool) {
       self.key = key
       self.role = role
       self.kind = kind

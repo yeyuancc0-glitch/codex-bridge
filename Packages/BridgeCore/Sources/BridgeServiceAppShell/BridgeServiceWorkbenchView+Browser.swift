@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceWorkbenchBrowserPane: View {
   @ObservedObject var model: BridgeServiceAppModel

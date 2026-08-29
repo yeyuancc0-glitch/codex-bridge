@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BridgeServiceAppCore
 
 public enum StatusTone: Sendable {
   case neutral

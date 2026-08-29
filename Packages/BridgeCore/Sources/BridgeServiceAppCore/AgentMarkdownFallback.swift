@@ -1,7 +1,7 @@
 import Foundation
 
-extension AgentMarkdownText {
-  nonisolated static func safePlainTextFallback(from content: String) -> String {
+public enum AgentMarkdownFallback {
+  public static func safePlainTextFallback(from content: String) -> String {
     let characters = Array(content)
     var result = ""
     var index = 0
@@ -86,7 +86,7 @@ extension AgentMarkdownText {
     case fenced
   }
 
-  nonisolated private static func structuralPrefixEnd(
+  private static func structuralPrefixEnd(
     in characters: [Character],
     from index: Int
   ) -> Int? {
@@ -127,7 +127,7 @@ extension AgentMarkdownText {
     return cursor
   }
 
-  nonisolated private static func linkRange(
+  private static func linkRange(
     in characters: [Character],
     from index: Int
   ) -> (labelEnd: Int, destinationEnd: Int)? {
@@ -141,7 +141,7 @@ extension AgentMarkdownText {
     return (labelEnd, destinationEnd)
   }
 
-  nonisolated private static func hasClosingMarker(
+  private static func hasClosingMarker(
     _ marker: Character,
     after index: Int,
     in characters: [Character]
@@ -159,7 +159,7 @@ extension AgentMarkdownText {
     return false
   }
 
-  nonisolated private static func fallbackMarkerRunLength(
+  private static func fallbackMarkerRunLength(
     _ marker: Character,
     at index: Int,
     in characters: [Character]

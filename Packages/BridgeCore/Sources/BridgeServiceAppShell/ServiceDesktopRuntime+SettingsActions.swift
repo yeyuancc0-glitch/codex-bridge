@@ -1,5 +1,6 @@
 import BridgeIPC
 import BridgeMCP
+import BridgeServiceAppCore
 
 extension BridgeServiceAppModel {
   func setTaskStartApprovalMode(_ mode: String) {

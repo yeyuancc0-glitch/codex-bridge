@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceSettingsSupervisorDefaultsCard: View {
   @ObservedObject var model: BridgeServiceAppModel

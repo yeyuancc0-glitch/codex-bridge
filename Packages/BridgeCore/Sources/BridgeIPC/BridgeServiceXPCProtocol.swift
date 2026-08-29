@@ -1,12 +1,14 @@
 import Foundation
 
-@objc public protocol CodexBridgeServiceXPCProtocol {
-  func perform(_ request: Data, withReply reply: @escaping (Data) -> Void)
-}
+#if os(macOS)
+  @objc public protocol CodexBridgeServiceXPCProtocol {
+    func perform(_ request: Data, withReply reply: @escaping (Data) -> Void)
+  }
 
-@objc public protocol CodexBridgeTaskStreamListener {
-  func push(_ payload: Data)
-}
+  @objc public protocol CodexBridgeTaskStreamListener {
+    func push(_ payload: Data)
+  }
+#endif
 
 public enum BridgeServiceIPC {
   public static let machServiceName = "org.codexbridge.service"

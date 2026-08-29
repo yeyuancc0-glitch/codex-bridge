@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BlacklistRow: View {
   @Binding var draft: BridgeBlacklistDraft

@@ -20,6 +20,11 @@ package enum AgentToolCategory: String, Equatable, Sendable {
 package struct CodexTranscriptToolPresentation: Equatable, Sendable {
   package let title: String
   package let systemImage: String
+
+  package init(title: String, systemImage: String) {
+    self.title = title
+    self.systemImage = systemImage
+  }
 }
 
 package enum CodexTranscriptPresentation {

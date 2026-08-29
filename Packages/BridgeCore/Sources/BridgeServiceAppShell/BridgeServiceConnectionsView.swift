@@ -1,6 +1,7 @@
 import BridgeIPC
 import BridgeMCP
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceConnectionsView: View {
   @ObservedObject var model: BridgeServiceAppModel

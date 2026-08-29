@@ -28,8 +28,14 @@ let package = Package(
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
     .library(name: "BridgeIPC", targets: ["BridgeIPC"]),
     .library(name: "BridgeServiceHost", targets: ["BridgeServiceHost"]),
+    .library(name: "BridgeServiceAppCore", targets: ["BridgeServiceAppCore"]),
     .library(name: "BridgeServiceAppShell", targets: ["BridgeServiceAppShell"]),
+    .library(name: "BridgeWindowsShell", targets: ["BridgeWindowsShell"]),
     .executable(name: "codex-bridge-service", targets: ["CodexBridgeServiceExecutable"]),
+    .executable(
+      name: "codex-bridge-windows-app",
+      targets: ["CodexBridgeWindowsApp"]
+    ),
     .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
     .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
     .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
@@ -55,16 +61,30 @@ let package = Package(
       url: "https://github.com/apple/swift-nio.git",
       exact: "2.101.3"
     ),
+    .package(
+      url: "https://github.com/apple/swift-crypto.git",
+      exact: "3.12.0"
+    ),
   ],
   targets: [
     .target(name: "BridgeDomain"),
-    .target(name: "BridgeSecurity"),
+    .target(
+      name: "BridgeSecurity",
+      dependencies: [
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]
+    ),
     .target(name: "BridgeCodexRPC"),
     .target(
       name: "BridgeProjects",
       dependencies: ["BridgeDomain", "BridgeSecurity"]
     ),
-    .target(name: "BridgeGit"),
+    .target(
+      name: "BridgeGit",
+      dependencies: [
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]
+    ),
     .target(
       name: "BridgeSupervisor",
       dependencies: ["BridgeCodexRPC", "BridgeSecurity"]
@@ -89,7 +109,10 @@ let package = Package(
     ),
     .target(
       name: "BridgeTunnel",
-      dependencies: ["BridgeSecurity"]
+      dependencies: [
+        "BridgeSecurity",
+        .product(name: "Crypto", package: "swift-crypto"),
+      ]
     ),
     .target(
       name: "BridgeServiceCore",
@@ -99,6 +122,7 @@ let package = Package(
         "BridgeProjects",
         "BridgeSecurity",
         .product(name: "GRDB", package: "GRDB.swift"),
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(
@@ -112,6 +136,7 @@ let package = Package(
         "BridgeProjects",
         "BridgeServiceCore",
         .product(name: "GRDB", package: "GRDB.swift"),
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(
@@ -124,6 +149,7 @@ let package = Package(
         "BridgeSecurity",
         "BridgeServiceCore",
         "BridgeSupervisor",
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(
@@ -141,6 +167,7 @@ let package = Package(
         "BridgeAgentCore",
         "BridgeDomain",
         "BridgeProcess",
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(
@@ -159,6 +186,7 @@ let package = Package(
         "BridgeDomain",
         "BridgeProcess",
         "BridgeSecurity",
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(
@@ -175,6 +203,7 @@ let package = Package(
         "BridgeSecurity",
         "BridgeServiceCore",
         "BridgeSkills",
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(name: "BridgeProcess"),
@@ -219,11 +248,33 @@ let package = Package(
       dependencies: [
         "BridgeIPC",
         "BridgeMCP",
+        "BridgeServiceAppCore",
+      ]
+    ),
+    .target(
+      name: "BridgeServiceAppCore",
+      dependencies: [
+        "BridgeIPC",
+        "BridgeMCP",
+      ]
+    ),
+    .target(
+      name: "BridgeWindowsShell",
+      dependencies: [
+        "BridgeIPC",
+        "BridgeServiceAppCore",
       ]
     ),
     .executableTarget(
       name: "CodexBridgeServiceExecutable",
       dependencies: ["BridgeServiceHost"]
+    ),
+    .executableTarget(
+      name: "CodexBridgeWindowsApp",
+      dependencies: [
+        "BridgeWindowsShell",
+        "BridgeIPC",
+      ]
     ),
     .executableTarget(
       name: "CodexRPCFixture",

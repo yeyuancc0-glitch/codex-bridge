@@ -1,6 +1,6 @@
 import BridgeIPC
 import Foundation
-import SwiftUI
+import Combine
 
 @MainActor
 public final class TaskConversationModel: ObservableObject, Identifiable {
@@ -56,7 +56,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     self.isTerminal = isTerminal
   }
 
-  func start() async {
+  public func start() async {
     if isTerminal {
       await reloadAuthoritativeSnapshot()
       return
@@ -98,7 +98,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       }
     } catch {
       guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
-      errorMessage = BridgeServiceAppModel.message(error)
+      errorMessage = BridgeServiceErrorMessage.message(error)
       do {
         let page = try await client.taskConversation(
           IPCTaskConversationRequest(taskID: taskID, limit: 200)
@@ -107,12 +107,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         _ = applyAuthoritativePage(page)
       } catch {
         guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
-        errorMessage = BridgeServiceAppModel.message(error)
+        errorMessage = BridgeServiceErrorMessage.message(error)
       }
     }
   }
 
-  func cancel() {
+  public func cancel() {
     lifecycleGeneration &+= 1
     loadGeneration &+= 1
     invalidateLiveSubscription()
@@ -124,12 +124,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     pendingResyncPushes.removeAll(keepingCapacity: false)
   }
 
-  func refreshPresentation() {
+  public func refreshPresentation() {
     guard !entries.isEmpty else { return }
     requestAutoScroll()
   }
 
-  func presentationSnapshot() -> TaskConversationPresentationSnapshot? {
+  public func presentationSnapshot() -> TaskConversationPresentationSnapshot? {
     flushPendingPushes()
     guard !entries.isEmpty else { return nil }
     return TaskConversationPresentationSnapshot(
@@ -138,7 +138,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     )
   }
 
-  func restorePresentation(_ snapshot: TaskConversationPresentationSnapshot?) {
+  public func restorePresentation(_ snapshot: TaskConversationPresentationSnapshot?) {
     guard let snapshot, !snapshot.entries.isEmpty else { return }
     entries = snapshot.entries
     canLoadEarlier = snapshot.canLoadEarlier
@@ -149,7 +149,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     requestAutoScroll()
   }
 
-  func loadEarlier() async {
+  public func loadEarlier() async {
     flushPendingPushes()
     guard canLoadEarlier, !isLoadingEarlier else { return }
     let anchor = entries.first(where: { $0.messageID != nil })?.messageID
@@ -175,7 +175,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       scrollAnchor = entries.last?.key
     } catch {
       guard isRequestValid(lifecycle: lifecycle, load: load) else { return }
-      errorMessage = BridgeServiceAppModel.message(error)
+      errorMessage = BridgeServiceErrorMessage.message(error)
     }
   }
 
@@ -212,7 +212,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     guard isRequestValid(lifecycle: generation, load: requestLoadGeneration), let lastError else {
       return
     }
-    errorMessage = BridgeServiceAppModel.message(lastError)
+    errorMessage = BridgeServiceErrorMessage.message(lastError)
   }
 
   @discardableResult

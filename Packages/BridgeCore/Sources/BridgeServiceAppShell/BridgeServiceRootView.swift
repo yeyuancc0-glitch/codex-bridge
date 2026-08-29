@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BridgeServiceAppCore
 
 public struct BridgeServiceRootView: View {
   @ObservedObject private var model: BridgeServiceAppModel

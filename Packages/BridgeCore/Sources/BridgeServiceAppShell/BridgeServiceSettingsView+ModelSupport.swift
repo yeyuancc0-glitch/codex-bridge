@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceSettingsModelCatalogStatus: View {
   @ObservedObject var model: BridgeServiceAppModel

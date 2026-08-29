@@ -1,5 +1,5 @@
 import BridgeAgentCore
-import CryptoKit
+import Crypto
 import Foundation
 
 #if canImport(Darwin)

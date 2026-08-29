@@ -1,47 +1,47 @@
 import BridgeIPC
 import BridgeMCP
-import CryptoKit
+import Crypto
 import Foundation
 
 extension MCPServiceTaskSnapshot {
-  var isTerminal: Bool {
+  public var isTerminal: Bool {
     ["completed", "failed", "interrupted"].contains(status)
   }
 
-  var isRunning: Bool {
+  public var isRunning: Bool {
     ["starting", "running", "waiting_for_codex_approval"].contains(status)
   }
 
-  var isActive: Bool {
+  public var isActive: Bool {
     isRunning || status == "awaiting_local_approval"
   }
 
-  var providerIdentifier: String {
+  public var providerIdentifier: String {
     AgentProviderPresentation.identifier(providerID)
   }
 
-  var providerDisplayName: String {
+  public var providerDisplayName: String {
     AgentProviderPresentation.displayName(providerID)
   }
 
-  var providerSystemImage: String {
+  public var providerSystemImage: String {
     AgentProviderPresentation.systemImage(providerID)
   }
 
-  var isCodexTask: Bool {
+  public var isCodexTask: Bool {
     providerIdentifier == "codex"
   }
 
-  var isExternalAgentTask: Bool {
+  public var isExternalAgentTask: Bool {
     !isCodexTask
   }
 
-  var expectedControlID: String? {
+  public var expectedControlID: String? {
     guard status == "running" else { return nil }
     return isCodexTask ? turnID : providerRunID
   }
 
-  var workbenchTitle: String {
+  public var workbenchTitle: String {
     for value in [currentStep, resultSummary] {
       if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         return value
@@ -50,7 +50,7 @@ extension MCPServiceTaskSnapshot {
     return "\(providerDisplayName) 任务"
   }
 
-  var failureDescription: String? {
+  public var failureDescription: String? {
     let code = failureCode?.trimmingCharacters(in: .whitespacesAndNewlines)
     let summary = resultSummary?.trimmingCharacters(in: .whitespacesAndNewlines)
     switch (code, summary) {
@@ -65,7 +65,7 @@ extension MCPServiceTaskSnapshot {
     }
   }
 
-  var sourceDisplayName: String {
+  public var sourceDisplayName: String {
     if source == "chatgpt.mcp" || sourceClientID == MCPClientID.chatGPT.rawValue {
       return "ChatGPT"
     }
@@ -79,14 +79,14 @@ extension MCPServiceTaskSnapshot {
   }
 }
 
-enum AgentProviderPresentation {
-  static func identifier(_ providerID: String?) -> String {
+public enum AgentProviderPresentation {
+  public static func identifier(_ providerID: String?) -> String {
     guard let providerID else { return "codex" }
     let normalized = providerID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     return normalized.isEmpty ? "codex" : normalized
   }
 
-  static func displayName(_ providerID: String?) -> String {
+  public static func displayName(_ providerID: String?) -> String {
     guard let providerID else { return "Codex" }
     switch identifier(providerID) {
     case "codex": return "Codex"
@@ -99,7 +99,7 @@ enum AgentProviderPresentation {
     }
   }
 
-  static func systemImage(_ providerID: String?) -> String {
+  public static func systemImage(_ providerID: String?) -> String {
     switch identifier(providerID) {
     case "codex": return "cpu.fill"
     case "opencode": return "chevron.left.forwardslash.chevron.right"
@@ -111,64 +111,29 @@ enum AgentProviderPresentation {
 }
 
 extension IPCAgentInstallationSummary {
-  var supportsEffortSelection: Bool {
+  public var supportsEffortSelection: Bool {
     effectiveCapabilities.contains("selection.effort")
   }
 }
 
-extension BridgeServiceAppModel {
-  func selectedAgentInstallation(
-    providerID: String,
-    installationID: String?
-  ) -> IPCAgentInstallationSummary? {
-    guard let installationID else { return nil }
-    return agentInstallations.first {
-      $0.providerID == providerID && $0.installationID == installationID
-    }
-  }
 
-  func supportsAgentEffortSelection(
-    providerID: String,
-    installationID: String?
-  ) -> Bool {
-    if providerID == "opencode" {
-      guard
-        selectedAgentInstallation(
-          providerID: providerID,
-          installationID: installationID
-        ) != nil
-      else { return false }
-      return agentSelectedModel(for: providerID)?.supportedReasoningEfforts.isEmpty == false
-    }
-    guard
-      let installation = selectedAgentInstallation(
-        providerID: providerID,
-        installationID: installationID
-      )
-    else {
-      return providerID != "antigravity"
-    }
-    return installation.supportsEffortSelection
-  }
-}
-
-enum WorkbenchApprovalResolutionKey {
-  static func task(_ approvalID: String) -> String {
+public enum WorkbenchApprovalResolutionKey {
+  public static func task(_ approvalID: String) -> String {
     "codex:\(approvalID)"
   }
 
-  static func direct(_ approvalID: String) -> String {
+  public static func direct(_ approvalID: String) -> String {
     "direct:\(approvalID)"
   }
 }
 
-struct CodexActivityPresentation: Equatable {
-  let statusText: String
-  let detailText: String?
-  let isActive: Bool
-  let showsBubble: Bool
+public struct CodexActivityPresentation: Equatable {
+  public let statusText: String
+  public let detailText: String?
+  public let isActive: Bool
+  public let showsBubble: Bool
 
-  init(task: MCPServiceTaskSnapshot?, activity: TaskConversationModel.Activity) {
+  public init(task: MCPServiceTaskSnapshot?, activity: TaskConversationModel.Activity) {
     guard let task else {
       statusText = "已连接本机 Codex 引擎"
       detailText = nil
@@ -251,7 +216,7 @@ struct CodexActivityPresentation: Equatable {
 }
 
 extension BridgeServiceRegistrationStatus {
-  var localizedTitle: String {
+  public var localizedTitle: String {
     switch self {
     case .notRegistered: "未注册"
     case .enabled: "已启用"
@@ -394,18 +359,18 @@ public struct BridgeBlacklistDraft: Equatable, Identifiable, Sendable {
   }
 }
 
-struct ProjectWorkspaceDraftState: Equatable, Sendable {
-  let commandMode: String
-  let commands: [BridgeWorkspaceCommandDraft]
-  let commandBlacklist: [BridgeBlacklistDraft]
+public struct ProjectWorkspaceDraftState: Equatable, Sendable {
+  public let commandMode: String
+  public let commands: [BridgeWorkspaceCommandDraft]
+  public let commandBlacklist: [BridgeBlacklistDraft]
 
-  init(workspace: MCPDirectWorkspace) {
+  public init(workspace: MCPDirectWorkspace) {
     commandMode = workspace.commandMode
     commands = workspace.commands.map(BridgeWorkspaceCommandDraft.init)
     commandBlacklist = workspace.commandBlacklist.map(BridgeBlacklistDraft.init)
   }
 
-  init(
+  public init(
     commandMode: String,
     commands: [BridgeWorkspaceCommandDraft],
     commandBlacklist: [BridgeBlacklistDraft]
@@ -430,4 +395,11 @@ struct ProjectWorkspaceDraftState: Equatable, Sendable {
       )
     }
   }
+}
+
+public enum BridgeServiceRegistrationStatus: String, CaseIterable, Sendable {
+  case notRegistered = "not_registered"
+  case enabled
+  case requiresApproval = "requires_approval"
+  case notFound = "not_found"
 }

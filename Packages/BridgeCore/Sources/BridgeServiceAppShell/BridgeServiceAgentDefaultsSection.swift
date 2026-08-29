@@ -1,5 +1,6 @@
 import BridgeIPC
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceAgentDefaultsSection: View {
   @ObservedObject var model: BridgeServiceAppModel

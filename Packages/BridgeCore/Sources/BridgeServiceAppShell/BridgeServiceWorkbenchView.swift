@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceWorkbenchView: View {
   @ObservedObject var model: BridgeServiceAppModel

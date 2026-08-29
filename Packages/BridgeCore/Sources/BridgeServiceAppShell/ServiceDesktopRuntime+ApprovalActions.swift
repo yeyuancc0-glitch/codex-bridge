@@ -1,4 +1,5 @@
 import BridgeIPC
+import BridgeServiceAppCore
 
 extension BridgeServiceAppModel {
   public func resolveApproval(_ approval: IPCApprovalSummary, decision: String) {

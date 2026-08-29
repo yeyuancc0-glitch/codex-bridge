@@ -1,15 +1,15 @@
 import BridgeIPC
 
-struct AgentModelCatalogResolution {
-  let response: IPCAgentModelsResponse
-  let addedCount: Int
-  let removedCount: Int
-  let defaultWasRemoved: Bool
-  let effortWasRemoved: Bool
+public struct AgentModelCatalogResolution {
+  public let response: IPCAgentModelsResponse
+  public let addedCount: Int
+  public let removedCount: Int
+  public let defaultWasRemoved: Bool
+  public let effortWasRemoved: Bool
 }
 
-enum AgentModelCatalogResolver {
-  static func defaultModelWasRemoved(
+public enum AgentModelCatalogResolver {
+  public static func defaultModelWasRemoved(
     _ defaultModel: String?,
     from response: IPCAgentModelsResponse
   ) -> Bool {
@@ -18,7 +18,7 @@ enum AgentModelCatalogResolver {
     } ?? false
   }
 
-  static func resolve(
+  public static func resolve(
     previousOptions: [IPCAgentModelSummary],
     catalogResponse: IPCAgentModelsResponse,
     response: IPCAgentModelsResponse,

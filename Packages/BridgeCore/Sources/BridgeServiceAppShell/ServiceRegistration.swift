@@ -1,13 +1,7 @@
 import Darwin
 import Foundation
 import ServiceManagement
-
-public enum BridgeServiceRegistrationStatus: String, CaseIterable, Sendable {
-  case notRegistered = "not_registered"
-  case enabled
-  case requiresApproval = "requires_approval"
-  case notFound = "not_found"
-}
+import BridgeServiceAppCore
 
 public enum BridgeServiceRegistrationError: Error, LocalizedError, Sendable {
   case executableNotFound

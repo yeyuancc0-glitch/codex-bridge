@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import WebKit
+import BridgeServiceAppCore
 
 public struct ChatGPTWebView: NSViewRepresentable {
   public let initialURL: URL

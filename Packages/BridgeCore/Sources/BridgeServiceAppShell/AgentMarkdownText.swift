@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import BridgeServiceAppCore
 
 struct AgentMarkdownText: View {
   let content: String
@@ -38,7 +39,7 @@ struct AgentMarkdownText: View {
   }
 
   private var fallbackText: some View {
-    Text(Self.safePlainTextFallback(from: content) + (isStreaming ? "▍" : ""))
+    Text(AgentMarkdownFallback.safePlainTextFallback(from: content) + (isStreaming ? "▍" : ""))
       .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
   }
 
@@ -175,7 +176,7 @@ struct AgentMarkdownInlineText: View {
   }
 
   private var displayedText: Text {
-    let fallback = AgentMarkdownText.safePlainTextFallback(from: content)
+    let fallback = AgentMarkdownFallback.safePlainTextFallback(from: content)
     let base =
       renderedContent == content
       ? rendered.map { Text($0) } ?? Text(fallback)
@@ -186,6 +187,6 @@ struct AgentMarkdownInlineText: View {
 
   private static func renderedValue(for content: String) -> AttributedString {
     AgentMarkdownText.inlineAttributedString(from: content)
-      ?? AttributedString(AgentMarkdownText.safePlainTextFallback(from: content))
+      ?? AttributedString(AgentMarkdownFallback.safePlainTextFallback(from: content))
   }
 }

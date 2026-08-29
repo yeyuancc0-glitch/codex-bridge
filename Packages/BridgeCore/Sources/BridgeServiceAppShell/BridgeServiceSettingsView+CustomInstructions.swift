@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct CustomInstructionsEditor: View {
   @ObservedObject var model: BridgeServiceAppModel

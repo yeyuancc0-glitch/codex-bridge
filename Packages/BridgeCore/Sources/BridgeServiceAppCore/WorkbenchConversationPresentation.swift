@@ -1,11 +1,11 @@
 import BridgeMCP
 
-enum WorkbenchConversationSource: Equatable {
+public enum WorkbenchConversationSource: Equatable {
   case task
   case historicalThread
   case empty
 
-  static func resolve(
+  public static func resolve(
     hasSelectedTask: Bool,
     historicalEntryCount: Int
   ) -> Self {
@@ -17,7 +17,7 @@ enum WorkbenchConversationSource: Equatable {
 }
 
 extension TaskConversationModel.Entry {
-  init(historicalThreadEntry entry: MCPThreadEntry, threadID: String, index: Int) {
+  public init(historicalThreadEntry entry: MCPThreadEntry, threadID: String, index: Int) {
     self.init(
       key: "history:\(threadID):\(index)",
       role: entry.role == "user" ? "user" : "agent",

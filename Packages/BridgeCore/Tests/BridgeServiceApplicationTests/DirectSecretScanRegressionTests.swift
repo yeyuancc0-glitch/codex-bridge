@@ -1,6 +1,6 @@
 import BridgeDirectCommand
 import BridgeMCP
-import CryptoKit
+import Crypto
 import Foundation
 import MCP
 import XCTest

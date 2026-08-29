@@ -1,5 +1,6 @@
 import BridgeMCP
 import SwiftUI
+import BridgeServiceAppCore
 
 struct ProjectPermissionEditor: View {
   @ObservedObject var model: BridgeServiceAppModel

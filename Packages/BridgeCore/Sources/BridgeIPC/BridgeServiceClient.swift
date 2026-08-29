@@ -18,38 +18,33 @@ public enum BridgeServiceClientError: Error, Equatable, LocalizedError, Sendable
 }
 
 public actor BridgeServiceClient {
-  private let connection: NSXPCConnection
+  private let transport: any ServiceRequestTransport
   let streamHub = CodexBridgeTaskStreamHub()
   var invalidated = false
   var conversationStreamTokens: [String: [Int: UUID]] = [:]
 
-  public init(machServiceName: String = BridgeServiceIPC.machServiceName) {
-    precondition(!machServiceName.isEmpty)
-    let connection = NSXPCConnection(machServiceName: machServiceName)
-    self.connection = connection
-    connection.remoteObjectInterface = NSXPCInterface(
-      with: CodexBridgeServiceXPCProtocol.self
-    )
-    connection.exportedInterface = NSXPCInterface(with: CodexBridgeTaskStreamListener.self)
-    connection.exportedObject = CodexBridgeTaskStreamBridge(hub: streamHub)
-    connection.resume()
+  public init(transport: any ServiceRequestTransport) {
+    self.transport = transport
+    transport.streamHandler = { [streamHub] payload in
+      streamHub.push(payload)
+    }
   }
 
-  public init(endpoint: NSXPCListenerEndpoint) {
-    let connection = NSXPCConnection(listenerEndpoint: endpoint)
-    self.connection = connection
-    connection.remoteObjectInterface = NSXPCInterface(
-      with: CodexBridgeServiceXPCProtocol.self
-    )
-    connection.exportedInterface = NSXPCInterface(with: CodexBridgeTaskStreamListener.self)
-    connection.exportedObject = CodexBridgeTaskStreamBridge(hub: streamHub)
-    connection.resume()
-  }
+  #if os(macOS)
+    public init(machServiceName: String = BridgeServiceIPC.machServiceName) {
+      precondition(!machServiceName.isEmpty)
+      self.init(transport: XPCServiceTransport(machServiceName: machServiceName))
+    }
+
+    public init(endpoint: NSXPCListenerEndpoint) {
+      self.init(transport: XPCServiceTransport(endpoint: endpoint))
+    }
+  #endif
 
   public func invalidate() {
     guard !invalidated else { return }
     invalidated = true
-    connection.invalidate()
+    transport.invalidate()
     conversationStreamTokens.removeAll(keepingCapacity: false)
     streamHub.clear()
   }
@@ -74,47 +69,6 @@ public actor BridgeServiceClient {
   }
 
   private func perform(_ data: Data) async throws -> Data {
-    try await withCheckedThrowingContinuation { continuation in
-      let completion = XPCClientCompletion(continuation)
-      guard
-        let proxy = connection.remoteObjectProxyWithErrorHandler({ _ in
-          completion.resume(throwing: BridgeServiceClientError.unavailable)
-        }) as? CodexBridgeServiceXPCProtocol
-      else {
-        completion.resume(throwing: BridgeServiceClientError.invalidRemoteProxy)
-        return
-      }
-      proxy.perform(data) { response in
-        completion.resume(returning: response)
-      }
-    }
-  }
-}
-
-private final class XPCClientCompletion: @unchecked Sendable {
-  private let lock = NSLock()
-  private var continuation: CheckedContinuation<Data, any Error>?
-
-  init(_ continuation: CheckedContinuation<Data, any Error>) {
-    self.continuation = continuation
-  }
-
-  func resume(returning data: Data) {
-    resolve { $0.resume(returning: data) }
-  }
-
-  func resume(throwing error: any Error) {
-    resolve { $0.resume(throwing: error) }
-  }
-
-  private func resolve(
-    _ body: (CheckedContinuation<Data, any Error>) -> Void
-  ) {
-    lock.lock()
-    let continuation = continuation
-    self.continuation = nil
-    lock.unlock()
-    guard let continuation else { return }
-    body(continuation)
+    try await transport.perform(data)
   }
 }

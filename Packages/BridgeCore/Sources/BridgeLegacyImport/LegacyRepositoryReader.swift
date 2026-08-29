@@ -1,7 +1,7 @@
 import BridgeDomain
 import BridgeProjects
 import BridgeServiceCore
-import CryptoKit
+import Crypto
 import Foundation
 import GRDB
 

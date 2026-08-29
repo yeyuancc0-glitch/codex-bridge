@@ -1,5 +1,6 @@
 import BridgeMCP
 import SwiftUI
+import BridgeServiceAppCore
 
 struct BridgeServiceWorkbenchInspectorLiveRegion: View {
   @ObservedObject var model: BridgeServiceAppModel

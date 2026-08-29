@@ -3,7 +3,7 @@ import BridgeDomain
 import BridgeProjects
 import BridgeSecurity
 import BridgeServiceHost
-import CryptoKit
+import Crypto
 import Foundation
 import GRDB
 import XCTest

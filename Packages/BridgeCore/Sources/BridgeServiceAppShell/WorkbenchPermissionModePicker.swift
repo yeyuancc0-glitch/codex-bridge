@@ -1,4 +1,5 @@
 import SwiftUI
+import BridgeServiceAppCore
 
 struct WorkbenchPermissionModePicker: View {
   @ObservedObject var model: BridgeServiceAppModel

@@ -1,9 +1,10 @@
-struct TaskConversationPresentationSnapshot {
-  let entries: [TaskConversationModel.Entry]
-  let canLoadEarlier: Bool
+public struct TaskConversationPresentationSnapshot {
+  public   let entries: [TaskConversationModel.Entry]
+  public   let canLoadEarlier: Bool
 }
 
-struct TaskConversationPresentationCache {
+public struct TaskConversationPresentationCache {
+  public init() {}
   private static let maximumTaskCount = 8
   private static let maximumEntryCount = 400
   private static let maximumSnapshotBytes = 2 * 1_024 * 1_024
@@ -11,13 +12,13 @@ struct TaskConversationPresentationCache {
   private var snapshots: [String: TaskConversationPresentationSnapshot] = [:]
   private var recency: [String] = []
 
-  mutating func snapshot(for taskID: String) -> TaskConversationPresentationSnapshot? {
+  public mutating func snapshot(for taskID: String) -> TaskConversationPresentationSnapshot? {
     guard let snapshot = snapshots[taskID] else { return nil }
     touch(taskID)
     return snapshot
   }
 
-  mutating func store(
+  public mutating func store(
     _ snapshot: TaskConversationPresentationSnapshot?,
     for taskID: String
   ) {
@@ -33,7 +34,7 @@ struct TaskConversationPresentationCache {
     }
   }
 
-  mutating func removeAll() {
+  public mutating func removeAll() {
     snapshots.removeAll(keepingCapacity: false)
     recency.removeAll(keepingCapacity: false)
   }

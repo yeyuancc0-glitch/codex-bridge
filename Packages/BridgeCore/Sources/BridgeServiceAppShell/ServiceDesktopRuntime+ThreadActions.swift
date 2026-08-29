@@ -1,5 +1,6 @@
 import BridgeIPC
 import BridgeMCP
+import BridgeServiceAppCore
 
 extension BridgeServiceAppModel {
   public func openThread(_ threadID: String, inProject projectID: String? = nil) {
