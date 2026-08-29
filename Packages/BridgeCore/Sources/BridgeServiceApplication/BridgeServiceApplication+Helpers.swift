@@ -185,13 +185,13 @@ extension BridgeServiceApplication {
   static func permissionModeRequest(
     _ rawValue: String?,
     override: Bool?,
-    requireWorkspaceWriteOverride: Bool
+    requirePermissionModeOverride: Bool
   ) throws -> String? {
     guard let rawValue else { return nil }
     guard let mode = ServicePermissionMode(rawValue: rawValue) else {
       throw BridgeMCPQueryError.contractRejected
     }
-    if mode == .workspaceWrite, requireWorkspaceWriteOverride, override != true {
+    if requirePermissionModeOverride, override != true {
       return nil
     }
     return mode.rawValue

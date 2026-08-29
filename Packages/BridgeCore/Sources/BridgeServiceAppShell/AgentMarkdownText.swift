@@ -4,22 +4,42 @@ import SwiftUI
 struct AgentMarkdownText: View {
   let content: String
   let isStreaming: Bool
+  let fillsWidth: Bool
+  @State private var document: AgentMarkdownDocument?
+  @State private var parsedContent = ""
 
-  init(_ content: String, isStreaming: Bool = false) {
+  init(_ content: String, isStreaming: Bool = false, fillsWidth: Bool = false) {
     self.content = content
     self.isStreaming = isStreaming
+    self.fillsWidth = fillsWidth
+    _document = State(initialValue: nil)
+    _parsedContent = State(initialValue: "")
   }
 
   var body: some View {
-    renderedText
+    Group {
+      if !isStreaming, parsedContent == content, let document {
+        AgentMarkdownDocumentView(
+          document: document,
+          isStreaming: false,
+          fillsWidth: fillsWidth
+        )
+      } else {
+        fallbackText
+      }
+    }
+    .task(id: isStreaming ? nil : content) {
+      guard !isStreaming else { return }
+      let nextDocument = document?.updating(content: content) ?? AgentMarkdownDocument(content)
+      guard !Task.isCancelled else { return }
+      document = nextDocument
+      parsedContent = content
+    }
   }
 
-  private var renderedText: Text {
-    let text =
-      Self.attributedString(from: content).map(Text.init)
-      ?? Text(Self.plainTextFallback(from: content))
-    guard isStreaming else { return text }
-    return text + Text("▍").foregroundColor(.accentColor)
+  private var fallbackText: some View {
+    Text(Self.safePlainTextFallback(from: content) + (isStreaming ? "▍" : ""))
+      .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
   }
 
   nonisolated static func attributedString(from content: String) -> AttributedString? {
@@ -29,7 +49,14 @@ struct AgentMarkdownText: View {
     )
   }
 
-  nonisolated private static func repairingIncompleteMarkup(in content: String) -> String {
+  nonisolated static func inlineAttributedString(from content: String) -> AttributedString? {
+    try? AttributedString(
+      markdown: repairingIncompleteMarkup(in: content),
+      options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+    )
+  }
+
+  nonisolated fileprivate static func repairingIncompleteMarkup(in content: String) -> String {
     var result = content
     let markers = markdownMarkerCounts(in: content)
     if markers.fences.isMultiple(of: 2) == false {
@@ -122,20 +149,43 @@ struct AgentMarkdownText: View {
     let nextIsNonWhitespace = next < characters.count && !characters[next].isWhitespace
     return previousIsNonWhitespace || nextIsNonWhitespace
   }
+}
 
-  nonisolated private static func plainTextFallback(from content: String) -> String {
-    content
-      .split(separator: "\n", omittingEmptySubsequences: false)
-      .map { line in
-        var value = String(line)
-        while value.first == "#" { value.removeFirst() }
-        if value.first == " " { value.removeFirst() }
-        if value.hasPrefix("- ") || value.hasPrefix("* ") { value.removeFirst(2) }
-        return
-          value
-          .replacingOccurrences(of: "**", with: "")
-          .replacingOccurrences(of: "`", with: "")
+struct AgentMarkdownInlineText: View {
+  let content: String
+  let showsCursor: Bool
+  @State private var rendered: AttributedString?
+  @State private var renderedContent = ""
+
+  init(_ content: String, showsCursor: Bool = false) {
+    self.content = content
+    self.showsCursor = showsCursor
+    _rendered = State(initialValue: nil)
+    _renderedContent = State(initialValue: "")
+  }
+
+  var body: some View {
+    displayedText
+      .task(id: content) {
+        let nextValue = Self.renderedValue(for: content)
+        guard !Task.isCancelled else { return }
+        rendered = nextValue
+        renderedContent = content
       }
-      .joined(separator: "\n")
+  }
+
+  private var displayedText: Text {
+    let fallback = AgentMarkdownText.safePlainTextFallback(from: content)
+    let base =
+      renderedContent == content
+      ? rendered.map { Text($0) } ?? Text(fallback)
+      : Text(fallback)
+    guard showsCursor else { return base }
+    return base + Text("▍").foregroundColor(.accentColor)
+  }
+
+  private static func renderedValue(for content: String) -> AttributedString {
+    AgentMarkdownText.inlineAttributedString(from: content)
+      ?? AttributedString(AgentMarkdownText.safePlainTextFallback(from: content))
   }
 }

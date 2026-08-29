@@ -106,8 +106,12 @@ public actor DeepSeekHarnessACPExecution {
     }
     guard envelope.sequence >= initialClientEventSequence else { return }
     do {
-      if let normalized = try await normalizer.normalize(envelope), !emit(normalized) {
-        await failStream(DeepSeekHarnessACPError.transportClosed)
+      let normalized = try await normalizer.normalizeForExecution(envelope)
+      for event in normalized {
+        guard emit(event) else {
+          await failStream(DeepSeekHarnessACPError.transportClosed)
+          return
+        }
       }
     } catch {
       await failExecution(

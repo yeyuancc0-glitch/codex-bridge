@@ -1633,6 +1633,106 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
   }
 
+  func testSwitchingTerminalConversationAToBToAAfterDelayedSubscriptionPreservesA()
+    async throws
+  {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let taskA = MCPServiceTaskSnapshot(
+      taskID: "terminal-switch-a",
+      projectID: "project-1",
+      status: "running",
+      providerID: "opencode",
+      providerRunID: "run-a",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-29T12:00:00Z"
+    )
+    let taskB = MCPServiceTaskSnapshot(
+      taskID: "terminal-switch-b",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "opencode",
+      providerRunID: "run-b",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-29T12:01:00Z"
+    )
+    let terminalA = MCPServiceTaskSnapshot(
+      taskID: taskA.taskID,
+      projectID: taskA.projectID,
+      status: "completed",
+      providerID: taskA.providerID,
+      providerRunID: taskA.providerRunID,
+      supervisorStatus: taskA.supervisorStatus,
+      localApprovalRequired: false,
+      updatedAt: "2026-08-29T12:02:00Z"
+    )
+    await client.setTaskSnapshots([taskA, taskB])
+    await client.setSubscriptionPage(
+      IPCTaskConversationPage(taskID: taskA.taskID, messages: [])
+    )
+    await client.setSubscriptionDelay(.milliseconds(150))
+    await client.setConversationPages([
+      .init(IPCTaskConversationRequest(taskID: taskA.taskID, limit: 200)):
+        IPCTaskConversationPage(
+          taskID: taskA.taskID,
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 1,
+              key: "agent:a-final",
+              role: "agent",
+              content: "A authoritative result",
+              final: true
+            )
+          ]
+        ),
+      .init(IPCTaskConversationRequest(taskID: taskB.taskID, limit: 200)):
+        IPCTaskConversationPage(
+          taskID: taskB.taskID,
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 2,
+              key: "agent:b-final",
+              role: "agent",
+              content: "B result",
+              final: true
+            )
+          ]
+        ),
+    ])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+    try await waitUntil { model.conversation?.taskID == taskA.taskID }
+
+    await client.setTaskSnapshots([terminalA, taskB])
+    await model.refresh(silent: true, includeCatalog: false)
+    model.openTask(taskB.taskID)
+    model.openTask(taskA.taskID)
+
+    try await waitUntil {
+      model.selectedTaskID == taskA.taskID
+        && model.conversation?.taskID == taskA.taskID
+        && model.conversation?.entries.first?.content == "A authoritative result"
+    }
+    try await Task.sleep(for: .milliseconds(200))
+    XCTAssertEqual(model.selectedTaskID, taskA.taskID)
+    XCTAssertEqual(model.conversation?.entries.first?.content, "A authoritative result")
+    XCTAssertEqual(model.conversation?.entries.first?.isFinal, true)
+    let subscribeCalls = await client.subscribeCallsValue()
+    let unsubscribed = await client.unsubscribedSubscriptionIDsValue()
+    XCTAssertEqual(subscribeCalls, 1)
+    XCTAssertEqual(unsubscribed, [7])
+    await model.shutdownUI()
+  }
+
   func testActiveTaskInAnotherProjectDoesNotReplaceWorkbenchDefault() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
@@ -1757,7 +1857,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
     await model.shutdownUI()
   }
 
-  func testOpeningCodexTaskStillReadsItsThreadCatalogEntry() async throws {
+  func testOpeningCodexTaskUsesTaskConversationWithoutLoadingLegacyThreadContent() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()
     let codexTask = MCPServiceTaskSnapshot(
@@ -1812,13 +1912,87 @@ final class BridgeServiceAppModelTests: XCTestCase {
     model.openTask(codexTask.taskID)
 
     try await waitUntil {
-      let calls = await client.threadCallCounts()
-      return model.selectedTaskID == codexTask.taskID && calls.read == 1
+      return model.selectedTaskID == codexTask.taskID
         && model.conversation?.entries.first?.content == "Persisted terminal result"
     }
     XCTAssertEqual(model.selectedThreadID, codexTask.threadID)
-    XCTAssertEqual(model.selectedThread?.thread.threadID, codexTask.threadID)
+    let calls = await client.threadCallCounts()
+    XCTAssertEqual(calls.read, 0)
+    XCTAssertNil(model.selectedThread)
     XCTAssertEqual(model.conversation?.taskID, codexTask.taskID)
+    await model.shutdownUI()
+  }
+
+  func testOpeningThreadUsesLatestTaskFromRequestedProject() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let oldTask = MCPServiceTaskSnapshot(
+      taskID: "project-1-old",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "codex",
+      threadID: "shared-thread",
+      turnID: "old-turn",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-20T00:00:00Z"
+    )
+    let latestTask = MCPServiceTaskSnapshot(
+      taskID: "project-1-latest",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "codex",
+      threadID: "shared-thread",
+      turnID: "latest-turn",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-22T00:00:00Z"
+    )
+    let otherProjectTask = MCPServiceTaskSnapshot(
+      taskID: "project-2-newest",
+      projectID: "project-2",
+      status: "completed",
+      providerID: "codex",
+      threadID: "shared-thread",
+      turnID: "other-turn",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-23T00:00:00Z"
+    )
+    await client.setTaskSnapshots([otherProjectTask, oldTask, latestTask])
+    await client.setConversationPages([
+      .init(IPCTaskConversationRequest(taskID: latestTask.taskID, limit: 200)):
+        IPCTaskConversationPage(
+          taskID: latestTask.taskID,
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 1,
+              key: "agent:latest",
+              role: "agent",
+              content: "Latest task in requested project",
+              final: true
+            )
+          ]
+        )
+    ])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+    model.openThread("shared-thread", inProject: "project-1")
+
+    try await waitUntil {
+      model.conversation?.entries.first?.content == "Latest task in requested project"
+    }
+    XCTAssertEqual(model.selectedTaskID, latestTask.taskID)
+    XCTAssertEqual(model.conversation?.taskID, latestTask.taskID)
+    let calls = await client.threadCallCounts()
+    XCTAssertEqual(calls.read, 0)
     await model.shutdownUI()
   }
 

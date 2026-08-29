@@ -171,7 +171,7 @@ struct TextBubbleView: View {
       if isUser {
         Spacer(minLength: 40)
       }
-      AgentMarkdownText(entry.content, isStreaming: streaming)
+      AgentMarkdownText(entry.content, isStreaming: streaming, fillsWidth: !isUser)
         .font(.system(size: 13))
         .textSelection(.enabled)
         .lineSpacing(2)

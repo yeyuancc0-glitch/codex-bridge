@@ -76,10 +76,11 @@ extension MCPServiceToolCatalog {
       + "that default. Omit all model and effort fields unless the user explicitly requests a "
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
       + "Model and effort fields are applied only when model_override is true. "
-      + "For ChatGPT and Qwen submissions, omit permission_mode to use the Workbench default task "
-      + "mode shared by Codex, OpenCode, DeepSeek Harness, and Antigravity. A read-only value may "
-      + "always narrow that default; workspace-write replaces it only with "
-      + "permission_mode_override=true. "
+      + "For ChatGPT and Qwen submissions, omit permission_mode. If a client sends a default "
+      + "permission_mode without permission_mode_override=true, Bridge treats it as an implicit "
+      + "client default and uses the Workbench default task mode shared by Codex, OpenCode, "
+      + "DeepSeek Harness, and Antigravity. A permission_mode value only replaces that default "
+      + "when permission_mode_override=true and the user explicitly requested it. "
       + "Set provider_id to route the task to another registered agent provider (for example "
       + "opencode or deepseek-harness). DeepSeek Harness supports fresh "
       + "sessions with provider-native read-only or workspace-write sandbox modes; omit thread_id, "
@@ -94,7 +95,7 @@ extension MCPServiceToolCatalog {
       + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
       + "Codex. For OpenCode, execution_effort accepts only the selected model's ACP effort values; "
       + "when omitted, Bridge uses the saved OpenCode default when supported and otherwise the Provider default. "
-      + "If permission_mode is omitted, Bridge uses the Workbench default for ChatGPT and Qwen; "
+      + "If permission_mode is omitted or unmarked, Bridge uses the Workbench default for ChatGPT and Qwen; "
       + "supervisor and skill fields must also be omitted. To continue an OpenCode conversation, pass the "
       + "provider_session_id returned by get_task as thread_id; Bridge resumes or loads that exact "
       + "ACP session in the selected project. For Antigravity, set provider_id=antigravity; it "
@@ -166,12 +167,12 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For ChatGPT and Qwen submissions, omitting this field uses the Workbench default task mode across Codex and registered external agents. A read-only value may always narrow that default; workspace-write requires permission_mode_override=true. Codex selects its native sandbox. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for local approval. Antigravity selects agy Plan or Accept Edits and uses its native sandbox permission policy for headless tools.",
+            "For ChatGPT and Qwen submissions, omitting this field or sending it without permission_mode_override=true uses the Workbench default task mode across Codex and registered external agents. A permission_mode value only replaces that default when permission_mode_override=true and the user explicitly requested it. Codex selects its native sandbox. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for local approval. Antigravity selects agy Plan or Accept Edits and uses its native sandbox permission policy for headless tools.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
           "description":
-            "Set true only when the user explicitly requests workspace-write or another per-task permission override. Read-only may be supplied without this marker to narrow the Workbench default.",
+            "Set true only when the user explicitly requests a per-task permission override. For ChatGPT and Qwen, absent or false uses the Workbench default even when a client supplies permission_mode: read-only.",
         ],
         "network_access": [
           "type": "boolean",

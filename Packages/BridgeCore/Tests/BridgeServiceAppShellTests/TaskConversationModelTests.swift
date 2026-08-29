@@ -530,16 +530,56 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(model.entries.map(\.content), ["Persisted terminal response"])
   }
 
+  func testPresentationRefreshReissuesScrollIntentAfterConversationWasLoaded() async throws {
+    let client = TestBridgeServiceClient()
+    let request = IPCTaskConversationRequest(taskID: "task-1", limit: 200)
+    await client.setConversationPages([
+      TestBridgeServiceClient.TaskConversationQuery(request):
+        IPCTaskConversationPage(
+          taskID: "task-1",
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 1,
+              key: "agent:final",
+              role: "agent",
+              content: "Loaded before the Workbench mounted",
+              final: true
+            )
+          ]
+        )
+    ])
+    let model = TaskConversationModel(taskID: "task-1", client: client, isTerminal: true)
+
+    await model.start()
+    let loadedRevision = model.scrollRevision
+    XCTAssertEqual(model.scrollAnchor, "agent:final")
+
+    model.refreshPresentation()
+
+    XCTAssertGreaterThan(model.scrollRevision, loadedRevision)
+    XCTAssertEqual(model.scrollAnchor, "agent:final")
+  }
+
   func testLoadEarlierPrependsOlderMessagesWithoutDuplicatingKnownKeys() async throws {
     let client = TestBridgeServiceClient()
+    let recentMessages =
+      [
+        IPCTaskConversationMessage(messageID: 3, key: "user:2", role: "user", content: "second"),
+        IPCTaskConversationMessage(
+          messageID: 4, key: "agent:item-2", role: "agent", content: "reply"),
+      ]
+      + (5...202).map { messageID in
+        IPCTaskConversationMessage(
+          messageID: Int64(messageID),
+          key: "agent:recent-\(messageID)",
+          role: "agent",
+          content: "recent \(messageID)"
+        )
+      }
     await client.setSubscriptionPage(
       IPCTaskConversationPage(
         taskID: "task-1",
-        messages: [
-          IPCTaskConversationMessage(messageID: 3, key: "user:2", role: "user", content: "second"),
-          IPCTaskConversationMessage(
-            messageID: 4, key: "agent:item-2", role: "agent", content: "reply"),
-        ]
+        messages: recentMessages
       )
     )
     await client.setConversationPages([
@@ -556,12 +596,15 @@ final class TaskConversationModelTests: XCTestCase {
     ])
     let model = TaskConversationModel(taskID: "task-1", client: client)
     await model.start()
-    XCTAssertEqual(model.entries.count, 2)
+    XCTAssertEqual(model.entries.count, 200)
+    XCTAssertTrue(model.canLoadEarlier)
 
     await model.loadEarlier()
 
-    XCTAssertEqual(model.entries.map(\.key), ["user:1", "user:2", "agent:item-2"])
+    XCTAssertEqual(model.entries.count, 201)
+    XCTAssertEqual(Array(model.entries.prefix(3).map(\.key)), ["user:1", "user:2", "agent:item-2"])
     XCTAssertEqual(model.entries[1].content, "second")
+    XCTAssertFalse(model.canLoadEarlier)
   }
 
   func testCancelStopsStreamingTask() async throws {
@@ -599,53 +642,6 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(model.subscriptionID, -1)
     let unsubscribed = await client.unsubscribedSubscriptionIDsValue()
     XCTAssertEqual(unsubscribed, [7])
-  }
-
-  func testThreadTurnGroupGrouping() {
-    let entries: [MCPThreadEntry] = [
-      MCPThreadEntry(turnID: "turn-1", role: "user", text: "Please research X"),
-      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "First, finding account"),
-      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "Second, parsing timeline"),
-      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "Here is the summary of X: ..."),
-    ]
-
-    let groups = ThreadTurnGroup.group(entries: entries)
-    XCTAssertEqual(groups.count, 2)
-
-    XCTAssertEqual(groups[0].role, "user")
-    XCTAssertEqual(groups[0].mainText, "Please research X")
-    XCTAssertTrue(groups[0].thoughts.isEmpty)
-
-    XCTAssertEqual(groups[1].role, "assistant")
-    XCTAssertEqual(groups[1].thoughts, ["First, finding account", "Second, parsing timeline"])
-    XCTAssertEqual(groups[1].mainText, "Here is the summary of X: ...")
-  }
-
-  func testThreadTurnGroupMultipleTurns() {
-    let entries: [MCPThreadEntry] = [
-      MCPThreadEntry(turnID: "turn-1", role: "user", text: "Hello"),
-      MCPThreadEntry(turnID: "turn-1", role: "assistant", text: "Hi there!"),
-      MCPThreadEntry(turnID: "turn-2", role: "user", text: "Check disk space"),
-      MCPThreadEntry(turnID: "turn-2", role: "assistant", text: "Running df -h"),
-      MCPThreadEntry(turnID: "turn-2", role: "assistant", text: "You have 100GB available."),
-    ]
-
-    let groups = ThreadTurnGroup.group(entries: entries)
-    XCTAssertEqual(groups.count, 4)
-
-    XCTAssertEqual(groups[0].role, "user")
-    XCTAssertEqual(groups[0].mainText, "Hello")
-
-    XCTAssertEqual(groups[1].role, "assistant")
-    XCTAssertEqual(groups[1].mainText, "Hi there!")
-    XCTAssertTrue(groups[1].thoughts.isEmpty)
-
-    XCTAssertEqual(groups[2].role, "user")
-    XCTAssertEqual(groups[2].mainText, "Check disk space")
-
-    XCTAssertEqual(groups[3].role, "assistant")
-    XCTAssertEqual(groups[3].thoughts, ["Running df -h"])
-    XCTAssertEqual(groups[3].mainText, "You have 100GB available.")
   }
 
   private func waitUntil(

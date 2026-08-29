@@ -54,14 +54,16 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   @Published public private(set) var activity: Activity = .idle
   @Published public private(set) var errorMessage: String?
   @Published public private(set) var isLoadingEarlier = false
+  @Published public private(set) var canLoadEarlier = false
   @Published public var autoScroll = true
   @Published public private(set) var scrollAnchor: String?
   @Published public private(set) var scrollRevision: UInt64 = 0
 
+  public let id = UUID()
   public let taskID: String
   public private(set) var subscriptionID = -1
 
-  private static let pushBatchDelay: Duration = .milliseconds(24)
+  private static let pushBatchDelay: Duration = .milliseconds(16)
 
   private let client: any BridgeTaskConversationClient
   private let isTerminal: Bool
@@ -85,10 +87,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     .seconds(1),
   ]
   private static let terminalSnapshotRetryDelays: [Duration] = [
-    .zero,
-    .milliseconds(80),
-    .milliseconds(200),
-    .milliseconds(400),
+    .zero, .milliseconds(80), .milliseconds(200), .milliseconds(400),
   ]
 
   public init(
@@ -99,10 +98,6 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     self.taskID = taskID
     self.client = client
     self.isTerminal = isTerminal
-  }
-
-  public var canLoadEarlier: Bool {
-    entries.first(where: { $0.messageID != nil }) != nil
   }
 
   func start() async {
@@ -173,6 +168,11 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     pendingResyncPushes.removeAll(keepingCapacity: false)
   }
 
+  func refreshPresentation() {
+    guard !entries.isEmpty else { return }
+    requestAutoScroll()
+  }
+
   func loadEarlier() async {
     flushPendingPushes()
     guard canLoadEarlier, !isLoadingEarlier else { return }
@@ -188,6 +188,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       )
       guard isRequestValid(lifecycle: lifecycle, load: load) else { return }
       guard page.taskID == taskID else { return }
+      canLoadEarlier = page.messages.count >= 100
       guard !page.messages.isEmpty else { return }
       let older = page.messages
         .filter { index[$0.key] == nil }
@@ -266,6 +267,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     pendingPushes.removeAll(keepingCapacity: false)
     pendingResyncPushes.removeAll(keepingCapacity: false)
     entries = page.messages.map { Entry($0, isFinal: $0.final) }
+    canLoadEarlier = page.messages.count >= 200
     rebuildIndex()
     refreshStreamingState()
     requestAutoScroll()

@@ -261,6 +261,7 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
         skillName: "review",
         providerID: AgentProviderID.deepSeekHarness.rawValue,
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "deepseek-skill-injection"
       ),
       expectedPrompt:
@@ -462,6 +463,7 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
       effort: "max",
       permissionMode: "read-only",
       prompt: "Inspect the workspace.",
+      permissionModeOverride: true,
       deadline: ContinuousClock.now.advanced(by: .seconds(10))
     )
     let storedTask = try await fixture.store.task(id: TaskID(rawValue: receipt.taskID))

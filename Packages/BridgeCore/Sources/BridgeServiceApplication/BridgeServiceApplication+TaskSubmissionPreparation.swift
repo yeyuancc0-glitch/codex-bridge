@@ -29,7 +29,7 @@ extension BridgeServiceApplication {
     let requestedPermissionMode = try Self.permissionModeRequest(
       submission.permissionMode,
       override: submission.permissionModeOverride,
-      requireWorkspaceWriteOverride: workbenchPermissionMode != nil
+      requirePermissionModeOverride: workbenchPermissionMode != nil
     )
     let permission = try Self.permissionMode(
       requestedPermissionMode,

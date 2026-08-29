@@ -342,8 +342,11 @@ let package = Package(
       dependencies: [
         "BridgeACP",
         "BridgeAgentCore",
+        "BridgeCodexService",
         "BridgeDeepSeekHarnessACP",
         "BridgeDomain",
+        "BridgeProjects",
+        "BridgeServiceCore",
       ]
     ),
     .testTarget(

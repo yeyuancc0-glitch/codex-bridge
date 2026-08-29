@@ -387,6 +387,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         threadID: sessionID,
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-session-continue"
       ),
       deadline: deadline
@@ -405,6 +406,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         threadID: sessionID,
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-session-concurrent"
       ),
       expected: .invalidTaskState,
@@ -453,6 +455,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         skillName: "review",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-skill-injection"
       ),
       expectedPrompt:
@@ -496,6 +499,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
           skillName: skillName,
           providerID: "opencode",
           permissionMode: "read-only",
+          permissionModeOverride: true,
           clientRequestID: clientRequestID
         ),
         expected: .skillNotFound,
@@ -522,6 +526,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect the repository.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-skill-omitted"
       ),
       deadline: deadline
@@ -625,6 +630,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect repository layout and report findings.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         networkAccess: true,
         clientRequestID: "agent-request-1"
       ),
@@ -658,6 +664,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect repository layout and report findings.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         networkAccess: true,
         clientRequestID: "agent-request-1"
       ),
@@ -854,7 +861,8 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       MCPServiceTaskSubmission(
         prompt: "Use the selected workbench project for this agent task.",
         providerID: AgentProviderID.openCode.rawValue,
-        permissionMode: "read-only"
+        permissionMode: "read-only",
+        permissionModeOverride: true
       ),
       deadline: deadline
     )
@@ -1028,7 +1036,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.permissionMode, .readOnly)
   }
 
-  func testOpenCodeSubmissionHonorsUnmarkedReadOnlyNarrowing() async throws {
+  func testOpenCodeSubmissionUsesWorkbenchWriteForUnmarkedReadOnly() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
     let provider = try ScriptedAgentProvider(supportsWorkspaceWrite: true)
@@ -1042,6 +1050,8 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         providers: [.openCode: provider]
       )
     )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    try await application.serviceSetWorkbenchPermissionMode(.workspaceWrite, deadline: deadline)
 
     let receipt = try await application.serviceSubmitTask(
       MCPServiceTaskSubmission(
@@ -1052,10 +1062,10 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         permissionModeOverride: false,
         clientRequestID: "unmarked-permission-mode"
       ),
-      deadline: ContinuousClock.now.advanced(by: .seconds(10))
+      deadline: deadline
     )
     let storedTask = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
-    XCTAssertEqual(storedTask?.permissionMode, .readOnly)
+    XCTAssertEqual(storedTask?.permissionMode, .workspaceWrite)
   }
 
   func testOpenCodeSubmissionHonorsExplicitPermissionModeOverride() async throws {
@@ -1105,6 +1115,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect the project.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-approval"
       ),
       deadline: deadline
@@ -1186,6 +1197,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-approval-mismatch"
       ),
       deadline: deadline
@@ -1259,6 +1271,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-model-unavailable"
       ),
       deadline: deadline
@@ -1306,6 +1319,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Read the README.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-request-conflict"
       ),
       deadline: deadline
@@ -1318,6 +1332,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
           prompt: "Read a different file.",
           providerID: "opencode",
           permissionMode: "read-only",
+          permissionModeOverride: true,
           clientRequestID: "agent-request-conflict"
         ),
         deadline: deadline
@@ -1333,6 +1348,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
           projectID: fixture.project.id.rawValue,
           prompt: "Read the README.",
           permissionMode: "read-only",
+          permissionModeOverride: true,
           clientRequestID: "agent-request-conflict"
         ),
         deadline: deadline
@@ -1467,6 +1483,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Watch the build directory.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-request-interrupt"
       ),
       deadline: deadline
@@ -1549,6 +1566,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect the repository.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-stream-ended"
       ),
       deadline: deadline
@@ -1594,6 +1612,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect the repository.",
         providerID: "opencode",
         permissionMode: "read-only",
+        permissionModeOverride: true,
         clientRequestID: "agent-sequence-regression"
       ),
       deadline: deadline

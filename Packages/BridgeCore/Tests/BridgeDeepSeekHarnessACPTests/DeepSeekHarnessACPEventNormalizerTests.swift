@@ -1,11 +1,129 @@
 import BridgeACP
 import BridgeAgentCore
 import BridgeDomain
+import BridgeProjects
+import BridgeServiceCore
 import XCTest
 
+@testable import BridgeCodexService
 @testable import BridgeDeepSeekHarnessACP
 
 final class DeepSeekHarnessACPEventNormalizerTests: XCTestCase {
+  func testFinalResponseAfterToolIsOrderedAfterToolInSQLite() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(
+      path: "bridge-dsh-order-\(UUID().uuidString)",
+      directoryHint: .isDirectory
+    )
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = try SimpleServiceStore(path: root.appending(path: "service.sqlite").path)
+    let projectID = ProjectID(rawValue: "dsh-order-project")
+    let projects = ServiceProjectService(
+      store: store,
+      makeProjectID: { projectID }
+    )
+    let project = try await projects.register(
+      name: "DSH order fixture",
+      rootURL: root,
+      id: projectID
+    )
+    let tasks = ServiceTaskManager(
+      store: store,
+      makeTaskID: { TaskID(rawValue: "dsh-order-task") }
+    )
+    let created = try await tasks.submit(
+      ServiceTaskRequest(
+        projectID: project.id,
+        source: .macOSApp,
+        prompt: "Run the fixture.",
+        providerID: DeepSeekHarnessACPConstants.providerID.rawValue,
+        installationID: "dsh-installation",
+        selectionMode: .explicit,
+        executionModel: "fixture-model",
+        executionEffort: "medium",
+        permissionMode: .readOnly
+      ),
+      taskID: TaskID(rawValue: "dsh-order-task")
+    )
+    let task = try await tasks.begin(taskID: created.task.id)
+    let conversation = TaskConversationBuffer(
+      tasks: tasks,
+      flushDeltaCount: 1,
+      flushInFlightCount: 1
+    )
+    let processor = ServiceExecutionAgentEventProcessor(
+      tasks: tasks,
+      projects: projects,
+      conversation: conversation
+    )
+    let binding = try AgentBinding(
+      providerID: .deepSeekHarness,
+      installationID: AgentInstallationID(rawValue: "dsh-installation"),
+      providerSessionID: "dsh-session",
+      providerRunID: "dsh-run"
+    )
+    let normalizer = DeepSeekHarnessACPEventNormalizer(
+      taskID: task.id,
+      binding: binding
+    )
+
+    let preamble = try await normalizer.normalizeForExecution(
+      .init(sequence: 0, event: .textDelta(sessionID: "dsh-session", text: "先检查环境。"))
+    )
+    let started = try await normalizer.normalizeForExecution(
+      .init(
+        sequence: 1,
+        event: .toolUpdated(
+          .init(
+            sessionID: "dsh-session",
+            toolCallID: "shell-1",
+            title: "bash",
+            kind: "bash",
+            status: .inProgress,
+            rawInput: .object(["command": .string("echo ok")])
+          )
+        )
+      )
+    )
+    let completed = try await normalizer.normalizeForExecution(
+      .init(
+        sequence: 2,
+        event: .toolUpdated(
+          .init(
+            sessionID: "dsh-session",
+            toolCallID: "shell-1",
+            title: nil,
+            kind: nil,
+            status: .completed,
+            rawInput: nil
+          )
+        )
+      )
+    )
+    let response = try await normalizer.normalizeForExecution(
+      .init(sequence: 3, event: .textDelta(sessionID: "dsh-session", text: "最终结果。"))
+    )
+    let final = try await normalizer.finalizeContent()
+    XCTAssertEqual(preamble.map(\.providerSequence), [0])
+    XCTAssertEqual(started.map(\.providerSequence), [1, 2])
+    XCTAssertEqual(completed.map(\.providerSequence), [3])
+    XCTAssertEqual(response.map(\.providerSequence), [4])
+    XCTAssertEqual(final.map(\.providerSequence), [5])
+    for event in [preamble, started, completed, response].flatMap({ $0 }) + final {
+      try await processor.process(event.event, taskID: task.id)
+    }
+    let closed = await conversation.close(taskID: task.id)
+    XCTAssertTrue(closed)
+
+    let messages = try await store.taskMessages(taskID: task.id)
+    XCTAssertEqual(
+      messages.map(\.key),
+      ["agent:message:assistant", "tool:shell-1", "agent:message:assistant:1"]
+    )
+    XCTAssertEqual(messages.last?.content, "最终结果。")
+  }
+
   func testFinalContentIsAuthoritativeAfterOrderedDeltas() async throws {
     let binding = try AgentBinding(
       providerID: .deepSeekHarness,

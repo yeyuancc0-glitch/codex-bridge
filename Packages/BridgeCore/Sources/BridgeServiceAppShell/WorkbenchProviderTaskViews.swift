@@ -69,9 +69,10 @@ struct WorkbenchAgentTaskPicker: View {
   }
 
   private var selectedItemLabel: String {
-    if let task = tasks.first(where: {
-      $0.taskID == model.selectedTaskID && $0.isExternalAgentTask
-    }) {
+    if let task = WorkbenchAgentTaskPickerContent.selectedTask(
+      tasks: tasks,
+      selectedTaskID: model.selectedTaskID
+    ) {
       return WorkbenchTaskTextPresentation.menuTitle(for: task)
     }
     if let thread = threads.first(where: { $0.threadID == model.selectedThreadID }) {
@@ -100,6 +101,14 @@ struct WorkbenchAgentTaskPicker: View {
 }
 
 package enum WorkbenchAgentTaskPickerContent {
+  package static func selectedTask(
+    tasks: [MCPServiceTaskSnapshot],
+    selectedTaskID: String?
+  ) -> MCPServiceTaskSnapshot? {
+    guard let selectedTaskID else { return nil }
+    return tasks.first(where: { $0.taskID == selectedTaskID })
+  }
+
   package static func orphanThreads(
     tasks: [MCPServiceTaskSnapshot],
     threads: [MCPThreadSummary]

@@ -331,14 +331,20 @@ struct BridgeServiceProjectsView: View {
   }
 
   private func threadTranscript(_ page: MCPThreadReadPage) -> some View {
-    NativeCard {
+    let entries = page.entries.enumerated().map { index, entry in
+      TaskConversationModel.Entry(
+        historicalThreadEntry: entry,
+        threadID: page.thread.threadID,
+        index: index
+      )
+    }
+    return NativeCard {
       VStack(alignment: .leading, spacing: 14) {
         HStack {
           Label("Thread 对话历史", systemImage: "bubble.left.and.text.bubble.right.fill")
             .font(.subheadline.weight(.semibold))
           Spacer()
-          let groups = ThreadTurnGroup.group(entries: page.entries)
-          Text("共 \(groups.count) 轮对话 · \(page.entries.count) 条记录")
+          Text("共 \(page.entries.count) 条记录")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -348,10 +354,9 @@ struct BridgeServiceProjectsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         } else {
-          let groups = ThreadTurnGroup.group(entries: page.entries)
-          VStack(alignment: .leading, spacing: 12) {
-            ForEach(groups) { group in
-              ThreadChatBubbleView(group: group)
+          LazyVStack(alignment: .leading, spacing: 10) {
+            ForEach(entries) { entry in
+              MessageBubble(entry: entry, streaming: false, providerID: "codex")
             }
           }
         }
