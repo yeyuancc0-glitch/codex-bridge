@@ -60,7 +60,7 @@ extension MCPServiceToolCatalog {
     description:
       "List user-registered Agent installations and their persisted Probe results. "
       + "A selectable OpenCode installation can receive tasks through submit_task; DeepSeek "
-      + "Harness is experimental and supports fresh sessions with provider-native read-only or "
+      + "Harness supports fresh sessions with provider-native read-only or "
       + "workspace-write modes. Selectable OpenCode and Antigravity installations can receive "
       + "explicit provider tasks through submit_task. Antigravity supports native plan/accept-edits "
       + "modes, mapping Plan/read-only "

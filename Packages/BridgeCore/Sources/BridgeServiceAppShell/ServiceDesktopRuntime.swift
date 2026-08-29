@@ -118,6 +118,8 @@ extension BridgeServiceAppModel {
       tasks = []
       approvals = []
       taskStartApprovalMode = "require"
+      workbenchPermissionMode = "workspace-write"
+      confirmedWorkbenchPermissionMode = "workspace-write"
       resolvingApprovalKeys = []
       resolvedTaskApprovalKeys = []
       resolvedDirectApprovalKeys = []
@@ -167,6 +169,7 @@ extension BridgeServiceAppModel {
     do {
       let refreshedStatus = try await client.status()
       if serviceStatus != refreshedStatus { serviceStatus = refreshedStatus }
+      applyWorkbenchPermissionMode(refreshedStatus.workbenchPermissionMode)
       if connectionState != .connected { connectionState = .connected }
       if !silent { lastRefreshAt = Date() }
       if !silent { errorMessage = nil }
@@ -214,7 +217,9 @@ extension BridgeServiceAppModel {
       guard !stopped, registration.status == .enabled else { return }
       let candidate = clientFactory()
       do {
-        serviceStatus = try await candidate.status()
+        let status = try await candidate.status()
+        serviceStatus = status
+        applyWorkbenchPermissionMode(status.workbenchPermissionMode)
         client = candidate
         connectionState = .connected
         registrationStatus = .enabled
@@ -366,7 +371,8 @@ extension BridgeServiceAppModel {
       localMCPURL: serviceStatus.localMCPURL,
       exposureMode: mode,
       tunnel: serviceStatus.tunnel,
-      workbenchProjectID: serviceStatus.workbenchProjectID
+      workbenchProjectID: serviceStatus.workbenchProjectID,
+      workbenchPermissionMode: serviceStatus.workbenchPermissionMode
     )
   }
 
@@ -377,8 +383,32 @@ extension BridgeServiceAppModel {
       localMCPURL: serviceStatus.localMCPURL,
       exposureMode: serviceStatus.exposureMode,
       tunnel: serviceStatus.tunnel,
-      workbenchProjectID: projectID
+      workbenchProjectID: projectID,
+      workbenchPermissionMode: serviceStatus.workbenchPermissionMode
     )
+  }
+
+  func updateWorkbenchPermissionModeState(_ mode: String) {
+    guard let serviceStatus else { return }
+    self.serviceStatus = IPCServiceStatusResponse(
+      status: serviceStatus.status,
+      localMCPURL: serviceStatus.localMCPURL,
+      exposureMode: serviceStatus.exposureMode,
+      tunnel: serviceStatus.tunnel,
+      workbenchProjectID: serviceStatus.workbenchProjectID,
+      workbenchPermissionMode: mode
+    )
+  }
+
+  func applyWorkbenchPermissionMode(_ mode: String?) {
+    guard workbenchPermissionModeSyncTask == nil else { return }
+    guard let mode, mode == "read-only" || mode == "workspace-write" else {
+      workbenchPermissionMode = "workspace-write"
+      confirmedWorkbenchPermissionMode = "workspace-write"
+      return
+    }
+    workbenchPermissionMode = mode
+    confirmedWorkbenchPermissionMode = mode
   }
 
   static func message(_ error: any Error) -> String {

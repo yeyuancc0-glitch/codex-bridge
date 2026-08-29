@@ -2,6 +2,25 @@ import BridgeServiceCore
 import XCTest
 
 final class ServiceSettingsTests: XCTestCase {
+  func testWorkbenchPermissionModeDefaultsToWorkspaceWriteAndPersistsReadOnly()
+    async throws
+  {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let settings = ServiceSettings(store: try SimpleServiceStore(path: fixture.databasePath))
+
+    let initialMode = try await settings.workbenchPermissionMode()
+    XCTAssertEqual(initialMode, .workspaceWrite)
+
+    try await settings.setWorkbenchPermissionMode(.readOnly)
+
+    let reopened = ServiceSettings(
+      store: try SimpleServiceStore(path: fixture.databasePath)
+    )
+    let persistedMode = try await reopened.workbenchPermissionMode()
+    XCTAssertEqual(persistedMode, .readOnly)
+  }
+
   func testTaskStartApprovalRequiresLocalApprovalByDefaultAndPersistsAutoMode() async throws {
     let fixture = try ServiceCoreFixture()
     defer { fixture.remove() }

@@ -97,9 +97,8 @@ extension BridgeServiceAppModel {
       let conversation,
       conversation.taskID == selectedTaskBeforeRefresh.taskID
     {
-      Task {
-        await conversation.reloadAuthoritativeSnapshot()
-      }
+      closeConversation()
+      openConversation(taskID: selectedTaskBeforeRefresh.taskID)
     }
     guard selectedTaskID == nil, selectedThreadID == nil, conversation == nil else { return }
     guard let selectedProjectID else { return }

@@ -103,7 +103,7 @@ enum AgentProviderPresentation {
     switch identifier(providerID) {
     case "codex": return "cpu.fill"
     case "opencode": return "chevron.left.forwardslash.chevron.right"
-    case "deepseek-harness": return "lock.shield.fill"
+    case "deepseek-harness": return "gearshape.2.fill"
     case "antigravity": return "sparkles"
     default: return "point.3.connected.trianglepath.dotted"
     }
@@ -186,6 +186,7 @@ struct CodexActivityPresentation: Equatable {
     case "running":
       (statusText, showsBubble) = Self.runningPresentation(
         activity,
+        providerID: task.providerIdentifier,
         providerName: providerName
       )
       isActive = true
@@ -222,19 +223,29 @@ struct CodexActivityPresentation: Equatable {
 
   private static func runningPresentation(
     _ activity: TaskConversationModel.Activity,
+    providerID: String,
     providerName: String
   ) -> (String, Bool) {
     switch activity {
     case .executing(let tool):
-      return (
-        tool.map { "\(providerName) 正在执行 \($0)…" }
-          ?? "\(providerName) 正在执行工具…",
-        true
+      guard let tool, !tool.isEmpty else {
+        return ("\(providerName) 正在处理任务…", true)
+      }
+      let presentation = CodexTranscriptPresentation.tool(
+        providerID: providerID,
+        name: tool,
+        status: "inProgress"
       )
+      if CodexTranscriptPresentation.category(providerID: providerID, name: tool) == .other {
+        return ("\(presentation.title)…", true)
+      }
+      return ("\(providerName) \(presentation.title)…", true)
     case .responding:
       return ("\(providerName) 正在输出…", false)
-    case .idle, .thinking:
-      return ("\(providerName) 正在思考…", true)
+    case .thinking:
+      return ("\(providerName) 正在分析…", true)
+    case .idle:
+      return ("\(providerName) 正在处理任务…", true)
     }
   }
 }

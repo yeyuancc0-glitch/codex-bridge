@@ -73,6 +73,8 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private var pendingPushes: [IPCTaskConversationPush] = []
   private var pendingResyncPushes: [IPCTaskConversationPush] = []
   private var lifecycleGeneration: UInt64 = 0
+  private var loadGeneration: UInt64 = 0
+  private var hasLoadedTerminalSnapshot = false
 
   private static let maximumPendingPushes = 256
   private static let resyncRetryDelays: [Duration] = [
@@ -81,6 +83,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     .milliseconds(500),
     .seconds(1),
     .seconds(1),
+  ]
+  private static let terminalSnapshotRetryDelays: [Duration] = [
+    .zero,
+    .milliseconds(80),
+    .milliseconds(200),
+    .milliseconds(400),
   ]
 
   public init(
@@ -103,12 +111,23 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       return
     }
     let generation = lifecycleGeneration
+    loadGeneration &+= 1
+    let requestLoadGeneration = self.loadGeneration
     do {
       let (subscription, updates) = try await client.subscribeTaskConversation(
         taskID: taskID,
         limit: 200
       )
-      guard lifecycleGeneration == generation else {
+      guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else {
+        if subscription.subscriptionID >= 0 {
+          try? await client.unsubscribeTaskConversation(
+            taskID: taskID,
+            subscriptionID: subscription.subscriptionID
+          )
+        }
+        return
+      }
+      guard applySubscriptionPage(subscription.page) else {
         if subscription.subscriptionID >= 0 {
           try? await client.unsubscribeTaskConversation(
             taskID: taskID,
@@ -118,7 +137,6 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         return
       }
       subscriptionID = subscription.subscriptionID
-      applyPage(subscription.page)
       hasAppliedPage = true
       streamingTask = Task { [weak self] in
         for await push in updates {
@@ -128,14 +146,16 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         self?.flushPendingPushes()
       }
     } catch {
-      guard lifecycleGeneration == generation else { return }
+      guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
       errorMessage = BridgeServiceAppModel.message(error)
       do {
         let page = try await client.taskConversation(
           IPCTaskConversationRequest(taskID: taskID, limit: 200)
         )
-        applyPage(page)
+        guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
+        _ = applyAuthoritativePage(page)
       } catch {
+        guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
         errorMessage = BridgeServiceAppModel.message(error)
       }
     }
@@ -143,12 +163,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
 
   func cancel() {
     lifecycleGeneration &+= 1
-    streamingTask?.cancel()
-    streamingTask = nil
+    loadGeneration &+= 1
+    invalidateLiveSubscription()
+    hasAppliedPage = false
+    hasLoadedTerminalSnapshot = false
     pushFlushTask?.cancel()
     pushFlushTask = nil
-    resyncTask?.cancel()
-    resyncTask = nil
     pendingPushes.removeAll(keepingCapacity: false)
     pendingResyncPushes.removeAll(keepingCapacity: false)
   }
@@ -158,12 +178,16 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     guard canLoadEarlier, !isLoadingEarlier else { return }
     let anchor = entries.first(where: { $0.messageID != nil })?.messageID
     guard let anchor else { return }
+    let lifecycle = lifecycleGeneration
+    let load = loadGeneration
     isLoadingEarlier = true
     defer { isLoadingEarlier = false }
     do {
       let page = try await client.taskConversation(
         IPCTaskConversationRequest(taskID: taskID, beforeMessageID: anchor, limit: 100)
       )
+      guard isRequestValid(lifecycle: lifecycle, load: load) else { return }
+      guard page.taskID == taskID else { return }
       guard !page.messages.isEmpty else { return }
       let older = page.messages
         .filter { index[$0.key] == nil }
@@ -173,22 +197,67 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       rebuildIndex()
       scrollAnchor = entries.last?.key
     } catch {
+      guard isRequestValid(lifecycle: lifecycle, load: load) else { return }
       errorMessage = BridgeServiceAppModel.message(error)
     }
   }
 
   func reloadAuthoritativeSnapshot() async {
+    loadGeneration &+= 1
+    let requestLoadGeneration = self.loadGeneration
     let generation = lifecycleGeneration
-    do {
-      let page = try await client.taskConversation(
-        IPCTaskConversationRequest(taskID: taskID, limit: 200)
-      )
-      guard lifecycleGeneration == generation else { return }
-      applyPage(page)
-    } catch {
-      guard lifecycleGeneration == generation else { return }
-      errorMessage = BridgeServiceAppModel.message(error)
+    invalidateLiveSubscription()
+    let delays = isTerminal ? Self.terminalSnapshotRetryDelays : [.zero]
+    var lastError: Error?
+    for (index, delay) in delays.enumerated() {
+      if delay > .zero {
+        do {
+          try await Task.sleep(for: delay)
+        } catch {
+          return
+        }
+      }
+      guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
+      do {
+        let page = try await client.taskConversation(
+          IPCTaskConversationRequest(taskID: taskID, limit: 200)
+        )
+        guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
+        if isTerminal, page.messages.isEmpty, index < delays.count - 1 {
+          continue
+        }
+        _ = applyAuthoritativePage(page)
+        return
+      } catch {
+        lastError = error
+      }
     }
+    guard isRequestValid(lifecycle: generation, load: requestLoadGeneration), let lastError else {
+      return
+    }
+    errorMessage = BridgeServiceAppModel.message(lastError)
+  }
+
+  @discardableResult
+  private func applyAuthoritativePage(_ page: IPCTaskConversationPage) -> Bool {
+    guard page.taskID == taskID else { return false }
+    if isTerminal, hasLoadedTerminalSnapshot, page.messages.isEmpty, !entries.isEmpty {
+      return true
+    }
+    applyPage(page)
+    if isTerminal {
+      hasLoadedTerminalSnapshot = true
+    }
+    hasAppliedPage = true
+    return true
+  }
+
+  @discardableResult
+  private func applySubscriptionPage(_ page: IPCTaskConversationPage) -> Bool {
+    guard page.taskID == taskID else { return false }
+    guard !(isTerminal && hasLoadedTerminalSnapshot) else { return true }
+    applyPage(page)
+    return true
   }
 
   private func applyPage(_ page: IPCTaskConversationPage) {
@@ -200,6 +269,28 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     rebuildIndex()
     refreshStreamingState()
     requestAutoScroll()
+  }
+
+  private func isRequestValid(lifecycle: UInt64, load: UInt64) -> Bool {
+    lifecycleGeneration == lifecycle && self.loadGeneration == load
+  }
+
+  private func invalidateLiveSubscription() {
+    streamingTask?.cancel()
+    streamingTask = nil
+    resyncTask?.cancel()
+    resyncTask = nil
+    let subscriptionID = self.subscriptionID
+    self.subscriptionID = -1
+    guard subscriptionID >= 0 else { return }
+    let client = self.client
+    let taskID = self.taskID
+    Task {
+      try? await client.unsubscribeTaskConversation(
+        taskID: taskID,
+        subscriptionID: subscriptionID
+      )
+    }
   }
 
   private func enqueuePush(_ push: IPCTaskConversationPush) {

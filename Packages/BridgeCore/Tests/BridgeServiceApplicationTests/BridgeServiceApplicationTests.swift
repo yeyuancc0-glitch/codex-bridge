@@ -506,6 +506,76 @@ final class BridgeServiceApplicationTests: XCTestCase {
     XCTAssertEqual(selectedProjectID, fixture.project.id.rawValue)
   }
 
+  func testChatGPTSubmissionUsesWorkbenchPermissionModeByDefault() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    try await application.serviceSetWorkbenchPermissionMode(.readOnly, deadline: deadline)
+
+    let defaultReceipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the Workbench read-only default.",
+        clientRequestID: "workbench-permission-default"
+      ),
+      deadline: deadline
+    )
+    let defaultTaskValue = try await fixture.tasks.task(
+      id: TaskID(rawValue: defaultReceipt.taskID)
+    )
+    let defaultTask = try XCTUnwrap(defaultTaskValue)
+    XCTAssertEqual(defaultTask.permissionMode, .readOnly)
+
+  }
+
+  func testQwenSubmissionUsesWorkbenchPermissionModeByDefault() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    try await application.serviceSetWorkbenchPermissionMode(.readOnly, deadline: deadline)
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the Qwen Workbench read-only default.",
+        clientRequestID: "workbench-permission-qwen"
+      ),
+      invocationContext: MCPInvocationContext(clientID: .qwenStudio),
+      deadline: deadline
+    )
+    let task = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(task?.permissionMode, .readOnly)
+  }
+
+  func testChatGPTWorkspaceWriteRequiresPermissionModeOverride() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    try await application.serviceSetWorkbenchPermissionMode(.readOnly, deadline: deadline)
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Do not replace the Workbench read-only default.",
+        permissionMode: "workspace-write",
+        permissionModeOverride: false,
+        clientRequestID: "workbench-permission-unmarked-write"
+      ),
+      deadline: deadline
+    )
+    let task = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertEqual(task?.permissionMode, .readOnly)
+  }
+
   func testExplicitSubmissionProjectOverridesWorkbenchSelection() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let secondRoot = FileManager.default.temporaryDirectory.appending(

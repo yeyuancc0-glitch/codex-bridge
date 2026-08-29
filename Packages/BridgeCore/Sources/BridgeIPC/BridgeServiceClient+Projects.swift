@@ -66,4 +66,11 @@ extension BridgeServiceClient {
       payload: IPCWorkbenchProjectRequest(projectID: projectID)
     )
   }
+
+  public func setWorkbenchPermissionMode(_ mode: String) async throws {
+    let _: IPCMutationResponse = try await call(
+      operation: .setWorkbenchPermissionMode,
+      payload: IPCWorkbenchPermissionModeRequest(permissionMode: mode)
+    )
+  }
 }

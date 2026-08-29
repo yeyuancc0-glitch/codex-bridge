@@ -54,7 +54,7 @@ struct BridgeServiceAgentDefaultsSection: View {
 
         permissionSelection
 
-        Text("MCP 客户端未显式指定配置时，任务将默认使用此配置。")
+        Text("本地 Provider API 未显式指定配置时使用此设置；ChatGPT/Qwen 工作台任务使用工作台默认任务模式。")
           .font(.caption2)
           .foregroundStyle(.secondary)
       }

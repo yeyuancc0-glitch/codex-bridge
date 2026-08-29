@@ -120,6 +120,21 @@ extension BridgeServiceXPCController {
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }
 
+  func handleSetWorkbenchPermissionMode(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(
+      IPCWorkbenchPermissionModeRequest.self,
+      from: request
+    )
+    guard let mode = ServicePermissionMode(rawValue: payload.permissionMode) else {
+      throw ServiceStoreError.invalidArgument("workbench.permissionMode")
+    }
+    try await composition.application.serviceSetWorkbenchPermissionMode(
+      mode,
+      deadline: Self.deadline()
+    )
+    return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+  }
+
   func handleRemoveProject(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(
       IPCProjectIDRequest.self,

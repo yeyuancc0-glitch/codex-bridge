@@ -41,7 +41,10 @@ extension BridgeServiceXPCController {
         tunnel: Self.tunnelStatus(tunnel),
         workbenchProjectID: try await composition.application.serviceWorkbenchProjectID(
           deadline: Self.deadline()
-        )
+        ),
+        workbenchPermissionMode: try await composition.application.serviceWorkbenchPermissionMode(
+          deadline: Self.deadline()
+        ).rawValue
       )
     )
   }

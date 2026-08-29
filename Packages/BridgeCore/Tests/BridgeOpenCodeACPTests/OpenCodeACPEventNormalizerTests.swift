@@ -163,6 +163,50 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
     XCTAssertEqual(approval.networkTarget, "https://example.test/api")
   }
 
+  func testToolNameUsesSemanticWebSubagentAndThinkCategories() async throws {
+    let normalizer = try makeNormalizer()
+    let web = try await normalizer.normalize(
+      .notification(
+        Self.toolNotification(
+          status: "in_progress",
+          title: "Search the web",
+          kind: "other",
+          toolCallID: "web-tool"
+        )
+      )
+    )
+    let subagent = try await normalizer.normalize(
+      .notification(
+        Self.toolNotification(
+          status: "in_progress",
+          title: "Delegate task",
+          kind: "other",
+          toolCallID: "subagent-tool"
+        )
+      )
+    )
+    let think = try await normalizer.normalize(
+      .notification(
+        Self.toolNotification(
+          status: "in_progress",
+          title: "Think",
+          kind: "think",
+          toolCallID: "think-tool"
+        )
+      )
+    )
+
+    guard case .tool(let webUpdate) = web?.event,
+      case .tool(let subagentUpdate) = subagent?.event,
+      case .tool(let thinkUpdate) = think?.event
+    else {
+      return XCTFail("Expected semantic tool updates")
+    }
+    XCTAssertEqual(webUpdate.name, "web_search")
+    XCTAssertEqual(subagentUpdate.name, "subagent")
+    XCTAssertEqual(thinkUpdate.name, "think")
+  }
+
   private func makeNormalizer(projectRoot: String? = nil) throws -> OpenCodeACPEventNormalizer {
     let binding = try AgentBinding(
       providerID: .openCode,
@@ -209,6 +253,8 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
 
   private static func toolNotification(
     status: String,
+    title: String = "Read project file",
+    kind: String = "read",
     toolCallID: String = "tool-1"
   ) -> OpenCodeACPNotification {
     OpenCodeACPNotification(
@@ -218,8 +264,8 @@ final class OpenCodeACPEventNormalizerTests: XCTestCase {
         "update": .object([
           "sessionUpdate": .string("tool_call_update"),
           "toolCallId": .string(toolCallID),
-          "title": .string("Read project file"),
-          "kind": .string("read"),
+          "title": .string(title),
+          "kind": .string(kind),
           "status": .string(status),
           "locations": .array([
             .object(["path": .string("/tmp/project/file.swift")])

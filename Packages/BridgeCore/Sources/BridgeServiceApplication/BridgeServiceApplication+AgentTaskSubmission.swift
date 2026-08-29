@@ -13,6 +13,7 @@ extension BridgeServiceApplication {
     providerRaw: String,
     project: ServiceProjectRecord,
     sourceClientID: String,
+    workbenchPermissionMode: ServicePermissionMode?,
     deadline: ContinuousClock.Instant
   ) async throws -> PreparedTaskSubmission {
     let providerID = AgentProviderID(rawValue: providerRaw)
@@ -55,41 +56,41 @@ extension BridgeServiceApplication {
     // missing marker to false.
     let configuredModel: String?
     let configuredEffort: String?
-    let defaultMode: ServicePermissionMode
+    let providerDefaultMode: ServicePermissionMode
     if policy.providerID == .openCode {
       configuredModel = try await settings.string(for: .openCodeDefaultModel)
       configuredEffort = try await settings.openCodeDefaultEffort()
       let configuredMode = try await settings.openCodeDefaultPermissionMode()
-      defaultMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
+      providerDefaultMode = configuredMode == "plan" ? .readOnly : .workspaceWrite
     } else if policy.providerID == .deepSeekHarness {
       configuredModel = try await settings.string(for: .deepSeekHarnessDefaultModel)
       configuredEffort = try await settings.string(for: .deepSeekHarnessDefaultEffort)
       let configuredMode = try await settings.deepSeekHarnessDefaultPermissionMode()
-      defaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
+      providerDefaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
     } else if policy.providerID == .antigravity {
       configuredModel = try await settings.antigravityDefaultModel()
       configuredEffort = try await settings.antigravityDefaultEffort()
       let configuredMode = try await settings.antigravityDefaultPermissionMode()
-      defaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
+      providerDefaultMode = configuredMode == "read-only" ? .readOnly : .workspaceWrite
     } else {
       configuredModel = nil
       configuredEffort = nil
-      defaultMode = policy.defaultPermissionMode
+      providerDefaultMode = policy.defaultPermissionMode
     }
+    let requestedPermissionMode = try Self.permissionModeRequest(
+      submission.permissionMode,
+      override: submission.permissionModeOverride,
+      requireWorkspaceWriteOverride: workbenchPermissionMode != nil
+    )
     if !policy.supportsWorkspaceWrite,
-      submission.permissionMode == ServicePermissionMode.workspaceWrite.rawValue
+      requestedPermissionMode == ServicePermissionMode.workspaceWrite.rawValue
     {
       throw BridgeMCPQueryError.contractRejected
     }
-    let narrowsToReadOnly =
-      submission.permissionMode == ServicePermissionMode.readOnly.rawValue
-    let requestedPermissionMode =
-      narrowsToReadOnly || submission.permissionModeOverride == true
-      ? submission.permissionMode : nil
     let permission = try Self.permissionMode(
       requestedPermissionMode,
       project: project,
-      defaultMode: defaultMode
+      defaultMode: workbenchPermissionMode ?? providerDefaultMode
     )
     guard policy.supportsWorkspaceWrite || permission != .workspaceWrite else {
       throw BridgeMCPQueryError.contractRejected

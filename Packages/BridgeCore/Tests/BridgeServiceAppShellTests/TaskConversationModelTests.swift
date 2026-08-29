@@ -25,11 +25,11 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(qwen.sourceDisplayName, "Qwen Studio")
   }
 
-  func testDeepSeekHarnessTaskUsesExperimentalReadOnlyPresentation() {
+  func testDeepSeekHarnessTaskUsesNeutralProviderPresentation() {
     let task = taskSnapshot(status: "running", providerID: "deepseek-harness")
 
     XCTAssertEqual(task.providerDisplayName, "DeepSeek Harness")
-    XCTAssertEqual(task.providerSystemImage, "lock.shield.fill")
+    XCTAssertEqual(task.providerSystemImage, "gearshape.2.fill")
     XCTAssertTrue(task.isExternalAgentTask)
   }
 
@@ -393,7 +393,7 @@ final class TaskConversationModelTests: XCTestCase {
     let thinking = CodexActivityPresentation(task: running, activity: .idle)
     XCTAssertTrue(thinking.isActive)
     XCTAssertTrue(thinking.showsBubble)
-    XCTAssertEqual(thinking.statusText, "Codex 正在思考…")
+    XCTAssertEqual(thinking.statusText, "Codex 正在处理任务…")
 
     let finished = CodexActivityPresentation(task: completed, activity: .thinking)
     XCTAssertFalse(finished.isActive)
@@ -500,6 +500,34 @@ final class TaskConversationModelTests: XCTestCase {
 
     XCTAssertEqual(model.entries.map(\.key), ["user:1", "agent:item-1"])
     XCTAssertNotNil(model.errorMessage)
+  }
+
+  func testTerminalConversationRetriesATransientEmptySnapshot() async throws {
+    let client = TestBridgeServiceClient()
+    let request = IPCTaskConversationRequest(taskID: "task-1", limit: 200)
+    await client.setConversationPageSequence(
+      [
+        IPCTaskConversationPage(taskID: "task-1", messages: []),
+        IPCTaskConversationPage(
+          taskID: "task-1",
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 1,
+              key: "agent:final",
+              role: "agent",
+              content: "Persisted terminal response",
+              final: true
+            )
+          ]
+        ),
+      ],
+      for: request
+    )
+    let model = TaskConversationModel(taskID: "task-1", client: client, isTerminal: true)
+
+    await model.start()
+
+    XCTAssertEqual(model.entries.map(\.content), ["Persisted terminal response"])
   }
 
   func testLoadEarlierPrependsOlderMessagesWithoutDuplicatingKnownKeys() async throws {

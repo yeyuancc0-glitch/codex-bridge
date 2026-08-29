@@ -76,22 +76,26 @@ extension MCPServiceToolCatalog {
       + "that default. Omit all model and effort fields unless the user explicitly requests a "
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
       + "Model and effort fields are applied only when model_override is true. "
+      + "For ChatGPT and Qwen submissions, omit permission_mode to use the Workbench default task "
+      + "mode shared by Codex, OpenCode, DeepSeek Harness, and Antigravity. A read-only value may "
+      + "always narrow that default; workspace-write replaces it only with "
+      + "permission_mode_override=true. "
       + "Set provider_id to route the task to another registered agent provider (for example "
-      + "opencode or deepseek-harness). DeepSeek Harness is experimental and supports fresh "
+      + "opencode or deepseek-harness). DeepSeek Harness supports fresh "
       + "sessions with provider-native read-only or workspace-write sandbox modes; omit thread_id, "
       + "supervisor_model and supervisor_effort, and use an explicitly requested model, effort, "
       + "permission mode, or Skill only when it is supported by the registered installation. "
       + "DeepSeek Harness uses its verified native tool composition; Web, network, MCP, file, command, "
       + "and subagent work should be routed to it when the registered installation exposes those "
       + "capabilities. Its execution-time permission requests are surfaced for local approval. For "
-      + "OpenCode, omit permission_mode to use the saved Bridge default. A read-only value may "
-      + "always narrow that default. Set permission_mode_override=true with workspace-write only "
-      + "when the user explicitly asks for native ACP Build. OpenCode network access follows its native permissions; the "
+      + "OpenCode, native ACP Plan/read-only or native ACP Build/workspace-write follows the Workbench default "
+      + "for ChatGPT and Qwen; local Provider API callers may retain their saved Provider default. "
+      + "OpenCode network access follows its native permissions; the "
       + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
       + "Codex. For OpenCode, execution_effort accepts only the selected model's ACP effort values; "
       + "when omitted, Bridge uses the saved OpenCode default when supported and otherwise the Provider default. "
-      + "If permission_mode is omitted, Bridge uses the saved OpenCode default mode; supervisor, "
-      + "and skill fields must also be omitted. To continue an OpenCode conversation, pass the "
+      + "If permission_mode is omitted, Bridge uses the Workbench default for ChatGPT and Qwen; "
+      + "supervisor and skill fields must also be omitted. To continue an OpenCode conversation, pass the "
       + "provider_session_id returned by get_task as thread_id; Bridge resumes or loads that exact "
       + "ACP session in the selected project. For Antigravity, set provider_id=antigravity; it "
       + "uses the registered official agy stream-json installation and supports native plan/accept-edits "
@@ -162,12 +166,12 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For external agents, read-only may always narrow the saved mode; workspace-write requires permission_mode_override=true. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for local approval. Antigravity selects agy Plan or Accept Edits and uses its native sandbox permission policy for headless tools.",
+            "For ChatGPT and Qwen submissions, omitting this field uses the Workbench default task mode across Codex and registered external agents. A read-only value may always narrow that default; workspace-write requires permission_mode_override=true. Codex selects its native sandbox. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for local approval. Antigravity selects agy Plan or Accept Edits and uses its native sandbox permission policy for headless tools.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
           "description":
-            "Set true only when the user explicitly requests workspace-write or another per-task permission override. Read-only may be supplied without this marker to narrow an external agent's saved mode.",
+            "Set true only when the user explicitly requests workspace-write or another per-task permission override. Read-only may be supplied without this marker to narrow the Workbench default.",
         ],
         "network_access": [
           "type": "boolean",

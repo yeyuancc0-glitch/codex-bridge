@@ -161,7 +161,8 @@ struct ServiceExecutionAgentEventProcessor: Sendable {
     case .pending, .inProgress: .inProgress
     case .completed: .completed
     case .failed: .failed
-    case .cancelled, .declined: .declined
+    case .cancelled: .cancelled
+    case .declined: .declined
     }
   }
 

@@ -142,4 +142,40 @@ extension BridgeServiceAppModel {
       }
     }
   }
+
+  func setWorkbenchPermissionMode(_ mode: String) {
+    guard mode == "read-only" || mode == "workspace-write",
+      mode != workbenchPermissionMode
+    else { return }
+    workbenchPermissionMode = mode
+    updateWorkbenchPermissionModeState(mode)
+    errorMessage = nil
+    workbenchPermissionModeSyncGeneration &+= 1
+    let generation = workbenchPermissionModeSyncGeneration
+    let precedingTask = workbenchPermissionModeSyncTask
+    workbenchPermissionModeSyncTask = Task { [weak self] in
+      await precedingTask?.value
+      guard let self else { return }
+      do {
+        let client = try self.currentClient()
+        try await client.setWorkbenchPermissionMode(mode)
+        self.confirmedWorkbenchPermissionMode = mode
+        guard self.workbenchPermissionModeSyncGeneration == generation else { return }
+        self.workbenchPermissionModeSyncTask = nil
+        self.workbenchPermissionMode = mode
+        self.updateWorkbenchPermissionModeState(mode)
+        self.postToast(
+          mode == "read-only" ? "工作台默认任务模式：只读" : "工作台默认任务模式：可写",
+          symbol: "checkmark.circle.fill",
+          tone: .success
+        )
+      } catch {
+        guard self.workbenchPermissionModeSyncGeneration == generation else { return }
+        self.workbenchPermissionModeSyncTask = nil
+        self.workbenchPermissionMode = self.confirmedWorkbenchPermissionMode
+        self.updateWorkbenchPermissionModeState(self.confirmedWorkbenchPermissionMode)
+        self.errorMessage = Self.message(error)
+      }
+    }
+  }
 }

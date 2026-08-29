@@ -116,7 +116,7 @@ struct ThreadChatBubbleView: View {
           }
 
           if !group.mainText.isEmpty {
-            Text(group.mainText)
+            AgentMarkdownText(group.mainText)
               .font(.system(size: 13))
               .textSelection(.enabled)
               .fixedSize(horizontal: false, vertical: true)
@@ -181,7 +181,7 @@ struct CodexThoughtsDisclosureView: View {
               Text("\(index + 1).")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.tertiary)
-              Text(thought)
+              AgentMarkdownText(thought)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)

@@ -174,19 +174,22 @@ public struct IPCServiceStatusResponse: Codable, Equatable, Sendable {
   public let exposureMode: MCPServiceExposureMode
   public let tunnel: IPCTunnelStatus
   public let workbenchProjectID: String?
+  public let workbenchPermissionMode: String?
 
   public init(
     status: BridgeStatusSnapshot,
     localMCPURL: String?,
     exposureMode: MCPServiceExposureMode,
     tunnel: IPCTunnelStatus = .unconfigured,
-    workbenchProjectID: String? = nil
+    workbenchProjectID: String? = nil,
+    workbenchPermissionMode: String? = nil
   ) {
     self.status = status
     self.localMCPURL = localMCPURL
     self.exposureMode = exposureMode
     self.tunnel = tunnel
     self.workbenchProjectID = workbenchProjectID
+    self.workbenchPermissionMode = workbenchPermissionMode
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -195,6 +198,22 @@ public struct IPCServiceStatusResponse: Codable, Equatable, Sendable {
     case exposureMode = "exposure_mode"
     case tunnel
     case workbenchProjectID = "workbench_project_id"
+    case workbenchPermissionMode = "workbench_permission_mode"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    status = try values.decode(BridgeStatusSnapshot.self, forKey: .status)
+    localMCPURL = try values.decodeIfPresent(String.self, forKey: .localMCPURL)
+    exposureMode = try values.decode(MCPServiceExposureMode.self, forKey: .exposureMode)
+    tunnel =
+      try values.decodeIfPresent(IPCTunnelStatus.self, forKey: .tunnel)
+      ?? .unconfigured
+    workbenchProjectID = try values.decodeIfPresent(String.self, forKey: .workbenchProjectID)
+    workbenchPermissionMode = try values.decodeIfPresent(
+      String.self,
+      forKey: .workbenchPermissionMode
+    )
   }
 }
 

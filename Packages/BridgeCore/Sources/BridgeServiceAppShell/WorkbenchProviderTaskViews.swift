@@ -141,17 +141,25 @@ struct WorkbenchExternalTaskCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
 
-        if task.providerIdentifier == "deepseek-harness" {
-          Label(
-            "实验性 Provider · 仅新会话",
-            systemImage: "lock.shield.fill"
-          )
-          .font(.caption2)
-          .foregroundStyle(.orange)
-        } else {
-          Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
+        if let modelLabel = WorkbenchTaskModelPresentation.label(
+          modelID: task.executionModel,
+          effort: task.executionEffort,
+          displayName: nil
+        ) {
+          Label("使用模型 \(modelLabel)", systemImage: "cpu")
             .font(.caption2)
             .foregroundStyle(.secondary)
+        }
+
+        Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+
+        if task.providerIdentifier == "deepseek-harness" {
+          Text("每个任务使用独立会话")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .help("DeepSeek Harness 当前不支持续接历史会话。")
         }
 
         if let failureDescription = task.failureDescription {

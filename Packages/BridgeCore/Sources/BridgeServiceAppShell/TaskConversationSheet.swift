@@ -71,7 +71,8 @@ struct TaskConversationSheet: View {
           ForEach(conversation.entries) { entry in
             MessageBubble(
               entry: entry,
-              streaming: isStreaming(entry)
+              streaming: isStreaming(entry),
+              providerID: task?.providerIdentifier ?? "codex"
             )
           }
 
@@ -146,13 +147,14 @@ struct TaskConversationSheet: View {
 struct MessageBubble: View {
   let entry: TaskConversationModel.Entry
   let streaming: Bool
+  var providerID = "codex"
 
   var body: some View {
     switch entry.kind {
     case "reasoning":
-      ReasoningBubbleView(entry: entry, streaming: streaming)
+      ReasoningBubbleView(entry: entry, streaming: streaming, providerID: providerID)
     case "tool_call":
-      ToolCallBubbleView(entry: entry)
+      ToolCallBubbleView(entry: entry, providerID: providerID)
     default:
       TextBubbleView(entry: entry, streaming: streaming)
     }
@@ -169,7 +171,7 @@ struct TextBubbleView: View {
       if isUser {
         Spacer(minLength: 40)
       }
-      Text(displayContent)
+      AgentMarkdownText(entry.content, isStreaming: streaming)
         .font(.system(size: 13))
         .textSelection(.enabled)
         .lineSpacing(2)
@@ -186,15 +188,12 @@ struct TextBubbleView: View {
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
   }
-
-  private var displayContent: String {
-    streaming ? entry.content + "▍" : entry.content
-  }
 }
 
 struct ReasoningBubbleView: View {
   let entry: TaskConversationModel.Entry
   let streaming: Bool
+  let providerID: String
   @State private var isExpanded = false
 
   var body: some View {
@@ -209,8 +208,13 @@ struct ReasoningBubbleView: View {
             .font(.caption2.weight(.semibold))
           Image(systemName: "brain.head.profile")
             .font(.caption2.weight(.semibold))
-          Text(streaming ? "正在思考" : "思考过程")
-            .font(.caption.weight(.semibold))
+          Text(
+            CodexTranscriptPresentation.reasoningTitle(
+              providerID: providerID,
+              streaming: streaming
+            )
+          )
+          .font(.caption.weight(.semibold))
           if streaming {
             ThinkingOrbView(size: 10)
           }
@@ -222,7 +226,7 @@ struct ReasoningBubbleView: View {
       .buttonStyle(.plain)
 
       if isExpanded {
-        Text(displayContent)
+        AgentMarkdownText(entry.content, isStreaming: streaming)
           .font(.callout)
           .foregroundStyle(.secondary)
           .textSelection(.enabled)
@@ -233,14 +237,11 @@ struct ReasoningBubbleView: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
-
-  private var displayContent: String {
-    streaming ? entry.content + "▍" : entry.content
-  }
 }
 
 struct ToolCallBubbleView: View {
   let entry: TaskConversationModel.Entry
+  let providerID: String
   @State private var isExpanded = false
 
   var body: some View {
@@ -292,22 +293,21 @@ struct ToolCallBubbleView: View {
     case "declined":
       Image(systemName: "minus.circle.fill")
         .foregroundStyle(.orange)
+    case "cancelled":
+      Image(systemName: "xmark.circle")
+        .foregroundStyle(.secondary)
     default:
       ThinkingOrbView(size: 11)
     }
   }
 
   private var statusLabel: String {
-    switch entry.toolStatus {
-    case "completed": ""
-    case "failed": "失败"
-    case "declined": "已拒绝"
-    default: "进行中"
-    }
+    CodexTranscriptPresentation.statusLabel(entry.toolStatus)
   }
 
   private var presentation: CodexTranscriptToolPresentation {
     CodexTranscriptPresentation.tool(
+      providerID: providerID,
       name: entry.toolName,
       status: entry.toolStatus
     )
@@ -316,41 +316,5 @@ struct ToolCallBubbleView: View {
   private var details: String? {
     if let arguments = entry.toolArguments, !arguments.isEmpty { return arguments }
     return entry.content.isEmpty ? nil : entry.content
-  }
-}
-
-package struct CodexTranscriptToolPresentation: Equatable, Sendable {
-  package let title: String
-  package let systemImage: String
-}
-
-package enum CodexTranscriptPresentation {
-  package static func tool(
-    name: String?,
-    status: String?
-  ) -> CodexTranscriptToolPresentation {
-    let normalized = (name ?? "").lowercased()
-    let isActive = status != "completed" && status != "failed" && status != "declined"
-    if normalized.contains("search") || normalized.contains("grep") {
-      return .init(title: isActive ? "正在搜索文件" : "已搜索文件", systemImage: "magnifyingglass")
-    }
-    if normalized.contains("read") {
-      return .init(title: isActive ? "正在读取文件" : "已读取文件", systemImage: "book")
-    }
-    if normalized.contains("list") {
-      return .init(title: isActive ? "正在列出文件" : "已列出文件", systemImage: "list.bullet")
-    }
-    if normalized.contains("file_change") || normalized.contains("patch")
-      || normalized.contains("edit") || normalized.contains("write")
-    {
-      return .init(title: isActive ? "正在编辑文件" : "已编辑文件", systemImage: "pencil")
-    }
-    if normalized.contains("command") || normalized.contains("exec") {
-      return .init(title: isActive ? "正在运行命令" : "已运行命令", systemImage: "terminal")
-    }
-    return .init(
-      title: isActive ? "正在使用 \(name ?? "工具")" : "已使用 \(name ?? "工具")",
-      systemImage: "wrench.and.screwdriver"
-    )
   }
 }

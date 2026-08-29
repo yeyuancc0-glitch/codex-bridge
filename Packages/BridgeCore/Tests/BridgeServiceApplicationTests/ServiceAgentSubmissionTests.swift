@@ -934,6 +934,40 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.executionEffort, "high")
   }
 
+  func testRemoteOpenCodeSubmissionUsesWorkbenchPermissionMode() async throws {
+    let fixture = try await makeServiceApplicationFixture(self)
+    try await fixture.settings.setOpenCodeDefaultPermissionMode("build")
+    let provider = try ScriptedAgentProvider(
+      supportsWorkspaceWrite: true,
+      supportedReasoningEfforts: ["low", "high"]
+    )
+    let registry = try await Self.makeRegistry(fixture: fixture, provider: provider, enabled: true)
+    let application = makeServiceApplication(
+      fixture: fixture,
+      catalogScript: serviceModelCatalogScript,
+      agentRegistry: registry,
+      agentRunner: ServiceAgentTaskRunner(
+        registry: registry,
+        providers: [.openCode: provider]
+      )
+    )
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    try await application.serviceSetWorkbenchPermissionMode(.readOnly, deadline: deadline)
+
+    let receipt = try await application.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: fixture.project.id.rawValue,
+        prompt: "Use the Workbench default for a remote OpenCode task.",
+        providerID: "opencode",
+        clientRequestID: "remote-opencode-workbench-mode"
+      ),
+      deadline: deadline
+    )
+    let taskValue = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    let task = try XCTUnwrap(taskValue)
+    XCTAssertEqual(task.permissionMode, .readOnly)
+  }
+
   func testManagedAgentSubmissionReusesIDAndUsesDefaultsWhenOverridesAreDisabled()
     async throws
   {
@@ -1695,7 +1729,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     async throws
   {
     let fixture = try await makeServiceApplicationFixture(self)
-    try await fixture.settings.setAntigravityDefaultPermissionMode("read-only")
+    try await fixture.settings.setWorkbenchPermissionMode(.readOnly)
     let provider = try ScriptedAgentProvider(
       providerID: .antigravity,
       capabilities: [.workspaceRead]

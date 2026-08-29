@@ -177,7 +177,7 @@ public actor OpenCodeACPEventNormalizer {
         return path
       }
     }
-    let name = state.kind ?? "tool"
+    let name = Self.semanticToolName(title: state.title, kind: state.kind)
     let payload = try AgentToolUpdate(
       key: "tool:\(toolCallID)",
       name: name,
@@ -190,6 +190,63 @@ public actor OpenCodeACPEventNormalizer {
     )
     tools[toolCallID] = state
     return try envelope(.tool(payload))
+  }
+
+  private static func semanticToolName(title: String?, kind: String?) -> String {
+    let values = [title, kind].compactMap { normalizedWords($0) }
+    let tokens = Set(values.flatMap { $0.split(separator: "_").map(String.init) })
+
+    if tokens.contains("web") || tokens.contains("browser") || tokens.contains("internet") {
+      if tokens.contains("search") || tokens.contains("query") || tokens.contains("lookup") {
+        return "web_search"
+      }
+      if tokens.contains("fetch") || tokens.contains("read") || tokens.contains("open")
+        || tokens.contains("url") || tokens.contains("page") || tokens.contains("content")
+      {
+        return "web_fetch"
+      }
+    }
+    if tokens.contains("url") && (tokens.contains("read") || tokens.contains("fetch")) {
+      return "web_fetch"
+    }
+    if tokens.contains("task") || tokens.contains("agent") || tokens.contains("subagent")
+      || tokens.contains("delegate") || tokens.contains("explore")
+    {
+      return "subagent"
+    }
+    if values.contains("think") {
+      // A real `think` tool is analysis, not evidence of a child run.
+      return "think"
+    }
+    if values.contains(where: { ["search", "grep", "glob", "find"].contains($0) }) {
+      return "search_files"
+    }
+    if values.contains(where: { ["read", "read_file"].contains($0) }) {
+      return "read_files"
+    }
+    if values.contains(where: { ["list", "list_files", "list_directory"].contains($0) }) {
+      return "list_files"
+    }
+    if values.contains(where: {
+      ["edit", "write", "patch", "delete", "move", "file_change"].contains($0)
+    }) {
+      return "file_change"
+    }
+    if values.contains(where: { ["execute", "command", "bash", "shell", "exec"].contains($0) }) {
+      return "command_execution"
+    }
+    return normalizedWords(kind) ?? normalizedWords(title) ?? "tool"
+  }
+
+  private static func normalizedWords(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let bounded = String(decoding: value.utf8.prefix(192), as: UTF8.self)
+    let normalized =
+      bounded
+      .lowercased()
+      .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+      .joined(separator: "_")
+    return normalized.isEmpty ? nil : normalized
   }
 
   private func plan(_ update: [String: ACPJSONValue]) throws -> AgentEventEnvelope? {

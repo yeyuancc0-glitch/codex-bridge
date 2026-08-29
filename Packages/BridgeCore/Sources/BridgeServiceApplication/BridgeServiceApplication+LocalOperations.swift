@@ -52,6 +52,21 @@ extension BridgeServiceApplication {
     try await settings.set(projectID, for: .workbenchProjectID)
   }
 
+  public func serviceWorkbenchPermissionMode(
+    deadline: ContinuousClock.Instant
+  ) async throws -> ServicePermissionMode {
+    try Self.checkDeadline(deadline)
+    return try await settings.workbenchPermissionMode()
+  }
+
+  public func serviceSetWorkbenchPermissionMode(
+    _ mode: ServicePermissionMode,
+    deadline: ContinuousClock.Instant
+  ) async throws {
+    try Self.checkDeadline(deadline)
+    try await settings.setWorkbenchPermissionMode(mode)
+  }
+
   public func serviceRegisterManagedProject(
     name: String,
     rootURL: URL,

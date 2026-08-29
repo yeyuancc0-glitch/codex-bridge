@@ -36,6 +36,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     supervisorEffort: "medium"
   )
   private var customInstructionsValue = "Fixture global instructions"
+  private var workbenchPermissionModeValue: String?
   private let failModelCatalog: Bool
   private let failThreadList: Bool
   private var statusDelay: Duration = .zero
@@ -60,6 +61,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     ]
   )
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
+  private var conversationPageSequences: [TaskConversationQuery: [IPCTaskConversationPage]] = [:]
   private var projectsValue: [MCPProjectSummary] = [
     MCPProjectSummary(
       projectID: "project-1",
@@ -147,6 +149,13 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setConversationPages(_ pages: [TaskConversationQuery: IPCTaskConversationPage]) {
     conversationPages = pages
+  }
+
+  func setConversationPageSequence(
+    _ pages: [IPCTaskConversationPage],
+    for request: IPCTaskConversationRequest
+  ) {
+    conversationPageSequences[TaskConversationQuery(request)] = pages
   }
 
   func setTaskSnapshots(_ snapshots: [MCPServiceTaskSnapshot]) {
@@ -259,7 +268,8 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
       ),
       localMCPURL: "http://127.0.0.1:1234/mcp",
       exposureMode: exposureMode,
-      tunnel: tunnelStatus
+      tunnel: tunnelStatus,
+      workbenchPermissionMode: workbenchPermissionModeValue
     )
   }
 
@@ -385,6 +395,14 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setWorkbenchProject(projectID: String?) async throws {
     workbenchProjectSelections.append(projectID)
+  }
+
+  func setWorkbenchPermissionMode(_ mode: String) async throws {
+    workbenchPermissionModeValue = mode
+  }
+
+  func configureWorkbenchPermissionMode(_ mode: String?) {
+    workbenchPermissionModeValue = mode
   }
 
   func workbenchProjectSelectionsValue() -> [String?] {
@@ -694,7 +712,13 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func taskConversation(
     _ request: IPCTaskConversationRequest
   ) async throws -> IPCTaskConversationPage {
-    conversationPages[TaskConversationQuery(request)]
+    let query = TaskConversationQuery(request)
+    if var pages = conversationPageSequences[query], !pages.isEmpty {
+      let page = pages.removeFirst()
+      conversationPageSequences[query] = pages
+      return page
+    }
+    return conversationPages[query]
       ?? IPCTaskConversationPage(taskID: request.taskID, messages: [])
   }
 

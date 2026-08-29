@@ -8,6 +8,31 @@ import XCTest
 
 @MainActor
 final class BridgeServiceAppModelTests: XCTestCase {
+  func testWorkbenchPermissionModeHydratesFromStatusAndPersistsThroughClient()
+    async throws
+  {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    await client.configureWorkbenchPermissionMode("read-only")
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+
+    await model.startAsync()
+
+    XCTAssertEqual(model.workbenchPermissionMode, "read-only")
+    model.setWorkbenchPermissionMode("workspace-write")
+    try await waitUntil {
+      guard model.workbenchPermissionMode == "workspace-write" else { return false }
+      let status = try? await client.status()
+      return status?.workbenchPermissionMode == "workspace-write"
+    }
+  }
+
   func testStartRegistersAndConnectsToBackgroundService() async throws {
     let registration = TestServiceRegistration(status: .notRegistered)
     let client = TestBridgeServiceClient()
@@ -1531,6 +1556,81 @@ final class BridgeServiceAppModelTests: XCTestCase {
     }
     XCTAssertEqual(model.selectedTaskID, running.taskID)
     await model.shutdownUI()
+  }
+
+  func testTerminalTransitionRebuildsConversationAfterDelayedEmptySubscription() async throws {
+    let terminalCases = [
+      (status: "completed", content: "Completed authoritative response"),
+      (status: "failed", content: "Failed authoritative response"),
+      (status: "interrupted", content: "Interrupted authoritative response"),
+    ]
+
+    for (index, terminalCase) in terminalCases.enumerated() {
+      let registration = TestServiceRegistration(status: .enabled)
+      let client = TestBridgeServiceClient()
+      let taskID = "terminal-race-\(index)"
+      let running = MCPServiceTaskSnapshot(
+        taskID: taskID,
+        projectID: "project-1",
+        status: "running",
+        providerID: "opencode",
+        providerRunID: "run-\(index)",
+        supervisorStatus: "disabled",
+        localApprovalRequired: false,
+        updatedAt: "2026-08-29T12:00:00Z"
+      )
+      let terminal = MCPServiceTaskSnapshot(
+        taskID: taskID,
+        projectID: "project-1",
+        status: terminalCase.status,
+        providerID: "opencode",
+        providerRunID: "run-\(index)",
+        supervisorStatus: "disabled",
+        localApprovalRequired: false,
+        updatedAt: "2026-08-29T12:01:00Z"
+      )
+      await client.setTaskSnapshots([running])
+      await client.setSubscriptionPage(
+        IPCTaskConversationPage(taskID: taskID, messages: [])
+      )
+      await client.setSubscriptionDelay(.milliseconds(100))
+      await client.setConversationPages([
+        .init(IPCTaskConversationRequest(taskID: taskID, limit: 200)):
+          IPCTaskConversationPage(
+            taskID: taskID,
+            messages: [
+              IPCTaskConversationMessage(
+                messageID: 1,
+                key: "agent:final",
+                role: "agent",
+                content: terminalCase.content,
+                final: true
+              )
+            ]
+          )
+      ])
+      let model = BridgeServiceAppModel(
+        registration: registration,
+        clientFactory: { client },
+        pollInterval: nil,
+        connectionRetryDelay: .milliseconds(1),
+        maximumConnectionAttempts: 1
+      )
+
+      await model.startAsync()
+      try await waitUntil { model.conversation?.taskID == taskID }
+      await client.setTaskSnapshots([terminal])
+      await model.refresh(silent: true, includeCatalog: false)
+
+      try await waitUntil {
+        model.conversation?.taskID == taskID
+          && model.conversation?.entries.first?.content == terminalCase.content
+      }
+      try await Task.sleep(for: .milliseconds(150))
+      XCTAssertEqual(model.conversation?.entries.first?.content, terminalCase.content)
+      XCTAssertEqual(model.conversation?.entries.first?.isFinal, true)
+      await model.shutdownUI()
+    }
   }
 
   func testActiveTaskInAnotherProjectDoesNotReplaceWorkbenchDefault() async throws {

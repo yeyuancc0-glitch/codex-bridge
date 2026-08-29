@@ -204,6 +204,18 @@ public struct IPCWorkbenchProjectRequest: Codable, Equatable, Sendable {
   }
 }
 
+public struct IPCWorkbenchPermissionModeRequest: Codable, Equatable, Sendable {
+  public let permissionMode: String
+
+  public init(permissionMode: String) {
+    self.permissionMode = permissionMode
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case permissionMode = "permission_mode"
+  }
+}
+
 public struct IPCProjectListResponse: Codable, Equatable, Sendable {
   public let projects: [MCPProjectSummary]
 

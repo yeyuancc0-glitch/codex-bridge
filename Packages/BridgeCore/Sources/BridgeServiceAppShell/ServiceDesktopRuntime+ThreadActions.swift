@@ -98,16 +98,7 @@ extension BridgeServiceAppModel {
 
   public func closeConversation() {
     guard let conversation else { return }
-    let taskID = conversation.taskID
-    let subscriptionID = conversation.subscriptionID
     self.conversation = nil
     conversation.cancel()
-    guard subscriptionID >= 0, let client, connectionState == .connected else { return }
-    Task {
-      try? await client.unsubscribeTaskConversation(
-        taskID: taskID,
-        subscriptionID: subscriptionID
-      )
-    }
   }
 }

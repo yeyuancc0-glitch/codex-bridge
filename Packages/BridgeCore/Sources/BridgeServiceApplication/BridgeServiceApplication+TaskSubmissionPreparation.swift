@@ -11,18 +11,31 @@ extension BridgeServiceApplication {
   ) async throws -> PreparedTaskSubmission {
     let projectID = try await submissionProjectID(explicit: submission.projectID)
     let project = try await readableProject(projectID)
+    let workbenchPermissionMode = try await workbenchDefaultPermissionMode(
+      sourceClientID: sourceClientID
+    )
     if let providerRaw = submission.providerID {
       return try await prepareAgentSubmission(
         submission,
         providerRaw: providerRaw,
         project: project,
         sourceClientID: sourceClientID,
+        workbenchPermissionMode: workbenchPermissionMode,
         deadline: deadline
       )
     }
     let models = try await catalog.listModels(deadline: deadline).models
     let selections = try await modelSelections(submission: submission, models: models)
-    let permission = try Self.permissionMode(submission.permissionMode, project: project)
+    let requestedPermissionMode = try Self.permissionModeRequest(
+      submission.permissionMode,
+      override: submission.permissionModeOverride,
+      requireWorkspaceWriteOverride: workbenchPermissionMode != nil
+    )
+    let permission = try Self.permissionMode(
+      requestedPermissionMode,
+      project: project,
+      defaultMode: workbenchPermissionMode
+    )
     let accessMode = try await settings.accessMode()
     let fastMode =
       try await settings.isFastModeEnabled()
@@ -51,6 +64,18 @@ extension BridgeServiceApplication {
         fastMode: fastMode
       )
     )
+  }
+
+  private func workbenchDefaultPermissionMode(
+    sourceClientID: String
+  ) async throws -> ServicePermissionMode? {
+    guard
+      sourceClientID == MCPClientID.chatGPT.rawValue
+        || sourceClientID == MCPClientID.qwenStudio.rawValue
+    else {
+      return nil
+    }
+    return try await settings.workbenchPermissionMode()
   }
 
   private func submissionProjectID(explicit: String?) async throws -> String {

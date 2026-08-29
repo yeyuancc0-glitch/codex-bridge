@@ -31,6 +31,7 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case executionAccessMode = "execution.access_mode"
   case executionFastMode = "execution.fast_mode"
   case workbenchProjectID = "workbench.project_id"
+  case workbenchPermissionMode = "workbench.permission_mode"
   case openCodeDefaultModel = "agent.opencode.default_model"
   case openCodeDefaultPermissionMode = "agent.opencode.default_permission_mode"
   case openCodeDefaultEffort = "agent.opencode.default_effort"
@@ -180,6 +181,20 @@ public actor ServiceSettings {
 
   public func setTaskStartApprovalMode(_ mode: ServiceTaskStartApprovalMode) async throws {
     try await set(mode.rawValue, for: .taskStartApprovalMode)
+  }
+
+  public func workbenchPermissionMode() async throws -> ServicePermissionMode {
+    guard let value = try await string(for: .workbenchPermissionMode) else {
+      return .workspaceWrite
+    }
+    guard let mode = ServicePermissionMode(rawValue: value) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return mode
+  }
+
+  public func setWorkbenchPermissionMode(_ mode: ServicePermissionMode) async throws {
+    try await set(mode.rawValue, for: .workbenchPermissionMode)
   }
 
   public func setModelPreferences(_ preferences: ServiceModelPreferences) async throws {

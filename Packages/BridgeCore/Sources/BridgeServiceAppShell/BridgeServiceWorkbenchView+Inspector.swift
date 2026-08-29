@@ -195,14 +195,9 @@ struct BridgeServiceWorkbenchInspectorHeader: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
 
-      if let task = context.currentTask, task.isCodexTask,
-        let modelLabel = WorkbenchTaskModelPresentation.label(
-          modelID: task.executionModel,
-          effort: task.executionEffort,
-          displayName: model.models.first(where: { $0.modelID == task.executionModel })?
-            .displayName
-        )
-      {
+      WorkbenchPermissionModePicker(model: model)
+
+      if let task = context.currentTask, let modelLabel = taskModelLabel(for: task) {
         Label {
           Text("使用模型 \(modelLabel)")
             .lineLimit(1)
@@ -212,7 +207,7 @@ struct BridgeServiceWorkbenchInspectorHeader: View {
         }
         .font(.caption2.weight(.medium))
         .foregroundStyle(.secondary)
-        .help("当前任务实际使用：\(task.executionModel ?? modelLabel) · \(task.executionEffort ?? "未知")")
+        .help("当前任务模型记录：\(modelLabel)")
         .accessibilityLabel("当前任务实际使用模型：\(modelLabel)")
       }
 
@@ -266,5 +261,21 @@ struct BridgeServiceWorkbenchInspectorHeader: View {
 
   private func canInterrupt(_ task: MCPServiceTaskSnapshot) -> Bool {
     task.expectedControlID != nil
+  }
+
+  private func taskModelLabel(for task: MCPServiceTaskSnapshot) -> String? {
+    let displayName: String?
+    if task.isCodexTask {
+      displayName = model.models.first(where: { $0.modelID == task.executionModel })?.displayName
+    } else {
+      displayName =
+        model.agentModelOptions(for: task.providerIdentifier)
+        .first(where: { $0.modelID == task.executionModel })?.displayName
+    }
+    return WorkbenchTaskModelPresentation.label(
+      modelID: task.executionModel,
+      effort: task.executionEffort,
+      displayName: displayName
+    )
   }
 }

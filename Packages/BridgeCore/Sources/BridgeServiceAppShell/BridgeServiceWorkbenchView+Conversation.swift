@@ -13,7 +13,7 @@ struct BridgeServiceWorkbenchInspectorLiveRegion: View {
         conversation: conversation,
         context: context
       )
-      .id(conversation.taskID)
+      .id(conversation.id)
     } else {
       BridgeServiceWorkbenchInspectorBody(
         model: model,
@@ -86,7 +86,8 @@ struct BridgeServiceWorkbenchInspectorBody: View {
           BridgeServiceWorkbenchConversationStream(
             conversation: conversation,
             selectedThread: model.selectedThread,
-            activity: activity
+            activity: activity,
+            providerID: context.currentTask?.providerIdentifier ?? "codex"
           )
         }
         .padding(12)
@@ -107,13 +108,18 @@ struct BridgeServiceWorkbenchConversationStream: View {
   let conversation: TaskConversationModel?
   let selectedThread: MCPThreadReadPage?
   let activity: CodexActivityPresentation
+  let providerID: String
 
   var body: some View {
     if let conversation, !conversation.entries.isEmpty {
       LazyVStack(alignment: .leading, spacing: 10) {
         ForEach(conversation.entries) { entry in
-          MessageBubble(entry: entry, streaming: entry.role == "agent" && !entry.isFinal)
-            .id(entry.key)
+          MessageBubble(
+            entry: entry,
+            streaming: entry.role == "agent" && !entry.isFinal,
+            providerID: providerID
+          )
+          .id(entry.key)
         }
 
         if isWaitingForProvider {

@@ -21,9 +21,23 @@ package enum WorkbenchTaskModelPresentation {
     effort: String?,
     displayName: String?
   ) -> String? {
-    guard let modelID, !modelID.isEmpty, let effort, !effort.isEmpty else { return nil }
-    let model = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? modelID
-    return "\(model) · \(effort.prefix(1).uppercased())\(effort.dropFirst())"
+    guard let modelID else { return nil }
+    let identifier = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !identifier.isEmpty else { return nil }
+    let resolvedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let model: String
+    if let resolvedName, !resolvedName.isEmpty {
+      model = resolvedName
+    } else {
+      model =
+        identifier == "provider-default"
+        ? "Provider 默认（未报告具体模型）"
+        : identifier
+    }
+    guard let effort else { return model }
+    let normalizedEffort = effort.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedEffort.isEmpty, normalizedEffort != "provider-default" else { return model }
+    return "\(model) · \(normalizedEffort.prefix(1).uppercased())\(normalizedEffort.dropFirst())"
   }
 }
 

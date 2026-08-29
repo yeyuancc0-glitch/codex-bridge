@@ -182,6 +182,21 @@ extension BridgeServiceApplication {
     return defaultMode
   }
 
+  static func permissionModeRequest(
+    _ rawValue: String?,
+    override: Bool?,
+    requireWorkspaceWriteOverride: Bool
+  ) throws -> String? {
+    guard let rawValue else { return nil }
+    guard let mode = ServicePermissionMode(rawValue: rawValue) else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    if mode == .workspaceWrite, requireWorkspaceWriteOverride, override != true {
+      return nil
+    }
+    return mode.rawValue
+  }
+
   static func prompt(_ prompt: String, acceptanceCriteria: [String]) -> String {
     guard !acceptanceCriteria.isEmpty else { return prompt }
     let lines = acceptanceCriteria.enumerated().map { index, value in

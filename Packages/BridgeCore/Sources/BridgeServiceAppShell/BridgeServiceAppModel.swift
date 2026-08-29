@@ -126,6 +126,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var selectedThreadID: String?
   @Published public internal(set) var selectedTaskID: String?
   @Published public internal(set) var selectedProjectID: String?
+  @Published public internal(set) var workbenchPermissionMode = "workspace-write"
   @Published public var chatWebView: WKWebView? {
     didSet {
       if chatWebView != nil {
@@ -177,6 +178,9 @@ public final class BridgeServiceAppModel: ObservableObject {
   var chatWebViewSleepTask: Task<Void, Never>?
   var toastDismissTask: Task<Void, Never>?
   var workbenchProjectSyncTask: Task<Void, Never>?
+  var workbenchPermissionModeSyncTask: Task<Void, Never>?
+  var workbenchPermissionModeSyncGeneration: UInt64 = 0
+  var confirmedWorkbenchPermissionMode = "workspace-write"
   var agentModelCatalogGenerations: [String: UInt64] = [:]
   var agentModelCatalogScopes: [String: AgentModelCatalogScope] = [:]
   var agentModelHydrationGenerations: [String: UInt64] = [:]
@@ -234,6 +238,7 @@ public final class BridgeServiceAppModel: ObservableObject {
     chatWebViewSleepTask?.cancel()
     toastDismissTask?.cancel()
     workbenchProjectSyncTask?.cancel()
+    workbenchPermissionModeSyncTask?.cancel()
     for task in agentModelDefaultMutationTasks.values {
       task.cancel()
     }
