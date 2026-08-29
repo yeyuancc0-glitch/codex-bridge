@@ -47,6 +47,11 @@ final class MCPToolContractTests: XCTestCase {
     )
     XCTAssertTrue(
       submit.description?.contains("Web, network, MCP, file, command") == true)
+    XCTAssertFalse(
+      submit.description?.localizedCaseInsensitiveContains(
+        "does not provide Web search"
+      ) == true
+    )
   }
 
   func testServiceCatalogPublishesStrictClosedSchemasAndExposureBoundaries() throws {

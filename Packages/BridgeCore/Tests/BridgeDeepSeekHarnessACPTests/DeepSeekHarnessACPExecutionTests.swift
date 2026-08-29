@@ -7,6 +7,92 @@ import XCTest
 @testable import BridgeDeepSeekHarnessACP
 
 final class DeepSeekHarnessACPExecutionTests: XCTestCase {
+  func testFailureDiagnosticsPreserveBoundedRemoteDetailsWithoutSecrets() {
+    let message =
+      "tool invocation failed; token=token-secret Authorization: Bearer bearer-secret "
+      + "cookie=session-secret api_key=api-secret .env=env-secret "
+      + #"{"password":"json-secret"} "#
+      + String(repeating: " detail", count: 1_000)
+    let summary = DeepSeekHarnessACPDiagnostic.failureSummary(
+      for: DeepSeekHarnessACPError.remote(code: -32_602, message: message)
+    )
+
+    XCTAssertTrue(summary.contains("tool invocation failed"))
+    XCTAssertTrue(summary.contains("-32602"))
+    XCTAssertFalse(summary.contains("token-secret"))
+    XCTAssertFalse(summary.contains("bearer-secret"))
+    XCTAssertFalse(summary.contains("session-secret"))
+    XCTAssertFalse(summary.contains("api-secret"))
+    XCTAssertFalse(summary.contains("env-secret"))
+    XCTAssertFalse(summary.contains("json-secret"))
+    XCTAssertLessThanOrEqual(
+      summary.utf8.count, DeepSeekHarnessACPDiagnostic.maximumProviderMessageBytes + 64)
+  }
+
+  func testFailureDiagnosticsIncludeProcessExitAndTransportReason() {
+    XCTAssertTrue(
+      DeepSeekHarnessACPDiagnostic.failureSummary(
+        for: DeepSeekHarnessACPError.processExited(23)
+      ).contains("exit code 23")
+    )
+    XCTAssertTrue(
+      DeepSeekHarnessACPDiagnostic.failureSummary(
+        for: DeepSeekHarnessACPError.transportClosed
+      ).contains("transport closed")
+    )
+  }
+
+  func testEOFRacePreservesTheUnderlyingProcessExitReason() async throws {
+    let transport = ScriptedDeepSeekHarnessTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(deepSeekInitializationResult(id: id))
+      case "session/new":
+        try await transport.emit(deepSeekSessionResult(id: id, sessionID: "eof-race-session"))
+      case "session/prompt":
+        await transport.finish(throwing: ACPError.processExited(23))
+      default:
+        break
+      }
+    }
+    let client = DeepSeekHarnessACPClient(
+      transport: transport,
+      clientInfo: .init(name: "tests", title: "Tests", version: "1")
+    )
+    _ = try await client.initialize()
+    let session = try await client.newSession(cwd: "/tmp")
+    let binding = try AgentBinding(
+      providerID: .deepSeekHarness,
+      installationID: .init(rawValue: "eof-race-installation"),
+      providerSessionID: session.id,
+      providerRunID: "eof-race-run"
+    )
+    let execution = DeepSeekHarnessACPExecution(
+      client: client,
+      normalizer: .init(taskID: .init(rawValue: "eof-race-task"), binding: binding),
+      sessionID: session.id,
+      prompt: "run",
+      initialClientEventSequence: await client.eventSequence,
+      inactivityTimeout: .seconds(30),
+      cleanup: {}
+    )
+    await execution.start()
+
+    var events: [AgentEventEnvelope] = []
+    for try await event in execution.events {
+      events.append(event)
+    }
+    await client.shutdown()
+
+    guard case .failed(let code, let summary) = events.last?.event else {
+      return XCTFail("Expected a terminal failure")
+    }
+    XCTAssertEqual(code, "deepseek_harness_execution_failed")
+    XCTAssertTrue(summary.contains("exit code 23"))
+  }
+
   func testCompletionPromptsContainExactAttestationMarkers() {
     let initial = DeepSeekHarnessACPCompletionAttestation.initialPrompt("run")
     XCTAssertTrue(initial.contains(DeepSeekHarnessACPCompletionAttestation.completedMarker))

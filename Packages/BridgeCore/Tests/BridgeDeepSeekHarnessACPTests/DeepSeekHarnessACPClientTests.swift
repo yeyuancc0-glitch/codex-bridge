@@ -158,6 +158,50 @@ final class DeepSeekHarnessACPClientTests: XCTestCase {
     XCTAssertEqual(permissionReply.result?["outcome"]?["optionId"], .string("reject-once"))
   }
 
+  func testEmptyToolTitleIsNormalizedToNil() async throws {
+    let transport = ScriptedDeepSeekHarnessTransport()
+    await transport.setHandler { message, transport in
+      guard let id = message.id else { return }
+      switch message.method {
+      case "initialize":
+        try await transport.emit(deepSeekInitializationResult(id: id))
+      case "session/new":
+        try await transport.emit(deepSeekSessionResult(id: id, sessionID: "empty-title-session"))
+      case "session/prompt":
+        try await transport.emit(
+          deepSeekToolUpdate(
+            sessionID: "empty-title-session",
+            updateType: "tool_call",
+            toolCallID: "empty-title-tool",
+            status: "in_progress",
+            title: "",
+            kind: "read"
+          )
+        )
+        try await transport.emit(deepSeekPromptResult(id: id))
+      default:
+        break
+      }
+    }
+    let client = DeepSeekHarnessACPClient(
+      transport: transport,
+      clientInfo: .init(name: "tests", title: "Tests", version: "1")
+    )
+    addTeardownBlock { await client.shutdown() }
+    _ = try await client.initialize()
+    let session = try await client.newSession(cwd: "/tmp")
+    let prompt = Task { try await client.prompt(sessionID: session.id, text: "read") }
+    var iterator = client.events.makeAsyncIterator()
+    guard let event = await iterator.next(),
+      case .toolUpdated(let update) = event.event
+    else {
+      return XCTFail("Expected a tool update")
+    }
+    XCTAssertNil(update.title)
+    XCTAssertEqual(update.kind, "read")
+    _ = try await prompt.value
+  }
+
   func testPermissionWithoutNestedToolCallOrRejectKindFailsClosed() async throws {
     let transport = ScriptedDeepSeekHarnessTransport()
     await transport.setHandler { message, transport in

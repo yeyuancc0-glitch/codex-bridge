@@ -555,7 +555,13 @@ final class MCPSessionLifecycleTests: XCTestCase {
     )
     let result = try XCTUnwrap(object["result"] as? [String: Any])
     let metadata = try XCTUnwrap(result["_meta"] as? [String: Any])
-    XCTAssertNotNil(metadata["io.modelcontextprotocol/serverInfo"])
+    let serverInfo = try XCTUnwrap(
+      metadata["io.modelcontextprotocol/serverInfo"] as? [String: Any]
+    )
+    XCTAssertEqual(
+      serverInfo["version"] as? String,
+      MCPServiceToolCatalog.contractVersion
+    )
 
     let jsonOnly = await registry.handle(
       AuthenticatedMCPRequest(

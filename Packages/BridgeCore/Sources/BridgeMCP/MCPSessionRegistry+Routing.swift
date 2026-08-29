@@ -206,7 +206,7 @@ extension MCPSessionRegistry {
     var metadata = result["_meta"] as? [String: Any] ?? [:]
     metadata["io.modelcontextprotocol/serverInfo"] = [
       "name": "Codex Bridge",
-      "version": "1.0.0",
+      "version": MCPServiceToolCatalog.contractVersion,
     ]
     result["_meta"] = metadata
     object["result"] = result
@@ -235,7 +235,7 @@ extension MCPSessionRegistry {
       "_meta": [
         "io.modelcontextprotocol/serverInfo": [
           "name": "Codex Bridge",
-          "version": "1.0.0",
+          "version": MCPServiceToolCatalog.contractVersion,
         ]
       ],
       "instructions": instructions,

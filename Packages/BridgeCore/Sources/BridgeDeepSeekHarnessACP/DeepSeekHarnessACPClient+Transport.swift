@@ -99,7 +99,7 @@ extension DeepSeekHarnessACPClient {
       throw DeepSeekHarnessACPError.invalidMessage
     }
     try validateIdentifier(toolCallID, field: "tool.toolCallID")
-    let title = update["title"]?.stringValue
+    let title = update["title"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
     if let title {
       guard title.utf8.count <= 1_024, !title.contains("\0") else {
         throw DeepSeekHarnessACPError.oversizedFrame
@@ -138,7 +138,9 @@ extension DeepSeekHarnessACPClient {
     initializationTask = nil
     activeSessionID = nil
     pendingPermissions.removeAll()
-    broker.failAll(with: Self.map(error ?? DeepSeekHarnessACPError.transportClosed))
+    let failure = Self.map(error ?? DeepSeekHarnessACPError.transportClosed)
+    rememberTerminalFailure(failure)
+    broker.failAll(with: failure)
     eventContinuation.finish()
   }
 
@@ -151,9 +153,24 @@ extension DeepSeekHarnessACPClient {
     pendingPermissions.removeAll()
     readerTask?.cancel()
     readerTask = nil
-    broker.failAll(with: error)
+    let failure = Self.map(error)
+    rememberTerminalFailure(failure)
+    broker.failAll(with: failure)
     eventContinuation.finish()
     await transport.close()
+  }
+
+  private func rememberTerminalFailure(_ error: any Error) {
+    guard terminalFailureStorage == nil else { return }
+    guard let failure = Self.map(error) as? DeepSeekHarnessACPError else { return }
+    if case .remote(let code, let message) = failure {
+      terminalFailureStorage = .remote(
+        code: code,
+        message: DeepSeekHarnessACPDiagnostic.sanitizeProviderMessage(message)
+      )
+    } else {
+      terminalFailureStorage = failure
+    }
   }
 
   func yield(_ event: DeepSeekHarnessACPClientEvent) {

@@ -9,6 +9,23 @@ import XCTest
 @testable import BridgeDeepSeekHarnessACP
 
 final class DeepSeekHarnessACPProviderTests: XCTestCase {
+  func testRemoteStartFailureRetainsSanitizedProviderMessage() {
+    let error = DeepSeekHarnessACPProvider.runtimeError(
+      for: DeepSeekHarnessACPError.remote(
+        code: -32_602,
+        message: "MCP failed: Authorization: Bearer start-secret token=token-secret"
+      )
+    )
+
+    guard case .malformedEvent(let detail) = error else {
+      return XCTFail("Expected a malformed-event runtime error")
+    }
+    XCTAssertTrue(detail.contains("deepseek-harness-acp-remote--32602"))
+    XCTAssertTrue(detail.contains("MCP failed"))
+    XCTAssertFalse(detail.contains("start-secret"))
+    XCTAssertFalse(detail.contains("token-secret"))
+  }
+
   func testInitializationIdentityIsOptionalButStrictWhenPresent() throws {
     let provider = try DeepSeekHarnessACPProvider()
     XCTAssertNoThrow(

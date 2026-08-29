@@ -99,4 +99,58 @@ final class DeepSeekHarnessACPEventNormalizerTests: XCTestCase {
     XCTAssertEqual(approval.relativePaths, ["Package.swift"])
     XCTAssertEqual(approval.options.map(\.kind), ["allow_once", "reject_once"])
   }
+
+  func testEmptyToolTitleFallsBackToKindAndThenTool() async throws {
+    let binding = try AgentBinding(
+      providerID: .deepSeekHarness,
+      installationID: AgentInstallationID(rawValue: "installation"),
+      providerSessionID: "session",
+      providerRunID: "run"
+    )
+    let normalizer = DeepSeekHarnessACPEventNormalizer(
+      taskID: TaskID(rawValue: "task"),
+      binding: binding
+    )
+
+    let withKind = try await normalizer.normalize(
+      .init(
+        sequence: 0,
+        event: .toolUpdated(
+          .init(
+            sessionID: "session",
+            toolCallID: "kind-tool",
+            title: "",
+            kind: "execute",
+            status: .inProgress,
+            rawInput: nil
+          )
+        )
+      )
+    )
+    let withoutKind = try await normalizer.normalize(
+      .init(
+        sequence: 1,
+        event: .toolUpdated(
+          .init(
+            sessionID: "session",
+            toolCallID: "plain-tool",
+            title: "",
+            kind: nil,
+            status: .inProgress,
+            rawInput: nil
+          )
+        )
+      )
+    )
+
+    guard case .tool(let first) = withKind?.event,
+      case .tool(let second) = withoutKind?.event
+    else {
+      return XCTFail("Expected tool updates")
+    }
+    XCTAssertEqual(first.name, "execute")
+    XCTAssertNil(first.title)
+    XCTAssertEqual(second.name, "tool")
+    XCTAssertNil(second.title)
+  }
 }

@@ -145,6 +145,13 @@ public actor DeepSeekHarnessACPExecution {
 
   private func clientEventsEnded() async {
     guard !terminal else { return }
+    if let failure = await client.terminalFailure() {
+      await failExecution(
+        code: "deepseek_harness_execution_failed",
+        summary: Self.failureSummary(failure)
+      )
+      return
+    }
     await failExecution(
       code: "deepseek_harness_eof_before_completion",
       summary: "DeepSeek Harness ACP ended before the task completed."
@@ -305,21 +312,6 @@ public actor DeepSeekHarnessACPExecution {
   }
 
   private static func failureSummary(_ error: any Error) -> String {
-    switch error {
-    case DeepSeekHarnessACPError.requestTimedOut:
-      return "DeepSeek Harness ACP request timed out."
-    case DeepSeekHarnessACPError.processExited:
-      return "DeepSeek Harness ACP process exited before completion."
-    case DeepSeekHarnessACPError.oversizedFrame:
-      return "DeepSeek Harness ACP exceeded a protocol size limit."
-    case DeepSeekHarnessACPError.sessionMismatch:
-      return "DeepSeek Harness ACP reported an unexpected session."
-    case DeepSeekHarnessACPError.remote(let code, _):
-      return "DeepSeek Harness ACP returned protocol error \(code)."
-    case DeepSeekHarnessACPError.inactivityTimeout:
-      return "DeepSeek Harness ACP became inactive before completion."
-    default:
-      return "DeepSeek Harness ACP execution failed."
-    }
+    DeepSeekHarnessACPDiagnostic.failureSummary(for: error)
   }
 }

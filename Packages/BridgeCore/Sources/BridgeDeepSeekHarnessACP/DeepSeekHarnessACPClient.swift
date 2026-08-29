@@ -18,6 +18,7 @@ public actor DeepSeekHarnessACPClient {
   var nextEventSequence: Int64 = 0
   var started = false
   var closed = false
+  var terminalFailureStorage: DeepSeekHarnessACPError?
   var sessionOperationInFlight = false
 
   public init(
@@ -44,6 +45,10 @@ public actor DeepSeekHarnessACPClient {
 
   public var eventSequence: Int64 {
     nextEventSequence
+  }
+
+  func terminalFailure() -> DeepSeekHarnessACPError? {
+    terminalFailureStorage
   }
 
   public func start() {

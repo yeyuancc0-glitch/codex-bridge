@@ -30,7 +30,7 @@ public struct MCPServiceServerFactory: Sendable {
     let instructions = await serverInstructions()
     let server = Server(
       name: "codex-bridge",
-      version: appVersion,
+      version: "\(appVersion)+mcp.\(MCPServiceToolCatalog.contractVersion)",
       title: "Codex Bridge",
       instructions: instructions,
       capabilities: .init(tools: .init(listChanged: false)),

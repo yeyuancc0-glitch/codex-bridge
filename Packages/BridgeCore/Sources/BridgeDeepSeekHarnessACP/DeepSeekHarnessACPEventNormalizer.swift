@@ -184,7 +184,7 @@ public actor DeepSeekHarnessACPEventNormalizer {
       throw DeepSeekHarnessACPError.oversizedFrame
     }
     var state = tools[update.toolCallID] ?? ToolState()
-    if let title = update.title { state.title = title }
+    if let title = update.title, !title.isEmpty { state.title = title }
     if let kind = update.kind { state.kind = kind }
     if let rawInput = update.rawInput { state.arguments = rawInput.encodedString() }
     state.status = update.status

@@ -51,8 +51,10 @@ extension DeepSeekHarnessACPProvider {
       DeepSeekHarnessACPError.malformedResponse,
       DeepSeekHarnessACPError.malformedPermission:
       return .malformedEvent("deepseek-harness-acp")
-    case DeepSeekHarnessACPError.remote(let code, _):
-      return .malformedEvent("deepseek-harness-acp-remote-\(code)")
+    case DeepSeekHarnessACPError.remote(let code, let message):
+      let detail = DeepSeekHarnessACPDiagnostic.sanitizeProviderMessage(message)
+      let suffix = detail.isEmpty ? "" : ": \(detail)"
+      return .malformedEvent("deepseek-harness-acp-remote-\(code)\(suffix)")
     case DeepSeekHarnessACPError.transportClosed:
       return .processUnavailable
     case DeepSeekHarnessACPError.unsupportedProtocol(let version):
