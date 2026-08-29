@@ -89,17 +89,25 @@ public struct IPCTaskSteerRequest: Codable, Equatable, Sendable {
   public let taskID: String
   public let expectedTurnID: String
   public let input: String
+  public let mode: MCPTaskSteerMode?
 
-  public init(taskID: String, expectedTurnID: String, input: String) {
+  public init(
+    taskID: String,
+    expectedTurnID: String,
+    input: String,
+    mode: MCPTaskSteerMode? = nil
+  ) {
     self.taskID = taskID
     self.expectedTurnID = expectedTurnID
     self.input = input
+    self.mode = mode
   }
 
   private enum CodingKeys: String, CodingKey {
     case taskID = "task_id"
     case expectedTurnID = "expected_turn_id"
     case input
+    case mode
   }
 }
 

@@ -23,7 +23,11 @@ extension BridgeServiceAppModel {
     }
   }
 
-  public func steerTask(_ task: MCPServiceTaskSnapshot, input: String) {
+  public func steerTask(
+    _ task: MCPServiceTaskSnapshot,
+    input: String,
+    mode: MCPTaskSteerMode = .queued
+  ) {
     guard let expectedTurnID = task.expectedControlID,
       !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       input.utf8.count <= IPCTaskSteerRequest.maximumInputBytes,
@@ -34,7 +38,8 @@ extension BridgeServiceAppModel {
       _ = try await client.steerTask(
         taskID: task.taskID,
         expectedTurnID: expectedTurnID,
-        input: input
+        input: input,
+        mode: mode
       )
       await self.refresh(silent: true, includeCatalog: false)
     }

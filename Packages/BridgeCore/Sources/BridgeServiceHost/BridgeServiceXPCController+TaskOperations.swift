@@ -103,6 +103,7 @@ extension BridgeServiceXPCController {
       taskID: payload.taskID,
       expectedTurnID: payload.expectedTurnID,
       input: payload.input,
+      mode: payload.mode ?? .queued,
       deadline: Self.deadline()
     )
     return try BridgeServiceIPCCodec.success(

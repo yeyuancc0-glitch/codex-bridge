@@ -127,6 +127,7 @@ extension DeepSeekHarnessACPClient {
     case "in_progress": .inProgress
     case "completed": .completed
     case "failed": .failed
+    case "cancelled": .cancelled
     default: nil
     }
   }

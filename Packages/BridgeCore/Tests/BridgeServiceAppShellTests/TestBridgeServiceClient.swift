@@ -656,9 +656,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func steerTask(
     taskID: String,
     expectedTurnID: String,
-    input: String
+    input: String,
+    mode: MCPTaskSteerMode
   ) async throws -> MCPServiceTaskMutationReceipt {
-    taskControlActions.append("steer:\(taskID):\(expectedTurnID):\(input)")
+    taskControlActions.append("steer:\(mode.rawValue):\(taskID):\(expectedTurnID):\(input)")
     return MCPServiceTaskMutationReceipt(
       taskID: taskID,
       status: "running",

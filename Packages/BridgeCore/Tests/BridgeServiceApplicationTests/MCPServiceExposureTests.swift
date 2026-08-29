@@ -210,6 +210,13 @@ final class MCPServiceExposureTests: XCTestCase {
     XCTAssertNotNil(submit["receipt_type"])
     let mutation = try outputProperties("steer_task", in: definitions)
     XCTAssertNotNil(mutation["receipt_type"])
+    let steerProperties = try XCTUnwrap(
+      definitions["steer_task"]?.inputSchema.objectValue?["properties"]?.objectValue
+    )
+    XCTAssertEqual(
+      steerProperties["mode"]?.objectValue?["enum"]?.arrayValue,
+      [.string("queued"), .string("interrupt-current-then-continue")]
+    )
 
     for name in [
       "direct_write_project_file", "direct_edit_project_file",

@@ -2,11 +2,18 @@ import BridgeAgentCore
 import Foundation
 
 public actor DeepSeekHarnessACPExecution {
+  enum PromptPhase {
+    case notStarted
+    case running
+    case settling
+    case terminal
+  }
+
   public nonisolated let events: AsyncThrowingStream<AgentEventEnvelope, any Error>
 
-  private let client: DeepSeekHarnessACPClient
+  let client: DeepSeekHarnessACPClient
   let normalizer: DeepSeekHarnessACPEventNormalizer
-  private let sessionID: String
+  let sessionID: String
   private let prompt: String
   private let initialClientEventSequence: Int64
   private let inactivityTimeout: Duration
@@ -18,15 +25,18 @@ public actor DeepSeekHarnessACPExecution {
   private var promptTask: Task<Void, Never>?
   private var watchdogTask: Task<Void, Never>?
   private var consumedClientEventBarrier: Int64
-  private var queuedSteers: [String] = []
-  private var queuedSteerBytes = 0
+  var queuedSteers: [String] = []
+  var queuedSteerBytes = 0
+  var pendingImmediateSteer: String?
+  var immediateCancelTask: Task<Void, any Error>?
+  var promptPhase = PromptPhase.notStarted
   var interruptRequested = false
   var completionCorrectionSent = false
   var recoveryRequiresSuccessfulToolCall = false
   var terminal = false
 
-  private static let maximumQueuedSteers = 32
-  private static let maximumQueuedSteerBytes = 256 * 1_024
+  static let maximumQueuedSteers = 32
+  static let maximumQueuedSteerBytes = 256 * 1_024
 
   public init(
     client: DeepSeekHarnessACPClient,
@@ -77,34 +87,6 @@ public actor DeepSeekHarnessACPExecution {
     armWatchdog()
   }
 
-  public func interrupt() async throws {
-    guard !terminal else { throw AgentRuntimeError.processUnavailable }
-    interruptRequested = true
-    clearQueuedSteers()
-    try await client.cancel(sessionID: sessionID)
-  }
-
-  /// ACP has no standard in-flight steer operation. Queue the input and send
-  /// it as the next prompt on this same session after the current prompt
-  /// resolves. The queue is bounded so control input cannot grow without
-  /// limit while the Harness is busy.
-  public func steer(text: String) throws {
-    guard !terminal, !interruptRequested else {
-      throw AgentRuntimeError.processUnavailable
-    }
-    let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !prompt.isEmpty, prompt.utf8.count <= 64 * 1_024, !prompt.contains("\0") else {
-      throw AgentRuntimeError.invalidRequest("steer.text")
-    }
-    guard queuedSteers.count < Self.maximumQueuedSteers,
-      queuedSteerBytes + prompt.utf8.count <= Self.maximumQueuedSteerBytes
-    else {
-      throw AgentRuntimeError.invalidRequest("steer.queue")
-    }
-    queuedSteers.append(prompt)
-    queuedSteerBytes += prompt.utf8.count
-  }
-
   public func resolveApproval(
     approvalID: String,
     optionID: String
@@ -116,7 +98,7 @@ public actor DeepSeekHarnessACPExecution {
   public func shutdown() async {
     guard claimTerminal() else { return }
     interruptRequested = true
-    clearQueuedSteers()
+    clearSteers()
     try? await client.cancel(sessionID: sessionID)
     if let event = try? await normalizer.interrupted() {
       _ = emit(event)
@@ -167,18 +149,13 @@ public actor DeepSeekHarnessACPExecution {
           return
         }
         let toolEvidenceBeforePrompt = await normalizer.toolEvidence()
+        promptPhase = .running
         let result = try await client.prompt(sessionID: sessionID, text: nextPrompt)
+        promptPhase = .settling
         try await waitUntilConsumed(result.eventSequenceBarrier)
         guard !terminal else { return }
         if interruptRequested {
           await finishInterrupted()
-          return
-        }
-        if result.stopReason == "cancelled" {
-          await failExecution(
-            code: "deepseek_harness_provider_cancelled",
-            summary: "DeepSeek Harness cancelled the task without a local interrupt request."
-          )
           return
         }
         let toolEvidenceAfterPrompt = await normalizer.toolEvidence()
@@ -192,12 +169,24 @@ public actor DeepSeekHarnessACPExecution {
           )
           return
         }
+        if result.stopReason == "cancelled" {
+          if let immediate = try await resumeAfterImmediateSteer() {
+            nextPrompt = immediate
+            continue
+          }
+          await failExecution(
+            code: "deepseek_harness_provider_cancelled",
+            summary: "DeepSeek Harness cancelled the task without a local interrupt request."
+          )
+          return
+        }
         if let queued = try await nextPromptOrTerminal(
           result: result,
           observedToolCalls: toolEvidenceAfterPrompt.calls - toolEvidenceBeforePrompt.calls,
           observedFailedToolCalls: toolEvidenceAfterPrompt.failedCalls
             - toolEvidenceBeforePrompt.failedCalls
         ) {
+          promptPhase = .notStarted
           nextPrompt = queued
           continue
         }
@@ -237,18 +226,6 @@ public actor DeepSeekHarnessACPExecution {
     await closeStream()
   }
 
-  func dequeueSteer() -> String? {
-    guard !queuedSteers.isEmpty else { return nil }
-    let prompt = queuedSteers.removeFirst()
-    queuedSteerBytes -= prompt.utf8.count
-    return prompt
-  }
-
-  private func clearQueuedSteers() {
-    queuedSteers.removeAll(keepingCapacity: false)
-    queuedSteerBytes = 0
-  }
-
   func emit(_ event: AgentEventEnvelope) -> Bool {
     switch continuation.yield(event) {
     case .enqueued: true
@@ -273,7 +250,8 @@ public actor DeepSeekHarnessACPExecution {
   func claimTerminal() -> Bool {
     guard !terminal else { return false }
     terminal = true
-    clearQueuedSteers()
+    promptPhase = .terminal
+    clearSteers()
     return true
   }
 
@@ -302,6 +280,7 @@ public actor DeepSeekHarnessACPExecution {
     eventTask?.cancel()
     promptTask?.cancel()
     watchdogTask?.cancel()
+    immediateCancelTask?.cancel()
     await client.shutdown()
     cleanup()
     if let error {

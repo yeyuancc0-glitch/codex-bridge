@@ -90,6 +90,7 @@ extension ServiceExecutionCoordinator {
         effectiveRunID: runID,
         interrupt: handle.interrupt,
         steer: handle.steer,
+        interruptAndSteer: handle.interruptAndSteer,
         shutdown: handle.shutdown,
         resolveApproval: handle.resolveApproval
       )

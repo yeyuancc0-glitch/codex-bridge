@@ -63,6 +63,9 @@ extension DeepSeekHarnessACPProvider {
           interrupt: { try await execution.interrupt() },
           shutdown: { await execution.shutdown() },
           steer: { text in try await execution.steer(text: text) },
+          interruptAndSteer: { text in
+            try await execution.interruptCurrentThenSteer(text: text)
+          },
           resolveApproval: { approvalID, optionID in
             try await execution.resolveApproval(
               approvalID: approvalID,

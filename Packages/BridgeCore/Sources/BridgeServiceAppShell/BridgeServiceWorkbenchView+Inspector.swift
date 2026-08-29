@@ -9,6 +9,7 @@ struct BridgeServiceWorkbenchInspectorContext {
   let projectTasks: [MCPServiceTaskSnapshot]
   let steerableTask: MCPServiceTaskSnapshot?
   let canSubmitSteer: Bool
+  let canInterruptAndContinue: Bool
   let providerSubtitle: String
   let activity: CodexActivityPresentation
 
@@ -24,6 +25,7 @@ struct BridgeServiceWorkbenchInspectorContext {
     self.projectTasks = projectTasks
     steerableTask = Self.steerableTask(in: model, task: selectedTask)
     canSubmitSteer = Self.canSubmitSteer(steerInput)
+    canInterruptAndContinue = Self.canInterruptAndContinue(in: model, task: selectedTask)
     providerSubtitle = Self.providerSubtitle(for: selectedTask)
     activity = CodexActivityPresentation(
       task: selectedTask ?? activeTask,
@@ -90,6 +92,16 @@ struct BridgeServiceWorkbenchInspectorContext {
     let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
     return !text.isEmpty && input.utf8.count <= IPCTaskSteerRequest.maximumInputBytes
       && !input.contains("\0")
+  }
+
+  private static func canInterruptAndContinue(
+    in model: BridgeServiceAppModel,
+    task: MCPServiceTaskSnapshot?
+  ) -> Bool {
+    guard let installationID = task?.installationID else { return false }
+    return model.agentInstallations.first(where: {
+      $0.installationID == installationID
+    })?.effectiveCapabilities.contains("lifecycle.steer_interrupt_and_continue") == true
   }
 
   private static func providerSubtitle(for task: MCPServiceTaskSnapshot?) -> String {
@@ -225,15 +237,27 @@ struct BridgeServiceWorkbenchInspectorHeader: View {
           TextField("补充指令（当前轮完成后继续）", text: $steerInput)
             .textFieldStyle(.roundedBorder)
             .lineLimit(1...3)
-          Button("发送") {
-            model.steerTask(task, input: steerInput)
-            steerInput = ""
+          Menu("发送") {
+            Button("当前轮结束后继续") {
+              model.steerTask(task, input: steerInput)
+              steerInput = ""
+            }
+            if context.canInterruptAndContinue {
+              Button("立即纠偏当前轮") {
+                model.steerTask(
+                  task,
+                  input: steerInput,
+                  mode: .interruptCurrentThenContinue
+                )
+                steerInput = ""
+              }
+            }
           }
           .buttonStyle(.bordered)
           .controlSize(.mini)
           .disabled(!context.canSubmitSteer)
         }
-        .help("该 Provider 会在当前轮完成后，将补充指令作为同一会话的下一次输入")
+        .help("可排队到当前轮结束；DeepSeek Harness 也可中断当前轮并在同一会话立即继续")
       }
     }
     .padding(12)

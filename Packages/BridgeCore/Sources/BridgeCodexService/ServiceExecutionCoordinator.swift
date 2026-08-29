@@ -13,6 +13,7 @@ public actor ServiceExecutionCoordinator {
     let effectiveRunID: String
     let interrupt: @Sendable () async throws -> Void
     let steer: (@Sendable (String) async throws -> Void)?
+    let interruptAndSteer: (@Sendable (String) async throws -> Void)?
     let shutdown: @Sendable () async -> Void
     let resolveApproval: (@Sendable (String, String) async throws -> Void)?
     var lastSequence: Int64? = nil
@@ -142,18 +143,23 @@ public actor ServiceExecutionCoordinator {
   public func steer(
     taskID: TaskID,
     expectedTurnID: String,
-    text: String
+    text: String,
+    interruptCurrentPrompt: Bool = false
   ) async throws {
     if let run = activeAgentRuns[taskID] {
       guard run.effectiveRunID == expectedTurnID else {
         throw ExecutionServiceError.bindingMismatch
       }
-      guard let steer = run.steer else {
+      let steer = interruptCurrentPrompt ? run.interruptAndSteer : run.steer
+      guard let steer else {
         throw ExecutionServiceError.sessionUnavailable(taskID)
       }
       try await steer(text)
       await conversation.appendUserMessage(taskID: taskID, content: text)
       return
+    }
+    if interruptCurrentPrompt {
+      throw ExecutionServiceError.sessionUnavailable(taskID)
     }
     try await execution.steer(
       taskID: taskID,

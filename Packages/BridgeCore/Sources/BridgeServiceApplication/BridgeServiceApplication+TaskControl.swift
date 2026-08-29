@@ -10,6 +10,7 @@ extension BridgeServiceApplication {
     taskID: String,
     expectedTurnID: String,
     input: String,
+    mode: MCPTaskSteerMode,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPServiceTaskMutationReceipt {
     try Self.checkDeadline(deadline)
@@ -42,7 +43,8 @@ extension BridgeServiceApplication {
       try await coordinator.steer(
         taskID: id,
         expectedTurnID: expectedTurnID,
-        text: input
+        text: input,
+        interruptCurrentPrompt: mode == .interruptCurrentThenContinue
       )
     } catch {
       throw Self.publicExecutionError(error)

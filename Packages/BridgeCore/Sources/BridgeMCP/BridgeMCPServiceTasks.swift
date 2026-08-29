@@ -454,3 +454,8 @@ public struct MCPServiceTaskMutationReceipt: Codable, Equatable, Sendable {
     case accepted
   }
 }
+
+public enum MCPTaskSteerMode: String, Codable, CaseIterable, Equatable, Sendable {
+  case queued
+  case interruptCurrentThenContinue = "interrupt-current-then-continue"
+}

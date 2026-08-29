@@ -87,7 +87,8 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func steerTask(
     taskID: String,
     expectedTurnID: String,
-    input: String
+    input: String,
+    mode: MCPTaskSteerMode
   ) async throws -> MCPServiceTaskMutationReceipt
   func interruptTask(
     taskID: String,
@@ -161,7 +162,8 @@ extension BridgeServiceClientProtocol {
   public func steerTask(
     taskID _: String,
     expectedTurnID _: String,
-    input _: String
+    input _: String,
+    mode _: MCPTaskSteerMode
   ) async throws -> MCPServiceTaskMutationReceipt {
     throw BridgeServiceClientError.unavailable
   }

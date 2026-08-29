@@ -72,6 +72,9 @@ extension DeepSeekHarnessACPExecution {
           await finishInterrupted()
           return nil
         }
+        if let immediate = try await resumeAfterImmediateSteer() {
+          return immediate
+        }
         if let nextPrompt = dequeueSteer() {
           return nextPrompt
         }
@@ -103,6 +106,9 @@ extension DeepSeekHarnessACPExecution {
     if interruptRequested {
       await finishInterrupted()
       return nil
+    }
+    if let immediate = try await resumeAfterImmediateSteer() {
+      return immediate
     }
     if observedFailedToolCalls > 0
       || DeepSeekHarnessACPCompletionAttestation.reportsToolCallFailure(content)
@@ -149,6 +155,9 @@ extension DeepSeekHarnessACPExecution {
     finalizedContent: [AgentEventEnvelope],
     stopReason: String
   ) async throws -> String? {
+    if let immediate = try await resumeAfterImmediateSteer() {
+      return immediate
+    }
     guard !finalizedContent.isEmpty else {
       await failExecution(
         code: "deepseek_harness_empty_response",
@@ -162,6 +171,9 @@ extension DeepSeekHarnessACPExecution {
     if interruptRequested {
       await finishInterrupted()
       return nil
+    }
+    if let immediate = try await resumeAfterImmediateSteer() {
+      return immediate
     }
     // A steer can arrive while the normalizer is finalizing the previous
     // turn. Re-check before claiming terminal so accepted input is never

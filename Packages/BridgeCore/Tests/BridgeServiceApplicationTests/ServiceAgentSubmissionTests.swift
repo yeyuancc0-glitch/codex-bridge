@@ -1453,10 +1453,24 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       taskID: receipt.taskID,
       expectedTurnID: runID,
       input: "focus elsewhere",
+      mode: .queued,
       deadline: deadline
     )
     XCTAssertTrue(steerReceipt.accepted)
     XCTAssertEqual(provider.steerInputs, ["focus elsewhere"])
+
+    do {
+      _ = try await application.serviceSteerTask(
+        taskID: receipt.taskID,
+        expectedTurnID: runID,
+        input: "interrupt this prompt",
+        mode: .interruptCurrentThenContinue,
+        deadline: deadline
+      )
+      XCTFail("Expected immediate steer to reject a provider without that delivery mode")
+    } catch {
+      XCTAssertEqual(error as? BridgeMCPQueryError, .unavailable)
+    }
 
     do {
       _ = try await application.serviceInterruptTask(

@@ -5,6 +5,7 @@ public enum AgentCapability: String, Codable, CaseIterable, Hashable, Sendable {
   case sessionContinue = "lifecycle.session_continue"
   case interrupt = "lifecycle.interrupt"
   case steer = "lifecycle.steer"
+  case steerInterruptAndContinue = "lifecycle.steer_interrupt_and_continue"
   case textDelta = "presentation.text_delta"
   case reasoningDelta = "presentation.reasoning_delta"
   case toolLifecycle = "presentation.tool_lifecycle"

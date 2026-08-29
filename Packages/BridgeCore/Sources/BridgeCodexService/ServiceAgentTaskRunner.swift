@@ -52,6 +52,7 @@ public struct AgentTaskRunHandle: Sendable {
   public let events: AsyncThrowingStream<AgentEventEnvelope, any Error>
   public let interrupt: @Sendable () async throws -> Void
   public let steer: (@Sendable (String) async throws -> Void)?
+  public let interruptAndSteer: (@Sendable (String) async throws -> Void)?
   public let shutdown: @Sendable () async -> Void
   public let resolveApproval: (@Sendable (String, String) async throws -> Void)?
 
@@ -61,6 +62,7 @@ public struct AgentTaskRunHandle: Sendable {
     events: AsyncThrowingStream<AgentEventEnvelope, any Error>,
     interrupt: @escaping @Sendable () async throws -> Void,
     steer: (@Sendable (String) async throws -> Void)? = nil,
+    interruptAndSteer: (@Sendable (String) async throws -> Void)? = nil,
     shutdown: @escaping @Sendable () async -> Void,
     resolveApproval: (@Sendable (String, String) async throws -> Void)? = nil
   ) {
@@ -69,6 +71,7 @@ public struct AgentTaskRunHandle: Sendable {
     self.events = events
     self.interrupt = interrupt
     self.steer = steer
+    self.interruptAndSteer = interruptAndSteer
     self.shutdown = shutdown
     self.resolveApproval = resolveApproval
   }
@@ -189,6 +192,7 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       events: handle.events,
       interrupt: handle.control.interrupt,
       steer: handle.control.steer,
+      interruptAndSteer: handle.control.interruptAndSteer,
       shutdown: handle.control.shutdown ?? {
         try? await handle.control.interrupt()
       },

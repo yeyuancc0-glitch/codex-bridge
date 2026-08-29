@@ -390,17 +390,20 @@ public struct AgentExecutionControl: Sendable {
   public let interrupt: @Sendable () async throws -> Void
   public let shutdown: (@Sendable () async -> Void)?
   public let steer: (@Sendable (String) async throws -> Void)?
+  public let interruptAndSteer: (@Sendable (String) async throws -> Void)?
   public let resolveApproval: (@Sendable (String, String) async throws -> Void)?
 
   public init(
     interrupt: @escaping @Sendable () async throws -> Void,
     shutdown: (@Sendable () async -> Void)? = nil,
     steer: (@Sendable (String) async throws -> Void)? = nil,
+    interruptAndSteer: (@Sendable (String) async throws -> Void)? = nil,
     resolveApproval: (@Sendable (String, String) async throws -> Void)? = nil
   ) {
     self.interrupt = interrupt
     self.shutdown = shutdown
     self.steer = steer
+    self.interruptAndSteer = interruptAndSteer
     self.resolveApproval = resolveApproval
   }
 }

@@ -1651,7 +1651,7 @@ final class BridgeServiceAppModelTests: XCTestCase {
       Set(actions),
       Set([
         "interrupt:codex-running:codex-turn-1",
-        "steer:opencode-running:opencode-run-1:Continue with the tests.",
+        "steer:queued:opencode-running:opencode-run-1:Continue with the tests.",
       ])
     )
     await model.shutdownUI()

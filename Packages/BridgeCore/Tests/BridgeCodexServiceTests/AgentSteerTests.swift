@@ -43,12 +43,25 @@ final class AgentSteerTests: XCTestCase {
       expectedTurnID: runID,
       text: "Focus on the failing test."
     )
+    try await coordinator.steer(
+      taskID: taskID,
+      expectedTurnID: runID,
+      text: "Stop the current attempt and summarize.",
+      interruptCurrentPrompt: true
+    )
 
     let steerInputs = await runner.steerInputs
+    let immediateSteerInputs = await runner.immediateSteerInputs
     XCTAssertEqual(steerInputs, ["Focus on the failing test."])
+    XCTAssertEqual(immediateSteerInputs, ["Stop the current attempt and summarize."])
     let messages = try await coordinator.conversationPage(taskID: taskID)
     XCTAssertTrue(
       messages.contains { $0.role == .user && $0.content == "Focus on the failing test." }
+    )
+    XCTAssertTrue(
+      messages.contains {
+        $0.role == .user && $0.content == "Stop the current attempt and summarize."
+      }
     )
   }
 }
@@ -56,6 +69,7 @@ final class AgentSteerTests: XCTestCase {
 private actor SteerableAgentRunner: AgentTaskRunning {
   private var continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation?
   private(set) var steerInputs: [String] = []
+  private(set) var immediateSteerInputs: [String] = []
 
   func start(_ brief: AgentTaskBrief) async throws -> AgentTaskRunHandle {
     let pair = AsyncThrowingStream.makeStream(
@@ -71,6 +85,9 @@ private actor SteerableAgentRunner: AgentTaskRunning {
       steer: { [weak self] text in
         await self?.recordSteer(text)
       },
+      interruptAndSteer: { [weak self] text in
+        await self?.recordImmediateSteer(text)
+      },
       shutdown: { [weak self] in
         await self?.finish()
       }
@@ -79,6 +96,10 @@ private actor SteerableAgentRunner: AgentTaskRunning {
 
   func recordSteer(_ text: String) {
     steerInputs.append(text)
+  }
+
+  func recordImmediateSteer(_ text: String) {
+    immediateSteerInputs.append(text)
   }
 
   func finish() {

@@ -13,6 +13,15 @@ extension SimpleServiceStore {
           throw ServiceStoreError.unknownTask(taskID)
         }
         try Self.upsertTaskMessage(message, taskID: taskID, in: db)
+        try db.execute(
+          sql: """
+            UPDATE bridge_service_tasks
+            SET updated_at = MAX(updated_at, ?)
+            WHERE task_id = ?
+            """,
+          arguments: [message.updatedAt.timeIntervalSince1970, taskID.rawValue]
+        )
+        guard db.changesCount == 1 else { throw ServiceStoreError.storageFailure }
         guard let row = try Self.taskMessageRow(taskID: taskID, key: message.key, in: db) else {
           throw ServiceStoreError.corruptRecord
         }

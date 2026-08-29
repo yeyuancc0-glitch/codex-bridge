@@ -85,7 +85,7 @@ extension MCPServiceToolDispatcher {
   private func callSteerTask(_ arguments: [String: Value]?) async throws -> CallTool.Result {
     let values = try StrictToolArguments(
       arguments,
-      allowed: ["task_id", "expected_turn_id", "input"],
+      allowed: ["task_id", "expected_turn_id", "input", "mode"],
       required: ["task_id", "expected_turn_id", "input"]
     )
     let taskID = try values.requiredIdentifier("task_id", maximumUTF8Bytes: 128)
@@ -94,12 +94,23 @@ extension MCPServiceToolDispatcher {
     guard OutboundContentSecurity.isSafe(input) else {
       throw BridgeMCPQueryError.unsafeContentDetected
     }
+    let rawMode = try values.optionalIdentifier("mode", maximumUTF8Bytes: 64)
+    let mode: MCPTaskSteerMode
+    if let rawMode {
+      guard let parsed = MCPTaskSteerMode(rawValue: rawMode) else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+      mode = parsed
+    } else {
+      mode = .queued
+    }
     let deadline = clock.now.advanced(by: deadlines.mutation)
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceSteerTask(
         taskID: taskID,
         expectedTurnID: turnID,
         input: input,
+        mode: mode,
         deadline: deadline
       )
     }

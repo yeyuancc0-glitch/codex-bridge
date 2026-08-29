@@ -40,14 +40,16 @@ extension BridgeServiceClient {
   public func steerTask(
     taskID: String,
     expectedTurnID: String,
-    input: String
+    input: String,
+    mode: MCPTaskSteerMode = .queued
   ) async throws -> MCPServiceTaskMutationReceipt {
     try await call(
       operation: .steerTask,
       payload: IPCTaskSteerRequest(
         taskID: taskID,
         expectedTurnID: expectedTurnID,
-        input: input
+        input: input,
+        mode: mode
       )
     )
   }

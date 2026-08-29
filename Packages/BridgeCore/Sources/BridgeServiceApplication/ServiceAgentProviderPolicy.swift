@@ -101,6 +101,7 @@ public struct ServiceAgentProviderPolicy: Equatable, Sendable {
     }
     if !supportsSteer {
       result.remove(.steer)
+      result.remove(.steerInterruptAndContinue)
     }
     if !supportsInteractiveApproval {
       result.remove(.oneShotApproval)
@@ -196,7 +197,8 @@ public enum ServiceAgentProviderPolicyRegistry {
     approvalEnforcement: "local_app",
     networkEnforcement: "provider_native",
     allowedCapabilities: [
-      .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+      .sessionCreate, .interrupt, .steer, .steerInterruptAndContinue, .textDelta,
+      .toolLifecycle, .workspaceRead,
       .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
       .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
       .skills,

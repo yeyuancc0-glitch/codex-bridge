@@ -102,6 +102,7 @@ public protocol BridgeMCPServiceAPI: Sendable {
     taskID: String,
     expectedTurnID: String,
     input: String,
+    mode: MCPTaskSteerMode,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPServiceTaskMutationReceipt
 

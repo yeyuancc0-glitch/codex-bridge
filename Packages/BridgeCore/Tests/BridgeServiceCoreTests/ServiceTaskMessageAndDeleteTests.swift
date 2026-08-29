@@ -126,10 +126,29 @@ final class ServiceTaskMessageAndDeleteTests: XCTestCase {
     )
 
     let activity = try await store.recentTaskMessageActivity(taskID: task.id, limit: 8)
+    let refreshedTaskValue = try await store.task(id: task.id)
+    let refreshedTask = try XCTUnwrap(refreshedTaskValue)
     XCTAssertEqual(activity.last?.key, early.key)
     XCTAssertEqual(activity.last?.content, "updated last")
     XCTAssertEqual(activity.last?.createdAt, early.createdAt)
     XCTAssertEqual(activity.last?.updatedAt, Date(timeIntervalSince1970: 1_800_000_500))
+    XCTAssertEqual(refreshedTask.updatedAt, Date(timeIntervalSince1970: 1_800_000_500))
+
+    _ = try await store.upsertTaskMessage(
+      ServiceTaskMessageDraft(
+        key: "agent:older-replay",
+        role: .agent,
+        content: "older replay",
+        createdAt: Date(timeIntervalSince1970: 1_800_000_250)
+      ),
+      taskID: task.id
+    )
+    let afterReplayValue = try await store.task(id: task.id)
+    let afterReplay = try XCTUnwrap(afterReplayValue)
+    XCTAssertEqual(
+      afterReplay.updatedAt,
+      Date(timeIntervalSince1970: 1_800_000_500)
+    )
   }
 
   func testUpsertMessageRequiresExistingTask() async throws {

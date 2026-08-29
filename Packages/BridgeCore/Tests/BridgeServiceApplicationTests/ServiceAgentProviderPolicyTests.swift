@@ -74,7 +74,8 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: true),
       [
-        .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+        .sessionCreate, .interrupt, .steer, .steerInterruptAndContinue, .textDelta,
+        .toolLifecycle, .workspaceRead,
         .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
         .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
         .skills,
@@ -83,7 +84,8 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: false),
       [
-        .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+        .sessionCreate, .interrupt, .steer, .steerInterruptAndContinue, .textDelta,
+        .toolLifecycle, .workspaceRead,
         .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
         .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow, .skills,
       ]

@@ -284,6 +284,7 @@ private struct InspectorService: BridgeMCPServiceAPI {
     taskID: String,
     expectedTurnID: String,
     input: String,
+    mode: MCPTaskSteerMode,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPServiceTaskMutationReceipt {
     throw BridgeMCPQueryError.unavailable

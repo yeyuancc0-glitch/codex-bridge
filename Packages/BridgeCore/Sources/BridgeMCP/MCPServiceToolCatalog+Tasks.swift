@@ -203,12 +203,18 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.steerTask.rawValue,
     title: "Steer task",
     description:
-      "Send bounded corrective input to the exact active provider run. For Codex this is sent to the active Turn; for OpenCode, DeepSeek Harness, and Antigravity, pass provider_run_id from get_task as expected_turn_id and the input is queued as the next prompt on the same session. This is a queued follow-up for those providers, not real-time insertion into the current prompt.",
+      "Send bounded corrective input to the exact active provider run. The default queued mode preserves existing behavior. For DeepSeek Harness, mode=interrupt-current-then-continue cancels only the current prompt and sends the correction on the same session without terminating the task. Other external providers currently accept queued mode only.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
         "expected_turn_id": boundedStringSchema(maximum: 1_024),
         "input": boundedStringSchema(maximum: 32 * 1_024),
+        "mode": [
+          "type": "string",
+          "enum": ["queued", "interrupt-current-then-continue"],
+          "description":
+            "Delivery mode. Omit or use queued for compatibility. interrupt-current-then-continue is available only when list_agents reports lifecycle.steer_interrupt_and_continue.",
+        ],
       ],
       required: ["task_id", "expected_turn_id", "input"]
     ),

@@ -60,7 +60,8 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertEqual(
       snapshot.effective,
       [
-        .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+        .sessionCreate, .interrupt, .steer, .steerInterruptAndContinue, .textDelta,
+        .toolLifecycle, .workspaceRead,
         .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
         .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
         .skills,
