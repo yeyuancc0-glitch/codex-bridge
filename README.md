@@ -165,6 +165,7 @@ Scripts/with-xcode.sh xcodebuild \
 ### 4. 配置 Agent 执行端
 - **Codex 引擎**：检测到本地 `codex` 命令后默认开箱即用。
 - **OpenCode 引擎**：在 Bridge 的“设置 → 本机 Agent Provider”中登记 OpenCode 可执行文件路径，Probe 检测为“可用”后点击启用。
+- **DeepSeek Harness（实验性）**：登记固定版本的 ACP 可执行文件与项目外 `cordis.yml`。将 `.env` 放在该 Profile 目录，并为主模型和 Web Search 分别配置 Base URL；详见 [DeepSeek Harness 接入指南](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)。
 
 ### 5. 连接你的 Chat 客户端
 
@@ -247,6 +248,7 @@ Scripts/test-tunnel-helper-config.sh
 
 - [ChatGPT Developer Mode 接入指南](./docs/CHATGPT_DEVELOPER_MODE.md)
 - [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)
+- [DeepSeek Harness 接入指南](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)
 - [系统与环境兼容性矩阵](./docs/COMPATIBILITY.md)
 - [依赖版本与开源许可证明](./docs/DEPENDENCIES.md)
 - [Secure Tunnel Helper 对接技术规范](./docs/TUNNEL_CLIENT_INTEGRATION.md)

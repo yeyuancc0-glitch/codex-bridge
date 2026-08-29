@@ -166,6 +166,7 @@ Open the app and click **Add Project** to register your authorized workspace dir
 ### 4. Configure Agent Engines
 - **Codex Engine**: Ready out of the box upon detecting the local `codex` binary.
 - **OpenCode Engine**: In Bridge, open **Settings → Local Agent Providers**, register the OpenCode executable path, and enable it after a successful probe.
+- **DeepSeek Harness (experimental)**: Register the pinned ACP executable and an external `cordis.yml`. Keep `.env` in that profile directory and configure separate base URLs for the main model and Web Search; see the [DeepSeek Harness Setup Guide](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE_en.md).
 
 ### 5. Connect Your Chat Clients
 
@@ -248,6 +249,7 @@ Scripts/test-tunnel-helper-config.sh
 
 - [ChatGPT Developer Mode Setup Guide](./docs/CHATGPT_DEVELOPER_MODE.md)
 - [OpenCode Connection Guide](./docs/OPENCODE_CONNECTION_GUIDE.md)
+- [DeepSeek Harness Setup Guide](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE_en.md)
 - [System & Environment Compatibility Matrix](./docs/COMPATIBILITY.md)
 - [Pinned Dependencies & Licensing Evidence](./docs/DEPENDENCIES.md)
 - [Secure Tunnel Helper Integration Contract](./docs/TUNNEL_CLIENT_INTEGRATION.md)
