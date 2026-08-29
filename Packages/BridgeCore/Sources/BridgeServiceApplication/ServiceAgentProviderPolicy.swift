@@ -158,9 +158,9 @@ public enum ServiceAgentProviderPolicyRegistry {
     supportsSkillSelection: true,
     supportsSupervisor: true,
     allowsNetworkAccess: true,
-    workspaceEnforcement: "bridge",
+    workspaceEnforcement: "provider_native",
     approvalEnforcement: "local_app",
-    networkEnforcement: "bridge"
+    networkEnforcement: "provider_native"
   )
 
   public static let openCode = ServiceAgentProviderPolicy(
@@ -223,7 +223,7 @@ public enum ServiceAgentProviderPolicyRegistry {
     supportsEffortSelection: true,
     supportsSkillSelection: true,
     allowsNetworkAccess: true,
-    workspaceEnforcement: "bridge_workspace_sandbox",
+    workspaceEnforcement: "provider_native",
     approvalEnforcement: "provider_soft_deny",
     networkEnforcement: "provider_native",
     allowedCapabilities: [

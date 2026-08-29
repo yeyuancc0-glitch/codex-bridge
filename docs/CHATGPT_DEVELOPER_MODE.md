@@ -134,7 +134,7 @@ Periodically check progress with get_task. Do not claim completion until get_tas
 }
 ```
 
-如需本次明确选择模型或权限模式，再使用 ACP 返回的精确模型 ID，并设置 `model_override: true`、`permission_mode_override: true`。`read-only` 映射 OpenCode Plan，`workspace-write` 映射 OpenCode Build；当前 OpenCode ACP 不接受 `network_access: true`，网络行为由 OpenCode 原生权限控制。继续已有 OpenCode 会话时，将 `get_task` 返回的 `provider_session_id` 作为下一次 `submit_task.thread_id`；新会话省略 `thread_id`。OpenCode 任务不要携带 `skill_name` 或 Supervisor 字段。
+如需本次明确选择模型或权限模式，再使用 ACP 返回的精确模型 ID，并设置 `model_override: true`、`permission_mode_override: true`。`read-only` 映射 OpenCode Plan，`workspace-write` 映射 OpenCode Build；显式联网任务设置 `network_access: true`，实际网络行为由 OpenCode 原生权限控制。继续已有 OpenCode 会话时，将 `get_task` 返回的 `provider_session_id` 作为下一次 `submit_task.thread_id`；新会话省略 `thread_id`。OpenCode 任务不要携带 `skill_name` 或 Supervisor 字段。
 
 任务提交后通常先进入 `awaiting_local_approval`，本机用户在 Bridge 工作台批准后才会启动 OpenCode。使用 `get_task` 查看 `provider_session_id`、`provider_run_id`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 和任务阶段；进入终态后调用 `get_final_report` 获取结构化报告。OpenCode 的 `steer_task`/`interrupt_task` 将 `get_task` 返回的 `provider_run_id` 填入 `expected_turn_id`。
 

@@ -208,9 +208,11 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
   func testLaunchEnvironmentMatchesWorkspaceWriteMode() throws {
     let fixture = try makeProfileFixture(prefix: "deepseek-launch-write-mode")
     let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-launch-write-mode")
+    let sourceHome = try makeTemporaryDirectory(prefix: "deepseek-source-home")
     addTeardownBlock {
       fixture.remove()
       try? FileManager.default.removeItem(atPath: runDirectory)
+      try? FileManager.default.removeItem(atPath: sourceHome)
     }
     let installation = try AgentInstallation(
       id: .init(rawValue: "launch-write-installation"),
@@ -250,10 +252,15 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
       runDirectory: runDirectory,
       mutationIntent: .workspaceWrite,
       networkAllowed: false,
-      sourceEnvironment: ["PATH": "/usr/bin:/bin"]
+      sourceEnvironment: [
+        "HOME": sourceHome,
+        "PATH": sourceHome + "/.local/bin:/usr/bin:/bin",
+      ]
     )
 
     XCTAssertEqual(launch.process.environment["DSH_PERMISSION_MODE"], "workspace-write")
+    XCTAssertEqual(launch.process.environment["HOME"], sourceHome)
+    XCTAssertTrue(launch.process.environment["PATH"]?.contains(sourceHome + "/.local/bin") == true)
     let value = try String(contentsOfFile: launch.process.argv[3], encoding: .utf8)
     XCTAssertTrue(value.contains("    mode: workspace-write"))
     XCTAssertFalse(value.contains("danger-full-access"))

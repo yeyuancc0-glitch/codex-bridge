@@ -73,7 +73,7 @@ final class AntigravityCLIProfileTests: XCTestCase {
     )
   }
 
-  func testLaunchBuilderUsesStreamJSONAndReadOnlyProjectBoundary() throws {
+  func testLaunchBuilderUsesStreamJSONAndNativeReadOnlyMode() throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-project")
     let home = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-home")
     let runDirectory = FileManager.default.temporaryDirectory
@@ -102,12 +102,13 @@ final class AntigravityCLIProfileTests: XCTestCase {
       networkAccessRequested: false
     )
 
-    let launch = try AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo").make(
+    let launch = try AntigravityCLILaunchBuilder().make(
       installation: installation,
       request: request,
       runDirectory: runDirectory,
       sourceEnvironment: [
         "HOME": home,
+        "PATH": home + "/.local/bin:/usr/bin",
         "USER": "bridge-test",
         "GEMINI_API_KEY": "dummy-gemini-key",
         "GOOGLE_GEMINI_BASE_URL": "https://example.test/gemini",
@@ -116,21 +117,9 @@ final class AntigravityCLIProfileTests: XCTestCase {
       ]
     )
 
-    XCTAssertTrue(launch.readOnlySandboxed)
     XCTAssertEqual(launch.process.workingDirectory, projectRoot)
     XCTAssertEqual(
-      launch.process.argv.first,
-      "/bin/echo"
-    )
-    XCTAssertEqual(launch.process.argv[1], "-p")
-    XCTAssertTrue(launch.process.argv[2].contains("deny file-write*"))
-    XCTAssertTrue(launch.process.argv[2].contains(runDirectory))
-    XCTAssertFalse(
-      launch.process.argv[2].contains("(allow file-write* (subpath \"\(projectRoot)\"))")
-    )
-    XCTAssertEqual(launch.process.argv[3], "--")
-    XCTAssertEqual(
-      Array(launch.process.argv.dropFirst(4)),
+      launch.process.argv,
       [
         launch.resolvedExecutablePath,
         "--sandbox",
@@ -150,7 +139,9 @@ final class AntigravityCLIProfileTests: XCTestCase {
         projectRoot,
       ]
     )
+    XCTAssertFalse(launch.process.argv.contains("sandbox-exec"))
     XCTAssertEqual(launch.process.environment["HOME"], home)
+    XCTAssertTrue(launch.process.environment["PATH"]?.contains(home + "/.local/bin") == true)
     XCTAssertEqual(launch.process.environment["USER"], "bridge-test")
     XCTAssertEqual(launch.process.environment["GEMINI_API_KEY"], "dummy-gemini-key")
     XCTAssertEqual(
@@ -188,20 +179,15 @@ final class AntigravityCLIProfileTests: XCTestCase {
       networkAccessRequested: false
     )
 
-    let launch = try AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo").make(
+    let launch = try AntigravityCLILaunchBuilder().make(
       installation: installation,
       request: request,
       runDirectory: runDirectory,
       sourceEnvironment: ["HOME": home]
     )
 
-    XCTAssertFalse(launch.readOnlySandboxed)
-    XCTAssertEqual(launch.process.argv[0], "/bin/echo")
-    XCTAssertTrue(launch.process.argv[2].contains("deny file-write*"))
-    XCTAssertTrue(launch.process.argv[2].contains(projectRoot))
-    XCTAssertTrue(launch.process.argv[2].contains(runDirectory))
     XCTAssertEqual(
-      Array(launch.process.argv.dropFirst(4)),
+      launch.process.argv,
       [
         "/bin/echo",
         "--sandbox",
@@ -215,6 +201,7 @@ final class AntigravityCLIProfileTests: XCTestCase {
         projectRoot,
       ]
     )
+    XCTAssertFalse(launch.process.argv.contains("sandbox-exec"))
     XCTAssertFalse(launch.process.argv.contains("--dangerously-skip-permissions"))
   }
 
@@ -243,7 +230,7 @@ final class AntigravityCLIProfileTests: XCTestCase {
     )
 
     XCTAssertThrowsError(
-      try AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo").make(
+      try AntigravityCLILaunchBuilder().make(
         installation: installation,
         request: request,
         runDirectory: runDirectory,

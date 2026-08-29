@@ -100,7 +100,7 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 - `execution_model` 和 `execution_effort` 只有在 `model_override=true` 时才覆盖本次任务。
 - `permission_mode` 只能是 `read-only` 或 `workspace-write`；它们分别映射为 ACP Plan 和 Build。
 - 只有用户明确要求本次模式时，才设置 `permission_mode_override=true`。
-- 当前 OpenCode ACP 没有 Bridge 级逐任务网络沙箱，因此 `network_access=true` 会被拒绝；网络行为由 OpenCode 原生权限设置控制。
+- OpenCode ACP 不套用 Bridge 级逐任务网络沙箱；显式网络任务应设置 `network_access=true`，实际网络行为由 OpenCode 原生权限设置控制。
 - 新建 OpenCode 会话时省略 `thread_id`；继续已有会话时，将上一任务 `get_task` 返回的 `provider_session_id` 作为 `submit_task.thread_id`。不要携带 `skill_name`、`supervisor_model` 或 `supervisor_effort`。
 - 项目本身禁止写入时，默认 Build 会安全收窄为只读，不会越过项目策略。
 
@@ -125,7 +125,7 @@ Bridge 会在同一个 ACP Session 中把 steer 内容排队为后续 prompt；�
 ## 6. 权限和数据隔离
 
 - Bridge 的 Plan/Build 只映射 OpenCode 的原生执行模式，不会伪造或绕过 OpenCode 权限。
-- OpenCode 的全局 XDG 配置、认证和插件由 OpenCode 自己管理；每个 Bridge 任务的 `HOME`、cache、state、runtime 和 `OPENCODE_DB` 都使用隔离目录。
+- OpenCode 继承用户 `HOME` 和 `PATH`，使原生配置与本机工具可用；Bridge 仅隔离每次运行的 cache、state、runtime，并将会话数据库保存在 Service 私有 AgentState。
 - Bridge 不读取或回传 OpenCode auth 文件、Token、Cookie 或 Runtime Key。
 - 远程客户端不能批准任务或 ACP 权限请求，所有批准都必须由本机用户完成。
 
@@ -138,7 +138,7 @@ Bridge 会在同一个 ACP Session 中把 steer 内容排队为后续 prompt；�
 | 版本或 ACP 不兼容 | 使用 `1.18.20 <= OpenCode < 1.19.0` 范围内的官方版本。 |
 | 模型列表为空 | 先选择项目，再点击“刷新模型列表”；目录必须来自 ACP。 |
 | 模型不可用 | 使用 ACP 返回的精确 ID，不要使用跨 Provider 别名。 |
-| `network_access=true` 被拒绝 | 改为 `false`，并在 OpenCode 原生权限中配置网络行为。 |
+| 网络工具被 Provider 拒绝 | 在任务中显式设置 `network_access=true`，并检查 OpenCode 原生权限配置。 |
 | `awaiting_local_approval` | 打开 Bridge 工作台批准任务；ChatGPT/Qwen 无法代替本机批准。 |
 | `project_busy` | 等待同一项目的其他写任务或 Direct 操作完成。 |
 | `unknown` | 检查 Service/Provider 是否重启；不要自动伪造恢复或启动新任务。 |

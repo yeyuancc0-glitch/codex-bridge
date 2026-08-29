@@ -165,7 +165,7 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     mutationIntent: AgentMutationIntent,
     sourceEnvironment: [String: String]
   ) throws -> [String: String] {
-    let home = URL(fileURLWithPath: runDirectory).appendingPathComponent("home").path
+    let home = try AgentProviderEnvironment.homeDirectory(source: sourceEnvironment)
     let xdgConfig = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-config").path
     let xdgCache = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-cache").path
     let xdgData = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-data").path
@@ -173,13 +173,16 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     let temporary = URL(fileURLWithPath: runDirectory).appendingPathComponent("tmp").path
     let dshHome = URL(fileURLWithPath: runDirectory).appendingPathComponent("dsh-home").path
     let snapshots = URL(fileURLWithPath: runDirectory).appendingPathComponent("snapshots").path
-    for path in [home, xdgConfig, xdgCache, xdgData, xdgState, temporary, dshHome, snapshots] {
+    for path in [xdgConfig, xdgCache, xdgData, xdgState, temporary, dshHome, snapshots] {
       try createPrivateDirectory(path)
     }
 
     var environment: [String: String] = [
       "HOME": home,
-      "PATH": Self.trustedPath(nodeInterpreter: nodeInterpreter),
+      "PATH": AgentProviderEnvironment.executableSearchPath(
+        executablePath: nodeInterpreter,
+        sourcePath: sourceEnvironment["PATH"]
+      ),
       "TMPDIR": temporary,
       "XDG_CONFIG_HOME": xdgConfig,
       "XDG_CACHE_HOME": xdgCache,
@@ -234,20 +237,6 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     updated[matching[0]] = prefix + mode
     value = updated.joined(separator: "\n")
     return Data(value.utf8)
-  }
-
-  private static func trustedPath(nodeInterpreter: String) -> String {
-    let candidates = [
-      URL(fileURLWithPath: nodeInterpreter).deletingLastPathComponent().path,
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]
-    var seen = Set<String>()
-    return candidates.filter { seen.insert($0).inserted }.joined(separator: ":")
   }
 
   private func canonicalExistingDirectory(_ value: String, field: String) throws -> String {

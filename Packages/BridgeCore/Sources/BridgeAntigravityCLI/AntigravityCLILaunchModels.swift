@@ -32,17 +32,14 @@ public struct AntigravityCLILaunchConfiguration: Sendable {
   public let process: AntigravityCLIProcessConfiguration
   public let runDirectory: String
   public let resolvedExecutablePath: String
-  public let readOnlySandboxed: Bool
 
   public init(
     process: AntigravityCLIProcessConfiguration,
     runDirectory: String,
-    resolvedExecutablePath: String,
-    readOnlySandboxed: Bool
+    resolvedExecutablePath: String
   ) {
     self.process = process
     self.runDirectory = runDirectory
     self.resolvedExecutablePath = resolvedExecutablePath
-    self.readOnlySandboxed = readOnlySandboxed
   }
 }

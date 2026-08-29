@@ -149,8 +149,8 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     persistentStateDirectory: String?,
     source: [String: String]
   ) throws -> [String: String] {
-    let sourceHome = try absoluteEnvironmentPath(
-      source["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path,
+    let sourceHome = try AgentProviderEnvironment.homeDirectory(
+      source: source,
       field: "environment.sourceHOME"
     )
     let dataHome = try absoluteEnvironmentPath(
@@ -163,7 +163,6 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
         ?? URL(fileURLWithPath: sourceHome).appendingPathComponent(".config").path,
       field: "environment.XDG_CONFIG_HOME"
     )
-    let home = URL(fileURLWithPath: runDirectory).appendingPathComponent("home").path
     let cache = URL(fileURLWithPath: runDirectory).appendingPathComponent("cache").path
     let state = URL(fileURLWithPath: runDirectory).appendingPathComponent("state").path
     let temporary = URL(fileURLWithPath: runDirectory).appendingPathComponent("tmp").path
@@ -174,13 +173,16 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       databaseRoot = runDirectory
     }
     let database = URL(fileURLWithPath: databaseRoot).appendingPathComponent("opencode.db").path
-    for path in [home, cache, state, temporary] {
+    for path in [cache, state, temporary] {
       try createPrivateDirectory(path)
     }
 
     var environment: [String: String] = [
-      "HOME": home,
-      "PATH": trustedPath(executable: executable),
+      "HOME": sourceHome,
+      "PATH": AgentProviderEnvironment.executableSearchPath(
+        executablePath: executable,
+        sourcePath: source["PATH"]
+      ),
       "TMPDIR": temporary,
       "XDG_CONFIG_HOME": configHome,
       "XDG_CACHE_HOME": cache,
@@ -194,20 +196,6 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       }
     }
     return environment
-  }
-
-  private static func trustedPath(executable: String) -> String {
-    let candidates = [
-      URL(fileURLWithPath: executable).deletingLastPathComponent().path,
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]
-    var seen = Set<String>()
-    return candidates.filter { seen.insert($0).inserted }.joined(separator: ":")
   }
 
   private static func resolveExecutable(_ path: String) throws -> String {

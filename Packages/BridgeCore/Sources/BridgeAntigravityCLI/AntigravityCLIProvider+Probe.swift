@@ -16,17 +16,6 @@ extension AntigravityCLIProvider {
         reason: "Installation belongs to another provider."
       )
     }
-    guard
-      FileManager.default.isExecutableFile(
-        atPath: configuration.launchBuilder.sandboxExecutablePath
-      )
-    else {
-      return unavailableProbe(
-        request.installation,
-        reason: "The macOS read-only process boundary is unavailable."
-      )
-    }
-
     do {
       let resolved = try Self.resolvedExecutable(request.installation.executablePath)
       let environment = try configuration.launchBuilder.commandEnvironment(

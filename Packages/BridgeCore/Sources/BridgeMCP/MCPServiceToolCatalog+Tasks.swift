@@ -112,8 +112,10 @@ extension MCPServiceToolCatalog {
       + "isolation. Set network_access=true whenever the user explicitly requests web search, URL "
       + "fetches, external APIs, or other network use; false or omitted does not grant task-level "
       + "network access. For Antigravity, a locally selected full-access mode plus network_access=true "
-      + "uses agy's documented non-interactive approval while retaining the requested Plan/Accept "
-      + "Edits mode and Bridge workspace-write sandbox. Never treat a non-terminal status or unchanged "
+      + "uses agy's documented non-interactive approval while retaining agy's native sandbox and the "
+      + "requested Plan/Accept Edits mode. Bridge controls task admission, project policy, and local "
+      + "start approval without wrapping Agent processes in a filesystem or network sandbox. Never "
+      + "treat a non-terminal status or unchanged "
       + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [

@@ -64,6 +64,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private static let pushBatchDelay: Duration = .milliseconds(24)
 
   private let client: any BridgeTaskConversationClient
+  private let isTerminal: Bool
   private var index: [String: Int] = [:]
   private var hasAppliedPage = false
   private var streamingTask: Task<Void, Never>?
@@ -82,9 +83,14 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     .seconds(1),
   ]
 
-  public init(taskID: String, client: any BridgeTaskConversationClient) {
+  public init(
+    taskID: String,
+    client: any BridgeTaskConversationClient,
+    isTerminal: Bool = false
+  ) {
     self.taskID = taskID
     self.client = client
+    self.isTerminal = isTerminal
   }
 
   public var canLoadEarlier: Bool {
@@ -92,6 +98,10 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   }
 
   func start() async {
+    if isTerminal {
+      await reloadAuthoritativeSnapshot()
+      return
+    }
     let generation = lifecycleGeneration
     do {
       let (subscription, updates) = try await client.subscribeTaskConversation(

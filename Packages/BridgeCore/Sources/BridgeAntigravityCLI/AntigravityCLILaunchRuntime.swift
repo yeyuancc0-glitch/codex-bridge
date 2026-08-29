@@ -8,37 +8,13 @@ import Foundation
 #endif
 
 enum AntigravityCLILaunchRuntime {
-  static func sandboxProfile(
-    projectRoot: String,
-    runDirectory: String,
-    allowsWorkspaceWrites: Bool
-  ) throws -> String {
-    guard projectRoot.rangeOfCharacter(from: .controlCharacters) == nil,
-      runDirectory.rangeOfCharacter(from: .controlCharacters) == nil
-    else {
-      throw AgentRuntimeError.invalidRequest("request.projectRoot")
-    }
-    let escapedProjectRoot = escapedProfilePath(projectRoot)
-    let escapedRunDirectory = escapedProfilePath(runDirectory)
-    var profile =
-      "(version 1)(allow default)(deny file-write*)"
-      + "(allow file-write* (subpath \"\(escapedRunDirectory)\"))"
-    if allowsWorkspaceWrites {
-      profile += "(allow file-write* (subpath \"\(escapedProjectRoot)\"))"
-    }
-    return profile
-  }
-
   static func environment(
     executable: String,
     runDirectory: String,
     source: [String: String],
     prepareTemporaryDirectory: Bool = true
   ) throws -> [String: String] {
-    let home = try absoluteEnvironmentPath(
-      source["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path,
-      field: "environment.HOME"
-    )
+    let home = try AgentProviderEnvironment.homeDirectory(source: source)
     let temporary: String
     if prepareTemporaryDirectory {
       temporary =
@@ -50,7 +26,10 @@ enum AntigravityCLILaunchRuntime {
     }
     var environment: [String: String] = [
       "HOME": home,
-      "PATH": trustedPath(executable: executable),
+      "PATH": AgentProviderEnvironment.executableSearchPath(
+        executablePath: executable,
+        sourcePath: source["PATH"]
+      ),
       "TMPDIR": temporary,
     ]
     for key in ["USER", "LOGNAME", "LANG", "LC_ALL", "SHELL"] {
@@ -125,26 +104,6 @@ enum AntigravityCLILaunchRuntime {
     } catch {
       throw AgentRuntimeError.processUnavailable
     }
-  }
-
-  private static func escapedProfilePath(_ path: String) -> String {
-    path
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-  }
-
-  private static func trustedPath(executable: String) -> String {
-    let candidates = [
-      URL(fileURLWithPath: executable).deletingLastPathComponent().path,
-      "/opt/homebrew/bin",
-      "/usr/local/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]
-    var seen = Set<String>()
-    return candidates.filter { seen.insert($0).inserted }.joined(separator: ":")
   }
 
   private static func absoluteEnvironmentPath(_ path: String, field: String) throws -> String {

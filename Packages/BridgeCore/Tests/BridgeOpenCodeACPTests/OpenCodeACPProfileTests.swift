@@ -48,6 +48,7 @@ final class OpenCodeACPProfileTests: XCTestCase {
       networkAllowed: false,
       sourceEnvironment: [
         "HOME": sourceHome,
+        "PATH": sourceHome + "/.local/bin:/usr/bin",
         "XDG_DATA_HOME": dataHome,
         "USER": "bridge-test",
         "LANG": "en_US.UTF-8",
@@ -69,10 +70,8 @@ final class OpenCodeACPProfileTests: XCTestCase {
       launch.process.environment["XDG_CONFIG_HOME"],
       URL(fileURLWithPath: sourceHome).appendingPathComponent(".config").path
     )
-    XCTAssertTrue(launch.process.environment["HOME"]?.hasPrefix(runtime + "/") == true)
-    XCTAssertFalse(
-      launch.process.environment["PATH"]?.contains(sourceHome + "/.local/bin") == true
-    )
+    XCTAssertEqual(launch.process.environment["HOME"], sourceHome)
+    XCTAssertTrue(launch.process.environment["PATH"]?.contains(sourceHome + "/.local/bin") == true)
     for key in [
       "OPENCODE_PERMISSION",
       "OPENCODE_DISABLE_PROJECT_CONFIG",
@@ -87,7 +86,6 @@ final class OpenCodeACPProfileTests: XCTestCase {
       URL(fileURLWithPath: runtime).appendingPathComponent("opencode.db").path
     )
     XCTAssertEqual(try permissions(of: runtime), 0o700)
-    XCTAssertEqual(try permissions(of: runtime + "/home"), 0o700)
     XCTAssertEqual(try permissions(of: runtime + "/cache"), 0o700)
   }
 
@@ -125,7 +123,8 @@ final class OpenCodeACPProfileTests: XCTestCase {
       first.process.environment["OPENCODE_DB"],
       second.process.environment["OPENCODE_DB"]
     )
-    XCTAssertNotEqual(first.process.environment["HOME"], second.process.environment["HOME"])
+    XCTAssertEqual(first.process.environment["HOME"], sourceHome)
+    XCTAssertEqual(second.process.environment["HOME"], sourceHome)
     XCTAssertEqual(
       first.process.environment["XDG_CONFIG_HOME"],
       second.process.environment["XDG_CONFIG_HOME"]
@@ -136,7 +135,7 @@ final class OpenCodeACPProfileTests: XCTestCase {
     )
   }
 
-  func testPersistentDatabaseIsSharedWithoutSharingPerRunHome() throws {
+  func testPersistentDatabaseIsSharedWithProviderNativeHome() throws {
     let root = try makeTemporaryDirectory(prefix: "project")
     let sourceHome = try makeTemporaryDirectory(prefix: "source-home")
     let persistentState = temporaryPath(prefix: "persistent-state")
@@ -172,7 +171,8 @@ final class OpenCodeACPProfileTests: XCTestCase {
 
     XCTAssertEqual(
       first.process.environment["OPENCODE_DB"], second.process.environment["OPENCODE_DB"])
-    XCTAssertNotEqual(first.process.environment["HOME"], second.process.environment["HOME"])
+    XCTAssertEqual(first.process.environment["HOME"], sourceHome)
+    XCTAssertEqual(second.process.environment["HOME"], sourceHome)
     XCTAssertEqual(try permissions(of: persistentState), 0o700)
   }
 

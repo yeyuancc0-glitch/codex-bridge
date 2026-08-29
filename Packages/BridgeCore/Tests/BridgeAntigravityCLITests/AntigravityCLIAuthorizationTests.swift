@@ -6,7 +6,7 @@ import XCTest
 @testable import BridgeAntigravityCLI
 
 final class AntigravityCLIAuthorizationTests: XCTestCase {
-  func testAutoApprovedNetworkTaskKeepsReadOnlySandbox() throws {
+  func testAutoApprovedNetworkTaskUsesAntigravityNativeSandbox() throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
       prefix: "agy-authorized-project"
     )
@@ -21,7 +21,7 @@ final class AntigravityCLIAuthorizationTests: XCTestCase {
       networkAccessRequested: true,
       toolApprovalPolicy: .autoApprove
     )
-    let launch = try AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo").make(
+    let launch = try AntigravityCLILaunchBuilder().make(
       installation: try installation(),
       request: request,
       runDirectory: runDirectory,
@@ -30,16 +30,12 @@ final class AntigravityCLIAuthorizationTests: XCTestCase {
 
     XCTAssertTrue(launch.process.argv.contains("--dangerously-skip-permissions"))
     XCTAssertTrue(launch.process.argv.contains("--sandbox"))
-    let providerArgv = Array(launch.process.argv.dropFirst(4))
-    let modeIndex = try XCTUnwrap(providerArgv.firstIndex(of: "--mode"))
+    XCTAssertEqual(launch.process.argv.first, launch.resolvedExecutablePath)
+    XCTAssertFalse(launch.process.argv.contains("sandbox-exec"))
+    let modeIndex = try XCTUnwrap(launch.process.argv.firstIndex(of: "--mode"))
     XCTAssertEqual(
-      Array(providerArgv[modeIndex...].prefix(2)),
+      Array(launch.process.argv[modeIndex...].prefix(2)),
       ["--mode", "plan"]
-    )
-    XCTAssertTrue(launch.readOnlySandboxed)
-    XCTAssertTrue(launch.process.argv[2].contains("deny file-write*"))
-    XCTAssertFalse(
-      launch.process.argv[2].contains("(allow file-write* (subpath \"\(projectRoot)\"))")
     )
   }
 

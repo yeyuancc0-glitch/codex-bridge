@@ -76,7 +76,8 @@ extension BridgeServiceAppModel {
       errorMessage = "后台 Service 未连接，无法查看对话。"
       return
     }
-    if let task = tasks.first(where: { $0.taskID == taskID }) {
+    let task = tasks.first(where: { $0.taskID == taskID })
+    if let task {
       selectedTaskID = task.taskID
       if task.isExternalAgentTask {
         selectedThread = nil
@@ -84,7 +85,11 @@ extension BridgeServiceAppModel {
       }
     }
     closeConversation()
-    let conversation = TaskConversationModel(taskID: taskID, client: client)
+    let conversation = TaskConversationModel(
+      taskID: taskID,
+      client: client,
+      isTerminal: task?.isTerminal == true
+    )
     self.conversation = conversation
     Task {
       await conversation.start()

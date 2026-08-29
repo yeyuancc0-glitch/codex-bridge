@@ -48,7 +48,7 @@ public struct AntigravityCLIProvider: AgentProvider, Sendable {
     descriptor = try AgentProviderDescriptor(
       providerID: .antigravity,
       displayName: "Antigravity CLI",
-      adapterRevision: 2
+      adapterRevision: 3
     )
   }
 }

@@ -1685,20 +1685,21 @@ final class BridgeServiceAppModelTests: XCTestCase {
       updatedAt: "2026-08-20T00:00:00Z"
     )
     await client.setTaskSnapshots([earlierTask, codexTask])
-    await client.setSubscriptionPage(
-      IPCTaskConversationPage(
-        taskID: codexTask.taskID,
-        messages: [
-          IPCTaskConversationMessage(
-            messageID: 1,
-            key: "agent:codex-final",
-            role: "agent",
-            content: "Persisted terminal result",
-            final: true
-          )
-        ]
-      )
-    )
+    await client.setConversationPages([
+      .init(IPCTaskConversationRequest(taskID: codexTask.taskID, limit: 200)):
+        IPCTaskConversationPage(
+          taskID: codexTask.taskID,
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 1,
+              key: "agent:codex-final",
+              role: "agent",
+              content: "Persisted terminal result",
+              final: true
+            )
+          ]
+        )
+    ])
     let model = BridgeServiceAppModel(
       registration: registration,
       clientFactory: { client },
@@ -1718,6 +1719,87 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertEqual(model.selectedThreadID, codexTask.threadID)
     XCTAssertEqual(model.selectedThread?.thread.threadID, codexTask.threadID)
     XCTAssertEqual(model.conversation?.taskID, codexTask.taskID)
+    await model.shutdownUI()
+  }
+
+  func testReopeningTerminalAgentTaskReloadsPersistedConversation() async throws {
+    let registration = TestServiceRegistration(status: .enabled)
+    let client = TestBridgeServiceClient()
+    let first = MCPServiceTaskSnapshot(
+      taskID: "terminal-agent-a",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "antigravity",
+      providerRunID: "run-a",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-29T12:00:00Z"
+    )
+    let second = MCPServiceTaskSnapshot(
+      taskID: "terminal-agent-b",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "deepseek-harness",
+      providerRunID: "run-b",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-29T12:01:00Z"
+    )
+    await client.setTaskSnapshots([second, first])
+    await client.setConversationPages([
+      .init(IPCTaskConversationRequest(taskID: first.taskID, limit: 200)):
+        IPCTaskConversationPage(
+          taskID: first.taskID,
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 1,
+              key: "agent:first-final",
+              role: "agent",
+              content: "First persisted result",
+              final: true
+            )
+          ]
+        ),
+      .init(IPCTaskConversationRequest(taskID: second.taskID, limit: 200)):
+        IPCTaskConversationPage(
+          taskID: second.taskID,
+          messages: [
+            IPCTaskConversationMessage(
+              messageID: 2,
+              key: "agent:second-final",
+              role: "agent",
+              content: "Second persisted result",
+              final: true
+            )
+          ]
+        ),
+    ])
+    let model = BridgeServiceAppModel(
+      registration: registration,
+      clientFactory: { client },
+      pollInterval: nil,
+      connectionRetryDelay: .milliseconds(1),
+      maximumConnectionAttempts: 1
+    )
+    await model.startAsync()
+
+    model.openTask(first.taskID)
+    try await waitUntil {
+      model.conversation?.entries.first?.content == "First persisted result"
+    }
+    model.openTask(second.taskID)
+    try await waitUntil {
+      model.conversation?.entries.first?.content == "Second persisted result"
+    }
+    model.openTask(first.taskID)
+    try await waitUntil {
+      model.conversation?.entries.first?.content == "First persisted result"
+    }
+
+    XCTAssertEqual(model.selectedTaskID, first.taskID)
+    XCTAssertEqual(model.conversation?.taskID, first.taskID)
+    let subscribeCalls = await client.subscribeCallsValue()
+    XCTAssertEqual(subscribeCalls, 0)
     await model.shutdownUI()
   }
 

@@ -5,18 +5,15 @@ public struct AntigravityCLILaunchBuilder: Sendable {
   public let maximumFrameBytes: Int
   public let maximumStandardErrorBytes: Int
   public let maximumLifetime: Duration
-  public let sandboxExecutablePath: String
 
   public init(
     maximumFrameBytes: Int = 1_048_576,
     maximumStandardErrorBytes: Int = 256 * 1_024,
-    maximumLifetime: Duration = .seconds(24 * 60 * 60),
-    sandboxExecutablePath: String = "/usr/bin/sandbox-exec"
+    maximumLifetime: Duration = .seconds(24 * 60 * 60)
   ) {
     self.maximumFrameBytes = max(1, maximumFrameBytes)
     self.maximumStandardErrorBytes = max(1, maximumStandardErrorBytes)
     self.maximumLifetime = maximumLifetime
-    self.sandboxExecutablePath = sandboxExecutablePath
   }
 
   public func make(
@@ -73,19 +70,10 @@ public struct AntigravityCLILaunchBuilder: Sendable {
       providerArgv.append(contentsOf: ["--effort", effort])
     }
 
-    guard FileManager.default.isExecutableFile(atPath: sandboxExecutablePath) else {
-      throw AgentRuntimeError.processUnavailable
-    }
     providerArgv.append(contentsOf: ["--add-dir", projectRoot])
-    let profile = try AntigravityCLILaunchRuntime.sandboxProfile(
-      projectRoot: projectRoot,
-      runDirectory: runtime,
-      allowsWorkspaceWrites: !readOnly
-    )
-    let argv = [sandboxExecutablePath, "-p", profile, "--"] + providerArgv
     return AntigravityCLILaunchConfiguration(
       process: AntigravityCLIProcessConfiguration(
-        argv: argv,
+        argv: providerArgv,
         workingDirectory: projectRoot,
         environment: environment,
         maximumFrameBytes: maximumFrameBytes,
@@ -94,8 +82,7 @@ public struct AntigravityCLILaunchBuilder: Sendable {
         standardInputTimeout: .seconds(2)
       ),
       runDirectory: runtime,
-      resolvedExecutablePath: executable,
-      readOnlySandboxed: readOnly
+      resolvedExecutablePath: executable
     )
   }
 

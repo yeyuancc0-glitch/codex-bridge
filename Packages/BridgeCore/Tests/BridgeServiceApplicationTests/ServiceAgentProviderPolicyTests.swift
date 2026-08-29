@@ -9,7 +9,15 @@ import Foundation
 import XCTest
 
 final class ServiceAgentProviderPolicyTests: XCTestCase {
-  func testAntigravityPolicyExposesSandboxedWriteContinuationAndQueuedSteerContract() {
+  func testCodexPolicyReportsNativeSandboxEnforcement() {
+    let policy = ServiceAgentProviderPolicyRegistry.codex
+
+    XCTAssertEqual(policy.workspaceEnforcement, "provider_native")
+    XCTAssertEqual(policy.approvalEnforcement, "local_app")
+    XCTAssertEqual(policy.networkEnforcement, "provider_native")
+  }
+
+  func testAntigravityPolicyExposesNativeWriteContinuationAndQueuedSteerContract() {
     let policy = ServiceAgentProviderPolicyRegistry.antigravity
 
     XCTAssertEqual(policy.providerID, .antigravity)
@@ -23,7 +31,7 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertTrue(policy.supportsSkillSelection)
     XCTAssertFalse(policy.supportsSupervisor)
     XCTAssertTrue(policy.allowsNetworkAccess)
-    XCTAssertEqual(policy.workspaceEnforcement, "bridge_workspace_sandbox")
+    XCTAssertEqual(policy.workspaceEnforcement, "provider_native")
     XCTAssertEqual(policy.approvalEnforcement, "provider_soft_deny")
     XCTAssertEqual(policy.networkEnforcement, "provider_native")
 

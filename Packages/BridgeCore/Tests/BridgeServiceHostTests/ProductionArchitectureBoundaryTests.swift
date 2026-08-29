@@ -104,6 +104,32 @@ final class ProductionArchitectureBoundaryTests: XCTestCase {
     }
   }
 
+  func testAgentProvidersDoNotUseBridgeSandboxExecWrapper() throws {
+    let launchSources = [
+      "Sources/BridgeCodexRPC/AppServerProcess.swift",
+      "Sources/BridgeOpenCodeACP/OpenCodeACPProfile.swift",
+      "Sources/BridgeDeepSeekHarnessACP/DeepSeekHarnessACPLaunchBuilder.swift",
+      "Sources/BridgeAntigravityCLI/AntigravityCLILaunchBuilder.swift",
+    ]
+
+    for path in launchSources {
+      let source = try String(
+        contentsOf: Self.packageRoot.appending(path: path, directoryHint: .notDirectory),
+        encoding: .utf8
+      )
+      XCTAssertFalse(source.contains("sandbox-exec"), "Agent launch uses Bridge sandbox: \(path)")
+    }
+
+    let antigravity = try String(
+      contentsOf: Self.packageRoot.appending(
+        path: "Sources/BridgeAntigravityCLI/AntigravityCLILaunchBuilder.swift",
+        directoryHint: .notDirectory
+      ),
+      encoding: .utf8
+    )
+    XCTAssertTrue(antigravity.contains("\"--sandbox\""))
+  }
+
   func testEmbeddedServiceResourcesAreStagedAndRequiredByReleaseBuilds() throws {
     let repositoryRoot = Self.packageRoot
       .deletingLastPathComponent()

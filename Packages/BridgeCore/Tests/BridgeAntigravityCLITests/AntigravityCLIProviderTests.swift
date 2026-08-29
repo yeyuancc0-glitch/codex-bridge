@@ -99,7 +99,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     )
     let provider = try AntigravityCLIProvider(
       configuration: AntigravityCLIProviderConfiguration(
-        launchBuilder: AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo"),
+        launchBuilder: AntigravityCLILaunchBuilder(),
         commandRunner: commandRunner,
         sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot]
       )
@@ -156,7 +156,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     )
     let provider = try AntigravityCLIProvider(
       configuration: AntigravityCLIProviderConfiguration(
-        launchBuilder: AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo"),
+        launchBuilder: AntigravityCLILaunchBuilder(),
         commandRunner: commandRunner,
         sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot]
       )
@@ -190,7 +190,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     let transport = ScriptedAntigravityTransport()
     let provider = try AntigravityCLIProvider(
       configuration: AntigravityCLIProviderConfiguration(
-        launchBuilder: AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo"),
+        launchBuilder: AntigravityCLILaunchBuilder(),
         runtimeBaseDirectory: runtime,
         sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot],
         transportFactory: { _ in
@@ -252,7 +252,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     let transport = ScriptedAntigravityTransport()
     let provider = try AntigravityCLIProvider(
       configuration: AntigravityCLIProviderConfiguration(
-        launchBuilder: AntigravityCLILaunchBuilder(sandboxExecutablePath: "/bin/echo"),
+        launchBuilder: AntigravityCLILaunchBuilder(),
         runtimeBaseDirectory: runtime,
         sourceEnvironment: ["HOME": home, "TMPDIR": projectRoot],
         transportFactory: { _ in

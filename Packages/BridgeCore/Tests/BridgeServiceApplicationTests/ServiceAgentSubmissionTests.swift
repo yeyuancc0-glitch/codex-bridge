@@ -1888,7 +1888,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(agent.installationID, "ainst-route-antigravity")
     XCTAssertTrue(agent.taskSubmissionEnabled)
     XCTAssertEqual(agent.effectiveCapabilities, [AgentCapability.workspaceRead.rawValue])
-    XCTAssertEqual(agent.workspaceEnforcement, "bridge_workspace_sandbox")
+    XCTAssertEqual(agent.workspaceEnforcement, "provider_native")
     XCTAssertEqual(agent.approvalEnforcement, "provider_soft_deny")
     XCTAssertEqual(agent.networkEnforcement, "provider_native")
   }
