@@ -42,6 +42,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   private var statusDelay: Duration = .zero
   private var failSubscription = false
   private var subscriptionDelay: Duration = .zero
+  private var conversationDelay: Duration = .zero
   private var threadListCalls = 0
   private var threadReadCalls = 0
   private var skillsValue: [MCPServiceSkill] = []
@@ -137,6 +138,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setSubscriptionDelay(_ delay: Duration) {
     subscriptionDelay = delay
+  }
+
+  func setConversationDelay(_ delay: Duration) {
+    conversationDelay = delay
   }
 
   func setStatusDelay(_ delay: Duration) {
@@ -712,6 +717,9 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   func taskConversation(
     _ request: IPCTaskConversationRequest
   ) async throws -> IPCTaskConversationPage {
+    if conversationDelay > .zero {
+      try await Task.sleep(for: conversationDelay)
+    }
     let query = TaskConversationQuery(request)
     if var pages = conversationPageSequences[query], !pages.isEmpty {
       let page = pages.removeFirst()

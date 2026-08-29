@@ -170,6 +170,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   let threadCatalogRefreshInterval: TimeInterval = 60
   let idlePollInterval: Duration = .seconds(10)
   var client: (any BridgeServiceClientProtocol)?
+  var conversationPresentationCache = TaskConversationPresentationCache()
   var pollingTask: Task<Void, Never>?
   var refreshInProgress = false
   var pendingRefresh = false

@@ -133,6 +133,7 @@ extension BridgeServiceAppModel {
       selectedThread = nil
       selectedTaskID = nil
       selectedProjectID = nil
+      conversationPresentationCache.removeAll()
     } catch {
       registrationStatus = registration.status
       connectionState = .unavailable

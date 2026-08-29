@@ -125,60 +125,24 @@ struct BridgeServiceWorkbenchConversationStream: View {
       historicalEntryCount: selectedThread?.entries.count ?? 0
     ) {
     case .task:
-      if let conversation, !conversation.entries.isEmpty {
-        taskConversation(conversation)
+      if let conversation {
+        BridgeServiceWorkbenchTaskConversationStream(
+          conversation: conversation,
+          activity: activity,
+          providerID: providerID
+        )
       } else if isWaitingForProvider {
-        waitingView
+        WorkbenchConversationWaitingView(activity: activity)
       } else {
-        emptyTaskConversation
+        WorkbenchConversationEmptyView(hasSelectedTask: true)
       }
     case .historicalThread:
       historicalThreadConversation(selectedThread)
     case .empty:
       if isWaitingForProvider {
-        waitingView
+        WorkbenchConversationWaitingView(activity: activity)
       } else {
-        emptyTaskConversation
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func taskConversation(_ conversation: TaskConversationModel) -> some View {
-    LazyVStack(alignment: .leading, spacing: 10) {
-      if conversation.isLoadingEarlier {
-        ProgressView()
-          .controlSize(.small)
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 4)
-      } else if conversation.canLoadEarlier {
-        Button("加载更早的消息") {
-          Task {
-            await conversation.loadEarlier()
-          }
-        }
-        .font(.caption)
-        .buttonStyle(.plain)
-        .foregroundStyle(.tint)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
-      }
-
-      ForEach(conversation.entries) { entry in
-        MessageBubble(
-          entry: entry,
-          streaming: entry.role == "agent" && !entry.isFinal,
-          providerID: providerID
-        )
-        .id(entry.key)
-      }
-
-      if isWaitingForProvider {
-        ThinkingBubbleView(
-          statusText: activity.statusText,
-          detailText: activity.detailText
-        )
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        WorkbenchConversationEmptyView(hasSelectedTask: false)
       }
     }
   }
@@ -201,37 +165,6 @@ struct BridgeServiceWorkbenchConversationStream: View {
           .id(entry.key)
       }
     }
-  }
-
-  private var waitingView: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      ThinkingBubbleView(
-        statusText: activity.statusText,
-        detailText: activity.detailText
-      )
-    }
-    .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-  }
-
-  private var emptyTaskConversation: some View {
-    VStack(spacing: 12) {
-      Image(systemName: hasSelectedTask ? "bubble.left.and.bubble.right" : "sparkles")
-        .font(.system(size: 24))
-        .foregroundStyle(.secondary)
-      Text(hasSelectedTask ? "正在同步对话内容" : "等待 ChatGPT 指令")
-        .font(.subheadline.weight(.semibold))
-        .foregroundStyle(.secondary)
-      Text(
-        hasSelectedTask
-          ? "任务已经选中，完整对话内容正在从后台 Service 读取。"
-          : "在左侧 ChatGPT 网页版发起提问并调用 MCP 工具，本面板将实时呈现任务流与所选 Provider 的执行结果。"
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .multilineTextAlignment(.center)
-      .padding(.horizontal, 16)
-    }
-    .frame(maxWidth: .infinity, minHeight: 240)
   }
 
   private var isWaitingForProvider: Bool {

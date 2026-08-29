@@ -4,51 +4,6 @@ import SwiftUI
 
 @MainActor
 public final class TaskConversationModel: ObservableObject, Identifiable {
-  public enum Activity: Equatable {
-    case idle
-    case thinking
-    case executing(String?)
-    case responding
-  }
-
-  public struct Entry: Identifiable, Equatable {
-    public let key: String
-    public let role: String
-    public let kind: String
-    public let messageID: Int64?
-    public var content: String
-    public var toolName: String?
-    public var toolStatus: String?
-    public var toolArguments: String?
-    public var isFinal: Bool
-
-    public var id: String { key }
-
-    init(_ message: IPCTaskConversationMessage, isFinal: Bool) {
-      key = message.key
-      role = message.role
-      kind = message.kind
-      messageID = message.messageID
-      content = message.content
-      toolName = message.toolName
-      toolStatus = message.toolStatus
-      toolArguments = message.toolArguments
-      self.isFinal = isFinal
-    }
-
-    init(key: String, role: String, kind: String, content: String, isFinal: Bool) {
-      self.key = key
-      self.role = role
-      self.kind = kind
-      messageID = nil
-      self.content = content
-      toolName = nil
-      toolStatus = nil
-      toolArguments = nil
-      self.isFinal = isFinal
-    }
-  }
-
   @Published public private(set) var entries: [Entry] = []
   @Published public private(set) var isStreaming = false
   @Published public private(set) var activity: Activity = .idle
@@ -77,6 +32,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private var lifecycleGeneration: UInt64 = 0
   private var loadGeneration: UInt64 = 0
   private var hasLoadedTerminalSnapshot = false
+  private var hasRestoredPresentation = false
 
   private static let maximumPendingPushes = 256
   private static let resyncRetryDelays: [Duration] = [
@@ -173,6 +129,26 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     requestAutoScroll()
   }
 
+  func presentationSnapshot() -> TaskConversationPresentationSnapshot? {
+    flushPendingPushes()
+    guard !entries.isEmpty else { return nil }
+    return TaskConversationPresentationSnapshot(
+      entries: entries,
+      canLoadEarlier: canLoadEarlier
+    )
+  }
+
+  func restorePresentation(_ snapshot: TaskConversationPresentationSnapshot?) {
+    guard let snapshot, !snapshot.entries.isEmpty else { return }
+    entries = snapshot.entries
+    canLoadEarlier = snapshot.canLoadEarlier
+    hasRestoredPresentation = true
+    hasLoadedTerminalSnapshot = isTerminal
+    rebuildIndex()
+    refreshStreamingState()
+    requestAutoScroll()
+  }
+
   func loadEarlier() async {
     flushPendingPushes()
     guard canLoadEarlier, !isLoadingEarlier else { return }
@@ -257,6 +233,11 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private func applySubscriptionPage(_ page: IPCTaskConversationPage) -> Bool {
     guard page.taskID == taskID else { return false }
     guard !(isTerminal && hasLoadedTerminalSnapshot) else { return true }
+    if hasRestoredPresentation, page.messages.isEmpty, !entries.isEmpty {
+      hasRestoredPresentation = false
+      return true
+    }
+    hasRestoredPresentation = false
     applyPage(page)
     return true
   }

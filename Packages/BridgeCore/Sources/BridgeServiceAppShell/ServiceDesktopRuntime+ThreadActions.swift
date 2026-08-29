@@ -78,6 +78,7 @@ extension BridgeServiceAppModel {
       client: client,
       isTerminal: task?.isTerminal == true
     )
+    conversation.restorePresentation(conversationPresentationCache.snapshot(for: taskID))
     self.conversation = conversation
     Task {
       await conversation.start()
@@ -86,6 +87,10 @@ extension BridgeServiceAppModel {
 
   public func closeConversation() {
     guard let conversation else { return }
+    conversationPresentationCache.store(
+      conversation.presentationSnapshot(),
+      for: conversation.taskID
+    )
     self.conversation = nil
     conversation.cancel()
   }
