@@ -1,8 +1,11 @@
 import BridgeCodexRPC
 import BridgeIPC
 import BridgeLegacyImport
-import Darwin
 import Foundation
+#if os(Windows)
+  import ucrt
+  import WinSDK
+#endif
 
 public enum ServiceProcessArgumentError: Error, Equatable, LocalizedError, Sendable {
   case unknownArgument(String)
@@ -46,10 +49,10 @@ public struct ServiceProcessOptions: Equatable, Sendable {
         }
         let value = arguments[valueIndex]
         guard !value.isEmpty,
-          value.hasPrefix("/"),
           value.utf8.count <= 16_384,
           !value.contains("\0"),
-          value.rangeOfCharacter(from: .controlCharacters) == nil
+          value.rangeOfCharacter(from: .controlCharacters) == nil,
+          isAbsolutePath(value)
         else {
           throw ServiceProcessArgumentError.invalidDataRoot
         }
@@ -61,6 +64,17 @@ public struct ServiceProcessOptions: Equatable, Sendable {
     }
     return ServiceProcessOptions(foreground: foreground, dataRootURL: dataRoot)
   }
+
+  private static func isAbsolutePath(_ value: String) -> Bool {
+    #if os(Windows)
+      // Drive-letter paths (C:\...) and UNC paths (\\server\share).
+      if value.hasPrefix("\\\\") { return true }
+      guard let first = value.first, first.isLetter, value.count >= 2 else { return false }
+      return value[value.index(after: value.startIndex)] == ":"
+    #else
+      return value.hasPrefix("/")
+    #endif
+  }
 }
 
 public enum ServiceProcessRunner {
@@ -68,7 +82,7 @@ public enum ServiceProcessRunner {
     arguments: [String] = Array(CommandLine.arguments.dropFirst()),
     appVersion: String = "0.3.0"
   ) async throws {
-    _ = umask(0o077)
+    applyDefaultUmask()
     let options = try ServiceProcessOptions.parse(arguments)
     let composition = try await ServiceComposition.make(
       configuration: ServiceCompositionConfiguration(
@@ -79,17 +93,14 @@ public enum ServiceProcessRunner {
       )
     )
     let endpoint = try await composition.startLocalMCP()
-    let listener: BridgeServiceXPCListener?
+    let listener: (any ServiceRequestListener)?
     if options.foreground {
       listener = nil
       FileHandle.standardOutput.write(
         Data("Codex Bridge service ready on 127.0.0.1:\(endpoint.port).\n".utf8)
       )
     } else {
-      let active = BridgeServiceXPCListener(
-        mode: .machService(BridgeServiceIPC.machServiceName),
-        composition: composition
-      )
+      let active = ServiceListenerFactory.makeListener(composition: composition)
       active.resume()
       listener = active
     }
@@ -98,88 +109,148 @@ public enum ServiceProcessRunner {
     listener?.invalidate()
     await composition.shutdown()
   }
+
+  private static func applyDefaultUmask() {
+    #if canImport(Darwin)
+      _ = umask(0o077)
+    #elseif canImport(Glibc)
+      _ = umask(0o077)
+    #elseif os(Windows)
+      _ = _umask(0o077)
+    #endif
+  }
 }
 
-enum ServiceTerminationSignal {
-  static func wait() async {
-    await wait(for: [SIGINT, SIGTERM])
-  }
-
-  static func wait(for signals: [Int32]) async {
-    let state = SignalState()
-    await withTaskCancellationHandler {
+#if os(Windows)
+  private enum ServiceTerminationSignal {
+    /// Bridges console lifecycle events (Ctrl+C, window close, logoff) into a
+    /// one-shot continuation so the service can shut down cleanly.
+    static func wait() async {
       await withCheckedContinuation { continuation in
-        state.start(continuation: continuation, signals: signals)
+        TerminationState.shared.start(continuation: continuation)
       }
-    } onCancel: {
-      state.finish()
     }
   }
-}
 
-private final class SignalState: @unchecked Sendable {
-  private let lock = NSLock()
-  private var continuation: CheckedContinuation<Void, Never>?
-  private var sources: [DispatchSourceSignal] = []
-  private var previousHandlers: [(signal: Int32, handler: (@convention(c) (Int32) -> Void)?)] = []
-  private var finished = false
+  private final class TerminationState: @unchecked Sendable {
+    static let shared = TerminationState()
 
-  func start(
-    continuation: CheckedContinuation<Void, Never>,
-    signals: [Int32]
-  ) {
-    lock.lock()
-    if finished {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var finished = false
+
+    func start(continuation: CheckedContinuation<Void, Never>) {
+      lock.lock()
+      if finished {
+        lock.unlock()
+        continuation.resume()
+        return
+      }
+      self.continuation = continuation
       lock.unlock()
-      continuation.resume()
-      return
+      // A C function pointer cannot capture context, so the handler reports
+      // to the process-wide shared state.
+      _ = SetConsoleCtrlHandler({ (_, _) -> Bool in
+        TerminationState.shared.finish()
+        return true
+      }, true)
     }
-    self.continuation = continuation
-    lock.unlock()
 
-    var installedSignals: [Int32] = []
-    for signal in signals where !installedSignals.contains(signal) {
-      installedSignals.append(signal)
-      install(signal: signal)
-    }
-    if Task.isCancelled {
-      finish()
-    }
-  }
-
-  func install(signal: Int32) {
-    lock.lock()
-    guard !finished else {
+    func finish() {
+      lock.lock()
+      guard !finished else {
+        lock.unlock()
+        return
+      }
+      finished = true
+      let continuation = continuation
+      self.continuation = nil
       lock.unlock()
-      return
+      continuation?.resume()
     }
-    let previousHandler = Darwin.signal(signal, SIG_IGN)
-    previousHandlers.append((signal: signal, handler: previousHandler))
-    let source = DispatchSource.makeSignalSource(signal: signal, queue: .global())
-    source.setEventHandler { [self] in self.finish() }
-    sources.append(source)
-    source.resume()
-    lock.unlock()
+  }
+#else
+  enum ServiceTerminationSignal {
+    static func wait() async {
+      await wait(for: [SIGINT, SIGTERM])
+    }
+
+    static func wait(for signals: [Int32]) async {
+      let state = SignalState()
+      await withTaskCancellationHandler {
+        await withCheckedContinuation { continuation in
+          state.start(continuation: continuation, signals: signals)
+        }
+      } onCancel: {
+        state.finish()
+      }
+    }
   }
 
-  func finish() {
-    lock.lock()
-    guard !finished else {
+  private final class SignalState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var sources: [DispatchSourceSignal] = []
+    private var previousHandlers: [(signal: Int32, handler: (@convention(c) (Int32) -> Void)?)] = []
+    private var finished = false
+
+    func start(
+      continuation: CheckedContinuation<Void, Never>,
+      signals: [Int32]
+    ) {
+      lock.lock()
+      if finished {
+        lock.unlock()
+        continuation.resume()
+        return
+      }
+      self.continuation = continuation
       lock.unlock()
-      return
+
+      var installedSignals: [Int32] = []
+      for signal in signals where !installedSignals.contains(signal) {
+        installedSignals.append(signal)
+        install(signal: signal)
+      }
+      if Task.isCancelled {
+        finish()
+      }
     }
-    finished = true
-    let continuation = continuation
-    self.continuation = nil
-    let activeSources = sources
-    sources.removeAll(keepingCapacity: false)
-    let handlers = previousHandlers
-    previousHandlers.removeAll(keepingCapacity: false)
-    lock.unlock()
-    for source in activeSources { source.cancel() }
-    for handler in handlers {
-      _ = Darwin.signal(handler.signal, handler.handler)
+
+    func install(signal: Int32) {
+      lock.lock()
+      guard !finished else {
+        lock.unlock()
+        return
+      }
+      let previousHandler = Darwin.signal(signal, SIG_IGN)
+      previousHandlers.append((signal: signal, handler: previousHandler))
+      let source = DispatchSource.makeSignalSource(signal: signal, queue: .global())
+      source.setEventHandler { [self] in self.finish() }
+      sources.append(source)
+      source.resume()
+      lock.unlock()
     }
-    continuation?.resume()
+
+    func finish() {
+      lock.lock()
+      guard !finished else {
+        lock.unlock()
+        return
+      }
+      finished = true
+      let continuation = continuation
+      self.continuation = nil
+      let activeSources = sources
+      sources.removeAll(keepingCapacity: false)
+      let handlers = previousHandlers
+      previousHandlers.removeAll(keepingCapacity: false)
+      lock.unlock()
+      for source in activeSources { source.cancel() }
+      for handler in handlers {
+        _ = Darwin.signal(handler.signal, handler.handler)
+      }
+      continuation?.resume()
+    }
   }
-}
+#endif

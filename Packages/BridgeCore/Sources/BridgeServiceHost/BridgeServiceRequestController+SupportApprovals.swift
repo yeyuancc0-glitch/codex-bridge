@@ -4,7 +4,7 @@ import BridgeMCP
 import BridgeServiceApplication
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func approvalSummary(
     _ approval: ExecutionApprovalRequest
   ) -> IPCApprovalSummary {

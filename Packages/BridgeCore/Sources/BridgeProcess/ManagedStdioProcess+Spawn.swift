@@ -4,6 +4,9 @@ import Foundation
   import Darwin
 #elseif canImport(Glibc)
   import Glibc
+#elseif os(Windows)
+  import WinSDK
+  import ucrt
 #endif
 
 extension ManagedStdioProcess {
@@ -35,6 +38,43 @@ extension ManagedStdioProcess {
       )
     #endif
   }
+
+  #if os(Windows)
+    /// Windows spawn: Foundation.Process wires the anonymous pipes and owns the
+    /// child handle; ManagedStdioProcess keeps the object for wait/terminate.
+    static func spawnWindows(
+      argv: [String],
+      workingDirectory: String?,
+      environment: [String: String],
+      standardInput: Pipe,
+      standardOutput: Pipe,
+      standardError: Pipe?
+    ) throws -> Foundation.Process {
+      guard let executable = argv.first else {
+        throw ManagedProcessError.invalidArgument
+      }
+      let process = Foundation.Process()
+      process.executableURL = URL(fileURLWithPath: executable)
+      process.arguments = Array(argv.dropFirst())
+      process.environment = environment
+      if let workingDirectory {
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
+      }
+      process.standardInput = standardInput
+      process.standardOutput = standardOutput
+      if let standardError {
+        process.standardError = standardError
+      } else {
+        process.standardError = standardOutput
+      }
+      do {
+        try process.run()
+      } catch {
+        throw ManagedProcessError.processLaunchFailed(Int32(ERROR_FILE_NOT_FOUND))
+      }
+      return process
+    }
+  #endif
 
   #if canImport(Darwin)
     static func spawnDarwin(
@@ -132,7 +172,7 @@ extension ManagedStdioProcess {
         }
       }
     }
-  #else
+  #elseif canImport(Glibc)
     static func spawnGlibc(
       argv: [String],
       workingDirectory: String?,
@@ -198,7 +238,11 @@ extension ManagedStdioProcess {
     _ strings: [String],
     _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) throws -> Result
   ) rethrows -> Result {
-    var storage = strings.map { strdup($0) }
+    #if os(Windows)
+      var storage = strings.map { _strdup($0) }
+    #else
+      var storage = strings.map { strdup($0) }
+    #endif
     defer { for pointer in storage { free(pointer) } }
     storage.append(nil)
     return try storage.withUnsafeMutableBufferPointer { buffer in

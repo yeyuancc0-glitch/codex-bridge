@@ -1,5 +1,9 @@
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public struct FileSystemIdentity: Codable, Equatable, Hashable, Sendable {
   public let device: UInt64
@@ -38,12 +42,38 @@ public struct RegisteredRoot: Codable, Equatable, Sendable {
   }
 
   static func readIdentity(atPath path: String) throws -> FileSystemIdentity {
-    var metadata = stat()
-    let status = path.withCString { Darwin.lstat($0, &metadata) }
-    guard status == 0 else { throw PathSecurityError.readFailed(errno) }
-    return FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
-    )
+    #if os(Windows)
+      let handle = path.withCString(encodedAs: UTF16.self) { wide in
+        CreateFileW(
+          wide,
+          DWORD(0),
+          0,
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_BACKUP_SEMANTICS),
+          nil
+        )
+      }
+      guard handle != INVALID_HANDLE_VALUE else {
+        throw PathSecurityError.readFailed(Int32(GetLastError()))
+      }
+      defer { _ = CloseHandle(handle) }
+      var info = BY_HANDLE_FILE_INFORMATION()
+      guard GetFileInformationByHandle(handle, &info) != 0 else {
+        throw PathSecurityError.readFailed(Int32(GetLastError()))
+      }
+      return FileSystemIdentity(
+        device: UInt64(info.dwVolumeSerialNumber),
+        inode: (UInt64(info.nFileIndexHigh) << 32) | UInt64(info.nFileIndexLow)
+      )
+    #else
+      var metadata = stat()
+      let status = path.withCString { lstat($0, &metadata) }
+      guard status == 0 else { throw PathSecurityError.readFailed(errno) }
+      return FileSystemIdentity(
+        device: UInt64(metadata.st_dev),
+        inode: UInt64(metadata.st_ino)
+      )
+    #endif
   }
 }

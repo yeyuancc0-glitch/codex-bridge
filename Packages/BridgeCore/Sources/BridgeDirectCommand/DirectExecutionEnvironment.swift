@@ -1,5 +1,12 @@
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
   public let bridgeSandbox: String
@@ -106,19 +113,50 @@ public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
   }
 
   private static func probeLoopbackBind() -> Bool {
-    let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-    guard descriptor >= 0 else { return false }
-    defer { Darwin.close(descriptor) }
-    var address = sockaddr_in()
-    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = 0
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-    return withUnsafePointer(to: &address) { pointer in
-      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+    #if os(Windows)
+      var wsaData = WSADATA()
+      guard WSAStartup(0x0202, &wsaData) == 0 else { return false }
+      defer { WSACleanup() }
+      let descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+      guard descriptor != INVALID_SOCKET else { return false }
+      defer { closesocket(descriptor) }
+      var address = sockaddr_in()
+      address.sin_family = ADDRESS_FAMILY(AF_INET)
+      address.sin_port = 0
+      address.sin_addr = "127.0.0.1".withCString { inet_addr($0) }
+      return withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          bind(descriptor, $0, Int32(MemoryLayout<sockaddr_in>.size)) == 0
+        }
       }
-    }
+    #elseif canImport(Darwin)
+      let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+      guard descriptor >= 0 else { return false }
+      defer { Darwin.close(descriptor) }
+      var address = sockaddr_in()
+      address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+      address.sin_family = sa_family_t(AF_INET)
+      address.sin_port = 0
+      address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+      return withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+        }
+      }
+    #else
+      let descriptor = Glibc.socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+      guard descriptor >= 0 else { return false }
+      defer { Glibc.close(descriptor) }
+      var address = sockaddr_in()
+      address.sin_family = sa_family_t(AF_INET)
+      address.sin_port = 0
+      address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+      return withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          Glibc.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+        }
+      }
+    #endif
   }
 
   private static let sandboxExecPath = "/usr/bin/sandbox-exec"

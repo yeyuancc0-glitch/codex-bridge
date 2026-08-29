@@ -5,7 +5,7 @@ import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleGetAgentCatalog(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let deadline = Self.deadline()
     let providers = try await composition.application.serviceManagedAgentProviderDescriptors(
@@ -168,7 +168,7 @@ extension BridgeServiceXPCController {
   }
 }
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleSubmitAgentTask(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentSubmitRequest.self, from: request)
     let deadline = ContinuousClock.now.advanced(by: .seconds(30))
@@ -221,7 +221,7 @@ extension BridgeServiceXPCController {
   }
 }
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleGetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.optionalPayload(
       IPCAgentModelDefaultRequest.self,

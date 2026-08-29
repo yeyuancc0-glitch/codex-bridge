@@ -2,7 +2,7 @@ import BridgeCodexService
 import BridgeIPC
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func conversationPage(
     taskID: String,
     entries: [TaskConversationBuffer.Entry]

@@ -1,6 +1,10 @@
 import Crypto
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public struct SecureFileRevision: Equatable, Sendable {
   public let sha256: String
@@ -69,6 +73,16 @@ public struct SecureProjectFileWriter: Sendable {
       throw PathSecurityError.sensitiveFileBlocked
     }
 
+    #if os(Windows)
+      return try applyWindows(
+        relativePath: relativePath,
+        resolver: resolver,
+        mode: mode,
+        content: content,
+        expectedSHA256: expectedSHA256
+      )
+    #endif
+
     var rootFD = open(
       resolver.root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
@@ -118,6 +132,9 @@ public struct SecureProjectFileWriter: Sendable {
     guard resolver.sensitivePolicy.allows(relativePath) else {
       throw PathSecurityError.sensitiveFileBlocked
     }
+    #if os(Windows)
+      return try windowsRevision(relativePath: relativePath, resolver: resolver)
+    #endif
     let rootFD = open(
       resolver.root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
@@ -329,6 +346,9 @@ public struct SecureProjectFileWriter: Sendable {
     guard resolver.sensitivePolicy.allows(relativePath) else {
       throw PathSecurityError.sensitiveFileBlocked
     }
+    #if os(Windows)
+      return try windowsRevision(relativePath: relativePath, resolver: resolver)
+    #endif
     let rootFD = open(
       resolver.root.canonicalPath,
       O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
@@ -447,4 +467,63 @@ public struct SecureProjectFileWriter: Sendable {
   private func closeFD(_ descriptor: Int32) {
     if descriptor >= 0 { close(descriptor) }
   }
+
+  #if os(Windows)
+    private func applyWindows(
+      relativePath: SecureRelativePath,
+      resolver: ProjectPathResolver,
+      mode: SecureWriteMode,
+      content: Data,
+      expectedSHA256: String?
+    ) throws -> SecureWriteResult {
+      let components = relativePath.components
+      switch mode {
+      case .create:
+        try WindowsSecureFile.createExclusive(
+          root: resolver.root,
+          components: components,
+          content: content
+        )
+        return SecureWriteResult(
+          mode: .create,
+          oldRevision: nil,
+          newRevision: .digest(of: content)
+        )
+      case .replace:
+        let oldRevision = try WindowsSecureFile.replaceFile(
+          root: resolver.root,
+          components: components,
+          content: content,
+          expectedSHA256: expectedSHA256
+        )
+        return SecureWriteResult(
+          mode: .replace,
+          oldRevision: oldRevision,
+          newRevision: .digest(of: content)
+        )
+      }
+    }
+
+    private func windowsRevision(
+      relativePath: SecureRelativePath,
+      resolver: ProjectPathResolver
+    ) throws -> SecureFileRevision? {
+      do {
+        let (data, _) = try WindowsSecureFile.readValidated(
+          root: resolver.root,
+          components: relativePath.components,
+          expectedIdentity: nil,
+          maximumBytes: maximumBytes
+        )
+        return .digest(of: data)
+      } catch let error as WindowsSecureFileError {
+        switch error {
+        case .openFailed(Int32(ERROR_FILE_NOT_FOUND)), .openFailed(Int32(ERROR_PATH_NOT_FOUND)):
+          return nil
+        default:
+          throw error
+        }
+      }
+    }
+  #endif
 }

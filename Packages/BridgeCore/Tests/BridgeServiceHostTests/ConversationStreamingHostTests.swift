@@ -728,7 +728,9 @@ final class ConversationStreamingHostTests: XCTestCase {
   }
 }
 
-private final class TestConversationStreamProxy: NSObject, CodexBridgeTaskStreamListener {
+private final class TestConversationStreamProxy: NSObject, CodexBridgeTaskStreamListener,
+  ServiceStreamSink
+{
   func push(_ payload: Data) {
     _ = payload
   }

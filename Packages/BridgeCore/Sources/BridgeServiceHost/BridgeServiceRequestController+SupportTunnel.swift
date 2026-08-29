@@ -4,7 +4,7 @@ import BridgeServiceCore
 import BridgeTunnel
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func tunnelStatus(
     _ snapshot: ServiceTunnelSnapshot
   ) -> IPCTunnelStatus {

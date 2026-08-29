@@ -1,5 +1,12 @@
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 struct LegacySourceFiles {
   static let repositoryName = "application.sqlite"
@@ -11,6 +18,17 @@ struct LegacySourceFiles {
 
   func openDirectory() throws -> LegacyVerifiedSourceDirectory? {
     let path = rootURL.path(percentEncoded: false)
+    #if os(Windows)
+    // Windows paths carry drive letters instead of a leading slash.
+    guard rootURL.isFileURL,
+      path.utf8.count <= 16_384,
+      !path.contains("\0"),
+      path.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
+      throw LegacyImportError.insecureSourceDirectory
+    }
+    return try LegacyVerifiedSourceDirectory.openWindows(path: path, rootURL: rootURL)
+    #else
     guard rootURL.isFileURL,
       path.hasPrefix("/"),
       path.utf8.count <= 16_384,
@@ -42,10 +60,249 @@ struct LegacySourceFiles {
       close(descriptor)
       throw error
     }
+    #endif
   }
 }
 
+#if os(Windows)
+  private struct LegacyWindowsSnapshot: Equatable {
+    var device: UInt64
+    var inode: UInt64
+    var size: UInt64
+    var lastWriteFileTime: UInt64
+    var attributes: DWORD
+
+    init?(handle: OpaquePointer) {
+      var information = BY_HANDLE_FILE_INFORMATION()
+      guard GetFileInformationByHandle(handle, &information) != 0 else { return nil }
+      let lastWrite = information.ftLastWriteTime
+      device = UInt64(information.dwVolumeSerialNumber)
+      inode = (UInt64(information.nFileIndexHigh) << 32) | UInt64(information.nFileIndexLow)
+      size = (UInt64(information.nFileSizeHigh) << 32) | UInt64(information.nFileSizeLow)
+      lastWriteFileTime =
+        (UInt64(lastWrite.dwHighDateTime) << 32) | UInt64(lastWrite.dwLowDateTime)
+      attributes = information.dwFileAttributes
+    }
+
+    static func isRegularFile(_ attributes: DWORD) -> Bool {
+      attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0
+        && attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
+    }
+  }
+
+  private struct LegacySourceDirectoryMetadata: Equatable {
+    let snapshot: LegacyWindowsSnapshot
+
+    init?(validating handle: OpaquePointer) {
+      // Windows uses ACLs; owner and POSIX-mode checks apply to POSIX only.
+      guard let fresh = LegacyWindowsSnapshot(handle: handle),
+        fresh.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0,
+        fresh.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
+      else { return nil }
+      snapshot = fresh
+    }
+  }
+
+  private struct LegacySourceFileMetadata: Equatable {
+    let snapshot: LegacyWindowsSnapshot
+    let maximumBytes: Int
+
+    init?(validatingFileHandle handle: OpaquePointer, name: String, maximumBytes: Int) {
+      guard maximumBytes > 0,
+        let fresh = LegacyWindowsSnapshot(handle: handle),
+        LegacyWindowsSnapshot.isRegularFile(fresh.attributes),
+        fresh.size > 0,
+        fresh.size <= UInt64(maximumBytes)
+      else { return nil }
+      snapshot = fresh
+      self.maximumBytes = maximumBytes
+    }
+  }
+#endif
+
 final class LegacyVerifiedSourceDirectory {
+  #if os(Windows)
+    private let rootURL: URL
+    private let path: String
+    private let handle: OpaquePointer
+    private let metadata: LegacySourceDirectoryMetadata
+
+    fileprivate init(
+      rootURL: URL,
+      path: String,
+      handle: OpaquePointer,
+      metadata: LegacySourceDirectoryMetadata
+    ) {
+      self.rootURL = rootURL
+      self.path = path
+      self.handle = handle
+      self.metadata = metadata
+    }
+
+    fileprivate static func openWindows(path: String, rootURL: URL) throws
+      -> LegacyVerifiedSourceDirectory? {
+      let handle: OpaquePointer? = path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(FILE_READ_ATTRIBUTES),
+          DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
+      }
+      guard let handle else {
+        let error = GetLastError()
+        if error == DWORD(ERROR_FILE_NOT_FOUND) || error == DWORD(ERROR_PATH_NOT_FOUND) {
+          return nil
+        }
+        throw LegacyImportError.insecureSourceDirectory
+      }
+      guard let metadata = LegacySourceDirectoryMetadata(validating: handle) else {
+        CloseHandle(handle)
+        throw LegacyImportError.insecureSourceDirectory
+      }
+      return LegacyVerifiedSourceDirectory(
+        rootURL: rootURL,
+        path: path,
+        handle: handle,
+        metadata: metadata
+      )
+    }
+
+    deinit {
+      CloseHandle(handle)
+    }
+
+    func repositoryFile() throws -> LegacyVerifiedSourceFile? {
+      guard
+        let file = try file(
+          name: LegacySourceFiles.repositoryName,
+          maximumBytes: LegacySourceFiles.maximumRepositoryBytes,
+          forbiddenSiblingNames: [
+            "\(LegacySourceFiles.repositoryName)-journal",
+            "\(LegacySourceFiles.repositoryName)-shm",
+            "\(LegacySourceFiles.repositoryName)-wal",
+          ]
+        )
+      else {
+        return nil
+      }
+      try file.validateRollbackJournalSQLiteHeader()
+      return file
+    }
+
+    func onboardingData() throws -> Data? {
+      guard
+        let file = try file(
+          name: LegacySourceFiles.onboardingName,
+          maximumBytes: LegacySourceFiles.maximumOnboardingBytes
+        )
+      else {
+        return nil
+      }
+      return try file.read(maximumBytes: LegacySourceFiles.maximumOnboardingBytes)
+    }
+
+    fileprivate func validateUnchanged() throws {
+      guard let fresh = Self.openWindows(path: path, rootURL: rootURL) else {
+        throw LegacyImportError.insecureSourceDirectory
+      }
+      defer { CloseHandle(fresh.handle) }
+      guard fresh.metadata == metadata else {
+        throw LegacyImportError.insecureSourceDirectory
+      }
+    }
+
+    fileprivate func validateEntry(
+      name: String,
+      expectedMetadata: LegacySourceFileMetadata
+    ) throws {
+      guard let current = Self.openFileHandle(filePath: path + "\\" + name) else {
+        throw LegacyImportError.insecureSourceFile(name)
+      }
+      defer { CloseHandle(current) }
+      guard let currentMetadata = LegacySourceFileMetadata(
+        validatingFileHandle: current,
+        name: name,
+        maximumBytes: expectedMetadata.maximumBytes
+      ), currentMetadata == expectedMetadata
+      else {
+        throw LegacyImportError.insecureSourceFile(name)
+      }
+    }
+
+    fileprivate func validateForbiddenSiblings(_ names: [String]) throws {
+      for name in names {
+        let siblingPath = path + "\\" + name
+        let attributes = siblingPath.withCString(encodedAs: UTF16.self) {
+          GetFileAttributesW($0)
+        }
+        if attributes != INVALID_FILE_ATTRIBUTES {
+          throw LegacyImportError.insecureSourceFile(LegacySourceFiles.repositoryName)
+        }
+        let error = GetLastError()
+        guard error == DWORD(ERROR_FILE_NOT_FOUND) || error == DWORD(ERROR_PATH_NOT_FOUND)
+        else {
+          throw LegacyImportError.readFailed
+        }
+      }
+    }
+
+    fileprivate static func openFileHandle(filePath: String) -> OpaquePointer? {
+      filePath.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(GENERIC_READ),
+          DWORD(FILE_SHARE_READ),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
+      }
+    }
+
+    private func file(
+      name: String,
+      maximumBytes: Int,
+      forbiddenSiblingNames: [String] = []
+    ) throws -> LegacyVerifiedSourceFile? {
+      try validateUnchanged()
+      try validateForbiddenSiblings(forbiddenSiblingNames)
+
+      let filePath = path + "\\" + name
+      guard let fileHandle = Self.openFileHandle(filePath: filePath) else {
+        if GetLastError() == DWORD(ERROR_FILE_NOT_FOUND) { return nil }
+        throw LegacyImportError.insecureSourceFile(name)
+      }
+
+      do {
+        guard let fileMetadata = LegacySourceFileMetadata(
+          validatingFileHandle: fileHandle,
+          name: name,
+          maximumBytes: maximumBytes
+        ) else {
+          throw LegacyImportError.insecureSourceFile(name)
+        }
+        try validateUnchanged()
+        try validateForbiddenSiblings(forbiddenSiblingNames)
+        try validateEntry(name: name, expectedMetadata: fileMetadata)
+        return LegacyVerifiedSourceFile(
+          name: name,
+          path: filePath,
+          handle: fileHandle,
+          metadata: fileMetadata,
+          directory: self,
+          forbiddenSiblingNames: forbiddenSiblingNames
+        )
+      } catch {
+        CloseHandle(fileHandle)
+        throw error
+      }
+    }
+  #else
   private let rootURL: URL
   private let descriptor: Int32
   private let metadata: LegacySourceDirectoryMetadata
@@ -198,11 +455,99 @@ final class LegacyVerifiedSourceDirectory {
       throw error
     }
   }
+  #endif
 }
 
 final class LegacyVerifiedSourceFile {
   let name: String
 
+  #if os(Windows)
+    private let path: String
+    private let handle: OpaquePointer
+    private let snapshot: LegacyWindowsSnapshot
+    private let directory: LegacyVerifiedSourceDirectory
+    private let forbiddenSiblingNames: [String]
+
+    fileprivate init(
+      name: String,
+      path: String,
+      handle: OpaquePointer,
+      snapshot: LegacyWindowsSnapshot,
+      directory: LegacyVerifiedSourceDirectory,
+      forbiddenSiblingNames: [String]
+    ) {
+      self.name = name
+      self.path = path
+      self.handle = handle
+      self.snapshot = snapshot
+      self.directory = directory
+      self.forbiddenSiblingNames = forbiddenSiblingNames
+    }
+
+    deinit {
+      CloseHandle(handle)
+    }
+
+    var descriptorPath: String {
+      // Windows has no /dev/fd; the database is opened by its real path.
+      path
+    }
+
+    func read(maximumBytes: Int) throws -> Data {
+      guard maximumBytes > 0, maximumBytes <= directory.maximumBytes(for: self) ?? maximumBytes
+      else {
+        throw LegacyImportError.readFailed
+      }
+      try validateUnchanged()
+
+      var result = Data()
+      var buffer = [UInt8](repeating: 0, count: 4 * 1_024)
+      while true {
+        var received: DWORD = 0
+        let succeeded = buffer.withUnsafeMutableBytes { bytes in
+          ReadFile(handle, bytes.baseAddress, DWORD(bytes.count), &received, nil)
+        }
+        guard succeeded != 0 else { throw LegacyImportError.readFailed }
+        if received == 0 { break }
+        guard Int(received) <= maximumBytes - result.count else {
+          throw LegacyImportError.readFailed
+        }
+        result.append(contentsOf: buffer.prefix(Int(received)))
+      }
+
+      try validateUnchanged()
+      return result
+    }
+
+    func validateUnchanged() throws {
+      try directory.validateUnchanged()
+      try directory.validateForbiddenSiblings(forbiddenSiblingNames)
+
+      guard let current = LegacyWindowsSnapshot(handle: handle), current == snapshot else {
+        throw LegacyImportError.insecureSourceFile(name)
+      }
+      try directory.validateEntry(name: name, expectedMetadata: directory.metadata(for: self))
+    }
+
+    fileprivate func validateRollbackJournalSQLiteHeader() throws {
+      try validateUnchanged()
+      var header = [UInt8](repeating: 0, count: 20)
+      var received: DWORD = 0
+      let succeeded = header.withUnsafeMutableBytes { bytes in
+        ReadFile(handle, bytes.baseAddress, DWORD(bytes.count), &received, nil)
+      }
+      guard succeeded != 0 else { throw LegacyImportError.corruptRepository }
+      guard received == DWORD(header.count) else { throw LegacyImportError.corruptRepository }
+      let expectedMagic = Array("SQLite format 3\0".utf8)
+      guard Array(header.prefix(expectedMagic.count)) == expectedMagic else {
+        throw LegacyImportError.corruptRepository
+      }
+      guard header[18] == 1, header[19] == 1 else {
+        throw LegacyImportError.insecureSourceFile(name)
+      }
+      try validateUnchanged()
+    }
+  #else
   private let descriptor: Int32
   private let metadata: LegacySourceFileMetadata
   private let directory: LegacyVerifiedSourceDirectory
@@ -299,66 +644,69 @@ final class LegacyVerifiedSourceFile {
     }
     try validateUnchanged()
   }
+  #endif
 }
 
-private struct LegacySourceDirectoryMetadata: Equatable {
-  let device: dev_t
-  let inode: ino_t
-  let owner: uid_t
-  let mode: mode_t
+#if !os(Windows)
+  private struct LegacySourceDirectoryMetadata: Equatable {
+    let device: dev_t
+    let inode: ino_t
+    let owner: uid_t
+    let mode: mode_t
 
-  init(validating metadata: stat) throws {
-    guard metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFDIR,
-      metadata.st_mode & 0o777 == 0o700
-    else {
-      throw LegacyImportError.insecureSourceDirectory
+    init(validating metadata: stat) throws {
+      guard metadata.st_uid == getuid(),
+        metadata.st_mode & S_IFMT == S_IFDIR,
+        metadata.st_mode & 0o777 == 0o700
+      else {
+        throw LegacyImportError.insecureSourceDirectory
+      }
+      device = metadata.st_dev
+      inode = metadata.st_ino
+      owner = metadata.st_uid
+      mode = metadata.st_mode
     }
-    device = metadata.st_dev
-    inode = metadata.st_ino
-    owner = metadata.st_uid
-    mode = metadata.st_mode
   }
-}
 
-private struct LegacySourceFileMetadata: Equatable {
-  let device: dev_t
-  let inode: ino_t
-  let owner: uid_t
-  let mode: mode_t
-  let linkCount: nlink_t
-  let size: off_t
-  let modifiedSeconds: Int64
-  let modifiedNanoseconds: Int64
-  let changedSeconds: Int64
-  let changedNanoseconds: Int64
-  let maximumBytes: Int
+  private struct LegacySourceFileMetadata: Equatable {
+    let device: dev_t
+    let inode: ino_t
+    let owner: uid_t
+    let mode: mode_t
+    let linkCount: nlink_t
+    let size: off_t
+    let modifiedSeconds: Int64
+    let modifiedNanoseconds: Int64
+    let changedSeconds: Int64
+    let changedNanoseconds: Int64
+    let maximumBytes: Int
 
-  init(
-    validating metadata: stat,
-    name: String,
-    maximumBytes: Int
-  ) throws {
-    guard maximumBytes > 0,
-      metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFREG,
-      metadata.st_mode & 0o777 == 0o600,
-      metadata.st_nlink == 1,
-      metadata.st_size > 0,
-      metadata.st_size <= off_t(maximumBytes)
-    else {
-      throw LegacyImportError.insecureSourceFile(name)
+    init(
+      validating metadata: stat,
+      name: String,
+      maximumBytes: Int
+    ) throws {
+      guard maximumBytes > 0,
+        metadata.st_uid == getuid(),
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_mode & 0o777 == 0o600,
+        metadata.st_nlink == 1,
+        metadata.st_size > 0,
+        metadata.st_size <= off_t(maximumBytes)
+      else {
+        throw LegacyImportError.insecureSourceFile(name)
+      }
+      device = metadata.st_dev
+      inode = metadata.st_ino
+      owner = metadata.st_uid
+      mode = metadata.st_mode
+      linkCount = metadata.st_nlink
+      size = metadata.st_size
+      modifiedSeconds = Int64(metadata.st_mtimespec.tv_sec)
+      modifiedNanoseconds = Int64(metadata.st_mtimespec.tv_nsec)
+      changedSeconds = Int64(metadata.st_ctimespec.tv_sec)
+      changedNanoseconds = Int64(metadata.st_ctimespec.tv_nsec)
+      self.maximumBytes = maximumBytes
     }
-    device = metadata.st_dev
-    inode = metadata.st_ino
-    owner = metadata.st_uid
-    mode = metadata.st_mode
-    linkCount = metadata.st_nlink
-    size = metadata.st_size
-    modifiedSeconds = Int64(metadata.st_mtimespec.tv_sec)
-    modifiedNanoseconds = Int64(metadata.st_mtimespec.tv_nsec)
-    changedSeconds = Int64(metadata.st_ctimespec.tv_sec)
-    changedNanoseconds = Int64(metadata.st_ctimespec.tv_nsec)
-    self.maximumBytes = maximumBytes
   }
-}
+#endif

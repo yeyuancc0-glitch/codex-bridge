@@ -4,6 +4,9 @@ import Foundation
   import Darwin
 #elseif canImport(Glibc)
   import Glibc
+#elseif os(Windows)
+  import WinSDK
+  import ucrt
 #endif
 
 public final class ManagedStdioProcess: @unchecked Sendable {
@@ -22,6 +25,9 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   private var identityStorage: ManagedProcessIdentity?
   private var inputClosed = false
   private var handlesClosed = false
+  #if os(Windows)
+    private var windowsProcess: Foundation.Process?
+  #endif
 
   public var identity: ManagedProcessIdentity? {
     lock.lock()
@@ -37,6 +43,54 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     onStandardOutput: @escaping OutputHandler,
     onStandardError: @escaping OutputHandler = { _ in }
   ) throws {
+    #if os(Windows)
+    guard let executable = argv.first,
+      !executable.isEmpty,
+      argv.count <= 128,
+      argv.allSatisfy({ !$0.contains("\0") }),
+      environment.allSatisfy({ !$0.key.contains("\0") && !$0.value.contains("\0") }),
+      workingDirectory.map({ !$0.isEmpty && !$0.contains("\0") }) ?? true
+    else {
+      throw ManagedProcessError.invalidArgument
+    }
+
+    standardOutputSink = onStandardOutput
+    standardErrorSink = onStandardError
+
+    let inputPipe = Pipe()
+    let outputPipe = Pipe()
+    let errorPipe = mergeStandardError ? nil : Pipe()
+    let launched: Foundation.Process
+    do {
+      launched = try Self.spawnWindows(
+        argv: argv,
+        workingDirectory: workingDirectory,
+        environment: environment,
+        standardInput: inputPipe,
+        standardOutput: outputPipe,
+        standardError: errorPipe
+      )
+    } catch {
+      inputPipe.fileHandleForReading.closeFile()
+      inputPipe.fileHandleForWriting.closeFile()
+      outputPipe.fileHandleForReading.closeFile()
+      outputPipe.fileHandleForWriting.closeFile()
+      errorPipe?.fileHandleForReading.closeFile()
+      errorPipe?.fileHandleForWriting.closeFile()
+      throw error
+    }
+
+    inputPipe.fileHandleForReading.closeFile()
+    outputPipe.fileHandleForWriting.closeFile()
+    errorPipe?.fileHandleForWriting.closeFile()
+
+    pid = Int32(launched.processIdentifier)
+    windowsProcess = launched
+    standardInputHandle = inputPipe.fileHandleForWriting
+    standardOutputHandle = outputPipe.fileHandleForReading
+    standardErrorHandle = errorPipe?.fileHandleForReading
+    identityStorage = Self.identity(of: pid)
+    #else
     guard let executable = argv.first,
       executable.hasPrefix("/"),
       argv.count <= 128,
@@ -84,6 +138,7 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     standardOutputHandle = outputPipe.fileHandleForReading
     standardErrorHandle = errorPipe?.fileHandleForReading
     identityStorage = Self.identity(of: processID)
+    #endif
 
     standardOutputHandle.readabilityHandler = { [weak self] handle in
       guard let self else { return }
@@ -110,7 +165,55 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     inputLock.lock()
     defer { inputLock.unlock() }
     guard !inputClosed else { throw ManagedProcessError.stdinUnavailable }
+    #if os(Windows)
+    let descriptor = standardInputHandle.fileDescriptor
+    guard let handle = OpaquePointer(bitPattern: Int(_get_osfhandle(descriptor))),
+      handle != INVALID_HANDLE_VALUE
+    else {
+      throw ManagedProcessError.stdinUnavailable
+    }
+    // Anonymous pipes do not support overlapped writes; PIPE_NOWAIT emulates
+    // EAGAIN so this loop can poll until the deadline expires.
+    var nonBlocking = DWORD(PIPE_READMODE_BYTE | PIPE_NOWAIT)
+    var blocking = DWORD(PIPE_READMODE_BYTE | PIPE_WAIT)
+    guard SetNamedPipeHandleState(handle, &nonBlocking, nil, nil) != 0 else {
+      throw ManagedProcessError.stdinUnavailable
+    }
+    defer { SetNamedPipeHandleState(handle, &blocking, nil, nil) }
 
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    do {
+      try data.withUnsafeBytes { buffer in
+        guard let baseAddress = buffer.baseAddress else { return }
+        var offset = 0
+        while offset < buffer.count {
+          var written: DWORD = 0
+          let succeeded = WriteFile(
+            handle,
+            baseAddress.advanced(by: offset),
+            DWORD(buffer.count - offset),
+            &written,
+            nil
+          )
+          if succeeded != 0, written > 0 {
+            offset += Int(written)
+            continue
+          }
+          if succeeded != 0 { throw ManagedProcessError.stdinUnavailable }
+          let error = GetLastError()
+          if error == ERROR_BROKEN_PIPE { throw ManagedProcessError.stdinUnavailable }
+          guard error == ERROR_NO_DATA, ContinuousClock.now < deadline else {
+            throw ManagedProcessError.stdinUnavailable
+          }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+      }
+    } catch let error as ManagedProcessError {
+      throw error
+    } catch {
+      throw ManagedProcessError.stdinUnavailable
+    }
+    #else
     let descriptor = standardInputHandle.fileDescriptor
     let previousFlags = fcntl(descriptor, F_GETFL)
     guard previousFlags >= 0,
@@ -147,6 +250,7 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     } catch {
       throw ManagedProcessError.stdinUnavailable
     }
+    #endif
   }
 
   public func closeStdin() {
@@ -159,16 +263,30 @@ public final class ManagedStdioProcess: @unchecked Sendable {
 
   public func terminateGroup() {
     guard isRunning else { return }
+    #if os(Windows)
+      // Windows has no process groups; terminate the process itself.
+      Self.terminateProcessByID(pid)
+    #else
     _ = systemKill(-pid, SIGTERM)
+    #endif
   }
 
   public func interruptGroup() {
     guard isRunning else { return }
+    #if os(Windows)
+      // Windows cannot deliver SIGINT without a shared console; force termination.
+      Self.terminateProcessByID(pid)
+    #else
     _ = systemKill(-pid, SIGINT)
+    #endif
   }
 
   public func killGroup() {
+    #if os(Windows)
+      if isRunning { Self.terminateProcessByID(pid) }
+    #else
     if isRunning { _ = systemKill(-pid, SIGKILL) }
+    #endif
   }
 
   public var isRunning: Bool {
@@ -267,6 +385,13 @@ public final class ManagedStdioProcess: @unchecked Sendable {
 
   private func reapIfExitedLocked() -> ManagedProcessTermination? {
     if let terminationStorage { return terminationStorage }
+    #if os(Windows)
+    guard let process = windowsProcess else { return nil }
+    guard !process.isRunning else { return nil }
+    let termination = ManagedProcessTermination.exited(Int32(process.terminationStatus))
+    terminationStorage = termination
+    return termination
+    #else
     var status: Int32 = 0
     let result = systemWaitPID(pid, &status, WNOHANG)
     guard result == pid else { return nil }
@@ -275,13 +400,30 @@ public final class ManagedStdioProcess: @unchecked Sendable {
       signal == 0 ? .exited((status >> 8) & 0xFF) : .killed(signal)
     terminationStorage = termination
     return termination
+    #endif
   }
 }
+
+#if os(Windows)
+  extension ManagedStdioProcess {
+    fileprivate static func terminateProcessByID(_ processID: Int32) -> Bool {
+      guard let handle = OpenProcess(
+        DWORD(PROCESS_TERMINATE),
+        false,
+        DWORD(UInt32(bitPattern: processID))
+      ) else {
+        return false
+      }
+      defer { CloseHandle(handle) }
+      return TerminateProcess(handle, 1)
+    }
+  }
+#endif
 #if canImport(Darwin)
   private let systemKill = Darwin.kill
   private let systemWaitPID = Darwin.waitpid
   private let systemWrite = Darwin.write
-#else
+#elseif canImport(Glibc)
   private let systemKill = Glibc.kill
   private let systemWaitPID = Glibc.waitpid
   private let systemWrite = Glibc.write

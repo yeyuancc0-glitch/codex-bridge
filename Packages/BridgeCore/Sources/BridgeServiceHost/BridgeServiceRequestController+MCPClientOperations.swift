@@ -2,7 +2,7 @@ import BridgeIPC
 import BridgeMCP
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleListMCPClients(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let formatter = ISO8601DateFormatter()
     let statuses = try await composition.mcpClientStatuses()

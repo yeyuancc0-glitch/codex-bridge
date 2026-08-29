@@ -6,7 +6,7 @@ import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleGetTaskConversation(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(
       IPCTaskConversationRequest.self,
@@ -45,7 +45,7 @@ extension BridgeServiceXPCController {
   }
 
   func handleSubscribeTaskConversation(_ request: BridgeServiceIPCRequest) async throws -> Data {
-    guard let streamProxy else {
+    guard let streamSink else {
       throw ServiceStoreError.invalidArgument("stream.unavailable")
     }
     await conversationStreamGate.acquire()
@@ -76,10 +76,10 @@ extension BridgeServiceXPCController {
         )
       )
     }
-    let forwarder = Task { [weak self, streamProxy] in
+    let forwarder = Task { [weak self, streamSink] in
       for await change in subscription.updates {
         guard let push = Self.encodePush(change) else { continue }
-        streamProxy.push(push)
+        streamSink.push(push)
       }
       await self?.removeForwarder(
         taskID: taskID,

@@ -4,7 +4,7 @@ import BridgeProjects
 import BridgeServiceCore
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func projectPolicy(
     read: String,
     write: String,

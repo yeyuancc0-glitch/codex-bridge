@@ -2,7 +2,7 @@ import BridgeIPC
 import BridgeMCP
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func mapMCPQueryError(_ error: BridgeMCPQueryError) -> BridgeServiceIPCError {
     switch error {
     case .projectNotFound:

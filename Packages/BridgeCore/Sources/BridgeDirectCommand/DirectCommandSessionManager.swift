@@ -1,8 +1,13 @@
 import BridgeDomain
 import BridgeServiceCore
-import Darwin
 import Foundation
 import Logging
+
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public struct DirectCommandSession: Sendable {
   public let sessionID: String
@@ -342,7 +347,19 @@ public actor DirectCommandSessionManager {
     for (sessionID, tracked) in trackedPIDs {
       let identity = tracked.identity
       guard DirectProcessLifetime.matchesCurrentProcess(identity) else { continue }
-      _ = Darwin.kill(-identity.processGroupID, SIGKILL)
+      #if os(Windows)
+        // Windows has no process groups; terminate the tracked process itself.
+        if let handle = OpenProcess(
+          DWORD(PROCESS_TERMINATE),
+          false,
+          DWORD(UInt32(bitPattern: identity.pid))
+        ) {
+          _ = TerminateProcess(handle, 1)
+          CloseHandle(handle)
+        }
+      #else
+        _ = Darwin.kill(-identity.processGroupID, SIGKILL)
+      #endif
       logger.warning(
         "Reaped orphan direct command session \(sessionID) pid \(identity.pid)"
       )

@@ -4,7 +4,7 @@ import BridgeServiceCore
 import BridgeTunnel
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleGetCustomInstructions(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let instructions = try await composition.application.serviceCustomInstructions(
       deadline: Self.deadline()

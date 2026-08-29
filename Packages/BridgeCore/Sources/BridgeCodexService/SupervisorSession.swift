@@ -1,8 +1,13 @@
 import BridgeCodexRPC
 import BridgeDomain
 import BridgeSupervisor
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 package actor SupervisorSession {
   nonisolated let events: AsyncStream<SupervisorEvent>
@@ -393,11 +398,18 @@ package actor SupervisorSession {
   }
 
   private static func privateDirectory(_ url: URL) -> Bool {
-    var metadata = stat()
-    return lstat(url.path, &metadata) == 0
-      && metadata.st_uid == getuid()
-      && metadata.st_mode & S_IFMT == S_IFDIR
-      && metadata.st_mode & 0o777 == 0o700
+    #if os(Windows)
+      // Windows uses ACLs; owner check applies to POSIX.
+      let attributes = url.path.withCString(encodedAs: UTF16.self) { GetFileAttributesW($0) }
+      return attributes != INVALID_FILE_ATTRIBUTES
+        && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+    #else
+      var metadata = stat()
+      return lstat(url.path, &metadata) == 0
+        && metadata.st_uid == getuid()
+        && metadata.st_mode & S_IFMT == S_IFDIR
+        && metadata.st_mode & 0o777 == 0o700
+    #endif
   }
 
   private static func code(_ error: SupervisorServiceError) -> String {

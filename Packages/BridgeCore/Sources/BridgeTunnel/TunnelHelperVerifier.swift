@@ -1,7 +1,9 @@
 import Crypto
-import Darwin
 import Foundation
-import Security
+#if canImport(Darwin)
+  import Darwin
+  import Security
+#endif
 
 public struct TunnelCodeIdentity: Equatable, Sendable {
   fileprivate let codeDirectoryHash: Data
@@ -16,6 +18,7 @@ public protocol TunnelCodeSignatureVerifier: Sendable {
   func verifyDynamic(processID: Int32, expectedIdentity: TunnelCodeIdentity) throws
 }
 
+#if canImport(Security)
 public struct MacOSTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
   private let requiresHostTeam: Bool
 
@@ -133,16 +136,48 @@ public struct MacOSTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
   }
 }
 
+#endif
+
+#if !canImport(Security)
+/// Placeholder verifier for platforms without a code-signature facility; the
+/// pinned tunnel helper itself has no build for those platforms either.
+public struct UnsupportedTunnelCodeSignatureVerifier: TunnelCodeSignatureVerifier {
+  public init() {}
+
+  public func verifyStatic(executableDescriptor: Int32) throws -> TunnelCodeIdentity {
+    throw TunnelHelperError.hostSignatureUnavailable
+  }
+
+  public func verifyDynamic(processID: Int32, expectedIdentity: TunnelCodeIdentity) throws {
+    throw TunnelHelperError.hostSignatureUnavailable
+  }
+}
+#endif
+
 public struct TunnelHelperVerifier: Sendable {
   private let codeSignatureVerifier: any TunnelCodeSignatureVerifier
 
-  public init(
-    codeSignatureVerifier: any TunnelCodeSignatureVerifier = MacOSTunnelCodeSignatureVerifier()
-  ) {
+  public init() {
+    self.codeSignatureVerifier = Self.defaultVerifier()
+  }
+
+  public init(codeSignatureVerifier: any TunnelCodeSignatureVerifier) {
     self.codeSignatureVerifier = codeSignatureVerifier
   }
 
+  private static func defaultVerifier() -> any TunnelCodeSignatureVerifier {
+    #if canImport(Security)
+      return MacOSTunnelCodeSignatureVerifier()
+    #else
+      return UnsupportedTunnelCodeSignatureVerifier()
+    #endif
+  }
+
   package func verify(executable: URL, expectedSHA256: String) throws -> TunnelVerifiedHelper {
+    #if !canImport(Darwin)
+      // No pinned helper build exists for this platform.
+      throw TunnelHelperError.unavailable
+    #else
     let descriptor = open(executable.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
     guard descriptor >= 0 else { throw TunnelHelperError.unavailable }
     defer { Darwin.close(descriptor) }
@@ -154,6 +189,7 @@ public struct TunnelHelperVerifier: Sendable {
     guard digest == expectedSHA256 else { throw TunnelHelperError.digestMismatch }
     let identity = try codeSignatureVerifier.verifyStatic(executableDescriptor: descriptor)
     return TunnelVerifiedHelper(executable: executable, codeIdentity: identity)
+    #endif
   }
 
   package func verifyRunning(

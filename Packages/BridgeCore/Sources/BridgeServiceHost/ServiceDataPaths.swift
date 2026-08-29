@@ -1,5 +1,7 @@
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 public enum ServiceDataPathsError: Error, Equatable, Sendable {
   case invalidRoot
@@ -34,7 +36,7 @@ public struct ServiceDataPaths: Sendable {
   }
 
   public static func prepare(at requestedRoot: URL) throws -> ServiceDataPaths {
-    guard requestedRoot.isFileURL, requestedRoot.path.hasPrefix("/") else {
+    guard requestedRoot.isFileURL, isAcceptableRootPath(requestedRoot.path) else {
       throw ServiceDataPathsError.invalidRoot
     }
     let root = requestedRoot.standardizedFileURL
@@ -74,35 +76,67 @@ public struct ServiceDataPaths: Sendable {
     return parent.appending(path: "CodexBridgeService", directoryHint: .isDirectory)
   }
 
+  private static func isAcceptableRootPath(_ path: String) -> Bool {
+    #if os(Windows)
+      if path.hasPrefix("\\\\") { return true }
+      guard let first = path.first, first.isLetter, path.count >= 2 else { return false }
+      return path[path.index(after: path.startIndex)] == ":"
+    #else
+      return path.hasPrefix("/")
+    #endif
+  }
+
   private static func preparePrivateDirectory(
     _ url: URL,
     createParents: Bool
   ) throws {
-    var metadata = stat()
-    if lstat(url.path, &metadata) != 0 {
-      guard errno == ENOENT else { throw ServiceDataPathsError.systemFailure(errno) }
-      do {
+    #if os(Windows)
+      // Windows enforces privacy through ACLs on the user profile; verifying
+      // that the path is a real directory is the portable equivalent here.
+      func currentAttributes() -> UInt32 {
+        url.path.withCString(encodedAs: UTF16.self) { GetFileAttributesW($0) }
+      }
+      var attributes = currentAttributes()
+      if attributes == INVALID_FILE_ATTRIBUTES {
         try FileManager.default.createDirectory(
           at: url,
-          withIntermediateDirectories: createParents,
-          attributes: [.posixPermissions: NSNumber(value: 0o700)]
+          withIntermediateDirectories: createParents
         )
-        try FileManager.default.setAttributes(
-          [.posixPermissions: NSNumber(value: 0o700)],
-          ofItemAtPath: url.path
-        )
-      } catch {
-        throw ServiceDataPathsError.systemFailure(errno)
+        attributes = currentAttributes()
       }
-      guard lstat(url.path, &metadata) == 0 else {
-        throw ServiceDataPathsError.systemFailure(errno)
+      guard attributes != INVALID_FILE_ATTRIBUTES,
+        attributes & UInt32(FILE_ATTRIBUTE_DIRECTORY) != 0,
+        attributes & UInt32(FILE_ATTRIBUTE_REPARSE_POINT) == 0
+      else {
+        throw ServiceDataPathsError.insecureDirectory
       }
-    }
-    guard metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFDIR,
-      metadata.st_mode & 0o777 == 0o700
-    else {
-      throw ServiceDataPathsError.insecureDirectory
-    }
+    #else
+      var metadata = stat()
+      if lstat(url.path, &metadata) != 0 {
+        guard errno == ENOENT else { throw ServiceDataPathsError.systemFailure(errno) }
+        do {
+          try FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: createParents,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+          )
+          try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o700)],
+            ofItemAtPath: url.path
+          )
+        } catch {
+          throw ServiceDataPathsError.systemFailure(errno)
+        }
+        guard lstat(url.path, &metadata) == 0 else {
+          throw ServiceDataPathsError.systemFailure(errno)
+        }
+      }
+      guard metadata.st_uid == getuid(),
+        metadata.st_mode & S_IFMT == S_IFDIR,
+        metadata.st_mode & 0o777 == 0o700
+      else {
+        throw ServiceDataPathsError.insecureDirectory
+      }
+    #endif
   }
 }

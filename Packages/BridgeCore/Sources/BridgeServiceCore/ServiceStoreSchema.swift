@@ -1,6 +1,13 @@
-import Darwin
 import Foundation
 import GRDB
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#elseif os(Windows)
+  import ucrt
+#endif
 
 private struct LegacySafeRule: Decodable {
   let id: String
@@ -87,9 +94,15 @@ enum ServiceStoreSchema {
     let destination = try DatabaseQueue(path: backupPath, configuration: configuration)
     do {
       try database.backup(to: destination)
-      guard chmod(backupPath, 0o600) == 0 else {
-        throw ServiceStoreError.storageFailure
-      }
+      #if os(Windows)
+        guard backupPath.withCString(encodedAs: UTF16.self, { _wchmod($0, 0o600) }) == 0 else {
+          throw ServiceStoreError.storageFailure
+        }
+      #else
+        guard chmod(backupPath, 0o600) == 0 else {
+          throw ServiceStoreError.storageFailure
+        }
+      #endif
       try validatePrivateBackup(at: backupPath)
     } catch {
       try? FileManager.default.removeItem(atPath: backupPath)
@@ -98,14 +111,23 @@ enum ServiceStoreSchema {
   }
 
   private static func validatePrivateBackup(at path: String) throws {
-    var metadata = stat()
-    guard lstat(path, &metadata) == 0,
-      metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFREG,
-      metadata.st_mode & 0o777 == 0o600
-    else {
-      throw ServiceStoreError.storageFailure
-    }
+    #if os(Windows)
+      // Windows uses ACLs; owner and POSIX-mode checks apply to POSIX only.
+      guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+        attributes[.type] as? FileAttributeType == .typeRegular
+      else {
+        throw ServiceStoreError.storageFailure
+      }
+    #else
+      var metadata = stat()
+      guard lstat(path, &metadata) == 0,
+        metadata.st_uid == getuid(),
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_mode & 0o777 == 0o600
+      else {
+        throw ServiceStoreError.storageFailure
+      }
+    #endif
   }
 
   static func makeMigrator() -> DatabaseMigrator {

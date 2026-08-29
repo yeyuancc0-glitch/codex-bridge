@@ -1,6 +1,10 @@
 import Crypto
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public enum SecureDirectoryAction: Equatable, Sendable {
   case deleteFile(expectedSHA256: String?)
@@ -36,6 +40,15 @@ public struct SecureProjectDirectoryMutation: Sendable {
     {
       throw PathSecurityError.sensitiveFileBlocked
     }
+
+    #if os(Windows)
+      return try applyWindows(
+        action: action,
+        relativePath: relativePath,
+        destinationRelativePath: destinationRelativePath,
+        resolver: resolver
+      )
+    #endif
 
     let rootFD = open(
       resolver.root.canonicalPath,
@@ -345,4 +358,67 @@ public struct SecureProjectDirectoryMutation: Sendable {
     }
     throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
   }
+
+  #if os(Windows)
+    private func applyWindows(
+      action: SecureDirectoryAction,
+      relativePath: SecureRelativePath,
+      destinationRelativePath: SecureRelativePath?,
+      resolver: ProjectPathResolver
+    ) throws -> SecureDirectoryMutationResult {
+      switch action {
+      case .deleteFile(let expectedSHA256):
+        if let expectedSHA256 {
+          let (data, _) = try WindowsSecureFile.readValidated(
+            root: resolver.root,
+            components: relativePath.components,
+            expectedIdentity: nil,
+            maximumBytes: maximumBytes
+          )
+          guard SecureFileRevision.digest(of: data).sha256 == expectedSHA256 else {
+            throw PathSecurityError.revisionConflict
+          }
+        }
+        try WindowsSecureFile.deleteFileValidated(
+          root: resolver.root,
+          components: relativePath.components
+        )
+        return SecureDirectoryMutationResult(action: action, revision: nil)
+      case .moveFile(let sourceExpectedSHA256, let destinationExpectedAbsent):
+        guard let destinationRelativePath else {
+          throw PathSecurityError.invalidRelativePath("missing destination")
+        }
+        if let sourceExpectedSHA256 {
+          let (data, _) = try WindowsSecureFile.readValidated(
+            root: resolver.root,
+            components: relativePath.components,
+            expectedIdentity: nil,
+            maximumBytes: maximumBytes
+          )
+          guard SecureFileRevision.digest(of: data).sha256 == sourceExpectedSHA256 else {
+            throw PathSecurityError.revisionConflict
+          }
+        }
+        try WindowsSecureFile.moveFileValidated(
+          root: resolver.root,
+          sourceComponents: relativePath.components,
+          destinationComponents: destinationRelativePath.components,
+          expectDestinationAbsent: destinationExpectedAbsent
+        )
+        return SecureDirectoryMutationResult(action: action, revision: nil)
+      case .createDirectory:
+        try WindowsSecureFile.createDirectoryValidated(
+          root: resolver.root,
+          components: relativePath.components
+        )
+        return SecureDirectoryMutationResult(action: action, revision: nil)
+      case .deleteEmptyDirectory:
+        try WindowsSecureFile.deleteEmptyDirectoryValidated(
+          root: resolver.root,
+          components: relativePath.components
+        )
+        return SecureDirectoryMutationResult(action: action, revision: nil)
+      }
+    }
+  #endif
 }

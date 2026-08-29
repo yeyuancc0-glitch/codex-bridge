@@ -1,6 +1,10 @@
 import Crypto
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public struct SecureTextFile: Equatable, Sendable {
   public let text: String
@@ -48,19 +52,39 @@ public struct SecureFileReader: Sendable {
     _ resolved: ResolvedProjectPath,
     root: RegisteredRoot
   ) throws -> SecureTextFile {
-    let descriptor = try openDescriptor(for: resolved, root: root)
-    defer { close(descriptor) }
+    #if os(Windows)
+      let components = try relativeComponents(of: resolved, root: root)
+      try WindowsSecureFile.validateRootIdentity(root: root)
+      let (handle, metadata) = try WindowsSecureFile.openResolving(
+        rootPath: root.canonicalPath,
+        components: components,
+        desiredAccess: DWORD(GENERIC_READ),
+        creationDisposition: DWORD(OPEN_EXISTING),
+        finalIsDirectory: false
+      )
+      defer { WindowsSecureFile.close(handle) }
+      guard metadata.identity == resolved.identity else {
+        throw PathSecurityError.fileIdentityChanged
+      }
+      guard metadata.size <= maximumBytes else {
+        throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
+      }
+      let data = try WindowsSecureFile.readFile(handle, maximumBytes: maximumBytes)
+    #else
+      let descriptor = try openDescriptor(for: resolved, root: root)
+      defer { close(descriptor) }
 
-    let metadata = try validateDescriptor(
-      descriptor,
-      root: root,
-      expectedIdentity: resolved.identity
-    )
-    guard metadata.st_size <= maximumBytes else {
-      throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
-    }
+      let metadata = try validateDescriptor(
+        descriptor,
+        root: root,
+        expectedIdentity: resolved.identity
+      )
+      guard metadata.st_size <= maximumBytes else {
+        throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
+      }
 
-    let data = try readBounded(descriptor)
+      let data = try readBounded(descriptor)
+    #endif
     guard !data.contains(0) else { throw PathSecurityError.binaryFileBlocked }
     guard let text = String(data: data, encoding: .utf8) else {
       throw PathSecurityError.binaryFileBlocked
@@ -170,4 +194,15 @@ public struct SecureFileReader: Sendable {
     }
     throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
   }
+
+  #if os(Windows)
+    private func relativeComponents(
+      of resolved: ResolvedProjectPath,
+      root: RegisteredRoot
+    ) throws -> [String] {
+      let relativePath = resolved.canonicalURL.path.dropFirst(root.canonicalPath.count)
+        .drop(while: { $0 == "/" })
+      return try SecureRelativePath(String(relativePath)).components
+    }
+  #endif
 }

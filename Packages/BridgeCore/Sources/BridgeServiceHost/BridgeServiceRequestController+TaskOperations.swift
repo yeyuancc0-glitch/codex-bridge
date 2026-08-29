@@ -4,7 +4,7 @@ import BridgeMCP
 import BridgeServiceCore
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleListThreads(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(
       IPCThreadListRequest.self,

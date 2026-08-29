@@ -1,7 +1,9 @@
 import BridgeSecurity
 import BridgeTunnel
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {
   private static let helperRelativePath = "Contents/Helpers/tunnel-client"
@@ -57,22 +59,8 @@ public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {
   }
 
   private static func readDigest(from url: URL) throws -> String {
-    let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    guard descriptor >= 0 else { throw ServiceTunnelError.helperUnavailable }
-    defer { close(descriptor) }
-
-    var metadata = stat()
-    guard fstat(descriptor, &metadata) == 0,
-      metadata.st_mode & S_IFMT == S_IFREG,
-      (64...66).contains(metadata.st_size)
-    else {
-      throw ServiceTunnelError.helperUnavailable
-    }
-
-    var bytes = [UInt8](repeating: 0, count: Int(metadata.st_size))
-    let count = Darwin.read(descriptor, &bytes, bytes.count)
-    guard count == bytes.count,
-      let value = String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(
+    let bytes = try readDigestBytes(from: url)
+    guard let value = String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(
         in: .whitespacesAndNewlines
       ),
       value.utf8.count == 64,
@@ -81,5 +69,57 @@ public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {
       throw ServiceTunnelError.helperUnavailable
     }
     return value
+  }
+
+  private static func readDigestBytes(from url: URL) throws -> [UInt8] {
+    #if os(Windows)
+      let handle = url.path.withCString(encodedAs: UTF16.self) { path in
+        CreateFileW(path, GENERIC_READ, 0, nil, DWORD(OPEN_EXISTING), 0, nil)
+      }
+      guard handle != INVALID_HANDLE_VALUE else {
+        throw ServiceTunnelError.helperUnavailable
+      }
+      defer { _ = CloseHandle(handle) }
+      var info = BY_HANDLE_FILE_INFORMATION()
+      guard GetFileInformationByHandle(handle, &info) != 0,
+        info.dwFileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0,
+        info.dwFileAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
+      else {
+        throw ServiceTunnelError.helperUnavailable
+      }
+      let size = Int((UInt64(info.nFileSizeHigh) << 32) | UInt64(info.nFileSizeLow))
+      guard (64...66).contains(size) else {
+        throw ServiceTunnelError.helperUnavailable
+      }
+      var bytes = [UInt8](repeating: 0, count: size)
+      let complete = bytes.withUnsafeMutableBytes { raw -> Bool in
+        var read: DWORD = 0
+        return ReadFile(handle, raw.baseAddress, DWORD(size), &read, nil)
+          && read == DWORD(size)
+      }
+      guard complete else {
+        throw ServiceTunnelError.helperUnavailable
+      }
+      return bytes
+    #else
+      let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+      guard descriptor >= 0 else { throw ServiceTunnelError.helperUnavailable }
+      defer { close(descriptor) }
+
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0,
+        metadata.st_mode & S_IFMT == S_IFREG,
+        (64...66).contains(metadata.st_size)
+      else {
+        throw ServiceTunnelError.helperUnavailable
+      }
+
+      var bytes = [UInt8](repeating: 0, count: Int(metadata.st_size))
+      let count = read(descriptor, &bytes, bytes.count)
+      guard count == bytes.count else {
+        throw ServiceTunnelError.helperUnavailable
+      }
+      return bytes
+    #endif
   }
 }

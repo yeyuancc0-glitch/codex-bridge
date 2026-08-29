@@ -1,5 +1,4 @@
 import BridgeSecurity
-import Darwin
 import Foundation
 
 public actor TunnelManager {

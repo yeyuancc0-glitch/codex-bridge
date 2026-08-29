@@ -4,7 +4,7 @@ import BridgeProjects
 import BridgeServiceCore
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleListProjects(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let projects = try await composition.application.serviceManagedProjects(
       deadline: Self.deadline()

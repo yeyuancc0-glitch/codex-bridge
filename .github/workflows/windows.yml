@@ -1,0 +1,31 @@
+name: windows
+
+on:
+  pull_request:
+  push:
+    branches: [main, win]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1"
+      - name: Build service and Windows shell
+        working-directory: Packages/BridgeCore
+        shell: pwsh
+        run: |
+          swift build --product codex-bridge-service
+          swift build --product codex-bridge-windows-app
+      - name: Smoke tests (platform-neutral targets)
+        working-directory: Packages/BridgeCore
+        shell: pwsh
+        run: |
+          swift test --filter "BridgeDomainTests|BridgeCodexRPCTests|BridgeAgentCoreTests"

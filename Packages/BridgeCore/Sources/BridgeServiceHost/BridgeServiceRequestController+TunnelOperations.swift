@@ -2,7 +2,7 @@ import BridgeIPC
 import BridgeTunnel
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   func handleConfigureTunnel(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(
       IPCTunnelConfigurationRequest.self,

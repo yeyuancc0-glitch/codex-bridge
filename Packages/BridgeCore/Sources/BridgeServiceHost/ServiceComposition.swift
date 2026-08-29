@@ -12,7 +12,6 @@ import BridgeSecurity
 import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
-import Security
 
 public actor ServiceComposition {
   public let paths: ServiceDataPaths
@@ -39,7 +38,7 @@ public actor ServiceComposition {
 
   public static func make(
     configuration: ServiceCompositionConfiguration,
-    secretStore: any SecretStore = KeychainSecretStore(),
+    secretStore: any SecretStore = SecretStoreFactory.defaultStore(),
     randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
       var bytes = [UInt8](repeating: 0, count: count)
       guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {

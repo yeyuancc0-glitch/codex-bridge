@@ -1,7 +1,7 @@
 import BridgeIPC
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func deadline() -> ContinuousClock.Instant {
     ContinuousClock.now.advanced(by: .seconds(20))
   }

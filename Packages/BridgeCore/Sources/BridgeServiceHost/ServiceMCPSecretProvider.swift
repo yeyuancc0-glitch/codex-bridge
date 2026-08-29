@@ -1,7 +1,6 @@
 import BridgeMCP
 import BridgeSecurity
 import Foundation
-import Security
 
 public enum ServiceMCPSecretError: Error, Equatable, Sendable {
   case randomGenerationFailed
@@ -18,7 +17,7 @@ public actor ServiceMCPSecretProvider {
   private let store: any SecretStore
   private let randomBytes: @Sendable (Int) throws -> Data
 
-  public init(store: any SecretStore = KeychainSecretStore()) {
+  public init(store: any SecretStore = SecretStoreFactory.defaultStore()) {
     self.store = store
     randomBytes = Self.secureRandomBytes
   }

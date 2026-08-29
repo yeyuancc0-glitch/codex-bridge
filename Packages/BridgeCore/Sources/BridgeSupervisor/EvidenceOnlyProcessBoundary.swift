@@ -1,6 +1,11 @@
 import BridgeCodexRPC
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public enum EvidenceOnlyProcessBoundaryError: Error, Equatable, Sendable {
   case invalidPath(String)
@@ -183,11 +188,18 @@ public enum EvidenceOnlyProcessBoundary {
   }
 
   private static func hasPrivateDirectoryMetadata(atPath path: String) -> Bool {
-    var metadata = stat()
-    return lstat(path, &metadata) == 0
-      && metadata.st_uid == getuid()
-      && metadata.st_mode & S_IFMT == S_IFDIR
-      && metadata.st_mode & 0o777 == 0o700
+    #if os(Windows)
+      // Windows uses ACLs; owner check applies to POSIX.
+      let attributes = path.withCString(encodedAs: UTF16.self) { GetFileAttributesW($0) }
+      return attributes != INVALID_FILE_ATTRIBUTES
+        && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+    #else
+      var metadata = stat()
+      return lstat(path, &metadata) == 0
+        && metadata.st_uid == getuid()
+        && metadata.st_mode & S_IFMT == S_IFDIR
+        && metadata.st_mode & 0o777 == 0o700
+    #endif
   }
 
   private static func profileLiteral(_ value: String) throws -> String {

@@ -1,4 +1,6 @@
-import Darwin
+#if canImport(Darwin)
+  import Darwin
+#endif
 import Foundation
 
 struct TunnelHealthSnapshot: Equatable, Sendable {
@@ -69,6 +71,13 @@ struct LoopbackHealthClient: Sendable {
     return url
   }
 
+  #if os(Windows)
+    private func request(path: String, baseURL: URL) throws -> HTTPResponse {
+      // The tunnel helper is not available on Windows, so no health endpoint
+      // can ever be listening on loopback.
+      throw TunnelHealthError.unavailable
+    }
+  #else
   private func request(path: String, baseURL: URL) throws -> HTTPResponse {
     guard let port = baseURL.port else { throw TunnelHealthError.invalidURLFile }
     let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -151,7 +160,8 @@ struct LoopbackHealthClient: Sendable {
       throw TunnelHealthError.invalidResponse
     }
     return try HTTPResponse(data: response)
-  }
+  }  #endif
+
 
   package static func pollTimestamp(in body: Data) -> TimeInterval? {
     let text = String(decoding: body, as: UTF8.self)

@@ -6,7 +6,7 @@ import BridgeServiceCore
 import BridgeTunnel
 import Foundation
 
-extension BridgeServiceXPCController {
+extension BridgeServiceRequestController {
   static func map(_ error: Error) -> BridgeServiceIPCError {
     if error is BridgeServiceIPCCodecError {
       return .init(code: "invalid_request", message: "The XPC request is invalid.")

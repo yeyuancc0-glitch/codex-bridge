@@ -45,7 +45,11 @@ public struct ManagedProcessRunner: Sendable {
     process: ManagedStdioProcess,
     timedOut: Bool
   ) -> ManagedProcessResult {
-    let termination = process.terminateAndWait(gracePeriod: gracePeriod) ?? .killed(SIGKILL)
+    #if os(Windows)
+      let termination = process.terminateAndWait(gracePeriod: gracePeriod) ?? .killed(9)
+    #else
+      let termination = process.terminateAndWait(gracePeriod: gracePeriod) ?? .killed(SIGKILL)
+    #endif
     process.drainRemainingOutput()
     process.close()
     return ManagedProcessResult(termination: termination, timedOut: timedOut)

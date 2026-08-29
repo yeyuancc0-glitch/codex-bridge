@@ -1,6 +1,9 @@
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#endif
 
+#if !os(Windows)
 package final class TunnelDirectoryHandle: @unchecked Sendable {
   package let path: String
   package let descriptor: Int32
@@ -141,3 +144,31 @@ package final class TunnelDirectoryHandle: @unchecked Sendable {
     !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
   }
 }
+
+#else
+// The pinned tunnel helper has no Windows build; the fd-based secure run
+// directory is only reachable through the POSIX implementation above.
+package final class TunnelDirectoryHandle: @unchecked Sendable {
+  package let path: String
+
+  package init(existingRoot: URL) throws {
+    throw TunnelManagerError.launchFailed
+  }
+
+  package init(creating name: String, in parent: TunnelDirectoryHandle) throws {
+    throw TunnelManagerError.launchFailed
+  }
+
+  package func matchesPath() -> Bool { false }
+  package func contains(name: String, directory: TunnelDirectoryHandle) -> Bool { false }
+  package func createDirectory(name: String) throws {
+    throw TunnelManagerError.launchFailed
+  }
+  package func readRegularFile(name: String, maximumBytes: Int) throws -> Data {
+    throw TunnelHealthError.invalidURLFile
+  }
+  package func removeEntry(name: String, directory: Bool = false) throws {
+    throw TunnelManagerError.cleanupFailed
+  }
+}
+#endif

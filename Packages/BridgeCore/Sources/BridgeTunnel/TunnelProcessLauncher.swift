@@ -1,10 +1,46 @@
-import Darwin
 import Foundation
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 struct TunnelChildExit: Equatable, Sendable {
   let code: Int32
 }
 
+#if os(Windows)
+final class TunnelSpawnedProcess: @unchecked Sendable {
+  let pid: Int32
+  let stdout: RedactedOutputBuffer
+  let stderr: RedactedOutputBuffer
+
+  fileprivate init() {
+    pid = -1
+    stdout = RedactedOutputBuffer(limit: 0, sensitiveValues: [])
+    stderr = RedactedOutputBuffer(limit: 0, sensitiveValues: [])
+  }
+
+  func pollExit() -> TunnelChildExit? { nil }
+  func beginTermination() -> Bool { false }
+  func escalateTermination() {}
+}
+
+struct TunnelProcessLauncher: Sendable {
+  // The pinned tunnel helper has no Windows build; launching always fails.
+  func spawn(
+    verifiedHelper: TunnelVerifiedHelper,
+    helperVerifier: TunnelHelperVerifier,
+    arguments: [String],
+    runtimeKey: Data,
+    localMCPHeaderSecret: Data,
+    runtimeDirectory: URL,
+    sensitiveValues: [String],
+    outputLimit: Int
+  ) throws -> TunnelSpawnedProcess {
+    throw TunnelManagerError.launchFailed
+  }
+}
+
+#else
 final class TunnelSpawnedProcess: @unchecked Sendable {
   let pid: pid_t
   let stdout: RedactedOutputBuffer
@@ -371,3 +407,5 @@ private final class DescriptorReader: @unchecked Sendable {
     }
   }
 }
+
+#endif
