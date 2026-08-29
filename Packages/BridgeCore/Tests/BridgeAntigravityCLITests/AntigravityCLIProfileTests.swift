@@ -61,6 +61,8 @@ final class AntigravityCLIProfileTests: XCTestCase {
         .sessionCreate,
         .sessionContinue,
         .steer,
+        .toolLifecycle,
+        .usage,
         .workspaceRead,
         .workspaceWriteInPlace,
         .modelSelection,

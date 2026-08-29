@@ -78,6 +78,8 @@ struct AntigravityCLIHelpFacts: Equatable, Sendable {
     var result: Set<AgentCapability> = []
     if supportsStreamJSON {
       result.insert(.sessionCreate)
+      result.insert(.toolLifecycle)
+      result.insert(.usage)
     }
     if supportsPlanMode && supportsStreamJSON {
       result.insert(.workspaceRead)

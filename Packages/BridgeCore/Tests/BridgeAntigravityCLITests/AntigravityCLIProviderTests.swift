@@ -175,7 +175,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
     XCTAssertTrue(result.unavailableReason?.contains("incompatible") == true)
   }
 
-  func testStartBuildsWorkspaceWriteAndRejectsNetworkRequestsBeforeLaunching() async throws {
+  func testStartBuildsWorkspaceWriteWithProviderNativeNetworkAccess() async throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
       prefix: "agy-admission-project")
     let home = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-admission-home")
@@ -217,15 +217,6 @@ final class AntigravityCLIProviderTests: XCTestCase {
       prompt: "Write a file",
       mutationIntent: .workspaceWrite,
       workspaceStrategy: .exclusiveProject,
-      networkAccessRequested: false
-    )
-    let networkRequest = try AgentExecutionRequest(
-      taskID: TaskID(rawValue: "task-agy-network"),
-      projectID: ProjectID(rawValue: "project-agy-network"),
-      projectRoot: projectRoot,
-      prompt: "Use the network",
-      mutationIntent: .readOnly,
-      workspaceStrategy: .sharedProject,
       networkAccessRequested: true
     )
 
@@ -240,16 +231,9 @@ final class AntigravityCLIProviderTests: XCTestCase {
     let firstFrame = try XCTUnwrap(sentFrames.first)
     let firstPrompt = try JSONDecoder().decode(AntigravityUserMessage.self, from: firstFrame)
       .message.content
-    XCTAssertTrue(firstPrompt.contains("non-interactive Codex Bridge run"))
-    XCTAssertTrue(firstPrompt.contains("native file, search, and web tools"))
+    XCTAssertEqual(firstPrompt, "Write a file")
     if let shutdown = writeHandle.control.shutdown {
       await shutdown()
-    }
-    do {
-      _ = try await provider.start(networkRequest, installation: installation)
-      XCTFail("Expected network access to be rejected")
-    } catch {
-      XCTAssertEqual(error as? AgentRuntimeError, .invalidRequest("request.networkAccessRequested"))
     }
   }
 
@@ -276,7 +260,12 @@ final class AntigravityCLIProviderTests: XCTestCase {
               AntigravityCLITestSupport.initializationFrame(
                 conversationID: "conversation-1",
                 cwd: projectRoot,
-                model: "gemini-test"
+                permissionMode: "always-proceed",
+                model: "gemini-test",
+                tools: [
+                  "read_file", "run_command", "search_web", "read_url_content",
+                  "mcp__server__tool", "delegate_subagent",
+                ]
               )
             )
           }
@@ -306,6 +295,12 @@ final class AntigravityCLIProviderTests: XCTestCase {
     XCTAssertTrue(handle.capabilities.effective.contains(.sessionContinue))
     XCTAssertTrue(handle.capabilities.effective.contains(.modelSelection))
     XCTAssertTrue(handle.capabilities.effective.contains(.effortSelection))
+    XCTAssertTrue(handle.capabilities.effective.contains(.shell))
+    XCTAssertTrue(handle.capabilities.effective.contains(.webSearch))
+    XCTAssertTrue(handle.capabilities.effective.contains(.webFetch))
+    XCTAssertTrue(handle.capabilities.effective.contains(.mcpClient))
+    XCTAssertTrue(handle.capabilities.effective.contains(.subagents))
+    XCTAssertTrue(handle.capabilities.effective.contains(.childRuns))
     if let shutdown = handle.control.shutdown {
       await shutdown()
     }

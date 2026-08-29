@@ -21,6 +21,14 @@ public enum AgentCapability: String, Codable, CaseIterable, Hashable, Sendable {
   case effortSelection = "selection.effort"
   case profileSelection = "selection.profile"
   case structuredOutput = "selection.structured_output"
+  case shell = "tools.shell"
+  case webSearch = "tools.web_search"
+  case webFetch = "tools.web_fetch"
+  case codeExecution = "tools.code_execution"
+  case mcpClient = "tools.mcp_client"
+  case subagents = "tools.subagents"
+  case workflow = "tools.workflow"
+  case skills = "tools.skills"
 }
 
 public struct AgentCapabilitySnapshot: Codable, Equatable, Sendable {

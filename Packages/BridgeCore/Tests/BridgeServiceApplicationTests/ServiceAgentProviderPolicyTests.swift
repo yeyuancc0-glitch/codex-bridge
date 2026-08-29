@@ -22,7 +22,7 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertTrue(policy.supportsEffortSelection)
     XCTAssertTrue(policy.supportsSkillSelection)
     XCTAssertFalse(policy.supportsSupervisor)
-    XCTAssertFalse(policy.allowsNetworkAccess)
+    XCTAssertTrue(policy.allowsNetworkAccess)
     XCTAssertEqual(policy.workspaceEnforcement, "bridge_workspace_sandbox")
     XCTAssertEqual(policy.approvalEnforcement, "provider_soft_deny")
     XCTAssertEqual(policy.networkEnforcement, "provider_native")
@@ -32,14 +32,16 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: true),
       [
         .sessionCreate, .sessionContinue, .interrupt, .steer, .toolLifecycle, .usage,
-        .workspaceRead, .workspaceWriteInPlace, .modelSelection, .effortSelection,
+        .workspaceRead, .workspaceWriteInPlace, .modelSelection, .effortSelection, .shell,
+        .webSearch, .webFetch, .mcpClient, .subagents, .childRuns,
       ]
     )
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: false),
       [
         .sessionCreate, .sessionContinue, .interrupt, .steer, .toolLifecycle, .usage,
-        .workspaceRead, .modelSelection, .effortSelection,
+        .workspaceRead, .modelSelection, .effortSelection, .shell, .webSearch, .webFetch,
+        .mcpClient, .subagents, .childRuns,
       ]
     )
   }
@@ -58,9 +60,10 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertFalse(policy.supportsSupervisor)
     XCTAssertTrue(policy.supportsSteer)
     XCTAssertTrue(policy.supportsInteractiveApproval)
+    XCTAssertTrue(policy.allowsNetworkAccess)
     XCTAssertEqual(policy.workspaceEnforcement, "provider_native")
     XCTAssertEqual(policy.approvalEnforcement, "local_app")
-    XCTAssertEqual(policy.networkEnforcement, "unavailable")
+    XCTAssertEqual(policy.networkEnforcement, "provider_native")
     XCTAssertEqual(policy.registrationTrustProfile, .userTrusted)
     XCTAssertEqual(
       policy.registrationSecurityProfileID,
@@ -71,15 +74,18 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: true),
       [
-        .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
-        .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+        .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+        .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
+        .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
+        .skills,
       ]
     )
     XCTAssertEqual(
       policy.effectiveCapabilities(reported, projectAllowsWorkspaceWrite: false),
       [
-        .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead,
+        .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
         .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+        .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow, .skills,
       ]
     )
   }
@@ -153,17 +159,25 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
         AgentCapability.sessionCreate.rawValue,
         AgentCapability.steer.rawValue,
         AgentCapability.textDelta.rawValue,
+        AgentCapability.toolLifecycle.rawValue,
         AgentCapability.effortSelection.rawValue,
         AgentCapability.modelSelection.rawValue,
         AgentCapability.workspaceRead.rawValue,
         AgentCapability.workspaceWriteInPlace.rawValue,
         AgentCapability.oneShotApproval.rawValue,
         AgentCapability.structuredApprovalPayload.rawValue,
+        AgentCapability.shell.rawValue,
+        AgentCapability.webSearch.rawValue,
+        AgentCapability.webFetch.rawValue,
+        AgentCapability.codeExecution.rawValue,
+        AgentCapability.subagents.rawValue,
+        AgentCapability.workflow.rawValue,
+        AgentCapability.skills.rawValue,
       ].sorted()
     )
     XCTAssertEqual(agent.workspaceEnforcement, "provider_native")
     XCTAssertEqual(agent.approvalEnforcement, "local_app")
-    XCTAssertEqual(agent.networkEnforcement, "unavailable")
+    XCTAssertEqual(agent.networkEnforcement, "provider_native")
 
     let receipt = try await application.serviceSubmitTask(
       MCPServiceTaskSubmission(
@@ -323,16 +337,6 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
           clientRequestID: "deepseek-policy-supervisor"
         )
       ),
-      (
-        "network",
-        MCPServiceTaskSubmission(
-          projectID: projectID,
-          prompt: "Use network.",
-          providerID: AgentProviderID.deepSeekHarness.rawValue,
-          networkAccess: true,
-          clientRequestID: "deepseek-policy-network"
-        )
-      ),
     ]
     for (name, submission) in unsupported {
       do {
@@ -348,6 +352,21 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
         )
       }
     }
+
+    let networkReceipt = try await registeredApplication.serviceSubmitTask(
+      MCPServiceTaskSubmission(
+        projectID: projectID,
+        prompt: "Use the Provider's native network tools.",
+        providerID: AgentProviderID.deepSeekHarness.rawValue,
+        networkAccess: true,
+        clientRequestID: "deepseek-policy-network"
+      ),
+      deadline: ContinuousClock.now.advanced(by: .seconds(5))
+    )
+    XCTAssertEqual(networkReceipt.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
+    let storedNetworkTask = try await fixture.tasks.task(
+      id: TaskID(rawValue: networkReceipt.taskID))
+    XCTAssertTrue(try XCTUnwrap(storedNetworkTask).networkAllowed)
   }
 
   func testDeepSeekManagedRegistrationRejectsNonReadOnlyTrustProfile() async throws {
@@ -525,8 +544,10 @@ private final class DeepSeekPolicyFixtureProvider: AgentProvider, @unchecked Sen
       )
     }
     let capabilities: Set<AgentCapability> = [
-      .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
-      .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+      .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+      .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
+      .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
+      .skills,
     ]
     return AgentProbeResult(
       installation: installation,
@@ -570,8 +591,10 @@ private final class DeepSeekPolicyFixtureProvider: AgentProvider, @unchecked Sen
       providerRunID: "run-\(request.taskID.rawValue)"
     )
     let capabilities: Set<AgentCapability> = [
-      .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
-      .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+      .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+      .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
+      .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
+      .skills,
     ]
     return AgentExecutionHandle(
       taskID: request.taskID,

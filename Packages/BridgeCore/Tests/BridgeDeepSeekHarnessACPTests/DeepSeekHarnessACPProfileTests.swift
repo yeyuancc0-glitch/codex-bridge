@@ -7,6 +7,27 @@ import XCTest
 @testable import BridgeDeepSeekHarnessACP
 
 final class DeepSeekHarnessACPProfileTests: XCTestCase {
+  func testBundledProfileExposesHarnessNativeToolComposition() throws {
+    let template = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    let value = try XCTUnwrap(String(data: template, encoding: .utf8))
+
+    for marker in [
+      "mode: both",
+      "@deepseek-ai/dsh-code-runtime-worker-thread",
+      "@deepseek-ai/dsh-tool-fs-search",
+      "@deepseek-ai/dsh-tool-subagent-control",
+      "@deepseek-ai/dsh-tool-workflow",
+      "@deepseek-ai/dsh-tool-todo",
+      "@deepseek-ai/dsh-tool-ralph",
+      "@deepseek-ai/dsh-tool-str-replace-editor",
+      "@deepseek-ai/dsh-web-search-deepseek",
+      "@deepseek-ai/dsh-web-fetch-http",
+      "fetch: true",
+    ] {
+      XCTAssertTrue(value.contains(marker), "bundled profile is missing \(marker)")
+    }
+  }
+
   func testLockedNodeRange() {
     XCTAssertTrue(DeepSeekHarnessACPProfile.isCompatibleNodeVersion("v22.19.0"))
     XCTAssertTrue(DeepSeekHarnessACPProfile.isCompatibleNodeVersion("22.23.1"))
@@ -346,6 +367,41 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     ) { error in
       XCTAssertEqual(error as? DeepSeekHarnessACPError, .templateMismatch)
     }
+  }
+
+  func testProfileCatalogAllowsExplicitAdditionalProviderComposition() throws {
+    let fixture = try makeProfileFixture(prefix: "deepseek-additional-composition")
+    let runDirectory = try makeTemporaryDirectory(prefix: "deepseek-additional-composition-run")
+    addTeardownBlock {
+      fixture.remove()
+      try? FileManager.default.removeItem(atPath: runDirectory)
+    }
+    let template = try DeepSeekHarnessACPProfile.bundledConfigurationTemplate()
+    var value = try XCTUnwrap(String(data: template, encoding: .utf8))
+    value += """
+      - id: user-mcp-server
+        name: '@deepseek-ai/dsh-mcp-client'
+        config:
+          serverName: local-tools
+          transport: stdio
+          command: local-mcp-server
+          args: []
+          cwd: /tmp
+      """
+
+    let profile = try DeepSeekHarnessACPModelCatalog.profile(
+      configuration: Data(value.utf8),
+      template: template
+    )
+
+    XCTAssertEqual(profile.defaultModelID, "deepseek-v4-pro")
+    let staged = try DeepSeekHarnessACPLaunchBuilder().prepareRuntimeProfile(
+      sourceRoot: fixture.root,
+      runDirectory: runDirectory,
+      configurationData: Data(value.utf8)
+    )
+    let stagedValue = try String(contentsOfFile: staged, encoding: .utf8)
+    XCTAssertTrue(stagedValue.contains("@deepseek-ai/dsh-mcp-client"))
   }
 
   private func makeProfileFixture(

@@ -28,10 +28,10 @@ final class MCPAntigravityContractTests: XCTestCase {
       [.string("read-only"), .string("workspace-write"), .null]
     )
     XCTAssertTrue(
-      permission["description"]?.stringValue?.contains("read-only selects Plan") == true
+      permission["description"]?.stringValue?.contains("Antigravity selects agy Plan") == true
     )
     XCTAssertTrue(
-      permission["description"]?.stringValue?.contains("workspace-write selects Accept Edits")
+      permission["description"]?.stringValue?.contains("or Accept Edits")
         == true
     )
     XCTAssertTrue(
@@ -45,7 +45,7 @@ final class MCPAntigravityContractTests: XCTestCase {
 
     let network = try XCTUnwrap(properties["network_access"]?.objectValue)
     XCTAssertTrue(
-      network["description"]?.stringValue?.contains("true is rejected") == true
+      network["description"]?.stringValue?.contains("Provider-native policies") == true
     )
 
     let description = submit.description ?? ""
@@ -59,7 +59,7 @@ final class MCPAntigravityContractTests: XCTestCase {
       "agy mode: accept-edits",
       "session continuation",
       "steer_task queues follow-up",
-      "interactive provider approval",
+      "native policy",
       "same project and installation",
     ] {
       XCTAssertTrue(description.contains(marker), "submit_task is missing: \(marker)")
@@ -88,8 +88,8 @@ final class MCPAntigravityContractTests: XCTestCase {
       "agy mode: plan",
       "agy mode: accept-edits",
       "queued steer",
-      "interactive provider approval",
-      "network_access=true",
+      "native headless policy",
+      "network_access records",
       "provider_session_id returned by get_task",
       "same project and installation",
     ] {

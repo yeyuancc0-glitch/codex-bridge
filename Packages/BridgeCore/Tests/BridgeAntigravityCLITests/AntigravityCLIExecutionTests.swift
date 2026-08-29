@@ -218,7 +218,7 @@ final class AntigravityCLIExecutionTests: XCTestCase {
       return XCTFail("Expected a permission-denied terminal event")
     }
     XCTAssertEqual(code, "antigravity_permission_denied")
-    XCTAssertTrue(summary.contains("narrow allow-rule"))
+    XCTAssertTrue(summary.contains("Tool Execution Policy 'proceed-in-sandbox'"))
   }
 
   func testInterruptRequestsProviderAndEndsWithInterruptedEvent() async throws {

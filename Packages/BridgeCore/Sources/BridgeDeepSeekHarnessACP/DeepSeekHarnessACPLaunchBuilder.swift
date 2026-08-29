@@ -47,12 +47,9 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     modelID: String? = nil,
     reasoningEffort: String? = nil,
     mutationIntent: AgentMutationIntent = .readOnly,
-    networkAllowed: Bool,
+    networkAllowed _: Bool,
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> DeepSeekHarnessACPLaunchConfiguration {
-    guard !networkAllowed else {
-      throw AgentRuntimeError.invalidRequest("request.networkAccessRequested")
-    }
     let validated = try profile.validate(installation)
     let project = try canonicalExistingDirectory(projectRoot, field: "projectRoot")
     let runtime = try preparePrivateDirectory(runDirectory, field: "runDirectory")

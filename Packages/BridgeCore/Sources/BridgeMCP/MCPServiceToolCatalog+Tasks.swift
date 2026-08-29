@@ -81,9 +81,9 @@ extension MCPServiceToolCatalog {
       + "sessions with provider-native read-only or workspace-write sandbox modes; omit thread_id, "
       + "supervisor_model and supervisor_effort, and use an explicitly requested model, effort, "
       + "permission mode, or Skill only when it is supported by the registered installation. "
-      + "The controlled DeepSeek Harness profile does not expose a Web search tool or ACP MCP servers; "
-      + "do not route tasks that require Web research to it. "
-      + "Its execution-time permission requests are surfaced for one-shot local approval. For "
+      + "DeepSeek Harness uses its verified native tool composition; Web, network, MCP, file, command, "
+      + "and subagent work should be routed to it when the registered installation exposes those "
+      + "capabilities. Its execution-time permission requests are surfaced for local approval. For "
       + "OpenCode, omit permission_mode to use the saved Bridge default. A read-only value may "
       + "always narrow that default. Set permission_mode_override=true with workspace-write only "
       + "when the user explicitly asks for native ACP Build. OpenCode network access follows its native permissions; the "
@@ -102,14 +102,14 @@ extension MCPServiceToolCatalog {
       + "must be a prior Bridge-bound Antigravity conversation from the same project and installation. "
       + "steer_task queues follow-up input on the same Antigravity session after the current prompt, "
       + "not real-time insertion. Bridge can inject an explicitly requested skill_name. Antigravity "
-      + "does not support Supervisor, interactive provider approval, or network_access=true; a provider "
-      + "permission denial is reported as task "
-      + "failure. The response includes wait_policy; follow "
+      + "does not support Supervisor. Network and sandboxed tools follow agy's native policy; Bridge "
+      + "must not reject a task solely because it requests network access. A provider permission denial "
+      + "is reported as task failure. The response includes wait_policy; follow "
       + "its recommended_poll_after_seconds before checking get_task again. The three profiles are "
       + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
-      + "seconds, quiet long-running work). A DeepSeek Harness network_enforcement of unavailable "
-      + "means network_access=false does not guarantee blocking the Harness model control plane or "
-      + "shell-tool network. Never treat a non-terminal status or unchanged "
+      + "seconds, quiet long-running work). External Provider network execution is Provider-native; "
+      + "network_access records the user's explicit task request but does not claim Bridge-level packet "
+      + "isolation. Never treat a non-terminal status or unchanged "
       + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [
@@ -156,7 +156,7 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For external agents, read-only may always narrow the saved mode; workspace-write requires permission_mode_override=true. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for one-shot local approval. Antigravity selects agy Plan or Accept Edits; interactive provider approval is unavailable and a permission denial fails the task.",
+            "For Codex, selects the native sandbox. For external agents, read-only may always narrow the saved mode; workspace-write requires permission_mode_override=true. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for local approval. Antigravity selects agy Plan or Accept Edits and uses its native sandbox permission policy for headless tools.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
@@ -166,7 +166,7 @@ extension MCPServiceToolCatalog {
         "network_access": [
           "type": "boolean",
           "description":
-            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them. For DeepSeek Harness, network enforcement is unavailable: false does not guarantee blocking model control-plane or shell-tool network access. Antigravity has no Bridge network grant and true is rejected.",
+            "Requests network use for the task. Codex applies its native sandbox policy. OpenCode, DeepSeek Harness, and Antigravity execute network-capable tools under their Provider-native policies; this field records the explicit request and project admission but does not claim Bridge-level packet isolation.",
         ],
         "acceptance_criteria": [
           "type": "array",

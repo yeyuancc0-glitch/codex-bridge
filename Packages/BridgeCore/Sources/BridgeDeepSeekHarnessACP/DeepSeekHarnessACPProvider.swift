@@ -50,7 +50,7 @@ public struct DeepSeekHarnessACPProvider: AgentProvider, Sendable {
     descriptor = try AgentProviderDescriptor(
       providerID: .deepSeekHarness,
       displayName: "DeepSeek Harness",
-      adapterRevision: 5
+      adapterRevision: 6
     )
   }
 

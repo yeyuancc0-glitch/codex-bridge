@@ -625,6 +625,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect repository layout and report findings.",
         providerID: "opencode",
         permissionMode: "read-only",
+        networkAccess: true,
         clientRequestID: "agent-request-1"
       ),
       deadline: deadline
@@ -639,6 +640,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.selectionMode, .explicit)
     XCTAssertEqual(task.executionModel, serviceDefaultProviderExecutionModel)
     XCTAssertEqual(task.permissionMode, .readOnly)
+    XCTAssertTrue(task.networkAllowed)
 
     // A read-only remote task keeps waiting across recovery and never holds
     // the project write slot.
@@ -656,6 +658,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         prompt: "Inspect repository layout and report findings.",
         providerID: "opencode",
         permissionMode: "read-only",
+        networkAccess: true,
         clientRequestID: "agent-request-1"
       ),
       deadline: deadline
@@ -751,6 +754,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertNil(completed.state.codexThreadID)
     XCTAssertEqual(provider.startedRequests.count, 1)
     XCTAssertEqual(provider.startedRequests[0].mutationIntent, .readOnly)
+    XCTAssertTrue(provider.startedRequests[0].networkAccessRequested)
     XCTAssertEqual(
       provider.startedRequests[0].profileID,
       AgentProfileID(rawValue: "controlled-readonly")
@@ -780,7 +784,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertNil(snapshot.turnID)
     XCTAssertEqual(snapshot.executionModel, serviceDefaultProviderExecutionModel)
     XCTAssertEqual(snapshot.permissionMode, "read-only")
-    XCTAssertFalse(snapshot.networkAccess)
+    XCTAssertTrue(snapshot.networkAccess)
     XCTAssertEqual(
       snapshot.recentEvents.first(where: { $0.kind == "task.completed" })?.summary,
       "The provider reported completion with stop reason end_turn; Bridge did not independently verify task acceptance."
@@ -1341,7 +1345,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: projectID, prompt: "x", providerID: "opencode",
         networkAccess: true),
       expected: .unavailable,
-      reason: "network request"
+      reason: "network request with no selectable installation"
     )
     try await assertRejected(
       application,
@@ -1585,7 +1589,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(provider.shutdownCount, 1)
   }
 
-  func testAntigravitySubmissionDefaultsToWorkspaceWriteExclusiveProject() async throws {
+  func testAntigravitySubmissionUsesWorkspaceWriteAndProviderNativeNetwork() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider(
       providerID: .antigravity,
@@ -1613,6 +1617,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         projectID: fixture.project.id.rawValue,
         prompt: "Update the repository.",
         providerID: "antigravity",
+        networkAccess: true,
         clientRequestID: "antigravity-workspace-write"
       ),
       deadline: deadline
@@ -1626,7 +1631,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(pending.providerID, AgentProviderID.antigravity.rawValue)
     XCTAssertEqual(pending.installationID, "ainst-route-antigravity")
     XCTAssertEqual(pending.permissionMode, .workspaceWrite)
-    XCTAssertFalse(pending.networkAllowed)
+    XCTAssertTrue(pending.networkAllowed)
     XCTAssertEqual(pending.selectionMode, .explicit)
 
     try await application.resolveTaskStartApproval(
@@ -1642,7 +1647,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     let request = try XCTUnwrap(provider.startedRequests.first)
     XCTAssertEqual(request.mutationIntent, .workspaceWrite)
     XCTAssertEqual(request.workspaceStrategy, .exclusiveProject)
-    XCTAssertFalse(request.networkAccessRequested)
+    XCTAssertTrue(request.networkAccessRequested)
     XCTAssertTrue(request.requiredCapabilities.contains(.workspaceWriteInPlace))
     XCTAssertEqual(request.profileID, AgentProfileID(rawValue: "desktop-shared"))
 
@@ -1728,7 +1733,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     }
   }
 
-  func testAntigravityAcceptsWorkspaceWriteAndRejectsNetworkAdmission() async throws {
+  func testAntigravityAcceptsWorkspaceWriteAndNetworkAdmission() async throws {
     let fixture = try await makeServiceApplicationFixture(self)
     let provider = try ScriptedAgentProvider(
       providerID: .antigravity,
@@ -1753,27 +1758,14 @@ final class ServiceAgentSubmissionTests: XCTestCase {
         providerID: "antigravity",
         permissionMode: "workspace-write",
         permissionModeOverride: true,
+        networkAccess: true,
         clientRequestID: "antigravity-write-accepted"
       ),
       deadline: ContinuousClock.now.advanced(by: .seconds(10))
     )
     XCTAssertEqual(receipt.status, ServiceTaskStatus.awaitingLocalApproval.rawValue)
-    try await assertRejected(
-      application,
-      submission: MCPServiceTaskSubmission(
-        projectID: projectID,
-        prompt: "Use the network while reviewing.",
-        providerID: "antigravity",
-        permissionMode: "read-only",
-        networkAccess: true,
-        clientRequestID: "antigravity-network-rejected"
-      ),
-      expected: .unavailable,
-      reason: "Antigravity network overrides are unavailable"
-    )
-
-    let projectTasks = try await fixture.tasks.tasks(projectID: fixture.project.id)
-    XCTAssertEqual(projectTasks.map(\.id.rawValue), [receipt.taskID])
+    let task = try await fixture.tasks.task(id: TaskID(rawValue: receipt.taskID))
+    XCTAssertTrue(try XCTUnwrap(task).networkAllowed)
     XCTAssertTrue(provider.startedRequests.isEmpty)
   }
 

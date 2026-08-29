@@ -95,7 +95,12 @@ enum DeepSeekHarnessACPModelCatalog {
     }
     let parsed = try parsedProfile(from: value)
     _ = try parsedProfile(from: templateValue)
-    guard try normalized(value) == normalized(templateValue) else {
+    let normalizedProfile = try normalized(value)
+    let normalizedTemplate = try normalized(templateValue)
+    guard
+      normalizedProfile == normalizedTemplate
+        || normalizedProfile.hasPrefix(normalizedTemplate)
+    else {
       throw DeepSeekHarnessACPError.templateMismatch
     }
     return parsed

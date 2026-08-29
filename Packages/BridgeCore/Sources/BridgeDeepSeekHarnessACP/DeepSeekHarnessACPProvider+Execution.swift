@@ -17,7 +17,7 @@ extension DeepSeekHarnessACPProvider {
         modelID: request.model,
         reasoningEffort: request.effort,
         mutationIntent: request.mutationIntent,
-        networkAllowed: false,
+        networkAllowed: request.networkAccessRequested,
         sourceEnvironment: configuration.sourceEnvironment
       )
       let connected = makeClient(transport: try configuration.transportFactory(launch))
@@ -93,9 +93,6 @@ extension DeepSeekHarnessACPProvider {
         || request.workspaceStrategy == .exclusiveProject
     else {
       throw AgentRuntimeError.invalidRequest("request.workspaceStrategy")
-    }
-    guard !request.networkAccessRequested else {
-      throw AgentRuntimeError.invalidRequest("request.networkAccessRequested")
     }
     guard request.requestedSessionID == nil else {
       throw AgentRuntimeError.capabilityUnavailable(.sessionContinue)

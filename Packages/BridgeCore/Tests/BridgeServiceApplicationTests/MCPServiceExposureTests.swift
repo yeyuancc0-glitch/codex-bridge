@@ -24,7 +24,8 @@ final class MCPServiceExposureTests: XCTestCase {
       XCTAssertTrue(instructions.contains("native ACP Plan/read-only"))
       XCTAssertTrue(instructions.contains("network_access does not override it"))
       XCTAssertTrue(instructions.contains("permission_mode_override=true"))
-      XCTAssertTrue(instructions.contains("Unmarked permission_mode values are ignored"))
+      XCTAssertTrue(instructions.contains("verified profile carries its native tool composition"))
+      XCTAssertTrue(instructions.contains("network_access records the explicit task request"))
       XCTAssertTrue(instructions.contains("provider_session_id returned by get_task as thread_id"))
       XCTAssertTrue(instructions.contains("optional execution_model"))
       XCTAssertTrue(instructions.contains("registered Harness profile"))
@@ -335,7 +336,7 @@ final class MCPServiceExposureTests: XCTestCase {
       properties?["model_override"]?.objectValue?["description"]?.stringValue?
         .localizedCaseInsensitiveContains("explicitly requests") == true
     )
-    XCTAssertTrue(description.contains("native ACP Plan"))
+    XCTAssertTrue(description.contains("provider-native read-only"))
     XCTAssertTrue(description.contains("native ACP Build"))
     XCTAssertTrue(description.contains("permission_mode_override=true"))
     XCTAssertTrue(description.contains("network_access field does not override"))
@@ -350,11 +351,11 @@ final class MCPServiceExposureTests: XCTestCase {
     )
     XCTAssertTrue(
       properties?["permission_mode_override"]?.objectValue?["description"]?.stringValue?
-        .contains("user's request explicitly asks") == true
+        .contains("user explicitly requests") == true
     )
     XCTAssertTrue(
       properties?["network_access"]?.objectValue?["description"]?.stringValue?
-        .contains("does not override") == true
+        .contains("Provider-native policies") == true
     )
   }
 

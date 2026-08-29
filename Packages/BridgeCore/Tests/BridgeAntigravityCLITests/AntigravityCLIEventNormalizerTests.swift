@@ -163,7 +163,7 @@ final class AntigravityCLIEventNormalizerTests: XCTestCase {
       return XCTFail("Expected a permission-denied summary")
     }
     XCTAssertTrue(summary.contains("permission_mode=request-review"))
-    XCTAssertTrue(summary.contains("toolPermission=proceed-in-sandbox"))
+    XCTAssertTrue(summary.contains("Tool Execution Policy 'proceed-in-sandbox'"))
     XCTAssertTrue(summary.contains("provider response was preserved"))
     XCTAssertFalse(
       events.contains { event in

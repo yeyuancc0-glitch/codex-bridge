@@ -30,6 +30,7 @@ public actor AntigravityCLIExecution {
   private var interruptRequested = false
   private var permissionDenied = false
   private var permissionMode: String?
+  private var nativeToolCapabilities: Set<AgentCapability> = []
   private var terminal = false
   private var initialized = false
 
@@ -159,6 +160,10 @@ public actor AntigravityCLIExecution {
     queuedSteerBytes += prompt.utf8.count
   }
 
+  public func observedNativeToolCapabilities() -> Set<AgentCapability> {
+    nativeToolCapabilities
+  }
+
   public func interrupt() async throws {
     guard initialized, !terminal else { throw AgentRuntimeError.processUnavailable }
     interruptRequested = true
@@ -240,6 +245,7 @@ public actor AntigravityCLIExecution {
     )
     self.binding = binding
     permissionMode = initialization.permissionMode
+    nativeToolCapabilities = Self.capabilities(for: initialization.tools)
     normalizer = AntigravityCLIEventNormalizer(
       taskID: taskID,
       binding: binding,
@@ -249,6 +255,29 @@ public actor AntigravityCLIExecution {
     _ = bindingContinuation.yield(binding)
     bindingContinuation.finish()
     try await sendPrompt(initialPrompt)
+  }
+
+  private static func capabilities(for tools: [String]) -> Set<AgentCapability> {
+    var result: Set<AgentCapability> = tools.isEmpty ? [] : [.toolLifecycle]
+    for tool in tools.map({ $0.lowercased() }) {
+      if tool.contains("command") || tool.contains("shell") || tool.contains("terminal") {
+        result.insert(.shell)
+      }
+      if tool.contains("search_web") || tool.contains("web_search") {
+        result.insert(.webSearch)
+      }
+      if tool.contains("url") || tool.contains("fetch") || tool.contains("browser") {
+        result.insert(.webFetch)
+      }
+      if tool.contains("mcp") {
+        result.insert(.mcpClient)
+      }
+      if tool.contains("subagent") || tool.contains("delegate") {
+        result.insert(.subagents)
+        result.insert(.childRuns)
+      }
+    }
+    return result
   }
 
   private func consume(
@@ -452,9 +481,8 @@ public actor AntigravityCLIExecution {
     }
   }
 
-  // V1 accepts the documented review/sandbox modes and rejects
-  // `always-proceed` even when it comes from the user's shared CLI settings.
   private static let acceptedPermissionModes: Set<String> = [
+    "always-proceed",
     "request-review",
     "proceed-in-sandbox",
     "strict",

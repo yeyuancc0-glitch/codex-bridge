@@ -45,6 +45,7 @@ extension AntigravityCLIProvider {
       let binding = try await active.waitForBinding(timeout: configuration.requestTimeout)
       var observed = Self.runtimeCapabilities.observed
       observed.insert(.sessionCreate)
+      observed.formUnion(await active.observedNativeToolCapabilities())
       let runCapabilities = Self.capabilities(observed: observed)
       let steer: (@Sendable (String) async throws -> Void)?
       if runCapabilities.effective.contains(.steer) {
@@ -82,9 +83,6 @@ extension AntigravityCLIProvider {
     guard request.workspaceStrategy == expectedStrategy
     else {
       throw AgentRuntimeError.capabilityUnavailable(.workspaceWriteInPlace)
-    }
-    guard !request.networkAccessRequested else {
-      throw AgentRuntimeError.invalidRequest("request.networkAccessRequested")
     }
     guard request.profileID == nil || request.profileID == AntigravityCLIProfiles.desktopShared
     else {
@@ -124,6 +122,12 @@ extension AntigravityCLIProvider {
     .workspaceWriteInPlace,
     .modelSelection,
     .effortSelection,
+    .shell,
+    .webSearch,
+    .webFetch,
+    .mcpClient,
+    .subagents,
+    .childRuns,
   ]
 
   static let enforcedCapabilities: Set<AgentCapability> = [
@@ -137,6 +141,12 @@ extension AntigravityCLIProvider {
     .workspaceWriteInPlace,
     .modelSelection,
     .effortSelection,
+    .shell,
+    .webSearch,
+    .webFetch,
+    .mcpClient,
+    .subagents,
+    .childRuns,
   ]
 
   static let runtimeCapabilities = capabilities(
@@ -144,6 +154,8 @@ extension AntigravityCLIProvider {
       .sessionCreate,
       .sessionContinue,
       .steer,
+      .toolLifecycle,
+      .usage,
       .workspaceRead,
       .workspaceWriteInPlace,
       .modelSelection,

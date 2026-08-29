@@ -14,6 +14,13 @@ extension DeepSeekHarnessACPProvider {
       .structuredApprovalPayload,
       .modelSelection,
       .effortSelection,
+      .shell,
+      .webSearch,
+      .webFetch,
+      .codeExecution,
+      .subagents,
+      .workflow,
+      .skills,
     ],
     observed: [
       .sessionCreate,
@@ -27,6 +34,13 @@ extension DeepSeekHarnessACPProvider {
       .structuredApprovalPayload,
       .modelSelection,
       .effortSelection,
+      .shell,
+      .webSearch,
+      .webFetch,
+      .codeExecution,
+      .subagents,
+      .workflow,
+      .skills,
     ],
     enforced: [
       .sessionCreate,
@@ -40,6 +54,13 @@ extension DeepSeekHarnessACPProvider {
       .structuredApprovalPayload,
       .modelSelection,
       .effortSelection,
+      .shell,
+      .webSearch,
+      .webFetch,
+      .codeExecution,
+      .subagents,
+      .workflow,
+      .skills,
     ]
   )
 }

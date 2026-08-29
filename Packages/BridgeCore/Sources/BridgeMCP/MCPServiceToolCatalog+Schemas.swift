@@ -49,7 +49,7 @@ extension MCPServiceToolCatalog {
         "type": "array",
         "items": stringSchema,
         "description":
-          "Capabilities actually available after provider observation and service policy. DeepSeek Harness may expose session_create, interrupt, lifecycle.steer, text_delta, workspace.read, workspace.write_in_place, approval.one_shot, approval.structured_payload, selection.model, and selection.effort. Antigravity may expose lifecycle.session_continue, lifecycle.steer (queued follow-up), workspace.write_in_place, selection.model, and selection.effort. An absent capability is unsupported; Antigravity does not expose interactive provider approval, Supervisor, or a Bridge network grant.",
+          "Capabilities actually available after provider observation and service policy. Tool capabilities include tools.shell, tools.web_search, tools.web_fetch, tools.code_execution, tools.mcp_client, tools.subagents, tools.workflow, and tools.skills. DeepSeek Harness and Antigravity expose the subset verified for the registered profile or current native tool roster, alongside lifecycle, workspace, approval, model, and effort capabilities. An absent capability identifies an integration gap to verify; it must not be treated as a reason to suppress unrelated Provider-native tools.",
       ],
       "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
       "security_profile_id": stringSchema,
@@ -58,7 +58,7 @@ extension MCPServiceToolCatalog {
       "network_enforcement": [
         "type": "string",
         "description":
-          "Bridge enforcement status. unavailable means network_access=false does not guarantee blocking the Provider model control plane or shell-tool network.",
+          "Network enforcement owner. provider_native means the Provider applies its own network and tool policy; Bridge records task intent and project admission without claiming packet-level isolation.",
       ],
       "models_summary": arraySchema(stringSchema),
       "unavailable_reason": stringSchema,

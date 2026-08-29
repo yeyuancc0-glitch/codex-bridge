@@ -27,11 +27,14 @@ enum AntigravityCLITestSupport {
     conversationID: String = "conversation-1",
     cwd: String,
     permissionMode: String = "request-review",
-    model: String = "gemini-test"
+    model: String = "gemini-test",
+    tools: [String] = ["read_file", "search"]
   ) -> Data {
-    data(
+    let toolsData = try! JSONEncoder().encode(tools)
+    let toolsJSON = String(decoding: toolsData, as: UTF8.self)
+    return data(
       """
-      {"event":"init","conversation_id":"\(conversationID)","init":{"cwd":"\(cwd)","tools":["read_file","search"],"permission_mode":"\(permissionMode)","model":"\(model)","agent":"antigravity"}}
+      {"event":"init","conversation_id":"\(conversationID)","init":{"cwd":"\(cwd)","tools":\(toolsJSON),"permission_mode":"\(permissionMode)","model":"\(model)","agent":"antigravity"}}
       """
     )
   }

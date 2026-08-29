@@ -67,13 +67,11 @@ extension MCPServiceToolCatalog {
       + "(agy mode: plan) and Accept Edits/workspace-write (agy mode: accept-edits) to its native "
       + "in-place modes, and may expose exact "
       + "session continuation and queued steer when effective_capabilities reports them. "
-      + "Antigravity has no interactive provider approval or Supervisor support; a headless "
-      + "permission denial is reported as task failure. The local user still approves each task "
-      + "before execution, while "
-      + "DeepSeek execution-time permission requests are surfaced for one-shot local approval; "
+      + "Antigravity has no Supervisor support; sandboxed headless tools use its Provider-native "
+      + "permission policy. The local user still approves each task before execution, while "
+      + "DeepSeek execution-time permission requests are surfaced for local approval; "
       + "steer input for ACP and Antigravity providers is queued as a follow-up on the same session. "
-      + "Inspect network_enforcement: unavailable means network_access=false "
-      + "does not guarantee blocking the Provider model control plane or shell-tool network.",
+      + "Inspect network_enforcement to see whether Bridge or the Provider owns network policy.",
     inputSchema: objectSchema(
       properties: ["project_id": optionalOpaqueProjectIDSchema]
     ),

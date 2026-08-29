@@ -26,18 +26,19 @@ final class MCPToolContractTests: XCTestCase {
     )
 
     XCTAssertTrue(providerDescription.contains("deepseek-harness"))
-    XCTAssertTrue(capabilityDescription.contains("workspace.write_in_place"))
-    XCTAssertTrue(capabilityDescription.contains("approval.one_shot"))
-    XCTAssertTrue(capabilityDescription.contains("lifecycle.steer"))
-    XCTAssertTrue(networkDescription.contains("does not guarantee"))
+    XCTAssertTrue(capabilityDescription.contains("tools.web_search"))
+    XCTAssertTrue(capabilityDescription.contains("approval"))
+    XCTAssertTrue(capabilityDescription.contains("lifecycle"))
+    XCTAssertTrue(capabilityDescription.contains("Provider-native tools"))
+    XCTAssertTrue(networkDescription.contains("provider_native"))
 
     let instructions = MCPServiceServerFactory.instructions(customInstructions: "")
     XCTAssertTrue(instructions.contains("provider_id=deepseek-harness"))
-    XCTAssertTrue(instructions.contains("one-shot local approval"))
+    XCTAssertTrue(instructions.contains("execution-time permission requests are surfaced"))
     XCTAssertTrue(instructions.contains("workspace-write"))
     XCTAssertTrue(instructions.contains("queued follow-up"))
-    XCTAssertTrue(instructions.contains("network_enforcement"))
-    XCTAssertTrue(instructions.contains("does not expose a Web search tool"))
+    XCTAssertTrue(instructions.contains("Provider-native policy"))
+    XCTAssertTrue(instructions.contains("Web, network, MCP, file, command"))
 
     let submit = try XCTUnwrap(
       MCPServiceToolCatalog(exposureMode: .full).definitions.first(where: {
@@ -45,7 +46,7 @@ final class MCPToolContractTests: XCTestCase {
       })
     )
     XCTAssertTrue(
-      submit.description?.contains("do not route tasks that require Web research") == true)
+      submit.description?.contains("Web, network, MCP, file, command") == true)
   }
 
   func testServiceCatalogPublishesStrictClosedSchemasAndExposureBoundaries() throws {

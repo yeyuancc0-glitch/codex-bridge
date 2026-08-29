@@ -45,7 +45,8 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       [
         .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
         .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
-        .effortSelection,
+        .effortSelection, .shell, .webSearch, .webFetch, .codeExecution, .subagents, .workflow,
+        .skills,
       ]
     )
     XCTAssertTrue(snapshot.advertised.contains(.oneShotApproval))
@@ -55,6 +56,9 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertTrue(snapshot.effective.contains(.workspaceWriteInPlace))
     XCTAssertTrue(snapshot.effective.contains(.structuredApprovalPayload))
     XCTAssertTrue(snapshot.effective.contains(.toolLifecycle))
+    XCTAssertTrue(snapshot.effective.contains(.webSearch))
+    XCTAssertTrue(snapshot.effective.contains(.subagents))
+    XCTAssertTrue(snapshot.effective.contains(.codeExecution))
   }
 
   func testCatalogComesFromHarnessACPWithoutAnotherProvider() async throws {
@@ -100,7 +104,7 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertFalse(sent.contains { $0.method == "session/prompt" })
   }
 
-  func testRequestValidationRejectsMutationNetworkAndUnsupportedOverrides() async throws {
+  func testRequestValidationRejectsMutationAndUnsupportedOverrides() async throws {
     let provider = try DeepSeekHarnessACPProvider(
       configuration: try DeepSeekHarnessACPProviderConfiguration(
         transportFactory: { _ in
@@ -128,22 +132,6 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       XCTFail("Expected isolated workspace strategy rejection")
     } catch let error as AgentRuntimeError {
       XCTAssertEqual(error, .invalidRequest("request.workspaceStrategy"))
-    }
-
-    let networkRequest = try AgentExecutionRequest(
-      taskID: .init(rawValue: "network-task"),
-      projectID: .init(rawValue: "project"),
-      projectRoot: project,
-      prompt: "network",
-      mutationIntent: .readOnly,
-      workspaceStrategy: .sharedProject,
-      networkAccessRequested: true
-    )
-    do {
-      _ = try await provider.start(networkRequest, installation: installation)
-      XCTFail("Expected network request rejection")
-    } catch let error as AgentRuntimeError {
-      XCTAssertEqual(error, .invalidRequest("request.networkAccessRequested"))
     }
 
     let effortRequest = try AgentExecutionRequest(
@@ -220,7 +208,7 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       prompt: "write",
       mutationIntent: .workspaceWrite,
       workspaceStrategy: .exclusiveProject,
-      networkAccessRequested: false,
+      networkAccessRequested: true,
       requiredCapabilities: [
         .workspaceRead, .workspaceWriteInPlace, .steer, .oneShotApproval,
         .structuredApprovalPayload,
