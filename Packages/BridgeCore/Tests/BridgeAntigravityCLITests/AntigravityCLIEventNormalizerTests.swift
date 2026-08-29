@@ -147,7 +147,8 @@ final class AntigravityCLIEventNormalizerTests: XCTestCase {
       try XCTUnwrap(resultEnvelope.result),
       permissionDenied: true,
       terminal: true,
-      permissionMode: "request-review"
+      permissionMode: "request-review",
+      deniedToolName: "run_command"
     )
 
     XCTAssertEqual(events.count, 3)
@@ -225,6 +226,33 @@ final class AntigravityCLIEventNormalizerTests: XCTestCase {
           head: "completed successfully", tail: "", byteCount: 22, truncated: false)
       )
     )
+  }
+
+  func testWebPermissionDenialPointsToInternetPolicy() async throws {
+    let normalizer = try makeNormalizer()
+    let resultEnvelope = try AntigravityCLITestSupport.decode(
+      AntigravityStreamEnvelope.self,
+      String(
+        decoding: try AntigravityCLITestSupport.resultFrame(response: "Partial result."),
+        as: UTF8.self
+      )
+    )
+
+    let events = try await normalizer.normalize(
+      try XCTUnwrap(resultEnvelope.result),
+      permissionDenied: true,
+      terminal: true,
+      permissionMode: "proceed-in-sandbox",
+      deniedToolName: "read_url_content"
+    )
+
+    guard case .failed(_, let summary) = events.last?.event else {
+      return XCTFail("Expected a permission-denied summary")
+    }
+    XCTAssertTrue(summary.contains("native tool 'read_url_content'"))
+    XCTAssertTrue(summary.contains("Internet Access Policy"))
+    XCTAssertTrue(summary.contains("domain/URL allow-rule"))
+    XCTAssertFalse(summary.contains("choose Tool Execution Policy 'proceed-in-sandbox'"))
   }
 
   func testRejectsWrongSessionAndInvalidStepState() async throws {

@@ -251,11 +251,8 @@ extension ServiceExecutionCoordinator {
       stopReason.utf8.count <= 128,
       stopReason.rangeOfCharacter(from: .controlCharacters) == nil
     else {
-      return
-        "The provider reported completion; Bridge did not independently verify task acceptance."
+      return "The provider reported completion."
     }
-    return
-      "The provider reported completion with stop reason \(stopReason); "
-      + "Bridge did not independently verify task acceptance."
+    return "The provider reported completion with stop reason \(stopReason)."
   }
 }

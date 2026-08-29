@@ -22,24 +22,35 @@ actor ServiceExecutionConversationCoordinator {
       throw ServiceStoreError.unknownTask(taskID)
     }
     let inMemory = await conversation.entries(taskID: taskID)
-    let persistedLimit = inMemory.count >= limit ? 0 : max(1, limit - inMemory.count)
+    let persistedLimit =
+      task.state.status.isTerminal
+      ? limit
+      : (inMemory.count >= limit ? 0 : max(1, limit - inMemory.count))
     let persisted = try await tasks.messages(taskID: taskID, limit: persistedLimit)
-    let memoryKeys = Set(inMemory.map(\.key))
-    var page =
-      persisted
-      .filter { !memoryKeys.contains($0.key) }
-      .map {
-        TaskConversationBuffer.Entry(
-          key: $0.key,
-          role: $0.role,
-          kind: $0.kind,
-          content: $0.content,
-          toolName: $0.toolName,
-          toolStatus: $0.toolStatus,
-          toolArguments: $0.toolArguments,
-          isFinal: $0.isFinal(for: task.state.status)
-        )
+    let persistedPage = persisted.map {
+      TaskConversationBuffer.Entry(
+        key: $0.key,
+        role: $0.role,
+        kind: $0.kind,
+        content: $0.content,
+        toolName: $0.toolName,
+        toolStatus: $0.toolStatus,
+        toolArguments: $0.toolArguments,
+        isFinal: $0.isFinal(for: task.state.status)
+      )
+    }
+    if task.state.status.isTerminal {
+      let updates = AsyncStream<ConversationChange> { continuation in
+        continuation.finish()
       }
+      return ConversationSubscription(
+        subscriptionID: -1,
+        page: Array(persistedPage.suffix(limit)),
+        updates: updates
+      )
+    }
+    let memoryKeys = Set(inMemory.map(\.key))
+    var page = persistedPage.filter { !memoryKeys.contains($0.key) }
     page.append(contentsOf: inMemory)
     let subscription = await conversation.subscribe(taskID: taskID)
     let merged =

@@ -175,6 +175,10 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     let promptState = ProviderPromptState()
     await transport.setHandler { message, transport in
       if message.method == "session/prompt", let id = message.id {
+        let prompt = try XCTUnwrap(
+          message.params?["prompt"]?.arrayValue?.first?["text"]?.stringValue
+        )
+        XCTAssertEqual(prompt, "write")
         await promptState.set(id)
         try await transport.emit(
           deepSeekPermissionRequest(
@@ -190,7 +194,7 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
         try await transport.emit(
           deepSeekMessageChunk(
             sessionID: "provider-approval-session",
-            text: "approved\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)"
+            text: "approved"
           )
         )
         try await transport.emit(

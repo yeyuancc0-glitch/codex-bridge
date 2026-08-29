@@ -29,6 +29,8 @@ public actor AntigravityCLIExecution {
   private var turnFinalizing = false
   private var interruptRequested = false
   private var permissionDenied = false
+  private var permissionDeniedToolName: String?
+  private var lastFailedTool: (name: String, stepIndex: Int)?
   private var permissionMode: String?
   private var nativeToolCapabilities: Set<AgentCapability> = []
   private var terminal = false
@@ -192,10 +194,18 @@ public actor AntigravityCLIExecution {
         guard let update = envelope.stepUpdate, let normalizer else {
           throw AntigravityCLIError.invalidMessage
         }
+        let toolName = update.toolInfo?.name ?? update.toolName
+        if update.stepType == "tool", update.state == "ERROR", let toolName {
+          lastFailedTool = (toolName, update.stepIndex)
+        }
         if AntigravityPermissionEvidence.detected(in: update.toolInfo?.error?.message)
           || AntigravityPermissionEvidence.detected(in: update.error?.message)
         {
           permissionDenied = true
+          let precedingToolName = lastFailedTool.flatMap {
+            $0.stepIndex + 1 == update.stepIndex ? $0.name : nil
+          }
+          permissionDeniedToolName = toolName ?? precedingToolName
         }
         for event in try await normalizer.normalize(update) {
           guard !terminal else { return }
@@ -316,7 +326,8 @@ public actor AntigravityCLIExecution {
       result,
       permissionDenied: denied,
       terminal: terminalResult,
-      permissionMode: permissionMode
+      permissionMode: permissionMode,
+      deniedToolName: permissionDeniedToolName
     ) {
       guard !terminal else { return }
       if interruptRequested, Self.isTerminalEvent(event.event) { continue }
@@ -345,6 +356,8 @@ public actor AntigravityCLIExecution {
     }
     let frame = try AntigravityWireCodec.encodeUserMessage(prompt)
     permissionDenied = false
+    permissionDeniedToolName = nil
+    lastFailedTool = nil
     try await transport.send(frame)
     guard !terminal else { return }
     turnFinalizing = false

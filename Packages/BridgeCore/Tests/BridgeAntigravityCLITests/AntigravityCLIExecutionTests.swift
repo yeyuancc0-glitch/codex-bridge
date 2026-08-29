@@ -221,6 +221,48 @@ final class AntigravityCLIExecutionTests: XCTestCase {
     XCTAssertTrue(summary.contains("Tool Execution Policy 'proceed-in-sandbox'"))
   }
 
+  func testImmediatelyFollowingAnonymousDenialRetainsFailedWebToolClassification() async throws {
+    let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
+      prefix: "agy-web-denial")
+    defer { try? FileManager.default.removeItem(atPath: projectRoot) }
+    let transport = ScriptedAntigravityTransport()
+    let execution = makeExecution(projectRoot: projectRoot, transport: transport)
+    await execution.start()
+    try await transport.emit(
+      AntigravityCLITestSupport.initializationFrame(
+        cwd: projectRoot,
+        permissionMode: "proceed-in-sandbox"
+      )
+    )
+    _ = try await execution.waitForBinding(timeout: .seconds(1))
+    let eventsTask = collectEvents(from: execution.events)
+    try await transport.emit(
+      AntigravityCLITestSupport.data(
+        """
+        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":4,"state":"ERROR","step_type":"tool","tool_name":"read_url_content","tool_info":{"name":"read_url_content","parameters":{"url":"https://example.com"},"error":{"type":"TOOL_ERROR","message":"request failed"}}}}
+        """
+      )
+    )
+    try await transport.emit(
+      AntigravityCLITestSupport.data(
+        """
+        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":5,"state":"ERROR","step_type":"tool","tool_name":null,"error":{"type":"PERMISSION","message":"headless mode cannot prompt; operation was auto-denied"}}}
+        """
+      )
+    )
+    try await transport.emit(
+      AntigravityCLITestSupport.resultFrame(response: "The page could not be read.")
+    )
+
+    let events = await eventsTask.value
+    guard case .failed(let code, let summary) = events.last?.event else {
+      return XCTFail("Expected a permission-denied terminal event")
+    }
+    XCTAssertEqual(code, "antigravity_permission_denied")
+    XCTAssertTrue(summary.contains("native tool 'read_url_content'"))
+    XCTAssertTrue(summary.contains("Internet Access Policy"))
+  }
+
   func testInterruptRequestsProviderAndEndsWithInterruptedEvent() async throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-interrupt")
     defer { try? FileManager.default.removeItem(atPath: projectRoot) }

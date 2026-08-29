@@ -787,7 +787,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertTrue(snapshot.networkAccess)
     XCTAssertEqual(
       snapshot.recentEvents.first(where: { $0.kind == "task.completed" })?.summary,
-      "The provider reported completion with stop reason end_turn; Bridge did not independently verify task acceptance."
+      "The provider reported completion with stop reason end_turn."
     )
   }
 

@@ -85,7 +85,8 @@ public actor AntigravityCLIEventNormalizer {
     _ result: AntigravityResult,
     permissionDenied: Bool,
     terminal: Bool,
-    permissionMode: String? = nil
+    permissionMode: String? = nil,
+    deniedToolName: String? = nil
   ) throws -> [AgentEventEnvelope] {
     try validateSession(result.conversationID)
     var events: [AgentEventEnvelope] = []
@@ -122,7 +123,8 @@ public actor AntigravityCLIEventNormalizer {
           .failed(
             code: "antigravity_permission_denied",
             summary: AntigravityCLIHeadlessPolicy.permissionDeniedSummary(
-              permissionMode: permissionMode
+              permissionMode: permissionMode,
+              deniedToolName: deniedToolName
             )
           )
         )

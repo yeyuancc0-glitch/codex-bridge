@@ -485,6 +485,23 @@ final class ConversationStreamingHostTests: XCTestCase {
       IPCTaskConversationRequest(taskID: taskID.rawValue, limit: 200)
     )
     XCTAssertTrue(completedPage.messages.allSatisfy(\.final))
+
+    for _ in 0..<2 {
+      let (completedSubscription, _) = try await client.subscribeTaskConversation(
+        taskID: taskID.rawValue,
+        limit: 200
+      )
+      XCTAssertEqual(completedSubscription.subscriptionID, -1)
+      XCTAssertEqual(
+        completedSubscription.page.messages.map(\.key),
+        completedPage.messages.map(\.key)
+      )
+      XCTAssertEqual(
+        completedSubscription.page.messages.map(\.content),
+        completedPage.messages.map(\.content)
+      )
+      XCTAssertTrue(completedSubscription.page.messages.allSatisfy(\.final))
+    }
   }
 
   func testConversationSubscriptionStreamsReasoningAndToolCalls() async throws {

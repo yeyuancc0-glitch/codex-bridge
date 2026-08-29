@@ -17,7 +17,6 @@ public actor DeepSeekHarnessACPExecution {
   private let prompt: String
   private let initialClientEventSequence: Int64
   private let inactivityTimeout: Duration
-  let requiresCompletionAttestation: Bool
   let requiresExecutionEvidence: Bool
   private let cleanup: @Sendable () -> Void
   private let continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation
@@ -31,8 +30,6 @@ public actor DeepSeekHarnessACPExecution {
   var immediateCancelTask: Task<Void, any Error>?
   var promptPhase = PromptPhase.notStarted
   var interruptRequested = false
-  var completionCorrectionSent = false
-  var recoveryRequiresSuccessfulToolCall = false
   var terminal = false
 
   static let maximumQueuedSteers = 32
@@ -46,7 +43,6 @@ public actor DeepSeekHarnessACPExecution {
     initialClientEventSequence: Int64,
     inactivityTimeout: Duration = DeepSeekHarnessACPConstants.inactivityTimeout,
     eventBufferLimit: Int = DeepSeekHarnessACPConstants.maximumEventBuffer,
-    requiresCompletionAttestation: Bool = false,
     requiresExecutionEvidence: Bool = false,
     cleanup: @escaping @Sendable () -> Void
   ) {
@@ -57,14 +53,10 @@ public actor DeepSeekHarnessACPExecution {
     self.client = client
     self.normalizer = normalizer
     self.sessionID = sessionID
-    self.prompt =
-      requiresCompletionAttestation
-      ? DeepSeekHarnessACPCompletionAttestation.initialPrompt(prompt)
-      : prompt
+    self.prompt = prompt
     self.initialClientEventSequence = max(0, initialClientEventSequence)
     consumedClientEventBarrier = max(0, initialClientEventSequence)
     self.inactivityTimeout = inactivityTimeout
-    self.requiresCompletionAttestation = requiresCompletionAttestation
     self.requiresExecutionEvidence = requiresExecutionEvidence
     self.cleanup = cleanup
     events = pair.stream
