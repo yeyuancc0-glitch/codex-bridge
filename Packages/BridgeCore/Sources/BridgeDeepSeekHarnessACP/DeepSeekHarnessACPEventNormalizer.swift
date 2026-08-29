@@ -4,6 +4,13 @@ import BridgeDomain
 import Foundation
 
 public actor DeepSeekHarnessACPEventNormalizer {
+  private struct ToolState {
+    var title: String?
+    var kind: String?
+    var status: AgentToolStatus = .pending
+    var arguments: String?
+  }
+
   private let taskID: TaskID
   private let binding: AgentBinding
   private let projectRoot: String?
@@ -11,8 +18,10 @@ public actor DeepSeekHarnessACPEventNormalizer {
   private var lastFinalizedContent = ""
   private var assistantMessageIndex: UInt64 = 0
   private var nextProviderSequence: Int64 = 0
+  private var tools: [String: ToolState] = [:]
 
   private static let maximumAssistantMessageIndex: UInt64 = 1_000_000
+  private static let maximumTools = 1_024
 
   public init(taskID: TaskID, binding: AgentBinding, projectRoot: String? = nil) {
     self.taskID = taskID
@@ -46,6 +55,9 @@ public actor DeepSeekHarnessACPEventNormalizer {
         authoritative: false
       )
       return try envelope(.content(update))
+    case .toolUpdated(let update):
+      try validateSession(update.sessionID)
+      return try tool(update)
     case .permissionRequested(let request):
       try validateSession(request.sessionID)
       return try approval(request)
@@ -58,6 +70,14 @@ public actor DeepSeekHarnessACPEventNormalizer {
 
   func currentContent() -> String {
     content
+  }
+
+  func toolEvidence() -> (calls: Int, failedCalls: Int, unfinishedCalls: Int) {
+    let failed = tools.values.reduce(0) { $0 + ($1.status == .failed ? 1 : 0) }
+    let unfinished = tools.values.reduce(0) {
+      $0 + ($1.status == .pending || $1.status == .inProgress ? 1 : 0)
+    }
+    return (tools.count, failed, unfinished)
   }
 
   public func finalizeContent(contentOverride: String? = nil) throws -> [AgentEventEnvelope] {
@@ -154,6 +174,30 @@ public actor DeepSeekHarnessACPEventNormalizer {
       options: request.options
     )
     return try envelope(.approvalRequested(approval))
+  }
+
+  private func tool(
+    _ update: DeepSeekHarnessACPToolUpdate
+  ) throws -> AgentEventEnvelope {
+    try validateIdentifier(update.toolCallID, field: "tool.toolCallID")
+    if tools[update.toolCallID] == nil, tools.count >= Self.maximumTools {
+      throw DeepSeekHarnessACPError.oversizedFrame
+    }
+    var state = tools[update.toolCallID] ?? ToolState()
+    if let title = update.title { state.title = title }
+    if let kind = update.kind { state.kind = kind }
+    if let rawInput = update.rawInput { state.arguments = rawInput.encodedString() }
+    state.status = update.status
+    let payload = try AgentToolUpdate(
+      key: "tool:\(update.toolCallID)",
+      name: state.title ?? state.kind ?? "tool",
+      title: state.title,
+      kind: state.kind,
+      status: state.status,
+      arguments: state.arguments
+    )
+    tools[update.toolCallID] = state
+    return try envelope(.tool(payload))
   }
 
   private static func approvalKind(_ value: String?) -> AgentApprovalKind {

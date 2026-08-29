@@ -122,13 +122,47 @@ public struct DeepSeekHarnessACPConfigValue: Equatable, Sendable {
   }
 }
 
+public enum DeepSeekHarnessACPTurnOutcome: String, Equatable, Sendable {
+  case completed
+  case blocked
+  case aborted
+  case maxTokens = "max-tokens"
+  case interrupted
+  case cancelled
+}
+
+public struct DeepSeekHarnessACPExecutionEvidence: Equatable, Sendable {
+  public let version: Int
+  public let turnOutcome: DeepSeekHarnessACPTurnOutcome
+  public let toolCalls: Int
+  public let failedToolCalls: Int
+
+  public init(
+    version: Int,
+    turnOutcome: DeepSeekHarnessACPTurnOutcome,
+    toolCalls: Int,
+    failedToolCalls: Int
+  ) {
+    self.version = version
+    self.turnOutcome = turnOutcome
+    self.toolCalls = toolCalls
+    self.failedToolCalls = failedToolCalls
+  }
+}
+
 public struct DeepSeekHarnessACPPromptResult: Equatable, Sendable {
   public let stopReason: String
   public let eventSequenceBarrier: Int64
+  public let executionEvidence: DeepSeekHarnessACPExecutionEvidence?
 
-  public init(stopReason: String, eventSequenceBarrier: Int64) {
+  public init(
+    stopReason: String,
+    eventSequenceBarrier: Int64,
+    executionEvidence: DeepSeekHarnessACPExecutionEvidence? = nil
+  ) {
     self.stopReason = stopReason
     self.eventSequenceBarrier = eventSequenceBarrier
+    self.executionEvidence = executionEvidence
   }
 }
 
@@ -163,8 +197,34 @@ public struct DeepSeekHarnessACPPermissionRequest: Equatable, Sendable {
   }
 }
 
+public struct DeepSeekHarnessACPToolUpdate: Equatable, Sendable {
+  public let sessionID: String
+  public let toolCallID: String
+  public let title: String?
+  public let kind: String?
+  public let status: AgentToolStatus
+  public let rawInput: ACPJSONValue?
+
+  public init(
+    sessionID: String,
+    toolCallID: String,
+    title: String?,
+    kind: String?,
+    status: AgentToolStatus,
+    rawInput: ACPJSONValue?
+  ) {
+    self.sessionID = sessionID
+    self.toolCallID = toolCallID
+    self.title = title
+    self.kind = kind
+    self.status = status
+    self.rawInput = rawInput
+  }
+}
+
 public enum DeepSeekHarnessACPClientEvent: Equatable, Sendable {
   case textDelta(sessionID: String, text: String)
+  case toolUpdated(DeepSeekHarnessACPToolUpdate)
   case permissionRequested(DeepSeekHarnessACPPermissionRequest)
   case approvalAutomaticallyDenied(sessionID: String, toolCallID: String)
 }

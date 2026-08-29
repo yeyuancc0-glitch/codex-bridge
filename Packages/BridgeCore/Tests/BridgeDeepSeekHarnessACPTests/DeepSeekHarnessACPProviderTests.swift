@@ -43,8 +43,9 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertEqual(
       snapshot.effective,
       [
-        .sessionCreate, .interrupt, .steer, .textDelta, .workspaceRead, .workspaceWriteInPlace,
-        .oneShotApproval, .structuredApprovalPayload, .modelSelection, .effortSelection,
+        .sessionCreate, .interrupt, .steer, .textDelta, .toolLifecycle, .workspaceRead,
+        .workspaceWriteInPlace, .oneShotApproval, .structuredApprovalPayload, .modelSelection,
+        .effortSelection,
       ]
     )
     XCTAssertTrue(snapshot.advertised.contains(.oneShotApproval))
@@ -53,6 +54,7 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
     XCTAssertTrue(snapshot.effective.contains(.steer))
     XCTAssertTrue(snapshot.effective.contains(.workspaceWriteInPlace))
     XCTAssertTrue(snapshot.effective.contains(.structuredApprovalPayload))
+    XCTAssertTrue(snapshot.effective.contains(.toolLifecycle))
   }
 
   func testCatalogComesFromHarnessACPWithoutAnotherProvider() async throws {
@@ -186,7 +188,7 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
           )
         )
         try await transport.emit(
-          ACPWireMessage(id: promptID, result: .object(["stopReason": .string("end_turn")]))
+          deepSeekPromptResult(id: promptID, outcome: "completed")
         )
         return
       }

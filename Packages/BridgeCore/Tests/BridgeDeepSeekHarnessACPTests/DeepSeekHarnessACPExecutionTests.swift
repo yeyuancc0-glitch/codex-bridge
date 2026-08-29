@@ -11,6 +11,8 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
     let initial = DeepSeekHarnessACPCompletionAttestation.initialPrompt("run")
     XCTAssertTrue(initial.contains(DeepSeekHarnessACPCompletionAttestation.completedMarker))
     XCTAssertTrue(initial.contains(DeepSeekHarnessACPCompletionAttestation.failedMarker))
+    XCTAssertTrue(initial.contains("actual tool call"))
+    XCTAssertTrue(initial.contains("acceptance criterion"))
     XCTAssertTrue(
       DeepSeekHarnessACPCompletionAttestation.correctivePrompt.contains(
         DeepSeekHarnessACPCompletionAttestation.completedMarker
@@ -19,6 +21,16 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
     XCTAssertTrue(
       DeepSeekHarnessACPCompletionAttestation.correctivePrompt.contains(
         DeepSeekHarnessACPCompletionAttestation.failedMarker
+      )
+    )
+    XCTAssertTrue(
+      DeepSeekHarnessACPCompletionAttestation.correctivePrompt.contains(
+        "tool-call formatting, encoding, argument, or empty-call error"
+      )
+    )
+    XCTAssertTrue(
+      DeepSeekHarnessACPCompletionAttestation.correctivePrompt.contains(
+        "issue the intended native tool call"
       )
     )
   }
@@ -99,6 +111,45 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
     XCTAssertEqual(code, "deepseek_harness_completion_unattested")
   }
 
+  func testReportedToolFailureRequiresSuccessfulRecoveryToolEvidence() async throws {
+    let events = try await runAttestedScenario(
+      texts: [
+        "工具调用格式出错，重新发起：",
+        "answer\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)",
+      ]
+    )
+
+    guard case .failed(let code, _) = events.last?.event else {
+      return XCTFail("Expected tool recovery without tool evidence to fail")
+    }
+    XCTAssertEqual(code, "deepseek_harness_tool_recovery_unverified")
+  }
+
+  func testReportedToolFailureCompletesAfterObservedSuccessfulToolCall() async throws {
+    let events = try await runAttestedScenario(
+      texts: [
+        "工具调用格式出错，重新发起：",
+        "answer\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)",
+      ],
+      successfulToolPrompt: 2
+    )
+
+    XCTAssertTrue(events.contains { if case .completed = $0.event { true } else { false } })
+    XCTAssertTrue(events.contains { if case .tool = $0.event { true } else { false } })
+  }
+
+  func testFailedToolLifecycleCannotCompleteWithoutSuccessfulRecovery() async throws {
+    let events = try await runAttestedScenario(
+      texts: ["answer\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)"],
+      failedToolPrompt: 1
+    )
+
+    guard case .failed(let code, _) = events.last?.event else {
+      return XCTFail("Expected failed-only tool evidence to fail")
+    }
+    XCTAssertEqual(code, "deepseek_harness_tool_recovery_unverified")
+  }
+
   func testShortResponseCanCompleteAfterACompletionCorrection() async throws {
     let events = try await runAttestedScenario(
       texts: [
@@ -125,6 +176,30 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
     }
     XCTAssertEqual(code, "deepseek_harness_provider_reported_failure")
     XCTAssertEqual(summary, "The required tool is unavailable.")
+  }
+
+  func testMissingExecutionEvidenceFailsClosed() async throws {
+    let events = try await runAttestedScenario(
+      texts: ["answer\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)"],
+      includeExecutionEvidence: false
+    )
+
+    guard case .failed(let code, _) = events.last?.event else {
+      return XCTFail("Expected missing execution evidence to fail")
+    }
+    XCTAssertEqual(code, "deepseek_harness_execution_evidence_missing")
+  }
+
+  func testExecutionEvidenceMustMatchObservedToolLifecycle() async throws {
+    let events = try await runAttestedScenario(
+      texts: ["answer\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)"],
+      reportedToolCalls: 1
+    )
+
+    guard case .failed(let code, _) = events.last?.event else {
+      return XCTFail("Expected mismatched execution evidence to fail")
+    }
+    XCTAssertEqual(code, "deepseek_harness_execution_evidence_mismatch")
   }
 
   func testInterruptMapsToInterruptedAndSendsCancel() async throws {
@@ -240,7 +315,13 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
     return events
   }
 
-  private func runAttestedScenario(texts: [String]) async throws -> [AgentEventEnvelope] {
+  private func runAttestedScenario(
+    texts: [String],
+    successfulToolPrompt: Int? = nil,
+    failedToolPrompt: Int? = nil,
+    includeExecutionEvidence: Bool = true,
+    reportedToolCalls: Int? = nil
+  ) async throws -> [AgentEventEnvelope] {
     let transport = ScriptedDeepSeekHarnessTransport()
     let state = AttestationPromptState()
     await transport.setHandler { message, transport in
@@ -262,12 +343,50 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
           XCTAssertEqual(prompt, DeepSeekHarnessACPCompletionAttestation.correctivePrompt)
         }
         let index = min(count - 1, texts.count - 1)
+        let toolStatus: String? =
+          if successfulToolPrompt == count {
+            "completed"
+          } else if failedToolPrompt == count {
+            "failed"
+          } else {
+            nil
+          }
+        if let toolStatus {
+          try await transport.emit(
+            deepSeekToolUpdate(
+              sessionID: "attestation-session",
+              updateType: "tool_call",
+              toolCallID: "read-\(count)",
+              status: "in_progress",
+              title: "read",
+              kind: "read",
+              rawInput: .object(["file_path": .string("AGENTS.md")])
+            )
+          )
+          try await transport.emit(
+            deepSeekToolUpdate(
+              sessionID: "attestation-session",
+              updateType: "tool_call_update",
+              toolCallID: "read-\(count)",
+              status: toolStatus
+            )
+          )
+        }
         try await transport.emit(
           deepSeekMessageChunk(sessionID: "attestation-session", text: texts[index])
         )
-        try await transport.emit(
-          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
-        )
+        if includeExecutionEvidence {
+          try await transport.emit(
+            deepSeekPromptResult(
+              id: id,
+              outcome: "completed",
+              toolCalls: reportedToolCalls ?? (toolStatus == nil ? 0 : 1),
+              failedToolCalls: toolStatus == "failed" ? 1 : 0
+            )
+          )
+        } else {
+          try await transport.emit(deepSeekPromptResult(id: id))
+        }
       default:
         break
       }
@@ -292,6 +411,7 @@ final class DeepSeekHarnessACPExecutionTests: XCTestCase {
       initialClientEventSequence: await client.eventSequence,
       inactivityTimeout: .seconds(30),
       requiresCompletionAttestation: true,
+      requiresExecutionEvidence: true,
       cleanup: {}
     )
     await execution.start()

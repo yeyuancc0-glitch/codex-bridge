@@ -55,11 +55,28 @@ final class DeepSeekHarnessACPClientTests: XCTestCase {
         )
       case "session/prompt":
         try await transport.emit(deepSeekMessageChunk(sessionID: "session-1", text: "Hello "))
+        try await transport.emit(
+          deepSeekToolUpdate(
+            sessionID: "session-1",
+            updateType: "tool_call",
+            toolCallID: "read-1",
+            status: "in_progress",
+            title: "read",
+            kind: "read",
+            rawInput: .object(["file_path": .string("AGENTS.md")])
+          )
+        )
+        try await transport.emit(
+          deepSeekToolUpdate(
+            sessionID: "session-1",
+            updateType: "tool_call_update",
+            toolCallID: "read-1",
+            status: "completed"
+          )
+        )
         try await transport.emit(deepSeekMessageChunk(sessionID: "session-1", text: "world"))
         try await transport.emit(deepSeekPermissionRequest(sessionID: "session-1"))
-        try await transport.emit(
-          ACPWireMessage(id: id, result: .object(["stopReason": .string("end_turn")]))
-        )
+        try await transport.emit(deepSeekPromptResult(id: id, outcome: "completed", toolCalls: 1))
       default:
         break
       }
@@ -94,13 +111,15 @@ final class DeepSeekHarnessACPClientTests: XCTestCase {
     }
     var events: [DeepSeekHarnessACPClientEventEnvelope] = []
     var iterator = client.events.makeAsyncIterator()
-    while events.count < 3, let event = await iterator.next() {
+    while events.count < 5, let event = await iterator.next() {
       events.append(event)
     }
     let result = try await prompt.value
     XCTAssertEqual(result.stopReason, "end_turn")
-    XCTAssertEqual(result.eventSequenceBarrier, 3)
-    XCTAssertEqual(events.map(\.sequence), [0, 1, 2])
+    XCTAssertEqual(result.eventSequenceBarrier, 5)
+    XCTAssertEqual(result.executionEvidence?.turnOutcome, .completed)
+    XCTAssertEqual(result.executionEvidence?.toolCalls, 1)
+    XCTAssertEqual(events.map(\.sequence), [0, 1, 2, 3, 4])
     XCTAssertEqual(
       events.compactMap { event -> String? in
         guard case .textDelta(_, let text) = event.event else { return nil }
@@ -108,6 +127,12 @@ final class DeepSeekHarnessACPClientTests: XCTestCase {
       },
       ["Hello ", "world"]
     )
+    let toolUpdates = events.compactMap { event -> DeepSeekHarnessACPToolUpdate? in
+      guard case .toolUpdated(let update) = event.event else { return nil }
+      return update
+    }
+    XCTAssertEqual(toolUpdates.map(\.status), [.inProgress, .completed])
+    XCTAssertEqual(toolUpdates.first?.rawInput?["file_path"]?.stringValue, "AGENTS.md")
     let permission = try XCTUnwrap(
       events.compactMap { event -> DeepSeekHarnessACPPermissionRequest? in
         guard case .permissionRequested(let request) = event.event else { return nil }

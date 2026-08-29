@@ -85,7 +85,8 @@ extension DeepSeekHarnessACPClient {
     }
     return DeepSeekHarnessACPPromptResult(
       stopReason: stopReason,
-      eventSequenceBarrier: response.eventSequenceBarrier
+      eventSequenceBarrier: response.eventSequenceBarrier,
+      executionEvidence: try Self.parseExecutionEvidence(response.value)
     )
   }
 
@@ -129,5 +130,33 @@ extension DeepSeekHarnessACPClient {
     readerTask = nil
     eventContinuation.finish()
     await broker.close()
+  }
+
+  private static func parseExecutionEvidence(
+    _ response: ACPJSONValue
+  ) throws -> DeepSeekHarnessACPExecutionEvidence? {
+    guard let metadata = response["_meta"]?.objectValue,
+      let rawEvidence = metadata["deepseek.ai/dsh"]
+    else { return nil }
+    guard let evidence = rawEvidence.objectValue,
+      evidence["version"]?.intValue == 1,
+      let outcomeValue = evidence["turnOutcome"]?.stringValue,
+      let outcome = DeepSeekHarnessACPTurnOutcome(rawValue: outcomeValue),
+      let rawToolCalls = evidence["toolCalls"]?.intValue,
+      let rawFailedToolCalls = evidence["failedToolCalls"]?.intValue,
+      let toolCalls = Int(exactly: rawToolCalls),
+      let failedToolCalls = Int(exactly: rawFailedToolCalls),
+      toolCalls >= 0,
+      failedToolCalls >= 0,
+      failedToolCalls <= toolCalls
+    else {
+      throw DeepSeekHarnessACPError.malformedResponse
+    }
+    return DeepSeekHarnessACPExecutionEvidence(
+      version: 1,
+      turnOutcome: outcome,
+      toolCalls: toolCalls,
+      failedToolCalls: failedToolCalls
+    )
   }
 }

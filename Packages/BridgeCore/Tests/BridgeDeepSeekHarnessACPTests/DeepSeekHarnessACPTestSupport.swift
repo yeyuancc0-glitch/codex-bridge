@@ -135,6 +135,53 @@ func deepSeekMessageChunk(sessionID: String, text: String) -> ACPWireMessage {
   )
 }
 
+func deepSeekToolUpdate(
+  sessionID: String,
+  updateType: String,
+  toolCallID: String,
+  status: String,
+  title: String? = nil,
+  kind: String? = nil,
+  rawInput: ACPJSONValue? = nil
+) -> ACPWireMessage {
+  var update: [String: ACPJSONValue] = [
+    "sessionUpdate": .string(updateType),
+    "toolCallId": .string(toolCallID),
+    "status": .string(status),
+  ]
+  if let title { update["title"] = .string(title) }
+  if let kind { update["kind"] = .string(kind) }
+  if let rawInput { update["rawInput"] = rawInput }
+  return ACPWireMessage(
+    method: "session/update",
+    params: .object([
+      "sessionId": .string(sessionID),
+      "update": .object(update),
+    ])
+  )
+}
+
+func deepSeekPromptResult(
+  id: ACPRequestID,
+  stopReason: String = "end_turn",
+  outcome: String? = nil,
+  toolCalls: Int = 0,
+  failedToolCalls: Int = 0
+) -> ACPWireMessage {
+  var result: [String: ACPJSONValue] = ["stopReason": .string(stopReason)]
+  if let outcome {
+    result["_meta"] = .object([
+      "deepseek.ai/dsh": .object([
+        "version": .integer(1),
+        "turnOutcome": .string(outcome),
+        "toolCalls": .integer(Int64(toolCalls)),
+        "failedToolCalls": .integer(Int64(failedToolCalls)),
+      ])
+    ])
+  }
+  return ACPWireMessage(id: id, result: .object(result))
+}
+
 func deepSeekPermissionRequest(
   sessionID: String,
   requestID: ACPRequestID = .string("permission-1"),

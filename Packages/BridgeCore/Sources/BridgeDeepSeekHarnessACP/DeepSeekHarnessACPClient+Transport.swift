@@ -53,14 +53,32 @@ extension DeepSeekHarnessACPClient {
       let object = params?.objectValue,
       let sessionID = object["sessionId"]?.stringValue,
       let update = object["update"]?.objectValue,
-      update["sessionUpdate"]?.stringValue == "agent_message_chunk",
+      let updateType = update["sessionUpdate"]?.stringValue
+    else {
+      throw DeepSeekHarnessACPError.invalidMessage
+    }
+    try requireSession(sessionID)
+    switch updateType {
+    case "agent_message_chunk":
+      try handleTextUpdate(sessionID: sessionID, update: update)
+    case "tool_call", "tool_call_update":
+      try handleToolUpdate(sessionID: sessionID, update: update)
+    default:
+      throw DeepSeekHarnessACPError.invalidMessage
+    }
+  }
+
+  private func handleTextUpdate(
+    sessionID: String,
+    update: [String: ACPJSONValue]
+  ) throws {
+    guard
       let content = update["content"]?.objectValue,
       content["type"]?.stringValue == "text",
       let text = content["text"]?.stringValue
     else {
       throw DeepSeekHarnessACPError.invalidMessage
     }
-    try requireSession(sessionID)
     guard text.utf8.count <= DeepSeekHarnessACPConstants.maximumFinalTextBytes,
       !text.contains("\0")
     else {
@@ -68,6 +86,49 @@ extension DeepSeekHarnessACPClient {
     }
     guard !text.isEmpty else { return }
     yield(.textDelta(sessionID: sessionID, text: text))
+  }
+
+  private func handleToolUpdate(
+    sessionID: String,
+    update: [String: ACPJSONValue]
+  ) throws {
+    guard let toolCallID = update["toolCallId"]?.stringValue,
+      let statusValue = update["status"]?.stringValue,
+      let status = Self.toolStatus(statusValue)
+    else {
+      throw DeepSeekHarnessACPError.invalidMessage
+    }
+    try validateIdentifier(toolCallID, field: "tool.toolCallID")
+    let title = update["title"]?.stringValue
+    if let title {
+      guard title.utf8.count <= 1_024, !title.contains("\0") else {
+        throw DeepSeekHarnessACPError.oversizedFrame
+      }
+    }
+    let kind = update["kind"]?.stringValue
+    if let kind { try validateIdentifier(kind, field: "tool.kind") }
+    yield(
+      .toolUpdated(
+        DeepSeekHarnessACPToolUpdate(
+          sessionID: sessionID,
+          toolCallID: toolCallID,
+          title: title,
+          kind: kind,
+          status: status,
+          rawInput: update["rawInput"]
+        )
+      )
+    )
+  }
+
+  private static func toolStatus(_ value: String) -> AgentToolStatus? {
+    switch value {
+    case "pending": .pending
+    case "in_progress": .inProgress
+    case "completed": .completed
+    case "failed": .failed
+    default: nil
+    }
   }
 
   func transportEnded(error: (any Error)?) async {

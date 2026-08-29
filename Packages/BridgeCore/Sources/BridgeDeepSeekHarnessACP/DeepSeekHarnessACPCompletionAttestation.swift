@@ -17,6 +17,8 @@ enum DeepSeekHarnessACPCompletionAttestation {
   private static let markerPrefix = "<codex-bridge-result "
   private static let instruction = """
 
+    Use native function calls whenever the task requires workspace, command, or network work. Send exactly one valid JSON object matching the advertised tool schema for each call. A message saying that a tool call will be retried is not a retry. Continue the original task with an actual tool call, and do not report completion until every required operation and acceptance criterion has succeeded.
+
     When the requested task is finished, end your final response with exactly one standalone line:
     \(completedMarker)
     If the task cannot be completed, end with exactly one standalone line:
@@ -31,8 +33,12 @@ enum DeepSeekHarnessACPCompletionAttestation {
   }
 
   static let correctivePrompt = """
-    Re-check the requested task and provide a concise task result. Your previous response did not
-    contain a valid completion attestation. End this response with exactly one standalone line:
+    Continue the original task now. Your previous response did not contain a valid completion
+    attestation. If it described a tool-call formatting, encoding, argument, or empty-call error,
+    do not repeat that status text: issue the intended native tool call with exactly one valid JSON
+    object matching its advertised schema, observe the result, and continue until the requested
+    work and acceptance criteria are actually complete. End the final response with exactly one
+    standalone line:
     \(completedMarker)
     or, if the task is not complete, \(failedMarker)
     Do not include either marker anywhere else.
@@ -63,6 +69,20 @@ enum DeepSeekHarnessACPCompletionAttestation {
         : .failed(summary: summary)
     }
     return content.contains(markerPrefix) ? .malformed : .missing
+  }
+
+  static func reportsToolCallFailure(_ content: String) -> Bool {
+    let normalized = content.lowercased()
+    let knownSignals = [
+      "工具调用格式出错",
+      "工具调用参数有误",
+      "工具调用编码出错",
+      "工具调用依旧为空",
+      "tool call format error",
+      "invalid tool call arguments",
+      "empty tool call",
+    ]
+    return knownSignals.contains { normalized.contains($0) }
   }
 
   private static func markerCount(in content: String) -> Int {

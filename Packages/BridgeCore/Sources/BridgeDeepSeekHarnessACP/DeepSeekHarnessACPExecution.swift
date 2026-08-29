@@ -11,6 +11,7 @@ public actor DeepSeekHarnessACPExecution {
   private let initialClientEventSequence: Int64
   private let inactivityTimeout: Duration
   let requiresCompletionAttestation: Bool
+  let requiresExecutionEvidence: Bool
   private let cleanup: @Sendable () -> Void
   private let continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation
   private var eventTask: Task<Void, Never>?
@@ -21,6 +22,7 @@ public actor DeepSeekHarnessACPExecution {
   private var queuedSteerBytes = 0
   var interruptRequested = false
   var completionCorrectionSent = false
+  var recoveryRequiresSuccessfulToolCall = false
   var terminal = false
 
   private static let maximumQueuedSteers = 32
@@ -35,6 +37,7 @@ public actor DeepSeekHarnessACPExecution {
     inactivityTimeout: Duration = DeepSeekHarnessACPConstants.inactivityTimeout,
     eventBufferLimit: Int = DeepSeekHarnessACPConstants.maximumEventBuffer,
     requiresCompletionAttestation: Bool = false,
+    requiresExecutionEvidence: Bool = false,
     cleanup: @escaping @Sendable () -> Void
   ) {
     let pair = AsyncThrowingStream.makeStream(
@@ -52,6 +55,7 @@ public actor DeepSeekHarnessACPExecution {
     consumedClientEventBarrier = max(0, initialClientEventSequence)
     self.inactivityTimeout = inactivityTimeout
     self.requiresCompletionAttestation = requiresCompletionAttestation
+    self.requiresExecutionEvidence = requiresExecutionEvidence
     self.cleanup = cleanup
     events = pair.stream
     continuation = pair.continuation
@@ -155,6 +159,7 @@ public actor DeepSeekHarnessACPExecution {
           await finishInterrupted()
           return
         }
+        let toolEvidenceBeforePrompt = await normalizer.toolEvidence()
         let result = try await client.prompt(sessionID: sessionID, text: nextPrompt)
         try await waitUntilConsumed(result.eventSequenceBarrier)
         guard !terminal else { return }
@@ -169,7 +174,23 @@ public actor DeepSeekHarnessACPExecution {
           )
           return
         }
-        if let queued = try await nextPromptOrTerminal(stopReason: result.stopReason) {
+        let toolEvidenceAfterPrompt = await normalizer.toolEvidence()
+        guard toolEvidenceAfterPrompt.calls >= toolEvidenceBeforePrompt.calls,
+          toolEvidenceAfterPrompt.failedCalls >= toolEvidenceBeforePrompt.failedCalls,
+          toolEvidenceAfterPrompt.unfinishedCalls == 0
+        else {
+          await failExecution(
+            code: "deepseek_harness_protocol_violation",
+            summary: "DeepSeek Harness reported inconsistent tool lifecycle evidence."
+          )
+          return
+        }
+        if let queued = try await nextPromptOrTerminal(
+          result: result,
+          observedToolCalls: toolEvidenceAfterPrompt.calls - toolEvidenceBeforePrompt.calls,
+          observedFailedToolCalls: toolEvidenceAfterPrompt.failedCalls
+            - toolEvidenceBeforePrompt.failedCalls
+        ) {
           nextPrompt = queued
           continue
         }
