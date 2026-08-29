@@ -167,6 +167,20 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     }
   }
 
+  func reloadAuthoritativeSnapshot() async {
+    let generation = lifecycleGeneration
+    do {
+      let page = try await client.taskConversation(
+        IPCTaskConversationRequest(taskID: taskID, limit: 200)
+      )
+      guard lifecycleGeneration == generation else { return }
+      applyPage(page)
+    } catch {
+      guard lifecycleGeneration == generation else { return }
+      errorMessage = BridgeServiceAppModel.message(error)
+    }
+  }
+
   private func applyPage(_ page: IPCTaskConversationPage) {
     pushFlushTask?.cancel()
     pushFlushTask = nil

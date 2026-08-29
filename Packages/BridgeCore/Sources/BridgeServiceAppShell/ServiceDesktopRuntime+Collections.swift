@@ -84,26 +84,40 @@ extension BridgeServiceAppModel {
   }
 
   private func applyTaskSnapshot(_ value: [MCPServiceTaskSnapshot]) {
+    let selectedTaskBeforeRefresh = selectedTaskID.flatMap { selectedTaskID in
+      tasks.first(where: { $0.taskID == selectedTaskID })
+    }
     if tasks != value {
       tasks = value
       reconcileTaskSelection()
     }
+    if let selectedTaskBeforeRefresh,
+      !selectedTaskBeforeRefresh.isTerminal,
+      value.first(where: { $0.taskID == selectedTaskBeforeRefresh.taskID })?.isTerminal == true,
+      let conversation,
+      conversation.taskID == selectedTaskBeforeRefresh.taskID
+    {
+      Task {
+        await conversation.reloadAuthoritativeSnapshot()
+      }
+    }
     guard selectedTaskID == nil, selectedThreadID == nil, conversation == nil else { return }
-    if let activeAgentTask = value.first(where: { $0.isExternalAgentTask && $0.isActive }),
+    guard let selectedProjectID else { return }
+    if let activeAgentTask = value.first(where: {
+      $0.projectID == selectedProjectID && $0.isExternalAgentTask && $0.isActive
+    }),
       conversation?.taskID != activeAgentTask.taskID
     {
-      selectedProjectID = activeAgentTask.projectID
-      persistWorkbenchProjectSelection(activeAgentTask.projectID)
       selectedTaskID = activeAgentTask.taskID
       selectedThreadID = nil
       selectedThread = nil
       openConversation(taskID: activeAgentTask.taskID)
-    } else if let activeTask = value.first(where: \.isRunning),
+    } else if let activeTask = value.first(where: {
+      $0.projectID == selectedProjectID && $0.isRunning
+    }),
       let threadID = activeTask.threadID,
       conversation?.taskID != activeTask.taskID
     {
-      selectedProjectID = activeTask.projectID
-      persistWorkbenchProjectSelection(activeTask.projectID)
       selectedTaskID = activeTask.taskID
       selectedThreadID = threadID
       selectedThread = nil

@@ -207,7 +207,8 @@ public actor ServiceTaskManager {
   public func complete(
     taskID: TaskID,
     resultSummary: String,
-    changedFiles: [String]
+    changedFiles: [String],
+    eventSummary: String? = nil
   ) async throws -> ServiceTaskRecord {
     try await mutate(
       taskID: taskID,
@@ -218,7 +219,7 @@ public actor ServiceTaskManager {
         failureCode: .set(nil)
       ),
       eventKind: .taskCompleted,
-      summary: "The provider completed the task."
+      summary: eventSummary ?? "The provider completed the task."
     )
   }
 

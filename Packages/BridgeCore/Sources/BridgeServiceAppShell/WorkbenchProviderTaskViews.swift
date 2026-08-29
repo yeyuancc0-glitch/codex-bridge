@@ -142,9 +142,15 @@ struct WorkbenchExternalTaskCard: View {
         }
 
         if task.providerIdentifier == "deepseek-harness" {
-          Label("实验性只读 · 仅新会话", systemImage: "lock.shield.fill")
-            .font(.caption2)
-            .foregroundStyle(.orange)
+          Label(
+            task.status == "completed"
+              ? "Harness 仅报告会话已结束，任务完成度未被 Bridge 验证"
+              : "实验性 Provider · 仅新会话",
+            systemImage: task.status == "completed"
+              ? "exclamationmark.triangle.fill" : "lock.shield.fill"
+          )
+          .font(.caption2)
+          .foregroundStyle(.orange)
         } else {
           Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
             .font(.caption2)

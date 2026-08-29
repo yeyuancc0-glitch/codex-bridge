@@ -30,11 +30,7 @@ extension BridgeServiceAppModel {
     selectedTaskID = relatedTask?.taskID
 
     if let preferredTaskID {
-      if relatedTask?.isActive == true {
-        openConversation(taskID: preferredTaskID)
-      } else {
-        closeConversation()
-      }
+      openConversation(taskID: preferredTaskID)
     } else if let activeTask = tasks.first(where: {
       $0.threadID == threadID && $0.isCodexTask && $0.isRunning
     }) {

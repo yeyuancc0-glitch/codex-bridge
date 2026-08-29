@@ -130,11 +130,12 @@ public struct TaskStatusLabel: View {
 
   public var body: some View {
     StatusBadge(label, symbol: symbol, tone: tone)
-      .help(status)
+      .help(helpText)
   }
 
   private var label: String {
-    switch status {
+    if isUnverifiedHarnessCompletion { return "Provider 已结束" }
+    return switch status {
     case "awaiting_local_approval": "等待本机批准"
     case "starting": "正在启动"
     case "running": "运行中"
@@ -148,7 +149,8 @@ public struct TaskStatusLabel: View {
   }
 
   private var symbol: String {
-    switch status {
+    if isUnverifiedHarnessCompletion { return "exclamationmark.triangle.fill" }
+    return switch status {
     case "completed": "checkmark.circle.fill"
     case "failed": "xmark.circle.fill"
     case "interrupted": "stop.circle.fill"
@@ -160,7 +162,8 @@ public struct TaskStatusLabel: View {
   }
 
   private var tone: StatusTone {
-    switch status {
+    if isUnverifiedHarnessCompletion { return .warning }
+    return switch status {
     case "completed": .success
     case "failed": .error
     case "awaiting_local_approval", "waiting_for_codex_approval": .warning
@@ -171,6 +174,16 @@ public struct TaskStatusLabel: View {
 
   private var providerDisplayName: String {
     AgentProviderPresentation.displayName(providerID)
+  }
+
+  private var isUnverifiedHarnessCompletion: Bool {
+    status == "completed" && providerID == "deepseek-harness"
+  }
+
+  private var helpText: String {
+    isUnverifiedHarnessCompletion
+      ? "DeepSeek Harness 报告会话 end_turn；Bridge 无法独立验证任务是否满足验收条件。"
+      : status
   }
 }
 

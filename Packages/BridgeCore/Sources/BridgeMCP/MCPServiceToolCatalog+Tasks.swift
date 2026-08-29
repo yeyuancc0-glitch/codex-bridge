@@ -81,6 +81,8 @@ extension MCPServiceToolCatalog {
       + "sessions with provider-native read-only or workspace-write sandbox modes; omit thread_id, "
       + "supervisor_model and supervisor_effort, and use an explicitly requested model, effort, "
       + "permission mode, or Skill only when it is supported by the registered installation. "
+      + "The controlled DeepSeek Harness profile does not expose a Web search tool or ACP MCP servers; "
+      + "do not route tasks that require Web research to it. "
       + "Its execution-time permission requests are surfaced for one-shot local approval. For "
       + "OpenCode, omit permission_mode to use the saved Bridge default. A read-only value may "
       + "always narrow that default. Set permission_mode_override=true with workspace-write only "

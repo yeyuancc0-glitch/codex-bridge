@@ -189,6 +189,37 @@ final class AntigravityCLIExecutionTests: XCTestCase {
     XCTAssertFalse(events.contains { if case .completed = $0.event { true } else { false } })
   }
 
+  func testTopLevelPermissionDenialIsNotHiddenByToolInfoError() async throws {
+    let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(
+      prefix: "agy-dual-error-denial")
+    defer { try? FileManager.default.removeItem(atPath: projectRoot) }
+    let transport = ScriptedAntigravityTransport()
+    let execution = makeExecution(projectRoot: projectRoot, transport: transport)
+    await execution.start()
+    try await transport.emit(
+      AntigravityCLITestSupport.initializationFrame(cwd: projectRoot)
+    )
+    _ = try await execution.waitForBinding(timeout: .seconds(1))
+    let eventsTask = collectEvents(from: execution.events)
+    try await transport.emit(
+      AntigravityCLITestSupport.data(
+        """
+        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":4,"state":"ERROR","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"status"},"error":{"type":"TOOL_ERROR","message":"command failed"}},"error":{"type":"PERMISSION","message":"headless mode cannot prompt; operation was auto-denied"}}}
+        """
+      )
+    )
+    try await transport.emit(
+      AntigravityCLITestSupport.resultFrame(response: "The command was skipped.")
+    )
+
+    let events = await eventsTask.value
+    guard case .failed(let code, let summary) = events.last?.event else {
+      return XCTFail("Expected a permission-denied terminal event")
+    }
+    XCTAssertEqual(code, "antigravity_permission_denied")
+    XCTAssertTrue(summary.contains("narrow provider allow-rule"))
+  }
+
   func testInterruptRequestsProviderAndEndsWithInterruptedEvent() async throws {
     let projectRoot = try AntigravityCLITestSupport.temporaryDirectory(prefix: "agy-interrupt")
     defer { try? FileManager.default.removeItem(atPath: projectRoot) }

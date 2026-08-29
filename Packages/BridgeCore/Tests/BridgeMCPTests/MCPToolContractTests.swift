@@ -37,6 +37,15 @@ final class MCPToolContractTests: XCTestCase {
     XCTAssertTrue(instructions.contains("workspace-write"))
     XCTAssertTrue(instructions.contains("queued follow-up"))
     XCTAssertTrue(instructions.contains("network_enforcement"))
+    XCTAssertTrue(instructions.contains("does not expose a Web search tool"))
+
+    let submit = try XCTUnwrap(
+      MCPServiceToolCatalog(exposureMode: .full).definitions.first(where: {
+        $0.name == MCPServiceToolName.submitTask.rawValue
+      })
+    )
+    XCTAssertTrue(
+      submit.description?.contains("do not route tasks that require Web research") == true)
   }
 
   func testServiceCatalogPublishesStrictClosedSchemasAndExposureBoundaries() throws {

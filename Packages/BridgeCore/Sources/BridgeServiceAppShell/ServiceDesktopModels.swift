@@ -198,7 +198,10 @@ struct CodexActivityPresentation: Equatable {
       isActive = true
       showsBubble = true
     case "completed":
-      statusText = "\(providerName) 已完成"
+      statusText =
+        task.providerIdentifier == "deepseek-harness"
+        ? "\(providerName) 已结束（未验证任务完成度）"
+        : "\(providerName) 已完成"
       isActive = false
       showsBubble = false
     case "failed":

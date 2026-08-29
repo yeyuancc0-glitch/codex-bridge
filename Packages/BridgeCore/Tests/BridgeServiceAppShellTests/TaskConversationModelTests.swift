@@ -401,6 +401,27 @@ final class TaskConversationModelTests: XCTestCase {
     XCTAssertEqual(finished.statusText, "Codex 已完成")
   }
 
+  func testDeepSeekEndTurnIsPresentedAsUnverifiedProviderTermination() {
+    let completed = MCPServiceTaskSnapshot(
+      taskID: "deepseek-task",
+      projectID: "project-1",
+      status: "completed",
+      providerID: "deepseek-harness",
+      supervisorStatus: "disabled",
+      localApprovalRequired: false,
+      updatedAt: "2026-08-28T12:00:00Z"
+    )
+
+    let presentation = CodexActivityPresentation(task: completed, activity: .idle)
+
+    XCTAssertFalse(presentation.isActive)
+    XCTAssertFalse(presentation.showsBubble)
+    XCTAssertEqual(
+      presentation.statusText,
+      "DeepSeek Harness 已结束（未验证任务完成度）"
+    )
+  }
+
   func testOpenCodeTaskPresentationUsesProviderStateWithoutCodexSemantics() {
     let task = MCPServiceTaskSnapshot(
       taskID: "opencode-task",

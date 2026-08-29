@@ -137,14 +137,15 @@ extension ServiceExecutionCoordinator {
       case .approvalRequested(let approval):
         _ = try await registerAgentApproval(approval, taskID: taskID)
 
-      case .completed(let summary, _):
+      case .completed(let summary, let stopReason):
         try await finishAgentRun(taskID: taskID) {
           try await closeConversation(taskID: taskID)
           let current = try await requiredTask(taskID)
           return try await tasks.complete(
             taskID: taskID,
             resultSummary: summary.isEmpty ? "The agent run completed." : summary,
-            changedFiles: current.state.changedFiles
+            changedFiles: current.state.changedFiles,
+            eventSummary: Self.agentCompletionEventSummary(stopReason: stopReason)
           )
         }
 
@@ -241,5 +242,19 @@ extension ServiceExecutionCoordinator {
     }
     run.lastSequence = envelope.providerSequence
     activeAgentRuns[taskID] = run
+  }
+
+  private static func agentCompletionEventSummary(stopReason: String?) -> String {
+    guard let stopReason,
+      !stopReason.isEmpty,
+      stopReason.utf8.count <= 128,
+      stopReason.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
+      return
+        "The provider reported completion; Bridge did not independently verify task acceptance."
+    }
+    return
+      "The provider reported completion with stop reason \(stopReason); "
+      + "Bridge did not independently verify task acceptance."
   }
 }

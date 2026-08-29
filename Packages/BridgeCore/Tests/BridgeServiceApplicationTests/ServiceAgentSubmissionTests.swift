@@ -638,7 +638,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(task.installationID, "ainst-route-opencode")
     XCTAssertEqual(task.selectionMode, .explicit)
     XCTAssertEqual(task.executionModel, serviceDefaultProviderExecutionModel)
-    XCTAssertEqual(task.permissionMode, .workspaceWrite)
+    XCTAssertEqual(task.permissionMode, .readOnly)
 
     // A read-only remote task keeps waiting across recovery and never holds
     // the project write slot.
@@ -737,7 +737,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       provider,
       taskID: taskIDValue,
       sequence: 7,
-      event: .completed(summary: "Layout report ready.", stopReason: nil)
+      event: .completed(summary: "Layout report ready.", stopReason: "end_turn")
     )
     provider.finish(taskID: taskIDValue)
 
@@ -781,6 +781,10 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(snapshot.executionModel, serviceDefaultProviderExecutionModel)
     XCTAssertEqual(snapshot.permissionMode, "read-only")
     XCTAssertFalse(snapshot.networkAccess)
+    XCTAssertEqual(
+      snapshot.recentEvents.first(where: { $0.kind == "task.completed" })?.summary,
+      "The provider reported completion with stop reason end_turn; Bridge did not independently verify task acceptance."
+    )
   }
 
   func testAgentModelCatalogUsesRequestedProjectRoot() async throws {

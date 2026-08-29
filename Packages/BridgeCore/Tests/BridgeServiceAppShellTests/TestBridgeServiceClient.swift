@@ -60,6 +60,17 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
     ]
   )
   private var conversationPages: [TaskConversationQuery: IPCTaskConversationPage] = [:]
+  private var projectsValue: [MCPProjectSummary] = [
+    MCPProjectSummary(
+      projectID: "project-1",
+      name: "Fixture",
+      capabilities: MCPProjectCapabilities(
+        read: "allowed",
+        write: "requiresLocalApproval",
+        network: "denied"
+      )
+    )
+  ]
   private var workbenchProjectSelections: [String?] = []
   private var taskSnapshotsValue: [MCPServiceTaskSnapshot]?
   private var taskControlActions: [String] = []
@@ -140,6 +151,10 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
 
   func setTaskSnapshots(_ snapshots: [MCPServiceTaskSnapshot]) {
     taskSnapshotsValue = snapshots
+  }
+
+  func setProjects(_ projects: [MCPProjectSummary]) {
+    projectsValue = projects
   }
 
   func setSkills(_ names: [String]) {
@@ -249,17 +264,7 @@ actor TestBridgeServiceClient: BridgeServiceClientProtocol {
   }
 
   func projects() async throws -> [MCPProjectSummary] {
-    [
-      MCPProjectSummary(
-        projectID: "project-1",
-        name: "Fixture",
-        capabilities: MCPProjectCapabilities(
-          read: "allowed",
-          write: "requiresLocalApproval",
-          network: "denied"
-        )
-      )
-    ]
+    projectsValue
   }
 
   func registerProject(_ request: IPCProjectRegistrationRequest) async throws -> MCPProjectDetail {

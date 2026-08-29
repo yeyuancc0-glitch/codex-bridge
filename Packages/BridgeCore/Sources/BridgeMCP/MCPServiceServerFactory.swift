@@ -89,6 +89,8 @@ public struct MCPServiceServerFactory: Sendable {
       + "supervisor_model and supervisor_effort. Its optional execution_model and execution_effort "
       + "must match the selected model declared by the registered Harness profile. Its optional "
       + "skill_name is injected by Bridge when the user explicitly requests that Skill. Its "
+      + "controlled profile does not expose a Web search tool or ACP MCP servers, so do not route "
+      + "tasks that require Web research to DeepSeek Harness. Its "
       + "execution-time permission requests are surfaced for one-shot local approval. DeepSeek "
       + "steer input is a queued follow-up on the same session, not real-time insertion. A network_enforcement "
       + "value of unavailable means network_access=false does not guarantee blocking the Harness "

@@ -16,14 +16,19 @@ public enum AntigravityPermissionEvidence {
     let denialMarkers = [
       "soft-denied",
       "soft denied",
+      "auto-denied",
+      "auto denied",
       "permission denied",
       "permission was denied",
       "denied permission",
+      "user denied permission",
       "requires approval",
       "could not obtain approval",
+      "headless mode cannot prompt",
       "not allowed by permission",
       "grant permission",
       "add an allow rule",
+      "add an allow-rule",
     ]
     return denialMarkers.contains { combined.contains($0) }
   }
@@ -116,7 +121,7 @@ public actor AntigravityCLIEventNormalizer {
           .failed(
             code: "antigravity_permission_denied",
             summary:
-              "Antigravity could not obtain a required tool approval in headless mode; the run was not treated as complete."
+              "Antigravity required an interactive tool approval that is unavailable in headless mode. Add a narrow provider allow-rule for the required operation or use a tool path that does not request approval."
           )
         )
       )
