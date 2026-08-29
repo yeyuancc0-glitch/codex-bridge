@@ -317,6 +317,12 @@ extension BridgeServiceAppModel {
     chatWebViewSleepTask = nil
   }
 
+  func reloadChatBrowser() {
+    guard isChatBrowserEnabled else { return }
+    cancelChatBrowserSleep()
+    chatBrowserReloadRequest &+= 1
+  }
+
   func releaseChatWebView() {
     if let url = chatWebView?.url,
       url.scheme?.lowercased() == "https",

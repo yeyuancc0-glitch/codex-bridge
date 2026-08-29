@@ -15,6 +15,15 @@ final class ChatGPTWebViewDelegateTests: XCTestCase {
     XCTAssertTrue(webView.uiDelegate === coordinator)
   }
 
+  @MainActor
+  func testCoordinatorConsumesEachReloadRequestOnce() {
+    let coordinator = ChatGPTWebView.Coordinator(ChatGPTWebView(reloadRequest: 4))
+
+    XCTAssertFalse(coordinator.consumeReloadRequest(4))
+    XCTAssertTrue(coordinator.consumeReloadRequest(5))
+    XCTAssertFalse(coordinator.consumeReloadRequest(5))
+  }
+
   private let policySelector = NSSelectorFromString(
     "webView:decidePolicyForNavigationAction:preferences:decisionHandler:")
   private let createWebViewSelector = NSSelectorFromString(

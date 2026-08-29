@@ -1853,6 +1853,21 @@ final class BridgeServiceAppModelTests: XCTestCase {
     XCTAssertNil(model.chatWebView)
   }
 
+  func testChatBrowserReloadRequestIsObservableWithoutAWebViewReference() async throws {
+    let model = BridgeServiceAppModel(
+      registration: TestServiceRegistration(status: .enabled),
+      clientFactory: { TestBridgeServiceClient() },
+      pollInterval: nil
+    )
+    model.isChatBrowserEnabled = true
+
+    model.reloadChatBrowser()
+    model.reloadChatBrowser()
+
+    XCTAssertEqual(model.chatBrowserReloadRequest, 2)
+    XCTAssertNil(model.chatWebView)
+  }
+
   func testToastPostingAndManualClear() async throws {
     let registration = TestServiceRegistration(status: .enabled)
     let client = TestBridgeServiceClient()

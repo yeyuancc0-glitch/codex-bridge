@@ -133,6 +133,7 @@ public final class BridgeServiceAppModel: ObservableObject {
       }
     }
   }
+  @Published public internal(set) var chatBrowserReloadRequest: UInt64 = 0
   @Published public internal(set) var isRefreshing = false
   @Published public internal(set) var lastRefreshAt: Date?
   @Published public internal(set) var conversation: TaskConversationModel?

@@ -11,6 +11,7 @@ struct BridgeServiceWorkbenchBrowserPane: View {
       if model.isChatBrowserEnabled {
         ChatGPTWebView(
           initialURL: model.chatBrowserResumeURL,
+          reloadRequest: model.chatBrowserReloadRequest,
           webViewReference: $model.chatWebView
         )
       } else {
@@ -37,31 +38,28 @@ struct BridgeServiceWorkbenchBrowserPane: View {
 
   private var browserToolbar: some View {
     HStack(spacing: 8) {
-      Button {
+      browserNavigationButton(
+        systemName: "chevron.left",
+        help: "后退",
+        enabled: model.chatWebView?.canGoBack == true
+      ) {
         model.chatWebView?.goBack()
-      } label: {
-        Image(systemName: "chevron.left")
-          .font(.caption.weight(.semibold))
       }
-      .buttonStyle(.borderless)
-      .disabled(model.chatWebView?.canGoBack != true)
 
-      Button {
+      browserNavigationButton(
+        systemName: "chevron.right",
+        help: "前进",
+        enabled: model.chatWebView?.canGoForward == true
+      ) {
         model.chatWebView?.goForward()
-      } label: {
-        Image(systemName: "chevron.right")
-          .font(.caption.weight(.semibold))
       }
-      .buttonStyle(.borderless)
-      .disabled(model.chatWebView?.canGoForward != true)
 
-      Button {
-        model.chatWebView?.reload()
-      } label: {
-        Image(systemName: "arrow.clockwise")
-          .font(.caption)
+      browserNavigationButton(
+        systemName: "arrow.clockwise",
+        help: "刷新当前网页"
+      ) {
+        model.reloadChatBrowser()
       }
-      .buttonStyle(.borderless)
 
       HStack(spacing: 6) {
         Image(systemName: "lock.fill")
@@ -103,5 +101,23 @@ struct BridgeServiceWorkbenchBrowserPane: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .background(Color(nsColor: .windowBackgroundColor))
+  }
+
+  private func browserNavigationButton(
+    systemName: String,
+    help: String,
+    enabled: Bool = true,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Image(systemName: systemName)
+        .font(.caption.weight(.semibold))
+        .frame(width: 28, height: 28)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.borderless)
+    .disabled(!enabled)
+    .help(help)
+    .accessibilityLabel(help)
   }
 }
