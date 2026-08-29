@@ -29,6 +29,7 @@ public enum AntigravityPermissionEvidence {
       "grant permission",
       "add an allow rule",
       "add an allow-rule",
+      "operation was denied by local policy",
     ]
     return denialMarkers.contains { combined.contains($0) }
   }

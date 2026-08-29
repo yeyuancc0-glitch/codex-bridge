@@ -195,7 +195,10 @@ public actor AntigravityCLIExecution {
           throw AntigravityCLIError.invalidMessage
         }
         let toolName = update.toolInfo?.name ?? update.toolName
-        if update.stepType == "tool", update.state == "ERROR", let toolName {
+        if update.stepType == "tool",
+          update.state == "ERROR" || update.toolInfo?.error != nil || update.error != nil,
+          let toolName
+        {
           lastFailedTool = (toolName, update.stepIndex)
         }
         if AntigravityPermissionEvidence.detected(in: update.toolInfo?.error?.message)

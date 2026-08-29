@@ -47,6 +47,11 @@ final class MCPAntigravityContractTests: XCTestCase {
     XCTAssertTrue(
       network["description"]?.stringValue?.contains("Provider-native policies") == true
     )
+    XCTAssertTrue(
+      network["description"]?.stringValue?.contains(
+        "explicitly requires web search"
+      ) == true
+    )
 
     let description = submit.description ?? ""
     for marker in [
@@ -90,6 +95,8 @@ final class MCPAntigravityContractTests: XCTestCase {
       "queued steer",
       "native headless policy",
       "network_access records",
+      "Set network_access=true whenever",
+      "local access mode is full-access",
       "provider_session_id returned by get_task",
       "same project and installation",
     ] {

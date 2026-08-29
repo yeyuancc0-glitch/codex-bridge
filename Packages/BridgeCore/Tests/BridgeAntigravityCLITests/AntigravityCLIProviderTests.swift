@@ -80,6 +80,7 @@ final class AntigravityCLIProviderTests: XCTestCase {
       --model Model for the current CLI session
       --effort Reasoning effort for the current CLI session (low|medium|high)
       --sandbox Run in a sandbox with terminal restrictions enabled
+      --dangerously-skip-permissions Auto-approve all tool permission requests
       --input-format stream-json reads one NDJSON message per line and runs a turn for each
       --output-format stream-json
       """

@@ -42,6 +42,7 @@ final class AntigravityCLIProfileTests: XCTestCase {
       --model Model for the current CLI session
       --effort Reasoning effort for the current CLI session (low|medium|high)
       --sandbox Run in a sandbox with terminal restrictions enabled
+      --dangerously-skip-permissions Auto-approve all tool permission requests
       --input-format stream-json reads one NDJSON message per line and runs a turn for each
       --output-format stream-json
       """
@@ -55,6 +56,7 @@ final class AntigravityCLIProfileTests: XCTestCase {
     XCTAssertTrue(facts.supportsEffort)
     XCTAssertTrue(facts.supportsQueuedTurns)
     XCTAssertTrue(facts.supportsSandbox)
+    XCTAssertTrue(facts.supportsPermissionBypass)
     XCTAssertEqual(
       facts.observedCapabilities,
       [

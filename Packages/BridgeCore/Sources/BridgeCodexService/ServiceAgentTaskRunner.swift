@@ -16,6 +16,11 @@ public struct AgentTaskBrief: Sendable {
   public let permissionMode: ServicePermissionMode
   public let profileID: AgentProfileID?
   public let networkAllowed: Bool
+  public let accessMode: ServiceAccessMode
+
+  public var toolApprovalPolicy: AgentToolApprovalPolicy {
+    accessMode == .fullAccess && networkAllowed ? .autoApprove : .providerManaged
+  }
 
   public init(
     taskID: TaskID,
@@ -29,7 +34,8 @@ public struct AgentTaskBrief: Sendable {
     effort: String? = nil,
     permissionMode: ServicePermissionMode = .readOnly,
     profileID: AgentProfileID? = nil,
-    networkAllowed: Bool
+    networkAllowed: Bool,
+    accessMode: ServiceAccessMode = .requestApproval
   ) {
     self.taskID = taskID
     self.providerID = providerID
@@ -43,6 +49,7 @@ public struct AgentTaskBrief: Sendable {
     self.permissionMode = permissionMode
     self.profileID = profileID
     self.networkAllowed = networkAllowed
+    self.accessMode = accessMode
   }
 }
 
@@ -172,6 +179,7 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       workspaceStrategy: brief.permissionMode == .workspaceWrite
         ? .exclusiveProject : .sharedProject,
       networkAccessRequested: brief.networkAllowed,
+      toolApprovalPolicy: brief.toolApprovalPolicy,
       requiredCapabilities: requiredCapabilities
     )
     let handle = try await provider.start(request, installation: installation)

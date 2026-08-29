@@ -239,28 +239,43 @@ final class AntigravityCLIExecutionTests: XCTestCase {
     try await transport.emit(
       AntigravityCLITestSupport.data(
         """
-        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":4,"state":"ERROR","step_type":"tool","tool_name":"read_url_content","tool_info":{"name":"read_url_content","parameters":{"url":"https://example.com"},"error":{"type":"TOOL_ERROR","message":"request failed"}}}}
+        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":4,"state":"DONE","step_type":"tool","tool_name":"read_url_content","tool_info":{"name":"read_url_content","parameters":{"url":"https://example.com"},"error":{"type":"TOOL_ERROR","message":"request failed"}}}}
         """
       )
     )
     try await transport.emit(
       AntigravityCLITestSupport.data(
         """
-        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":5,"state":"ERROR","step_type":"tool","tool_name":null,"error":{"type":"PERMISSION","message":"headless mode cannot prompt; operation was auto-denied"}}}
+        {"event":"step_update","step_update":{"conversation_id":"conversation-1","step_index":5,"state":"ERROR","step_type":"tool","tool_name":null,"error":{"type":"PERMISSION","message":"The requested operation was denied by local policy."}}}
         """
       )
     )
     try await transport.emit(
-      AntigravityCLITestSupport.resultFrame(response: "The page could not be read.")
+      AntigravityCLITestSupport.resultFrame(
+        status: "SUCCESS",
+        response: "The page could not be read."
+      )
     )
 
     let events = await eventsTask.value
-    guard case .failed(let code, let summary) = events.last?.event else {
-      return XCTFail("Expected a permission-denied terminal event")
+    XCTAssertEqual(events.map(\.providerSequence), [0, 1, 2, 3, 4])
+    guard case .tool(let webTool) = events[0].event,
+      case .tool(let denialTool) = events[1].event,
+      case .content(let content) = events[2].event,
+      case .approvalAutomaticallyDenied = events[3].event,
+      case .failed(let code, let summary) = events[4].event
+    else {
+      return XCTFail("Expected failed web tool, denial, response, and terminal failure")
     }
+    XCTAssertEqual(webTool.name, "read_url_content")
+    XCTAssertEqual(webTool.status, .failed)
+    XCTAssertEqual(webTool.output, "request failed")
+    XCTAssertEqual(denialTool.status, .failed)
+    XCTAssertEqual(content.content, "The page could not be read.")
     XCTAssertEqual(code, "antigravity_permission_denied")
     XCTAssertTrue(summary.contains("native tool 'read_url_content'"))
     XCTAssertTrue(summary.contains("Internet Access Policy"))
+    XCTAssertFalse(events.contains { if case .completed = $0.event { true } else { false } })
   }
 
   func testInterruptRequestsProviderAndEndsWithInterruptedEvent() async throws {

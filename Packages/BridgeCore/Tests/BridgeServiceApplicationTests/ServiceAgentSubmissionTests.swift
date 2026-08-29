@@ -1625,6 +1625,15 @@ final class ServiceAgentSubmissionTests: XCTestCase {
       )
     )
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    try await fixture.settings.setModelPreferences(
+      ServiceModelPreferences(
+        executionModel: "execution-model",
+        executionEffort: "high",
+        supervisorModel: "supervisor-model",
+        supervisorEffort: "medium",
+        accessMode: .fullAccess
+      )
+    )
 
     let receipt = try await application.serviceSubmitTask(
       MCPServiceTaskSubmission(
@@ -1646,6 +1655,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(pending.installationID, "ainst-route-antigravity")
     XCTAssertEqual(pending.permissionMode, .workspaceWrite)
     XCTAssertTrue(pending.networkAllowed)
+    XCTAssertEqual(pending.accessMode, .fullAccess)
     XCTAssertEqual(pending.selectionMode, .explicit)
 
     try await application.resolveTaskStartApproval(
@@ -1662,6 +1672,7 @@ final class ServiceAgentSubmissionTests: XCTestCase {
     XCTAssertEqual(request.mutationIntent, .workspaceWrite)
     XCTAssertEqual(request.workspaceStrategy, .exclusiveProject)
     XCTAssertTrue(request.networkAccessRequested)
+    XCTAssertEqual(request.toolApprovalPolicy, .autoApprove)
     XCTAssertTrue(request.requiredCapabilities.contains(.workspaceWriteInPlace))
     XCTAssertEqual(request.profileID, AgentProfileID(rawValue: "desktop-shared"))
 

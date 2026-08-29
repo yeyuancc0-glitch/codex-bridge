@@ -47,11 +47,17 @@ public struct AntigravityCLILaunchBuilder: Sendable {
     var providerArgv = [
       executable,
       "--sandbox",
-      "--input-format",
-      "stream-json",
-      "--output-format",
-      "stream-json",
     ]
+    if request.toolApprovalPolicy == .autoApprove {
+      providerArgv.append("--dangerously-skip-permissions")
+    }
+    providerArgv.append(
+      contentsOf: [
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+      ])
     let readOnly = request.mutationIntent == .readOnly
     providerArgv.append(contentsOf: ["--mode", readOnly ? "plan" : "accept-edits"])
     if let sessionID = request.requestedSessionID {

@@ -109,7 +109,11 @@ extension MCPServiceToolCatalog {
       + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
       + "seconds, quiet long-running work). External Provider network execution is Provider-native; "
       + "network_access records the user's explicit task request but does not claim Bridge-level packet "
-      + "isolation. Never treat a non-terminal status or unchanged "
+      + "isolation. Set network_access=true whenever the user explicitly requests web search, URL "
+      + "fetches, external APIs, or other network use; false or omitted does not grant task-level "
+      + "network access. For Antigravity, a locally selected full-access mode plus network_access=true "
+      + "uses agy's documented non-interactive approval while retaining the requested Plan/Accept "
+      + "Edits mode and Bridge workspace-write sandbox. Never treat a non-terminal status or unchanged "
       + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [
@@ -166,7 +170,7 @@ extension MCPServiceToolCatalog {
         "network_access": [
           "type": "boolean",
           "description":
-            "Requests network use for the task. Codex applies its native sandbox policy. OpenCode, DeepSeek Harness, and Antigravity execute network-capable tools under their Provider-native policies; this field records the explicit request and project admission but does not claim Bridge-level packet isolation.",
+            "Set true whenever the user's task explicitly requires web search, URL fetches, external APIs, or other network use. False or omitted does not grant task-level network access. Codex applies its native sandbox policy. OpenCode, DeepSeek Harness, and Antigravity execute network-capable tools under their Provider-native policies; this field records the explicit request and project admission but does not claim Bridge-level packet isolation.",
         ],
         "acceptance_criteria": [
           "type": "array",

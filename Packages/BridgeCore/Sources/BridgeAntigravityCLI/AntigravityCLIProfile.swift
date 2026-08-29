@@ -73,6 +73,7 @@ struct AntigravityCLIHelpFacts: Equatable, Sendable {
   let supportsEffort: Bool
   let supportsQueuedTurns: Bool
   let supportsSandbox: Bool
+  let supportsPermissionBypass: Bool
 
   var observedCapabilities: Set<AgentCapability> {
     var result: Set<AgentCapability> = []
@@ -126,7 +127,10 @@ struct AntigravityCLIHelpFacts: Equatable, Sendable {
       supportsEffort: effortLine.contains("--effort")
         && ["low", "medium", "high"].allSatisfy(effortLine.contains),
       supportsQueuedTurns: streamJSON && queuedTurns,
-      supportsSandbox: lines.contains(where: { $0.contains("--sandbox") })
+      supportsSandbox: lines.contains(where: { $0.contains("--sandbox") }),
+      supportsPermissionBypass: lines.contains(where: {
+        $0.contains("--dangerously-skip-permissions")
+      })
     )
   }
 }
