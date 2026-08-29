@@ -5,11 +5,12 @@ public actor DeepSeekHarnessACPExecution {
   public nonisolated let events: AsyncThrowingStream<AgentEventEnvelope, any Error>
 
   private let client: DeepSeekHarnessACPClient
-  private let normalizer: DeepSeekHarnessACPEventNormalizer
+  let normalizer: DeepSeekHarnessACPEventNormalizer
   private let sessionID: String
   private let prompt: String
   private let initialClientEventSequence: Int64
   private let inactivityTimeout: Duration
+  let requiresCompletionAttestation: Bool
   private let cleanup: @Sendable () -> Void
   private let continuation: AsyncThrowingStream<AgentEventEnvelope, any Error>.Continuation
   private var eventTask: Task<Void, Never>?
@@ -18,8 +19,9 @@ public actor DeepSeekHarnessACPExecution {
   private var consumedClientEventBarrier: Int64
   private var queuedSteers: [String] = []
   private var queuedSteerBytes = 0
-  private var interruptRequested = false
-  private var terminal = false
+  var interruptRequested = false
+  var completionCorrectionSent = false
+  var terminal = false
 
   private static let maximumQueuedSteers = 32
   private static let maximumQueuedSteerBytes = 256 * 1_024
@@ -32,6 +34,7 @@ public actor DeepSeekHarnessACPExecution {
     initialClientEventSequence: Int64,
     inactivityTimeout: Duration = DeepSeekHarnessACPConstants.inactivityTimeout,
     eventBufferLimit: Int = DeepSeekHarnessACPConstants.maximumEventBuffer,
+    requiresCompletionAttestation: Bool = false,
     cleanup: @escaping @Sendable () -> Void
   ) {
     let pair = AsyncThrowingStream.makeStream(
@@ -41,10 +44,14 @@ public actor DeepSeekHarnessACPExecution {
     self.client = client
     self.normalizer = normalizer
     self.sessionID = sessionID
-    self.prompt = prompt
+    self.prompt =
+      requiresCompletionAttestation
+      ? DeepSeekHarnessACPCompletionAttestation.initialPrompt(prompt)
+      : prompt
     self.initialClientEventSequence = max(0, initialClientEventSequence)
     consumedClientEventBarrier = max(0, initialClientEventSequence)
     self.inactivityTimeout = inactivityTimeout
+    self.requiresCompletionAttestation = requiresCompletionAttestation
     self.cleanup = cleanup
     events = pair.stream
     continuation = pair.continuation
@@ -187,67 +194,6 @@ public actor DeepSeekHarnessACPExecution {
     }
   }
 
-  private func nextPromptOrTerminal(stopReason: String) async throws -> String? {
-    guard stopReason == "end_turn" else {
-      switch stopReason {
-      case "refusal":
-        await failExecution(
-          code: "deepseek_harness_refusal",
-          summary: "DeepSeek Harness refused the task."
-        )
-      case "max_tokens":
-        await failExecution(
-          code: "deepseek_harness_max_tokens",
-          summary: "DeepSeek Harness reached the model token limit before completion."
-        )
-      default:
-        await failExecution(
-          code: "deepseek_harness_unknown_stop_reason",
-          summary: "DeepSeek Harness returned an unsupported stop reason."
-        )
-      }
-      return nil
-    }
-    let finalizedContent = try await normalizer.finalizeContent()
-    guard !terminal else { return nil }
-    guard !finalizedContent.isEmpty else {
-      await failExecution(
-        code: "deepseek_harness_empty_response",
-        summary: "DeepSeek Harness ACP completed without a committed assistant message."
-      )
-      return nil
-    }
-
-    do {
-      for event in finalizedContent {
-        guard emit(event) else { throw DeepSeekHarnessACPError.transportClosed }
-      }
-    } catch {
-      await closeStream(throwing: error)
-      return nil
-    }
-
-    if interruptRequested {
-      await finishInterrupted()
-      return nil
-    }
-    // A steer can arrive while the normalizer is finalizing the previous
-    // turn. Re-check before claiming terminal so accepted input is never
-    // lost to a completion race.
-    if let nextPrompt = dequeueSteer() {
-      return nextPrompt
-    }
-    guard claimTerminal() else { return nil }
-    do {
-      let completed = try await normalizer.completed(stopReason: stopReason)
-      guard emit(completed) else { throw DeepSeekHarnessACPError.transportClosed }
-      await closeStream()
-    } catch {
-      await closeStream(throwing: error)
-    }
-    return nil
-  }
-
   private func waitUntilConsumed(_ barrier: Int64) async throws {
     while consumedClientEventBarrier < barrier {
       guard !terminal else { throw DeepSeekHarnessACPError.transportClosed }
@@ -255,7 +201,7 @@ public actor DeepSeekHarnessACPExecution {
     }
   }
 
-  private func finishInterrupted() async {
+  func finishInterrupted() async {
     guard claimTerminal() else { return }
     if let interrupted = try? await normalizer.interrupted() {
       _ = emit(interrupted)
@@ -263,7 +209,7 @@ public actor DeepSeekHarnessACPExecution {
     await closeStream()
   }
 
-  private func dequeueSteer() -> String? {
+  func dequeueSteer() -> String? {
     guard !queuedSteers.isEmpty else { return nil }
     let prompt = queuedSteers.removeFirst()
     queuedSteerBytes -= prompt.utf8.count
@@ -275,7 +221,7 @@ public actor DeepSeekHarnessACPExecution {
     queuedSteerBytes = 0
   }
 
-  private func emit(_ event: AgentEventEnvelope) -> Bool {
+  func emit(_ event: AgentEventEnvelope) -> Bool {
     switch continuation.yield(event) {
     case .enqueued: true
     case .dropped, .terminated: false
@@ -283,7 +229,7 @@ public actor DeepSeekHarnessACPExecution {
     }
   }
 
-  private func failExecution(code: String, summary: String) async {
+  func failExecution(code: String, summary: String) async {
     guard claimTerminal() else { return }
     if let event = try? await normalizer.failed(code: code, summary: summary) {
       _ = emit(event)
@@ -296,7 +242,7 @@ public actor DeepSeekHarnessACPExecution {
     await closeStream(throwing: error)
   }
 
-  private func claimTerminal() -> Bool {
+  func claimTerminal() -> Bool {
     guard !terminal else { return false }
     terminal = true
     clearQueuedSteers()
@@ -324,7 +270,7 @@ public actor DeepSeekHarnessACPExecution {
     )
   }
 
-  private func closeStream(throwing error: (any Error)? = nil) async {
+  func closeStream(throwing error: (any Error)? = nil) async {
     eventTask?.cancel()
     promptTask?.cancel()
     watchdogTask?.cancel()

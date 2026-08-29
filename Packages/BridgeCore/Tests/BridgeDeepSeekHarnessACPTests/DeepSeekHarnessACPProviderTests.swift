@@ -180,7 +180,10 @@ final class DeepSeekHarnessACPProviderTests: XCTestCase {
       if message.method == nil, message.id == .string("permission-1") {
         guard let promptID = await promptState.value() else { return }
         try await transport.emit(
-          deepSeekMessageChunk(sessionID: "provider-approval-session", text: "approved")
+          deepSeekMessageChunk(
+            sessionID: "provider-approval-session",
+            text: "approved\n\(DeepSeekHarnessACPCompletionAttestation.completedMarker)"
+          )
         )
         try await transport.emit(
           ACPWireMessage(id: promptID, result: .object(["stopReason": .string("end_turn")]))

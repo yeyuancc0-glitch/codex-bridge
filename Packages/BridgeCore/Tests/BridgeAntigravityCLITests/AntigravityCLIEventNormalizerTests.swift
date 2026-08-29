@@ -146,7 +146,8 @@ final class AntigravityCLIEventNormalizerTests: XCTestCase {
     let events = try await normalizer.normalize(
       try XCTUnwrap(resultEnvelope.result),
       permissionDenied: true,
-      terminal: true
+      terminal: true,
+      permissionMode: "request-review"
     )
 
     XCTAssertEqual(events.count, 3)
@@ -158,6 +159,12 @@ final class AntigravityCLIEventNormalizerTests: XCTestCase {
     }
     XCTAssertEqual(reason, "antigravity-soft-denial")
     XCTAssertEqual(code, "antigravity_permission_denied")
+    guard case .failed(_, let summary) = events[2].event else {
+      return XCTFail("Expected a permission-denied summary")
+    }
+    XCTAssertTrue(summary.contains("permission_mode=request-review"))
+    XCTAssertTrue(summary.contains("toolPermission=proceed-in-sandbox"))
+    XCTAssertTrue(summary.contains("provider response was preserved"))
     XCTAssertFalse(
       events.contains { event in
         if case .completed = event.event { return true }

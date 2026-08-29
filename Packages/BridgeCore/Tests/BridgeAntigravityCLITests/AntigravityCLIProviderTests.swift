@@ -231,6 +231,17 @@ final class AntigravityCLIProviderTests: XCTestCase {
 
     let writeHandle = try await provider.start(writeRequest, installation: installation)
     XCTAssertTrue(writeHandle.capabilities.effective.contains(.workspaceWriteInPlace))
+    for _ in 0..<100 {
+      let frames = await transport.sentFramesValue()
+      if !frames.isEmpty { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let sentFrames = await transport.sentFramesValue()
+    let firstFrame = try XCTUnwrap(sentFrames.first)
+    let firstPrompt = try JSONDecoder().decode(AntigravityUserMessage.self, from: firstFrame)
+      .message.content
+    XCTAssertTrue(firstPrompt.contains("non-interactive Codex Bridge run"))
+    XCTAssertTrue(firstPrompt.contains("native file, search, and web tools"))
     if let shutdown = writeHandle.control.shutdown {
       await shutdown()
     }

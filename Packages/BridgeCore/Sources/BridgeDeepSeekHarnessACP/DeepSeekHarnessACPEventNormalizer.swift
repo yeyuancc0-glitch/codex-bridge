@@ -56,8 +56,16 @@ public actor DeepSeekHarnessACPEventNormalizer {
     }
   }
 
-  public func finalizeContent() throws -> [AgentEventEnvelope] {
-    guard !content.isEmpty else { return [] }
+  func currentContent() -> String {
+    content
+  }
+
+  public func finalizeContent(contentOverride: String? = nil) throws -> [AgentEventEnvelope] {
+    let finalizedContent = contentOverride ?? content
+    if finalizedContent.isEmpty {
+      if contentOverride != nil { content = "" }
+      return []
+    }
     guard assistantMessageIndex < Self.maximumAssistantMessageIndex else {
       throw DeepSeekHarnessACPError.oversizedFrame
     }
@@ -66,12 +74,12 @@ public actor DeepSeekHarnessACPEventNormalizer {
       role: .assistant,
       kind: .message,
       mode: .full,
-      content: content,
+      content: finalizedContent,
       baseContentLength: nil,
       isFinal: true,
       authoritative: true
     )
-    lastFinalizedContent = content
+    lastFinalizedContent = finalizedContent
     content = ""
     assistantMessageIndex += 1
     return [try envelope(.content(update))]

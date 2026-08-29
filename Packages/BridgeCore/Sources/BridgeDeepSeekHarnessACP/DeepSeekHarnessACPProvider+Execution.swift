@@ -47,6 +47,7 @@ extension DeepSeekHarnessACPProvider {
         initialClientEventSequence: initialSequence,
         inactivityTimeout: configuration.inactivityTimeout,
         eventBufferLimit: configuration.eventBufferLimit,
+        requiresCompletionAttestation: true,
         cleanup: {
           DeepSeekHarnessACPLaunchBuilder.removeRunDirectory(launch.runDirectory)
         }

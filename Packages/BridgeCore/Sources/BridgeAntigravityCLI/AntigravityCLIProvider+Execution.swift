@@ -32,7 +32,7 @@ extension AntigravityCLIProvider {
         projectRoot: launch.process.workingDirectory,
         requestedSessionID: request.requestedSessionID,
         expectedModel: request.model,
-        prompt: request.prompt,
+        prompt: AntigravityCLIHeadlessPolicy.prompt(request.prompt),
         transport: connected,
         inactivityTimeout: configuration.inactivityTimeout,
         eventBufferLimit: configuration.eventBufferLimit,

@@ -29,6 +29,7 @@ public actor AntigravityCLIExecution {
   private var turnFinalizing = false
   private var interruptRequested = false
   private var permissionDenied = false
+  private var permissionMode: String?
   private var terminal = false
   private var initialized = false
 
@@ -238,6 +239,7 @@ public actor AntigravityCLIExecution {
       providerRunID: runID
     )
     self.binding = binding
+    permissionMode = initialization.permissionMode
     normalizer = AntigravityCLIEventNormalizer(
       taskID: taskID,
       binding: binding,
@@ -284,7 +286,8 @@ public actor AntigravityCLIExecution {
     for event in try await normalizer.normalize(
       result,
       permissionDenied: denied,
-      terminal: terminalResult
+      terminal: terminalResult,
+      permissionMode: permissionMode
     ) {
       guard !terminal else { return }
       if interruptRequested, Self.isTerminalEvent(event.event) { continue }

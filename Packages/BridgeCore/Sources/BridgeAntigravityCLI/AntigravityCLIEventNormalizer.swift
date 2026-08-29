@@ -84,7 +84,8 @@ public actor AntigravityCLIEventNormalizer {
   public func normalize(
     _ result: AntigravityResult,
     permissionDenied: Bool,
-    terminal: Bool
+    terminal: Bool,
+    permissionMode: String? = nil
   ) throws -> [AgentEventEnvelope] {
     try validateSession(result.conversationID)
     var events: [AgentEventEnvelope] = []
@@ -120,8 +121,9 @@ public actor AntigravityCLIEventNormalizer {
         try envelope(
           .failed(
             code: "antigravity_permission_denied",
-            summary:
-              "Antigravity required an interactive tool approval that is unavailable in headless mode. Add a narrow provider allow-rule for the required operation or use a tool path that does not request approval."
+            summary: AntigravityCLIHeadlessPolicy.permissionDeniedSummary(
+              permissionMode: permissionMode
+            )
           )
         )
       )

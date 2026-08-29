@@ -106,7 +106,7 @@ final class AntigravityCLIExecutionTests: XCTestCase {
     )
     let events = await eventsTask.value
     XCTAssertEqual(events.count, 3)
-    guard case .content = events[0].event,
+    guard case .content(let content) = events[0].event,
       case .approvalAutomaticallyDenied(let reason) = events[1].event,
       case .failed(let code, _) = events[2].event
     else {
@@ -114,6 +114,7 @@ final class AntigravityCLIExecutionTests: XCTestCase {
     }
     XCTAssertEqual(reason, "antigravity-soft-denial")
     XCTAssertEqual(code, "antigravity_permission_denied")
+    XCTAssertEqual(content.content, "The tool was not run.")
   }
 
   func testStructuredToolDenialIsRememberedUntilResult() async throws {
@@ -217,7 +218,7 @@ final class AntigravityCLIExecutionTests: XCTestCase {
       return XCTFail("Expected a permission-denied terminal event")
     }
     XCTAssertEqual(code, "antigravity_permission_denied")
-    XCTAssertTrue(summary.contains("narrow provider allow-rule"))
+    XCTAssertTrue(summary.contains("narrow allow-rule"))
   }
 
   func testInterruptRequestsProviderAndEndsWithInterruptedEvent() async throws {
