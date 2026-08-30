@@ -13,6 +13,9 @@ var testTargets: [Target] = [
   )
 ]
 
+var tunnelFixtureProducts: [Product] = []
+var tunnelFixtureTargets: [Target] = []
+
 #if !os(Windows)
   testTargets += [
     .testTarget(
@@ -180,6 +183,24 @@ var testTargets: [Target] = [
       ]
     ),
   ]
+  tunnelFixtureProducts = [
+    .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
+    .executable(
+      name: "bridge-tunnel-acceptance-fixture",
+      targets: ["BridgeTunnelAcceptanceFixture"]
+    ),
+  ]
+  tunnelFixtureTargets = [
+    .executableTarget(
+      name: "BridgeTunnelFixture",
+      path: "Tests/BridgeTunnelTests/Fixture"
+    ),
+    .executableTarget(
+      name: "BridgeTunnelAcceptanceFixture",
+      dependencies: ["BridgeSecurity", "BridgeTunnel"],
+      path: "Tests/BridgeTunnelAcceptanceFixture"
+    ),
+  ]
 #endif
 
 let package = Package(
@@ -218,12 +239,7 @@ let package = Package(
     ),
     .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
     .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
-    .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
-    .executable(
-      name: "bridge-tunnel-acceptance-fixture",
-      targets: ["BridgeTunnelAcceptanceFixture"]
-    ),
-  ],
+  ] + tunnelFixtureProducts,
   dependencies: [
     // Vendored MCP swift-sdk 0.12.1: upstream excludes the EventSource
     // dependency on Windows while importing it unconditionally, which breaks
@@ -470,14 +486,5 @@ let package = Package(
       dependencies: ["BridgeMCP"],
       path: "Tests/BridgeMCPInspectorFixture"
     ),
-    .executableTarget(
-      name: "BridgeTunnelFixture",
-      path: "Tests/BridgeTunnelTests/Fixture"
-    ),
-    .executableTarget(
-      name: "BridgeTunnelAcceptanceFixture",
-      dependencies: ["BridgeSecurity", "BridgeTunnel"],
-      path: "Tests/BridgeTunnelAcceptanceFixture"
-    ),
-  ] + testTargets
+  ] + tunnelFixtureTargets + testTargets
 )
