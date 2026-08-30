@@ -29,10 +29,9 @@ jobs:
           Remove-Item .\swift-installer.exe
           Write-Host "installer exit code: $($proc.ExitCode)"
           $roots = @(
+            "$env:LOCALAPPDATA\Programs\Swift",
             "C:\Library\Developer\Toolchains",
-            "$env:LOCALAPPDATA\Library\Developer\Toolchains",
-            "$env:ProgramFiles\Swift",
-            "${env:ProgramFiles(x86)}\Swift"
+            "$env:ProgramFiles\Swift"
           )
           $swiftExe = Get-ChildItem $roots -Recurse -Filter swift.exe `
             -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
