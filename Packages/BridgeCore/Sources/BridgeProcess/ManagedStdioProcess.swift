@@ -179,8 +179,11 @@ public final class ManagedStdioProcess: @unchecked Sendable {
         }
         semaphore.signal()
       }
-      if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-        throw ManagedProcessError.stdinUnavailable
+      let deadline = ContinuousClock.now.advanced(by: timeout)
+      while semaphore.wait(timeout: .now() + .milliseconds(20)) == .timedOut {
+        if ContinuousClock.now >= deadline {
+          throw ManagedProcessError.stdinUnavailable
+        }
       }
       if writeFailed { throw ManagedProcessError.stdinUnavailable }
     #else
