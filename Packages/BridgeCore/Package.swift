@@ -446,6 +446,7 @@ let package = Package(
       name: "BridgeWindowsShell",
       dependencies: [
         "BridgeIPC",
+        "BridgeMCP",
         "BridgeServiceAppCore",
       ]
     ),

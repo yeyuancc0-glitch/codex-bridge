@@ -47,7 +47,7 @@
         state = .failed
         return
       }
-      ensureDirectoryExists(userDataFolder)
+      Self.ensureDirectoryExists(userDataFolder)
 
       let handler = webView2CompletionHandler { [weak self] errorCode, environment in
         self?.environmentCreated(errorCode: errorCode, environment: environment)

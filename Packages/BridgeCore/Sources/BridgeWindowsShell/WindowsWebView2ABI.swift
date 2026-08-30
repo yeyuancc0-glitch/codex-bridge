@@ -122,7 +122,7 @@
   // is the shell's message-loop thread.
 
   private struct CompletionHandlerObject {
-    var vtable: UnsafeRawPointer
+    var vtable: UnsafeMutablePointer<CompletionHandlerVTable>
     var refCount: UInt32
     var context: Unmanaged<CompletionHandlerContext>
   }
@@ -149,7 +149,7 @@
       ) -> HRESULT
   }
 
-  private let completionHandlerVTable: UnsafeMutablePointer<CompletionHandlerVTable> = {
+  private func makeCompletionHandlerVTable() -> UnsafeMutablePointer<CompletionHandlerVTable> {
     let table = UnsafeMutablePointer<CompletionHandlerVTable>.allocate(capacity: 1)
     table.initialize(
       to: CompletionHandlerVTable(
@@ -160,7 +160,7 @@
       )
     )
     return table
-  }()
+  }
 
   /// Creates a completion handler COM object with one reference owned by the
   /// caller. WebView2 retains its own reference for an accepted asynchronous
@@ -168,10 +168,11 @@
   func webView2CompletionHandler(
     _ onCompleted: @escaping (HRESULT, UnsafeMutableRawPointer?) -> Void
   ) -> UnsafeMutableRawPointer {
+    let vtable = makeCompletionHandlerVTable()
     let object = UnsafeMutablePointer<CompletionHandlerObject>.allocate(capacity: 1)
     object.initialize(
       to: CompletionHandlerObject(
-        vtable: UnsafeRawPointer(completionHandlerVTable),
+        vtable: vtable,
         refCount: 1,
         context: Unmanaged.passRetained(CompletionHandlerContext(onCompleted: onCompleted))
       )
@@ -211,9 +212,12 @@
     let refCount = object.pointee.refCount
     if refCount == 0 {
       let context = object.pointee.context
+      let vtable = object.pointee.vtable
       object.deinitialize(count: 1)
       object.deallocate()
       context.release()
+      vtable.deinitialize(count: 1)
+      vtable.deallocate()
     }
     return refCount
   }

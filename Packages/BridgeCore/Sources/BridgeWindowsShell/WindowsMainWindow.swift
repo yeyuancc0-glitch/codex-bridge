@@ -26,17 +26,16 @@
 
     // CW_USEDEFAULT ((int)0x80000000); cast macros are not imported by WinSDK.
     private static let defaultPosition = Int32(bitPattern: 0x8000_0000)
-    // MAKEINTRESOURCE(32512): IDI_APPLICATION / IDC_ARROW resource pointers.
-    private static let iconApplicationResource = UnsafePointer<WCHAR>(bitPattern: 32_512)!
-    private static let arrowCursorResource = UnsafePointer<WCHAR>(bitPattern: 32_512)!
+    // MAKEINTRESOURCE(32512): IDI_APPLICATION / IDC_ARROW.
+    private static let standardResourceID = 32_512
 
-    private static let menuExitID: UInt = 1001
-    private static let menuRefreshID: UInt = 1002
-    private static let menuStartServiceID: UInt = 1003
+    private static let menuExitID: UINT_PTR = 1001
+    private static let menuRefreshID: UINT_PTR = 1002
+    private static let menuStartServiceID: UINT_PTR = 1003
     private static let listBoxControlID = 2001
     private static let statusControlID = 2002
     private static let chatPlaceholderControlID = 2003
-    private static let timerID: UINT = 1
+    private static let timerID: UINT_PTR = 1
     private static let timerIntervalMs: UINT = 250
 
     // shellapi.h constants, declared locally to avoid macro-import variance.
@@ -193,8 +192,8 @@
           WindowsMainWindow.handleMessage(window, message, wParam, lParam)
         }
         windowClass.hInstance = instance
-        windowClass.hIcon = LoadIconW(nil, iconApplicationResource)
-        windowClass.hCursor = LoadCursorW(nil, arrowCursorResource)
+        windowClass.hIcon = LoadIconW(nil, resourcePointer(standardResourceID))
+        windowClass.hCursor = LoadCursorW(nil, resourcePointer(standardResourceID))
         windowClass.hbrBackground = GetSysColorBrush(COLOR_WINDOW)
         windowClass.lpszClassName = className
         _ = RegisterClassW(&windowClass)
@@ -228,7 +227,9 @@
       _ = SetMenu(window, menuBar)
     }
 
-    private static func appendMenuItem(_ menu: HMENU?, _ flags: UINT, _ id: UInt, _ text: String) {
+    private static func appendMenuItem(
+      _ menu: HMENU?, _ flags: UINT, _ id: UINT_PTR, _ text: String
+    ) {
       text.withCString(encodedAs: UTF16.self) {
         _ = AppendMenuW(menu, flags, id, $0)
       }
@@ -236,7 +237,7 @@
 
     private static func appendPopup(_ menuBar: HMENU?, _ popup: HMENU?, _ text: String) {
       guard let popup else { return }
-      let id = UInt(bitPattern: Int(bitPattern: popup))
+      let id = UINT_PTR(UInt(bitPattern: Int(bitPattern: popup)))
       text.withCString(encodedAs: UTF16.self) {
         _ = AppendMenuW(menuBar, UINT(MF_POPUP | MF_STRING), id, $0)
       }
@@ -252,7 +253,7 @@
       data.uID = UINT(1)
       data.uFlags = UINT(trayNIFMessage | trayNIFIcon | trayNIFTip)
       data.uCallbackMessage = trayCallbackMessage
-      data.hIcon = LoadIconW(nil, iconApplicationResource)
+      data.hIcon = LoadIconW(nil, resourcePointer(standardResourceID))
       copyTip("Codex Bridge", into: &data)
       _ = Shell_NotifyIconW(trayNIMAdd, &data)
       trayData = data
@@ -285,6 +286,10 @@
       text.withCString(encodedAs: UTF16.self) {
         _ = SetWindowTextW(target, $0)
       }
+    }
+
+    private static func resourcePointer(_ id: Int) -> UnsafePointer<WCHAR> {
+      UnsafePointer<WCHAR>(bitPattern: id)!
     }
   }
 #endif
