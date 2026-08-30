@@ -42,7 +42,12 @@ jobs:
         working-directory: Packages/BridgeCore
         shell: pwsh
         run: |
-          swift build --product codex-bridge-service
+          Get-Command swift | Format-List Source
+          swift --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift build --product codex-bridge-service --verbose 2>&1 |
+            ForEach-Object { "$_" } | Select-Object -Last 60
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build --product codex-bridge-windows-app
       - name: Smoke tests (platform-neutral targets)
         working-directory: Packages/BridgeCore
