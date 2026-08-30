@@ -71,7 +71,12 @@ powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
 `codex-bridge-service.exe --foreground --data-root C:\path`。portable 目录随附的是
 与应用架构匹配的 `WebView2Loader.dll`；Windows 仍必须预先安装系统级 WebView2
 Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Runtime 或 loader
-时壳保留任务管理功能并明确显示聊天页不可用。构建产物使用 release 配置，并从
+时壳保留任务管理功能并明确显示聊天页不可用。按
+[Swift Windows toolchain packaging](https://github.com/swiftlang/swift/blob/main/docs/WindowsToolchain.md)，
+安装器只安装宿主架构的 runtime，
+因此 staging 从 SDK `Redistributables` 中对应的
+`rtl.dynamic.private.<arch>.msm` 提取目标 DLL，再逐个校验 PE 架构。构建产物使用
+release 配置，并从
 Visual Studio `%VCToolsRedistDir%` 对应架构的 CRT 目录收集 Microsoft 允许 app-local
 部署的 VC runtime（见 [Microsoft C++ local deployment](https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp?view=msvc-170)）；
 Windows 10/11 自带的 UCRT 仍作为系统组件使用。

@@ -25,6 +25,7 @@ if (-not (Test-Path Env:OS) -or $env:OS -ne "Windows_NT") {
 
 $scriptDirectory = Split-Path -Parent $PSCommandPath
 . (Join-Path $scriptDirectory "windows-portable-support.ps1")
+. (Join-Path $scriptDirectory "windows-portable-runtime.ps1")
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $scriptDirectory))
 $expectedMachine = if ($Architecture -eq "x64") { [UInt16]0x8664 } else { [UInt16]0xAA64 }
 $effectiveTargetTriple = if ([string]::IsNullOrWhiteSpace($TargetTriple)) {
@@ -69,34 +70,6 @@ function Get-GitCommit {
   return "unknown"
 }
 
-function Resolve-VCRedistRoot {
-  $configuredRoot = $VCRedistRoot
-  if ([string]::IsNullOrWhiteSpace($configuredRoot) -and
-      (Test-Path Env:CODEX_BRIDGE_VC_REDIST_ROOT)) {
-    $configuredRoot = $env:CODEX_BRIDGE_VC_REDIST_ROOT
-  }
-  if (-not [string]::IsNullOrWhiteSpace($configuredRoot)) {
-    return Get-FullPath $configuredRoot
-  }
-
-  $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
-  $vswherePath = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
-  Assert-RegularFile $vswherePath | Out-Null
-  $installationOutput = @(& $vswherePath -latest -property installationPath)
-  if ($LASTEXITCODE -ne 0 -or $installationOutput.Count -eq 0) {
-    throw "Visual Studio installation path was not found."
-  }
-  $installationPath = ($installationOutput | Select-Object -First 1).ToString().Trim()
-  $versionsRoot = Join-Path $installationPath "VC\Redist\MSVC"
-  Assert-Directory $versionsRoot | Out-Null
-  $versionDirectories = @(Get-ChildItem -LiteralPath $versionsRoot -Directory |
-      Sort-Object Name -Descending)
-  if ($versionDirectories.Count -eq 0) {
-    throw "Visual C++ Redistributable files were not found."
-  }
-  return $versionDirectories[0].FullName
-}
-
 $binFull = Get-FullPath $BinPath
 Assert-Directory $binFull | Out-Null
 $outFull = Get-FullPath $OutDir
@@ -130,7 +103,8 @@ Remove-ExactPath $outFull
 Remove-ExactPath $zipPath
 New-Item -ItemType Directory -Path $outFull -Force | Out-Null
 
-$temporaryRoot = $null
+$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-bridge-portable-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
 try {
   $servicePath = Join-Path $binFull "codex-bridge-service.exe"
   $applicationPath = Join-Path $binFull "codex-bridge-windows-app.exe"
@@ -145,38 +119,19 @@ try {
   Stage-File (Join-Path $repoRoot "LICENSE") "LICENSE.txt"
   Stage-File (Join-Path $repoRoot "NOTICE") "NOTICE.txt"
 
-  $swiftcCommand = Get-Command swiftc -ErrorAction Stop
-  $targetInfoArguments = @("-print-target-info", "-target", $effectiveTargetTriple)
-  $targetInfoOutput = @(& $swiftcCommand.Path @targetInfoArguments 2>&1)
-  if ($LASTEXITCODE -ne 0 -or $targetInfoOutput.Count -eq 0) {
-    throw "swiftc -print-target-info failed."
+  $swiftRuntimeModule = Resolve-SwiftRuntimeMergeModule $Architecture
+  $swiftRuntimeDirectory = Join-Path $temporaryRoot "swift-runtime"
+  Expand-SwiftRuntimeMergeModule $swiftRuntimeModule $swiftRuntimeDirectory
+  $swiftRuntimeFiles = @(Get-ChildItem -LiteralPath $swiftRuntimeDirectory -Filter "*.dll" -File -Recurse)
+  if (-not ($swiftRuntimeFiles.Name -contains "swiftCore.dll")) {
+    throw "Swift runtime merge module is missing swiftCore.dll."
   }
-  $targetInfo = ($targetInfoOutput -join [Environment]::NewLine) | ConvertFrom-Json
-  $runtimePaths = @($targetInfo.paths.runtimeLibraryPaths)
-  $runtimeFiles = @{}
-  foreach ($runtimePath in $runtimePaths) {
-    if (-not (Test-Path -LiteralPath $runtimePath -PathType Container)) {
-      continue
+  foreach ($swiftRuntimeFile in $swiftRuntimeFiles) {
+    Assert-RegularFile $swiftRuntimeFile.FullName | Out-Null
+    if ((Get-PEMachine $swiftRuntimeFile.FullName) -ne $expectedMachine) {
+      throw "Swift runtime DLL has the wrong architecture: $($swiftRuntimeFile.FullName)"
     }
-    foreach ($runtimeFile in @(Get-ChildItem -LiteralPath $runtimePath -Filter "*.dll" -File -Recurse)) {
-      if ((Get-PEMachine $runtimeFile.FullName) -ne $expectedMachine) {
-        continue
-      }
-      $key = $runtimeFile.Name.ToLowerInvariant()
-      if ($runtimeFiles.ContainsKey($key)) {
-        if ((Get-Sha256 $runtimeFiles[$key]) -ne (Get-Sha256 $runtimeFile.FullName)) {
-          throw "Conflicting runtime DLLs have the same name: $($runtimeFile.Name)"
-        }
-      } else {
-        $runtimeFiles[$key] = $runtimeFile.FullName
-      }
-    }
-  }
-  if (-not $runtimeFiles.ContainsKey("swiftcore.dll")) {
-    throw "Architecture-matching swiftCore.dll was not found in swiftc runtimeLibraryPaths."
-  }
-  foreach ($runtimeKey in @($runtimeFiles.Keys | Sort-Object)) {
-    Stage-File $runtimeFiles[$runtimeKey] (Split-Path -Leaf $runtimeFiles[$runtimeKey])
+    Stage-File $swiftRuntimeFile.FullName $swiftRuntimeFile.Name
   }
 
   $vcpkgRootValue = $VcpkgRoot
@@ -195,7 +150,7 @@ try {
   }
   Stage-File $sqlitePath "sqlite3.dll"
 
-  $vcRedistRootFull = Resolve-VCRedistRoot
+  $vcRedistRootFull = Resolve-VCRedistRoot $VCRedistRoot
   Assert-Directory $vcRedistRootFull | Out-Null
   $vcArchitectureRoot = Join-Path $vcRedistRootFull $Architecture
   Assert-Directory $vcArchitectureRoot | Out-Null
@@ -226,8 +181,6 @@ try {
   Assert-Directory $resourceCandidates[0].FullName | Out-Null
   Copy-Item -LiteralPath $resourceCandidates[0].FullName -Destination (Join-Path $outFull $resourceCandidates[0].Name) -Recurse -Force
 
-  $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-bridge-webview2-" + [Guid]::NewGuid().ToString("N"))
-  New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
   $packagePath = Join-Path $temporaryRoot "webview2-package.zip"
   $packageUri = "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$webView2Version/microsoft.web.webview2.$webView2Version.nupkg"
   Invoke-WebRequest -UseBasicParsing -Uri $packageUri -OutFile $packagePath
@@ -251,6 +204,7 @@ try {
     targetTriple = $effectiveTargetTriple
     gitCommit = Get-GitCommit
     swiftVersion = Get-SwiftVersion
+    swiftRuntimeMergeModule = (Split-Path -Leaf $swiftRuntimeModule)
     webView2SDKVersion = $webView2Version
     webView2PackageSHA256 = $webView2Hash
     vcRedistVersion = (Split-Path -Leaf $vcRedistRootFull)

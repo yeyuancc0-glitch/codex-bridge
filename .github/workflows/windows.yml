@@ -56,40 +56,54 @@ jobs:
           if (-not $swiftExe) { $swiftExe = $candidates | Select-Object -First 1 }
           if (-not $swiftExe) { throw "swift.exe not found after install" }
           Write-Host "found swift at $swiftExe"
-          Add-Content $env:GITHUB_PATH (Split-Path $swiftExe)
-          # The bundle ships host-tool runtime libraries (swiftCore.dll etc.)
-          # in a separate Runtime Libraries directory that must be on PATH.
-          $searchRoots = @(
-            (Split-Path (Split-Path (Split-Path (Split-Path $swiftExe)))),
-            "$env:LOCALAPPDATA\Programs",
-            "C:\Library"
-          )
-          $runtimeBin = $searchRoots | ForEach-Object {
-            if (Test-Path $_) {
-              Get-ChildItem $_ -Recurse -Filter swiftCore.dll `
-                -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty DirectoryName
-            }
-          } | Where-Object { $_ } | Select-Object -First 1
-          if (-not $runtimeBin) { throw "swiftCore.dll not found after install" }
+          $swiftBin = Split-Path $swiftExe
+          Add-Content $env:GITHUB_PATH $swiftBin
+          $toolchainVersionDirectory = (Get-Item $swiftBin).Parent.Parent
+          if (-not $toolchainVersionDirectory -or
+              -not $toolchainVersionDirectory.Parent.Name.Equals("Toolchains", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Swift toolchain version directory was not found."
+          }
+          $swiftRoot = $toolchainVersionDirectory.Parent.Parent.FullName
+          $sdkVersion = $toolchainVersionDirectory.Name -replace "\+.*$", ""
+          # The host runtime is separate from the toolchain and must be on PATH.
+          $runtimeBin = Join-Path $swiftRoot "Runtimes\$sdkVersion\usr\bin"
+          if (-not (Test-Path (Join-Path $runtimeBin "swiftCore.dll"))) {
+            throw "Version-matching swiftCore.dll was not found after install."
+          }
           Write-Host "found runtime at $runtimeBin"
           Add-Content $env:GITHUB_PATH $runtimeBin
-          # The installer ships a bundled Windows SDK (Platforms) and points
-          # SDKROOT at it, but env changes made by the installer do not reach
-          # already running job steps; forward it explicitly. Fall back to the
-          # system Windows Kits installation.
-          $platformDir = $searchRoots | ForEach-Object {
-            if (Test-Path $_) {
-              Get-ChildItem $_ -Recurse -Directory -Filter "Windows.platform" `
-                -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-            }
-          } | Where-Object { $_ } | Select-Object -First 1
-          if ($platformDir) {
-            $sdkRoot = Join-Path $platformDir "Developer\SDKs\Windows.sdk"
-          } else {
-            $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
+          # The installer ships a version-matched Windows SDK separately from
+          # the toolchain. Installer environment changes do not reach an
+          # already-running job, so forward the exact SDK explicitly.
+          $platformDir = Join-Path $swiftRoot "Platforms\$sdkVersion\Windows.platform"
+          $sdkRoot = Join-Path $platformDir "Developer\SDKs\Windows.sdk"
+          if (-not (Test-Path -LiteralPath $sdkRoot -PathType Container)) {
+            throw "Version-matching Swift Windows SDK was not found."
           }
           Write-Host "SDKROOT=$sdkRoot"
           Add-Content $env:GITHUB_ENV "SDKROOT=$sdkRoot"
+      - name: Validate Swift portable runtime
+        shell: pwsh
+        run: |
+          $scriptRoot = Join-Path $env:GITHUB_WORKSPACE "Scripts"
+          . (Join-Path $scriptRoot "windows-portable-support.ps1")
+          . (Join-Path $scriptRoot "windows-portable-runtime.ps1")
+          $architecture = "${{ matrix.architecture }}"
+          $expectedMachine = if ($architecture -eq "x64") { [UInt16]0x8664 } else { [UInt16]0xAA64 }
+          $temporaryRoot = Join-Path $env:RUNNER_TEMP ("swift-runtime-" + [Guid]::NewGuid().ToString("N"))
+          try {
+            $modulePath = Resolve-SwiftRuntimeMergeModule $architecture
+            Expand-SwiftRuntimeMergeModule $modulePath $temporaryRoot
+            $swiftCore = @(Get-ChildItem -LiteralPath $temporaryRoot -File -Recurse -Filter "swiftCore.dll")
+            if ($swiftCore.Count -ne 1 -or (Get-PEMachine $swiftCore[0].FullName) -ne $expectedMachine) {
+              throw "Swift runtime merge module did not contain the expected swiftCore.dll."
+            }
+            Write-Host "Validated $modulePath"
+          } finally {
+            if (Test-Path -LiteralPath $temporaryRoot) {
+              Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
+            }
+          }
       - name: Install SQLite via vcpkg (for GRDB)
         shell: pwsh
         run: |
@@ -142,7 +156,9 @@ jobs:
           $targetLibraryPaths = @($vcpkgLib, $msvcLib, $sdkUM, $sdkUCRT) -join ";"
           Add-Content $env:GITHUB_ENV "TARGET_LIBRARY_PATHS=$targetLibraryPaths"
           $vcRedistRoot = Get-ChildItem "$vsRoot\VC\Redist\MSVC" -Directory |
-            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+            Where-Object { $_.Name -match "^[0-9]+(?:\.[0-9]+)+$" } |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
           if (-not $vcRedistRoot) { throw "Visual C++ Redistributable files are unavailable." }
           Add-Content $env:GITHUB_ENV "CODEX_BRIDGE_VC_REDIST_ROOT=$vcRedistRoot"
           if ($archDir -eq "x64") {
