@@ -149,6 +149,7 @@
       guard approvalPresentationItems().contains(where: { $0.id == selectedApprovalID }) else {
         self.selectedApprovalID = nil
         approvalStatusText = nil
+        return
       }
     }
 
