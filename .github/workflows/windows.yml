@@ -71,7 +71,20 @@ jobs:
           $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -find "**\dumpbin.exe" | Select-Object -First 1
           if ($dumpbin) {
-            & $dumpbin /dependents "$bin\swift.exe" | Select-Object -Skip 1
+            $deps = & $dumpbin /dependents "$bin\swift.exe" |
+              Select-String -Pattern '^\s+(\S+\.dll)' |
+              ForEach-Object { $_.Matches[0].Groups[1].Value }
+            foreach ($d in $deps) {
+              $local = Test-Path (Join-Path $bin $d)
+              $system = Test-Path (Join-Path $env:SystemRoot\System32 $d)
+              if (-not ($local -or $system)) {
+                Write-Host "MISSING DEPENDENCY: $d"
+              } else {
+                Write-Host "ok: $d (local=$local system=$system)"
+              }
+            }
+            Write-Host "--- mimalloc files in bin ---"
+            (Get-ChildItem $bin -Filter "mimalloc*").Name -join ", "
           } else {
             Write-Host "dumpbin not found"
           }
