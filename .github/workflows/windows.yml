@@ -114,8 +114,9 @@ jobs:
             "$kitsInc\winrt"
           ) -join ";"
           Add-Content $env:GITHUB_ENV "INCLUDE=$inc"
-          # Compose the linker library path: vcpkg + MSVC + Windows SDK, since
-          # setting LIB overrides the toolchain's own MSVC discovery.
+          # Preflight the target libraries. ARM64 keeps the host LIB untouched
+          # so SwiftPM can compile its x64 manifest, then receives these paths
+          # as target linker arguments in the build step.
           $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -property installationPath | Select-Object -First 1
           $msvcLib = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
@@ -138,9 +139,12 @@ jobs:
               throw "Required $archDir library is unavailable: $library"
             }
           }
-          $lib = @($vcpkgLib, $msvcLib, $sdkUM, $sdkUCRT) -join ";"
-          Write-Host "LIB=$lib"
-          Add-Content $env:GITHUB_ENV "LIB=$lib"
+          $targetLibraryPaths = @($vcpkgLib, $msvcLib, $sdkUM, $sdkUCRT) -join ";"
+          Add-Content $env:GITHUB_ENV "TARGET_LIBRARY_PATHS=$targetLibraryPaths"
+          if ($archDir -eq "x64") {
+            Write-Host "LIB=$targetLibraryPaths"
+            Add-Content $env:GITHUB_ENV "LIB=$targetLibraryPaths"
+          }
       - name: Build service and Windows shell
         working-directory: Packages/BridgeCore
         shell: pwsh
@@ -149,7 +153,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $targetTriple = "${{ matrix.target_triple }}"
           $swiftArguments = @("-Xswiftc", "-DSQLITE_DISABLE_SNAPSHOT")
-          if ($targetTriple) { $swiftArguments += @("--triple", $targetTriple) }
+          if ($targetTriple) {
+            $swiftArguments += @("--triple", $targetTriple)
+            foreach ($libraryPath in ($env:TARGET_LIBRARY_PATHS -split ";")) {
+              $swiftArguments += @("-Xlinker", "-libpath:$libraryPath")
+            }
+          }
           swift build @swiftArguments --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build @swiftArguments --product codex-bridge-windows-app
