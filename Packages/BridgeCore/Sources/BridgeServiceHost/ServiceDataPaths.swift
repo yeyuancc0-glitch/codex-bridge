@@ -1,4 +1,6 @@
+import BridgeAgentCore
 import Foundation
+
 #if canImport(Darwin)
   import Darwin
 #elseif os(Windows)
@@ -38,7 +40,7 @@ public struct ServiceDataPaths: Sendable {
   }
 
   public static func prepare(at requestedRoot: URL) throws -> ServiceDataPaths {
-    guard requestedRoot.isFileURL, isAcceptableRootPath(requestedRoot.path) else {
+    guard requestedRoot.isFileURL, AgentPathSemantics.isAbsolute(requestedRoot.path) else {
       throw ServiceDataPathsError.invalidRoot
     }
     let root = requestedRoot.standardizedFileURL
@@ -76,16 +78,6 @@ public struct ServiceDataPaths: Sendable {
         directoryHint: .isDirectory
       )
     return parent.appending(path: "CodexBridgeService", directoryHint: .isDirectory)
-  }
-
-  private static func isAcceptableRootPath(_ path: String) -> Bool {
-    #if os(Windows)
-      if path.hasPrefix("\\\\") { return true }
-      guard let first = path.first, first.isLetter, path.count >= 2 else { return false }
-      return path[path.index(after: path.startIndex)] == ":"
-    #else
-      return path.hasPrefix("/")
-    #endif
   }
 
   private static func preparePrivateDirectory(

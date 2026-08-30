@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeCodexRPC
 import BridgeIPC
 import BridgeLegacyImport
@@ -53,7 +54,7 @@ public struct ServiceProcessOptions: Equatable, Sendable {
           value.utf8.count <= 16_384,
           !value.contains("\0"),
           value.rangeOfCharacter(from: .controlCharacters) == nil,
-          isAbsolutePath(value)
+          AgentPathSemantics.isAbsolute(value)
         else {
           throw ServiceProcessArgumentError.invalidDataRoot
         }
@@ -66,16 +67,6 @@ public struct ServiceProcessOptions: Equatable, Sendable {
     return ServiceProcessOptions(foreground: foreground, dataRootURL: dataRoot)
   }
 
-  private static func isAbsolutePath(_ value: String) -> Bool {
-    #if os(Windows)
-      // Drive-letter paths (C:\...) and UNC paths (\\server\share).
-      if value.hasPrefix("\\\\") { return true }
-      guard let first = value.first, first.isLetter, value.count >= 2 else { return false }
-      return value[value.index(after: value.startIndex)] == ":"
-    #else
-      return value.hasPrefix("/")
-    #endif
-  }
 }
 
 public enum ServiceProcessRunner {
