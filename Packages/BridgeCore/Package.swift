@@ -10,11 +10,11 @@ var testTargets: [Target] = [
   .testTarget(
     name: "BridgeAgentCoreTests",
     dependencies: ["BridgeAgentCore"]
-  )
+  ),
 ]
 
-var tunnelFixtureProducts: [Product] = []
-var tunnelFixtureTargets: [Target] = []
+var macOSFixtureProducts: [Product] = []
+var macOSFixtureTargets: [Target] = []
 
 #if !os(Windows)
   testTargets += [
@@ -183,14 +183,15 @@ var tunnelFixtureTargets: [Target] = []
       ]
     ),
   ]
-  tunnelFixtureProducts = [
+  macOSFixtureProducts = [
     .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
     .executable(
       name: "bridge-tunnel-acceptance-fixture",
       targets: ["BridgeTunnelAcceptanceFixture"]
     ),
+    .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
   ]
-  tunnelFixtureTargets = [
+  macOSFixtureTargets = [
     .executableTarget(
       name: "BridgeTunnelFixture",
       path: "Tests/BridgeTunnelTests/Fixture"
@@ -199,6 +200,11 @@ var tunnelFixtureTargets: [Target] = []
       name: "BridgeTunnelAcceptanceFixture",
       dependencies: ["BridgeSecurity", "BridgeTunnel"],
       path: "Tests/BridgeTunnelAcceptanceFixture"
+    ),
+    .executableTarget(
+      name: "BridgeMCPInspectorFixture",
+      dependencies: ["BridgeMCP"],
+      path: "Tests/BridgeMCPInspectorFixture"
     ),
   ]
 #endif
@@ -238,8 +244,7 @@ let package = Package(
       targets: ["CodexBridgeWindowsApp"]
     ),
     .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
-    .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
-  ] + tunnelFixtureProducts,
+  ] + macOSFixtureProducts,
   dependencies: [
     // Vendored MCP swift-sdk 0.12.1: upstream excludes the EventSource
     // dependency on Windows while importing it unconditionally, which breaks
@@ -268,7 +273,7 @@ let package = Package(
     .target(
       name: "BridgeSecurity",
       dependencies: [
-        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "Crypto", package: "swift-crypto")
       ]
     ),
     .target(name: "BridgeCodexRPC"),
@@ -279,7 +284,7 @@ let package = Package(
     .target(
       name: "BridgeGit",
       dependencies: [
-        .product(name: "Crypto", package: "swift-crypto"),
+        .product(name: "Crypto", package: "swift-crypto")
       ]
     ),
     .target(
@@ -481,10 +486,5 @@ let package = Package(
       name: "CodexRPCFixture",
       dependencies: ["BridgeCodexRPC"]
     ),
-    .executableTarget(
-      name: "BridgeMCPInspectorFixture",
-      dependencies: ["BridgeMCP"],
-      path: "Tests/BridgeMCPInspectorFixture"
-    ),
-  ] + tunnelFixtureTargets + testTargets
+  ] + macOSFixtureTargets + testTargets
 )
