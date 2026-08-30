@@ -54,7 +54,9 @@ public actor AntigravityCLIEventNormalizer {
   public init(taskID: TaskID, binding: AgentBinding, projectRoot: String) {
     self.taskID = taskID
     self.binding = binding
-    self.projectRoot = URL(fileURLWithPath: projectRoot).standardizedFileURL.path
+    self.projectRoot =
+      AntigravityCLILaunchRuntime.canonicalFoundationPath(projectRoot)
+      ?? projectRoot
   }
 
   public func normalize(_ update: AntigravityStepUpdate) throws -> [AgentEventEnvelope] {
@@ -275,17 +277,35 @@ public actor AntigravityCLIEventNormalizer {
       !value.contains("\0"), value.rangeOfCharacter(from: .controlCharacters) == nil
     else { return nil }
     let raw: String
-    if value.hasPrefix("file://"), let url = URL(string: value), url.isFileURL {
-      raw = url.path
+    if value.lowercased().hasPrefix("file://"), let url = URL(string: value), url.isFileURL {
+      if let host = url.host, !host.isEmpty,
+        host.caseInsensitiveCompare("localhost") != .orderedSame
+      {
+        raw = "\\\\\(host)\(url.path)"
+      } else {
+        raw = url.path
+      }
     } else {
       raw = value
     }
-    let absolute =
-      raw.hasPrefix("/")
-      ? URL(fileURLWithPath: raw).standardizedFileURL.path
-      : URL(fileURLWithPath: projectRoot, isDirectory: true)
-        .appendingPathComponent(raw).standardizedFileURL.path
-    guard absolute == projectRoot || absolute.hasPrefix(projectRoot + "/") else { return nil }
+    let absolute: String
+    if AgentPathSemantics.isAbsolute(raw) {
+      guard let normalized = AntigravityCLILaunchRuntime.canonicalFoundationPath(raw) else {
+        return nil
+      }
+      absolute = normalized
+    } else {
+      guard
+        let joined = AntigravityCLILaunchRuntime.canonicalFoundationPath(
+          URL(fileURLWithPath: projectRoot, isDirectory: true)
+            .appendingPathComponent(raw).path
+        )
+      else {
+        return nil
+      }
+      absolute = joined
+    }
+    guard AgentPathSemantics.isContained(absolute, in: projectRoot) else { return nil }
     return absolute
   }
 

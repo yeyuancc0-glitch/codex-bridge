@@ -94,7 +94,9 @@ public actor AntigravityCLIExecution {
     )
     self.taskID = taskID
     self.installationID = installationID
-    self.projectRoot = URL(fileURLWithPath: projectRoot).standardizedFileURL.path
+    self.projectRoot =
+      AntigravityCLILaunchRuntime.canonicalFoundationPath(projectRoot)
+      ?? projectRoot
     self.requestedSessionID = requestedSessionID
     self.expectedModel = expectedModel
     initialPrompt = prompt
@@ -242,8 +244,11 @@ public actor AntigravityCLIExecution {
     else {
       throw AntigravityCLIError.invalidMessage
     }
-    let cwd = URL(fileURLWithPath: initialization.cwd).standardizedFileURL.path
-    guard cwd == projectRoot else { throw AntigravityCLIError.sessionMismatch }
+    guard let cwd = AntigravityCLILaunchRuntime.canonicalFoundationPath(initialization.cwd),
+      AgentPathSemantics.relativePath(cwd, from: projectRoot) == ""
+    else {
+      throw AntigravityCLIError.sessionMismatch
+    }
     if let requestedSessionID, requestedSessionID != sessionID {
       throw AntigravityCLIError.sessionMismatch
     }

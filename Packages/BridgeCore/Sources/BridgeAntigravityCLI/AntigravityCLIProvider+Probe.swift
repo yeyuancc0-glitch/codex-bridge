@@ -2,12 +2,6 @@ import BridgeAgentCore
 import BridgeProcess
 import Foundation
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
-
 extension AntigravityCLIProvider {
   public func probe(_ request: AgentProbeRequest) async -> AgentProbeResult {
     guard request.installation.providerID == .antigravity else {
@@ -131,20 +125,6 @@ extension AntigravityCLIProvider {
   }
 
   static func resolvedExecutable(_ path: String) throws -> String {
-    guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.installationUnavailable(AgentInstallationID(rawValue: path))
-    }
-    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
-    var metadata = stat()
-    guard stat(resolved, &metadata) == 0,
-      metadata.st_mode & S_IFMT == S_IFREG,
-      access(resolved, X_OK) == 0,
-      metadata.st_uid == getuid() || metadata.st_uid == 0,
-      metadata.st_mode & mode_t(S_IWGRP | S_IWOTH) == 0,
-      metadata.st_mode & mode_t(S_ISUID | S_ISGID) == 0
-    else {
-      throw AgentRuntimeError.installationUnavailable(AgentInstallationID(rawValue: path))
-    }
-    return resolved
+    try AntigravityCLILaunchRuntime.resolveExecutable(path)
   }
 }
