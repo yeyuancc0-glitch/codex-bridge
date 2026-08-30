@@ -9,13 +9,14 @@ public enum ServiceBundleLocator {
   public static func currentAppBundleURL() -> URL? {
     guard let executable = executableURL() else { return nil }
     var candidate = executable.deletingLastPathComponent()
-    while candidate.path != "/" {
+    while true {
       if candidate.pathExtension == "app" {
         return candidate.standardizedFileURL
       }
-      candidate.deleteLastPathComponent()
+      let parent = candidate.deletingLastPathComponent()
+      guard parent != candidate else { return nil }
+      candidate = parent
     }
-    return nil
   }
 
   private static func executableURL() -> URL? {
