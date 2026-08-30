@@ -12,7 +12,8 @@ param(
   [ValidatePattern("^[A-Za-z0-9._-]+$")]
   [string]$VcpkgTriplet,
   [string]$TargetTriple = "",
-  [string]$VcpkgRoot = ""
+  [string]$VcpkgRoot = "",
+  [string]$VCRedistRoot = ""
 )
 
 Set-StrictMode -Version Latest
@@ -66,6 +67,34 @@ function Get-GitCommit {
     return $env:GITHUB_SHA
   }
   return "unknown"
+}
+
+function Resolve-VCRedistRoot {
+  $configuredRoot = $VCRedistRoot
+  if ([string]::IsNullOrWhiteSpace($configuredRoot) -and
+      (Test-Path Env:CODEX_BRIDGE_VC_REDIST_ROOT)) {
+    $configuredRoot = $env:CODEX_BRIDGE_VC_REDIST_ROOT
+  }
+  if (-not [string]::IsNullOrWhiteSpace($configuredRoot)) {
+    return Get-FullPath $configuredRoot
+  }
+
+  $programFilesX86 = [Environment]::GetFolderPath("ProgramFilesX86")
+  $vswherePath = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
+  Assert-RegularFile $vswherePath | Out-Null
+  $installationOutput = @(& $vswherePath -latest -property installationPath)
+  if ($LASTEXITCODE -ne 0 -or $installationOutput.Count -eq 0) {
+    throw "Visual Studio installation path was not found."
+  }
+  $installationPath = ($installationOutput | Select-Object -First 1).ToString().Trim()
+  $versionsRoot = Join-Path $installationPath "VC\Redist\MSVC"
+  Assert-Directory $versionsRoot | Out-Null
+  $versionDirectories = @(Get-ChildItem -LiteralPath $versionsRoot -Directory |
+      Sort-Object Name -Descending)
+  if ($versionDirectories.Count -eq 0) {
+    throw "Visual C++ Redistributable files were not found."
+  }
+  return $versionDirectories[0].FullName
 }
 
 $binFull = Get-FullPath $BinPath
@@ -166,6 +195,29 @@ try {
   }
   Stage-File $sqlitePath "sqlite3.dll"
 
+  $vcRedistRootFull = Resolve-VCRedistRoot
+  Assert-Directory $vcRedistRootFull | Out-Null
+  $vcArchitectureRoot = Join-Path $vcRedistRootFull $Architecture
+  Assert-Directory $vcArchitectureRoot | Out-Null
+  $vcRuntimeCandidates = @(Get-ChildItem -LiteralPath $vcArchitectureRoot -Directory |
+      Where-Object { $_.Name -match "^Microsoft\.VC[0-9]+\.CRT$" })
+  if ($vcRuntimeCandidates.Count -ne 1) {
+    throw "Expected exactly one architecture-matching Visual C++ runtime directory."
+  }
+  $vcRuntimeDirectory = $vcRuntimeCandidates[0]
+  Assert-Directory $vcRuntimeDirectory.FullName | Out-Null
+  $vcRuntimeFiles = @(Get-ChildItem -LiteralPath $vcRuntimeDirectory.FullName -Filter "*.dll" -File)
+  if (-not ($vcRuntimeFiles.Name -contains "vcruntime140.dll")) {
+    throw "Visual C++ runtime directory is missing vcruntime140.dll."
+  }
+  foreach ($vcRuntimeFile in $vcRuntimeFiles) {
+    Assert-RegularFile $vcRuntimeFile.FullName | Out-Null
+    if ((Get-PEMachine $vcRuntimeFile.FullName) -ne $expectedMachine) {
+      throw "Visual C++ runtime DLL has the wrong architecture: $($vcRuntimeFile.FullName)"
+    }
+    Stage-File $vcRuntimeFile.FullName $vcRuntimeFile.Name
+  }
+
   $resourceCandidates = @(Get-ChildItem -LiteralPath $binFull -Directory -Recurse |
       Where-Object { $_.Name -in @("BridgeCore_BridgeDeepSeekHarnessACP.bundle", "BridgeCore_BridgeDeepSeekHarnessACP.resources") })
   if ($resourceCandidates.Count -ne 1) {
@@ -201,6 +253,8 @@ try {
     swiftVersion = Get-SwiftVersion
     webView2SDKVersion = $webView2Version
     webView2PackageSHA256 = $webView2Hash
+    vcRedistVersion = (Split-Path -Leaf $vcRedistRootFull)
+    vcRuntimeDirectory = $vcRuntimeDirectory.Name
   }
   $buildInfoPath = Join-Path $outFull "BUILD-INFO.json"
   $utf8NoBom = [Text.UTF8Encoding]::new($false)

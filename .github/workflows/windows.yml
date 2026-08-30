@@ -141,6 +141,10 @@ jobs:
           }
           $targetLibraryPaths = @($vcpkgLib, $msvcLib, $sdkUM, $sdkUCRT) -join ";"
           Add-Content $env:GITHUB_ENV "TARGET_LIBRARY_PATHS=$targetLibraryPaths"
+          $vcRedistRoot = Get-ChildItem "$vsRoot\VC\Redist\MSVC" -Directory |
+            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $vcRedistRoot) { throw "Visual C++ Redistributable files are unavailable." }
+          Add-Content $env:GITHUB_ENV "CODEX_BRIDGE_VC_REDIST_ROOT=$vcRedistRoot"
           if ($archDir -eq "x64") {
             Write-Host "LIB=$targetLibraryPaths"
             Add-Content $env:GITHUB_ENV "LIB=$targetLibraryPaths"
@@ -159,11 +163,12 @@ jobs:
               $swiftArguments += @("-Xlinker", "-libpath:$libraryPath")
             }
           }
-          swift build @swiftArguments --product codex-bridge-service
+          $buildArguments = @($swiftArguments) + @("-c", "release")
+          swift build @buildArguments --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build @swiftArguments --product codex-bridge-windows-app
+          swift build @buildArguments --product codex-bridge-windows-app
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $binPathOutput = & swift build @swiftArguments --show-bin-path
+          $binPathOutput = & swift build @buildArguments --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $binPath = ($binPathOutput | Select-Object -Last 1).ToString().Trim()
           if (-not $binPath) { throw "Swift build output directory was empty." }
@@ -188,13 +193,14 @@ jobs:
         run: |
           $targetTriple = "${{ matrix.target_triple }}"
           $portableDir = Join-Path $env:GITHUB_WORKSPACE ".build\windows-dist\${{ matrix.architecture }}"
-          $stageArguments = @(
-            "-BinPath", $env:SWIFT_BIN_PATH,
-            "-OutDir", $portableDir,
-            "-Architecture", "${{ matrix.architecture }}",
-            "-VcpkgTriplet", "${{ matrix.triplet }}")
+          $stageArguments = @{
+            BinPath = $env:SWIFT_BIN_PATH
+            OutDir = $portableDir
+            Architecture = "${{ matrix.architecture }}"
+            VcpkgTriplet = "${{ matrix.triplet }}"
+          }
           if ($targetTriple) {
-            $stageArguments += @("-TargetTriple", $targetTriple)
+            $stageArguments["TargetTriple"] = $targetTriple
           }
           & "$env:GITHUB_WORKSPACE\Scripts\stage-windows-portable.ps1" @stageArguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -233,6 +239,15 @@ jobs:
                 Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
               } else { "no stderr" }
               throw "Portable service did not reach readiness: $failure"
+            }
+            $portableRoot = ([IO.Path]::GetFullPath($portableDir)).TrimEnd("\") + "\"
+            $vcModules = @($process.Modules |
+                Where-Object { $_.ModuleName -match "^(concrt|msvcp|vccorlib|vcruntime)[^.]*\.dll$" })
+            foreach ($vcModule in $vcModules) {
+              $modulePath = [IO.Path]::GetFullPath($vcModule.FileName)
+              if (-not $modulePath.StartsWith($portableRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Visual C++ runtime was loaded outside the portable directory: $modulePath"
+              }
             }
           } finally {
             if ($process -and -not $process.HasExited) {

@@ -58,6 +58,7 @@ powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
 ├── WebView2Loader.dll
 ├── swift*.dll / 其他 Swift runtime DLL
 ├── sqlite3.dll
+├── vcruntime*.dll / msvcp*.dll / 其他 VC runtime DLL
 ├── BridgeCore_BridgeDeepSeekHarnessACP.bundle（或 .resources）
 ├── LICENSE.txt / NOTICE.txt
 ├── Microsoft.Web.WebView2.LICENSE.txt / Microsoft.Web.WebView2.NOTICE.txt
@@ -70,7 +71,10 @@ powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
 `codex-bridge-service.exe --foreground --data-root C:\path`。portable 目录随附的是
 与应用架构匹配的 `WebView2Loader.dll`；Windows 仍必须预先安装系统级 WebView2
 Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Runtime 或 loader
-时壳保留任务管理功能并明确显示聊天页不可用。
+时壳保留任务管理功能并明确显示聊天页不可用。构建产物使用 release 配置，并从
+Visual Studio `%VCToolsRedistDir%` 对应架构的 CRT 目录收集 Microsoft 允许 app-local
+部署的 VC runtime（见 [Microsoft C++ local deployment](https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp?view=msvc-170)）；
+Windows 10/11 自带的 UCRT 仍作为系统组件使用。
 
 GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest 上构建 x64 与
 ARM64 两套服务/壳产物，在构建与测试后分别上传
@@ -124,9 +128,10 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 - macOS：全量 `swift test`（所有套件 0 失败为门禁）+ Xcode Debug 构建。
 - Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
   `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
-  编译；x64 还运行 Domain、AgentCore、Security、Codex RPC resolver 与跨平台
-  AppCore 任务呈现测试，并从 staged portable 目录在隔离 PATH 下启动服务，使用
-  独立数据目录完成 SQLite/服务组装并等待本地 MCP ready。
+  以 release 配置编译；x64 还运行 Domain、AgentCore、Security、Codex RPC resolver
+  与跨平台 AppCore 任务呈现测试，并从 staged portable 目录在隔离 PATH 下启动服务，
+  使用独立数据目录完成 SQLite/服务组装并等待本地 MCP ready；进程已加载的 VC runtime
+  必须来自 portable 目录。
   ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
 - Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
   因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由
