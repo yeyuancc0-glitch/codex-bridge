@@ -193,9 +193,9 @@ final class DirectGitIndexTransaction: @unchecked Sendable {
       defer { _ = CloseHandle(source) }
 
       // Windows uses ACLs; the POSIX mode reset does not apply.
-      guard SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) != INVALID_SET_FILE_POINTER,
+      guard SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) == 0,
         SetEndOfFile(lockHandle),
-        SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) != INVALID_SET_FILE_POINTER,
+        SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) == 0,
         copyBytes(from: source, to: lockHandle),
         FlushFileBuffers(lockHandle)
       else {
