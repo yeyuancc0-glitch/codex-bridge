@@ -29,6 +29,8 @@ package actor SupervisorSession {
   var completions: [String: TurnNotification] = [:]
   var pending: [SupervisorObservation] = []
   var failure: SupervisorServiceError?
+  // Sticky because a rejected approval request can race with final verdict handling.
+  var approvalRequested = false
   var seenIssueIDs: Set<String> = []
   var automaticSteerCount = 0
   var terminal = false
@@ -256,6 +258,19 @@ package actor SupervisorSession {
     _ decision: SupervisorDecision,
     observation: SupervisorObservation
   ) {
+    if observation.kind == .final {
+      if let failure {
+        degrade(code: Self.code(failure), summary: failure.localizedDescription)
+        return
+      }
+      if approvalRequested {
+        degrade(
+          code: Self.code(.approvalRequested),
+          summary: "Supervisor requested user approval; Codex execution continues."
+        )
+        return
+      }
+    }
     switch decision.decision {
     case .continue:
       if observation.kind == .final {

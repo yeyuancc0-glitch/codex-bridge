@@ -119,4 +119,45 @@ final class ServiceTaskConcurrencyTests: XCTestCase {
     XCTAssertEqual(firstTasks.filter { $0.permissionMode == .workspaceWrite }.count, 1)
     XCTAssertEqual(secondTasks.map(\.id), [secondWrite.id])
   }
+
+  func testConcurrentCompletionAndSupervisorUpdatePreserveBothStates() async throws {
+    let fixture = try ServiceCoreFixture()
+    defer { fixture.remove() }
+    let store = try SimpleServiceStore(path: fixture.databasePath)
+    let project = try makeServiceProject(
+      id: "prj-concurrent-state",
+      rootURL: fixture.firstProjectURL
+    )
+    try await store.insertProject(project)
+    let task = try makeServiceTask(
+      id: "tsk-concurrent-state",
+      projectID: project.id,
+      status: .running,
+      supervisorStatus: .running,
+      supervisorModel: "supervisor-model",
+      supervisorEffort: "medium"
+    )
+    _ = try await store.createTask(task, event: creationEvent(at: task.createdAt))
+    let clock = ServiceCoreTestClock(start: task.updatedAt.addingTimeInterval(1))
+    let manager = ServiceTaskManager(store: store, now: clock.next)
+
+    async let completion = manager.complete(
+      taskID: task.id,
+      resultSummary: "Completed successfully.",
+      changedFiles: []
+    )
+    async let supervisor = manager.updateSupervisor(
+      taskID: task.id,
+      status: .degraded,
+      summary: "Supervisor requested approval."
+    )
+    _ = try await (completion, supervisor)
+
+    let loaded = try await manager.task(id: task.id)
+    let stored = try XCTUnwrap(loaded)
+    XCTAssertEqual(stored.state.status, .completed)
+    XCTAssertEqual(stored.state.resultSummary, "Completed successfully.")
+    XCTAssertEqual(stored.state.supervisorStatus, .degraded)
+    XCTAssertEqual(stored.state.supervisorSummary, "Supervisor requested approval.")
+  }
 }

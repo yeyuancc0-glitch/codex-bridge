@@ -7,6 +7,7 @@ extension SupervisorSession {
     guard !terminal else { return }
     switch event {
     case .serverRequest(let request):
+      approvalRequested = true
       failure = .approvalRequested
       try? await client.respond(
         to: request.id,

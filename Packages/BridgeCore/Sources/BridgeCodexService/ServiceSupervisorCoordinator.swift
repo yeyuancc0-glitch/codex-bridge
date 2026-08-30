@@ -32,7 +32,8 @@ actor ServiceSupervisorCoordinator {
         return
       }
       let events = handle.events
-      collectors[task.id] = Task { [weak self] in
+      // Supervisor state transitions must not starve behind ambient task load.
+      collectors[task.id] = Task(priority: .userInitiated) { [weak self] in
         for await event in events {
           guard let self else { return }
           await self.consume(event, taskID: task.id)

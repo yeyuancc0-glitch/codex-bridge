@@ -33,7 +33,7 @@ public actor RPCDispatcher {
   ) async throws -> JSONValue {
     try await withTaskCancellationHandler {
       try Task.checkCancellation()
-      return try await withCheckedThrowingContinuation { continuation in
+      let value = try await withCheckedThrowingContinuation { continuation in
         beginRequest(
           id: id,
           method: method,
@@ -42,6 +42,7 @@ public actor RPCDispatcher {
           send: send
         )
       }
+      return value
     } onCancel: {
       Task { await self.cancel(id: id) }
     }
@@ -87,7 +88,8 @@ public actor RPCDispatcher {
       return
     }
 
-    let timeoutTask = Task { [weak self] in
+    // Keep transport sends and watchdogs responsive under saturated ambient executors.
+    let timeoutTask = Task(priority: .userInitiated) { [weak self] in
       do {
         try await Task.sleep(nanoseconds: timeoutNanoseconds)
       } catch {
@@ -95,7 +97,7 @@ public actor RPCDispatcher {
       }
       await self?.timeOut(id: id, method: method)
     }
-    let sendTask = Task { [weak self] in
+    let sendTask = Task(priority: .userInitiated) { [weak self] in
       do {
         try Task.checkCancellation()
         try await send()

@@ -5,6 +5,9 @@ public actor ServiceTaskManager {
   private let store: SimpleServiceStore
   private let makeTaskID: @Sendable () -> TaskID
   private let now: @Sendable () -> Date
+  // Store awaits reenter this actor; serialize read-modify-write cycles per task.
+  private var activeMutationTaskIDs: Set<TaskID> = []
+  private var mutationWaiters: [TaskID: [CheckedContinuation<Void, Never>]] = [:]
 
   public init(
     store: SimpleServiceStore,
@@ -386,6 +389,8 @@ public actor ServiceTaskManager {
     summary: String,
     expectedStatus: ServiceTaskStatus? = nil
   ) async throws -> ServiceTaskRecord {
+    await beginMutation(taskID: taskID)
+    defer { endMutation(taskID: taskID) }
     let current = try await requiredTask(id: taskID)
     let date = now()
     let state = try Self.apply(patch, to: current.state)
@@ -400,6 +405,26 @@ public actor ServiceTaskManager {
       expectedStatus: expectedStatus
     )
     return updated
+  }
+
+  private func beginMutation(taskID: TaskID) async {
+    guard activeMutationTaskIDs.contains(taskID) else {
+      activeMutationTaskIDs.insert(taskID)
+      return
+    }
+    await withCheckedContinuation { continuation in
+      mutationWaiters[taskID, default: []].append(continuation)
+    }
+  }
+
+  private func endMutation(taskID: TaskID) {
+    guard var waiters = mutationWaiters[taskID], !waiters.isEmpty else {
+      activeMutationTaskIDs.remove(taskID)
+      return
+    }
+    let next = waiters.removeFirst()
+    mutationWaiters[taskID] = waiters.isEmpty ? nil : waiters
+    next.resume()
   }
 
   private func requiredTask(id: TaskID) async throws -> ServiceTaskRecord {
