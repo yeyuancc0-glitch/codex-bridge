@@ -130,4 +130,4 @@ jobs:
         working-directory: Packages/BridgeCore
         shell: pwsh
         run: |
-          swift test --filter "BridgeDomainTests|BridgeCodexRPCTests|BridgeAgentCoreTests"
+          swift test --filter "BridgeDomainTests"

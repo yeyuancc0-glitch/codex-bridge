@@ -47,7 +47,8 @@ import Foundation
       path.withCString(encodedAs: UTF16.self) {
         CreateFileW(
           $0,
-          DWORD(0x8000_0000) | DWORD(0x4000_0000) /* GENERIC_READ | GENERIC_WRITE */,
+          // GENERIC_READ | GENERIC_WRITE
+          DWORD(0x8000_0000) | DWORD(0x4000_0000),
           0,
           nil,
           DWORD(OPEN_ALWAYS),

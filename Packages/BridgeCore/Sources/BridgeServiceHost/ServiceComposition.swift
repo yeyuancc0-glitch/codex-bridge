@@ -39,13 +39,20 @@ public actor ServiceComposition {
   public static func make(
     configuration: ServiceCompositionConfiguration,
     secretStore: any SecretStore = SecretStoreFactory.defaultStore(),
-    randomBytes: @escaping @Sendable (Int) throws -> Data = { count in
-      var bytes = [UInt8](repeating: 0, count: count)
-      guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
-        throw ServiceMCPSecretError.randomGenerationFailed
-      }
-      return Data(bytes)
-    },
+    tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
+  ) async throws -> ServiceComposition {
+    try await make(
+      configuration: configuration,
+      secretStore: secretStore,
+      randomBytes: ServiceMCPSecretProvider.secureRandomBytes,
+      tunnelFactory: tunnelFactory
+    )
+  }
+
+  public static func make(
+    configuration: ServiceCompositionConfiguration,
+    secretStore: any SecretStore = SecretStoreFactory.defaultStore(),
+    randomBytes: @escaping @Sendable (Int) throws -> Data,
     tunnelFactory: (any ServiceTunnelManagerBuilding)? = nil
   ) async throws -> ServiceComposition {
     let paths = try ServiceDataPaths.prepare(at: configuration.dataRootURL)

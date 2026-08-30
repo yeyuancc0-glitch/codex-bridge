@@ -112,7 +112,10 @@
         throw WindowsSecureFileError.openFailed(Int32(GetLastError()))
       }
       defer { close(handle) }
-      guard try identity(of: handle) == root.identity else {
+      let currentIdentity = try identity(of: handle)
+      guard currentIdentity.device == root.identity.device,
+        currentIdentity.inode == root.identity.inode
+      else {
         throw PathSecurityError.rootIdentityChanged
       }
     }
@@ -225,7 +228,10 @@
         finalIsDirectory: false
       )
       defer { close(handle) }
-      if let expectedIdentity, metadata.identity != expectedIdentity {
+      if let expectedIdentity,
+        metadata.identity.device != expectedIdentity.device
+          || metadata.identity.inode != expectedIdentity.inode
+      {
         throw PathSecurityError.fileIdentityChanged
       }
       guard metadata.size <= maximumBytes else {

@@ -1,5 +1,9 @@
 @preconcurrency import Foundation
 
+#if os(Windows)
+  import WinSDK
+#endif
+
 public struct AppServerConfiguration: Equatable, Sendable {
   public let executableURL: URL
   public let arguments: [String]
@@ -291,7 +295,15 @@ public actor AppServerProcess {
       try? await Task.sleep(nanoseconds: 50_000_000)
     }
     guard state.process.isRunning else { return }
-    kill(state.process.processIdentifier, SIGKILL)
+    #if os(Windows)
+      let processID = DWORD(UInt32(bitPattern: state.process.processIdentifier))
+      if let handle = OpenProcess(DWORD(PROCESS_TERMINATE), false, processID) {
+        _ = TerminateProcess(handle, 1)
+        _ = CloseHandle(handle)
+      }
+    #else
+      kill(state.process.processIdentifier, SIGKILL)
+    #endif
     _ = await state.waitForExit()
   }
 }

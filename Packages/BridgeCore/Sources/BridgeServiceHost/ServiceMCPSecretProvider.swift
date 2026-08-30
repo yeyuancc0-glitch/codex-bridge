@@ -68,13 +68,14 @@ public actor ServiceMCPSecretProvider {
     }
   }
 
-  private static func secureRandomBytes(count: Int) throws -> Data {
+  static func secureRandomBytes(count: Int) throws -> Data {
     guard count > 0, count <= 4_096 else {
       throw ServiceMCPSecretError.randomGenerationFailed
     }
     var bytes = [UInt8](repeating: 0, count: count)
-    guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
-      throw ServiceMCPSecretError.randomGenerationFailed
+    var generator = SystemRandomNumberGenerator()
+    for index in bytes.indices {
+      bytes[index] = UInt8.random(in: .min ... .max, using: &generator)
     }
     return Data(bytes)
   }

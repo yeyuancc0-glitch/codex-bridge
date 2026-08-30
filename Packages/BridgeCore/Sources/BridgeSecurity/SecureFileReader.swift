@@ -1,5 +1,6 @@
 import Crypto
 import Foundation
+
 #if canImport(Darwin)
   import Darwin
 #elseif os(Windows)
@@ -63,7 +64,9 @@ public struct SecureFileReader: Sendable {
         finalIsDirectory: false
       )
       defer { WindowsSecureFile.close(handle) }
-      guard metadata.identity == resolved.identity else {
+      guard metadata.identity.device == resolved.identity.device,
+        metadata.identity.inode == resolved.identity.inode
+      else {
         throw PathSecurityError.fileIdentityChanged
       }
       guard metadata.size <= maximumBytes else {
@@ -104,103 +107,103 @@ public struct SecureFileReader: Sendable {
 
   #if !os(Windows)
     private func openDescriptor(
-    for resolved: ResolvedProjectPath,
-    root: RegisteredRoot
-  ) throws -> Int32 {
-    let relativePath = resolved.canonicalURL.path.dropFirst(root.canonicalPath.count)
-      .drop(while: { $0 == "/" })
-    let components = try SecureRelativePath(String(relativePath)).components
+      for resolved: ResolvedProjectPath,
+      root: RegisteredRoot
+    ) throws -> Int32 {
+      let relativePath = resolved.canonicalURL.path.dropFirst(root.canonicalPath.count)
+        .drop(while: { $0 == "/" })
+      let components = try SecureRelativePath(String(relativePath)).components
 
-    var descriptor = open(
-      root.canonicalPath,
-      O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
-    )
-    guard descriptor >= 0 else { throw PathSecurityError.readFailed(errno) }
+      var descriptor = open(
+        root.canonicalPath,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+      )
+      guard descriptor >= 0 else { throw PathSecurityError.readFailed(errno) }
 
-    do {
-      try validateRootDescriptor(descriptor, root: root)
-      for (index, component) in components.enumerated() {
-        let isLast = index == components.count - 1
-        let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
-        let next = component.withCString { openat(descriptor, $0, flags) }
-        let openError = errno
-        close(descriptor)
-        descriptor = -1
-        guard next >= 0 else { throw PathSecurityError.readFailed(openError) }
-        descriptor = next
+      do {
+        try validateRootDescriptor(descriptor, root: root)
+        for (index, component) in components.enumerated() {
+          let isLast = index == components.count - 1
+          let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (isLast ? 0 : O_DIRECTORY)
+          let next = component.withCString { openat(descriptor, $0, flags) }
+          let openError = errno
+          close(descriptor)
+          descriptor = -1
+          guard next >= 0 else { throw PathSecurityError.readFailed(openError) }
+          descriptor = next
+        }
+        return descriptor
+      } catch {
+        if descriptor >= 0 {
+          close(descriptor)
+        }
+        throw error
       }
-      return descriptor
-    } catch {
-      if descriptor >= 0 {
-        close(descriptor)
+    }
+
+    private func validateRootDescriptor(
+      _ descriptor: Int32,
+      root: RegisteredRoot
+    ) throws {
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0 else {
+        throw PathSecurityError.readFailed(errno)
       }
-      throw error
-    }
-  }
-
-  private func validateRootDescriptor(
-    _ descriptor: Int32,
-    root: RegisteredRoot
-  ) throws {
-    var metadata = stat()
-    guard fstat(descriptor, &metadata) == 0 else {
-      throw PathSecurityError.readFailed(errno)
-    }
-    let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
-    )
-    guard identity == root.identity else {
-      throw PathSecurityError.rootIdentityChanged
-    }
-  }
-
-  private func validateDescriptor(
-    _ descriptor: Int32,
-    root: RegisteredRoot,
-    expectedIdentity: FileSystemIdentity
-  ) throws -> stat {
-    var metadata = stat()
-    guard fstat(descriptor, &metadata) == 0 else {
-      throw PathSecurityError.readFailed(errno)
-    }
-    guard (metadata.st_mode & S_IFMT) == S_IFREG else {
-      throw PathSecurityError.unsupportedFileType
-    }
-    let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
-    )
-    guard identity.device == root.identity.device else {
-      throw PathSecurityError.pathEscapeBlocked
-    }
-    guard identity == expectedIdentity else {
-      throw PathSecurityError.fileIdentityChanged
-    }
-    return metadata
-  }
-
-  private func readBounded(_ descriptor: Int32) throws -> Data {
-    var result = Data()
-    var buffer = [UInt8](repeating: 0, count: min(16 * 1024, maximumBytes + 1))
-
-    while result.count <= maximumBytes {
-      let requested = min(buffer.count, maximumBytes + 1 - result.count)
-      let count = buffer.withUnsafeMutableBytes { bytes in
-        Darwin.read(descriptor, bytes.baseAddress, requested)
+      let identity = FileSystemIdentity(
+        device: UInt64(metadata.st_dev),
+        inode: UInt64(metadata.st_ino)
+      )
+      guard identity == root.identity else {
+        throw PathSecurityError.rootIdentityChanged
       }
-      if count == 0 { return result }
-      guard count > 0 else { throw PathSecurityError.readFailed(errno) }
-      result.append(contentsOf: buffer.prefix(count))
     }
-    throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
-  }
+
+    private func validateDescriptor(
+      _ descriptor: Int32,
+      root: RegisteredRoot,
+      expectedIdentity: FileSystemIdentity
+    ) throws -> stat {
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0 else {
+        throw PathSecurityError.readFailed(errno)
+      }
+      guard (metadata.st_mode & S_IFMT) == S_IFREG else {
+        throw PathSecurityError.unsupportedFileType
+      }
+      let identity = FileSystemIdentity(
+        device: UInt64(metadata.st_dev),
+        inode: UInt64(metadata.st_ino)
+      )
+      guard identity.device == root.identity.device else {
+        throw PathSecurityError.pathEscapeBlocked
+      }
+      guard identity == expectedIdentity else {
+        throw PathSecurityError.fileIdentityChanged
+      }
+      return metadata
+    }
+
+    private func readBounded(_ descriptor: Int32) throws -> Data {
+      var result = Data()
+      var buffer = [UInt8](repeating: 0, count: min(16 * 1024, maximumBytes + 1))
+
+      while result.count <= maximumBytes {
+        let requested = min(buffer.count, maximumBytes + 1 - result.count)
+        let count = buffer.withUnsafeMutableBytes { bytes in
+          Darwin.read(descriptor, bytes.baseAddress, requested)
+        }
+        if count == 0 { return result }
+        guard count > 0 else { throw PathSecurityError.readFailed(errno) }
+        result.append(contentsOf: buffer.prefix(count))
+      }
+      throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
+    }
 
   #endif
 }
 
 #if os(Windows)
-extension SecureFileReader {
+  extension SecureFileReader {
     private func relativeComponents(
       of resolved: ResolvedProjectPath,
       root: RegisteredRoot
@@ -209,5 +212,5 @@ extension SecureFileReader {
         .drop(while: { $0 == "/" })
       return try SecureRelativePath(String(relativePath)).components
     }
-}
+  }
 #endif

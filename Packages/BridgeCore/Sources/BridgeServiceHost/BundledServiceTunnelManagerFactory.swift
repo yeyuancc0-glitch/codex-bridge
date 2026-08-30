@@ -4,6 +4,8 @@ import Foundation
 
 #if canImport(Darwin)
   import Darwin
+#elseif os(Windows)
+  import WinSDK
 #endif
 
 public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {

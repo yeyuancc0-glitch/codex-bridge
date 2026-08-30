@@ -1,18 +1,33 @@
 import BridgeIPC
-import Combine
 import Foundation
 
+#if canImport(Combine)
+  import Combine
+#endif
+
 @MainActor
-public final class TaskConversationModel: ObservableObject, Identifiable {
-  @Published public private(set) var entries: [Entry] = []
-  @Published public private(set) var isStreaming = false
-  @Published public private(set) var activity: Activity = .idle
-  @Published public private(set) var errorMessage: String?
-  @Published public private(set) var isLoadingEarlier = false
-  @Published public private(set) var canLoadEarlier = false
-  @Published public var autoScroll = true
-  @Published public private(set) var scrollAnchor: String?
-  @Published public private(set) var scrollRevision: UInt64 = 0
+public final class TaskConversationModel: Identifiable {
+  #if canImport(Combine)
+    @Published public private(set) var entries: [Entry] = []
+    @Published public private(set) var isStreaming = false
+    @Published public private(set) var activity: Activity = .idle
+    @Published public private(set) var errorMessage: String?
+    @Published public private(set) var isLoadingEarlier = false
+    @Published public private(set) var canLoadEarlier = false
+    @Published public var autoScroll = true
+    @Published public private(set) var scrollAnchor: String?
+    @Published public private(set) var scrollRevision: UInt64 = 0
+  #else
+    public private(set) var entries: [Entry] = []
+    public private(set) var isStreaming = false
+    public private(set) var activity: Activity = .idle
+    public private(set) var errorMessage: String?
+    public private(set) var isLoadingEarlier = false
+    public private(set) var canLoadEarlier = false
+    public var autoScroll = true
+    public private(set) var scrollAnchor: String?
+    public private(set) var scrollRevision: UInt64 = 0
+  #endif
 
   public let id = UUID()
   public let taskID: String
@@ -477,3 +492,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     isStreaming = true
   }
 }
+
+#if canImport(Combine)
+  extension TaskConversationModel: ObservableObject {}
+#endif
