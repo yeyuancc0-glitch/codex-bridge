@@ -24,6 +24,9 @@ try {
 
   if ($Test) {
     swift test --filter "BridgeDomainTests"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    swift test --filter "BridgeAgentCoreTests"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
 
   New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

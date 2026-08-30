@@ -131,3 +131,5 @@ jobs:
         shell: pwsh
         run: |
           swift test --filter "BridgeDomainTests"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test --filter "BridgeAgentCoreTests"

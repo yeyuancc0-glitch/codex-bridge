@@ -469,23 +469,22 @@ enum AgentValidation {
   }
 
   static func absolutePath(_ value: String, field: String) throws {
-    guard value.hasPrefix("/"), value.utf8.count <= 16 * 1_024, !value.contains("\0") else {
+    guard AgentPathSemantics.isAbsolute(value),
+      value.utf8.count <= 16 * 1_024,
+      !value.contains("\0")
+    else {
       throw AgentRuntimeError.invalidRequest(field)
     }
   }
 
   static func uniqueRelativePaths(_ values: [String], field: String) throws {
-    guard values.count <= 128, Set(values).count == values.count else {
+    let keys = values.compactMap { AgentPathSemantics.normalizedRelativePath($0) }
+    guard values.count <= 128, keys.count == values.count, Set(keys).count == values.count else {
       throw AgentRuntimeError.invalidRequest(field)
     }
     for value in values {
-      guard !value.isEmpty, !value.hasPrefix("/"), value.utf8.count <= 1_024,
-        !value.contains("\0")
+      guard value.utf8.count <= 1_024, !value.contains("\0")
       else {
-        throw AgentRuntimeError.invalidRequest(field)
-      }
-      let components = value.split(separator: "/", omittingEmptySubsequences: false)
-      guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
         throw AgentRuntimeError.invalidRequest(field)
       }
     }

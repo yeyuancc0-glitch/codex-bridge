@@ -6,6 +6,10 @@ var testTargets: [Target] = [
   .testTarget(
     name: "BridgeDomainTests",
     dependencies: ["BridgeDomain"]
+  ),
+  .testTarget(
+    name: "BridgeAgentCoreTests",
+    dependencies: ["BridgeAgentCore"]
   )
 ]
 

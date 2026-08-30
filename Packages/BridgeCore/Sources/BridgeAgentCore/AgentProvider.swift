@@ -57,7 +57,7 @@ public struct AgentInstallation: Codable, Equatable, Sendable {
     guard artifacts.count <= 16,
       Set(artifacts.map(\.role)).count == artifacts.count,
       artifacts.allSatisfy({
-        $0.canonicalPath.hasPrefix("/")
+        AgentPathSemantics.isAbsolute($0.canonicalPath)
           && $0.canonicalPath.utf8.count <= 16 * 1_024
           && !$0.canonicalPath.contains("\0")
           && $0.inode > 0
