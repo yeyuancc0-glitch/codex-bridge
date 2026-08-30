@@ -27,6 +27,12 @@ struct DescriptorCandidateEnumerator {
   private var aggregatePathBytes = 0
   private var candidates: [String] = []
 
+  init(root: RegisteredRoot, policy: ProjectFilePolicy, limits: ProjectFileLimits) {
+    self.root = root
+    self.policy = policy
+    self.limits = limits
+  }
+
   mutating func candidates(scope: SecureRelativePath?) async throws -> ProjectFileCandidates {
     #if canImport(Darwin)
       let rootDescriptor = Darwin.open(
@@ -373,7 +379,7 @@ struct DescriptorCandidateEnumerator {
       return handle == INVALID_HANDLE_VALUE ? nil : handle
     }
 
-    private static func entryInformation(_ path: String) -> (
+    fileprivate static func entryInformation(_ path: String) -> (
       device: UInt64, inode: UInt64, size: Int64, attributes: DWORD
     )? {
       let handle: HANDLE = path.withCString(encodedAs: UTF16.self) {
