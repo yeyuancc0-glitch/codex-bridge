@@ -75,14 +75,21 @@ jobs:
           }
           Write-Host "SDKROOT=$sdkRoot"
           Add-Content $env:GITHUB_ENV "SDKROOT=$sdkRoot"
+      - name: Install SQLite via vcpkg (for GRDB)
+        shell: pwsh
+        run: |
+          $triplet = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64-windows" } else { "x64-windows" }
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "sqlite3:$triplet"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content $env:GITHUB_ENV "INCLUDE=$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\include"
+          Add-Content $env:GITHUB_ENV "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\lib"
       - name: Build service and Windows shell
         working-directory: Packages/BridgeCore
         shell: pwsh
         run: |
           swift --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build --product codex-bridge-service --verbose 2>&1 |
-            ForEach-Object { "$_" } | Select-Object -Last 80
+          swift build --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build --product codex-bridge-windows-app
       - name: Smoke tests (platform-neutral targets)
