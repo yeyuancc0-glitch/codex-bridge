@@ -76,7 +76,8 @@ jobs:
         run: |
           swift --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build --product codex-bridge-service
+          swift build --product codex-bridge-service --verbose 2>&1 |
+            ForEach-Object { "$_" } | Select-Object -Last 80
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build --product codex-bridge-windows-app
       - name: Smoke tests (platform-neutral targets)
