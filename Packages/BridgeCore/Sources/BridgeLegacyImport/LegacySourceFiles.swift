@@ -93,7 +93,7 @@ struct LegacySourceFiles {
   private struct LegacySourceDirectoryMetadata: Equatable {
     let snapshot: LegacyWindowsSnapshot
 
-    init?(validating handle: OpaquePointer) {
+    init?(validating handle: HANDLE) {
       // Windows uses ACLs; owner and POSIX-mode checks apply to POSIX only.
       guard let fresh = LegacyWindowsSnapshot(handle: handle),
         fresh.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0,
@@ -107,7 +107,7 @@ struct LegacySourceFiles {
     let snapshot: LegacyWindowsSnapshot
     let maximumBytes: Int
 
-    init?(validatingFileHandle handle: OpaquePointer, name: String, maximumBytes: Int) {
+    init?(validatingFileHandle handle: HANDLE, name: String, maximumBytes: Int) {
       guard maximumBytes > 0,
         let fresh = LegacyWindowsSnapshot(handle: handle),
         LegacyWindowsSnapshot.isRegularFile(fresh.attributes),
@@ -207,7 +207,7 @@ final class LegacyVerifiedSourceDirectory {
     }
 
     fileprivate func validateUnchanged() throws {
-      guard let fresh = Self.openWindows(path: path, rootURL: rootURL) else {
+      guard let fresh = try Self.openWindows(path: path, rootURL: rootURL) else {
         throw LegacyImportError.insecureSourceDirectory
       }
       defer { _ = CloseHandle(fresh.handle) }
