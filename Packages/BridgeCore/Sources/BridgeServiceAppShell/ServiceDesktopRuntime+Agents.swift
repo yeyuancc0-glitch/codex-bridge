@@ -1,6 +1,6 @@
 import BridgeIPC
-import Foundation
 import BridgeServiceAppCore
+import Foundation
 
 extension BridgeServiceAppModel {
   func registerAgentInstallation(

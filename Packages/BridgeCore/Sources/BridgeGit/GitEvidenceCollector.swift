@@ -1,6 +1,11 @@
 import Crypto
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 public struct GitEvidenceCollector: Sendable {
   public let patchStore: GitPatchStore
@@ -107,9 +112,16 @@ public struct GitEvidenceCollector: Sendable {
   ) async throws -> OpenedWorkingDirectory {
     let provided = try await rootAuthorizer.authorizedCanonicalGitRoot(
       for: projectIdentifier)
-    guard provided.isFileURL, provided.path.hasPrefix("/") else {
-      throw GitEvidenceError.invalidAuthorizedRoot
-    }
+    #if os(Windows)
+      // Windows paths carry drive letters instead of a leading slash.
+      guard provided.isFileURL else {
+        throw GitEvidenceError.invalidAuthorizedRoot
+      }
+    #else
+      guard provided.isFileURL, provided.path.hasPrefix("/") else {
+        throw GitEvidenceError.invalidAuthorizedRoot
+      }
+    #endif
     let standardized = provided.standardizedFileURL
     let canonical = standardized.resolvingSymlinksInPath()
     guard standardized.path == canonical.path else {
@@ -198,7 +210,11 @@ public struct GitEvidenceCollector: Sendable {
 
   private func requireSafeAttributes(at root: OpenedWorkingDirectory) async throws {
     var scanner = GitAttributeScanner()
-    let files = try scanner.scan(rootDescriptor: root.descriptor)
+    #if os(Windows)
+      let files = try scanner.scan(rootPath: root.url.path)
+    #else
+      let files = try scanner.scan(rootDescriptor: root.descriptor)
+    #endif
     let informationFile = try await gitInformationAttributes(at: root)
     var totalBytes = 0
     for contents in files {
@@ -239,32 +255,70 @@ public struct GitEvidenceCollector: Sendable {
     return FileManager.default.fileExists(atPath: file.path) ? file : nil
   }
 
-  private func readAttributeFile(_ file: URL) throws -> Data {
-    let descriptor = Darwin.open(file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    guard descriptor >= 0 else { throw GitEvidenceError.unsafeGitAttributes }
-    defer { Darwin.close(descriptor) }
-    var information = stat()
-    guard fstat(descriptor, &information) == 0,
-      information.st_mode & S_IFMT == S_IFREG,
-      information.st_size >= 0,
-      information.st_size <= 256 * 1_024
-    else {
-      throw GitEvidenceError.unsafeGitAttributes
-    }
-    var output = Data()
-    var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
-    while output.count <= 256 * 1_024 {
-      let count = Darwin.read(descriptor, &buffer, buffer.count)
-      if count == 0 { return output }
-      if count > 0 {
-        output.append(contentsOf: buffer.prefix(count))
-        continue
+  #if os(Windows)
+    private func readAttributeFile(_ file: URL) throws -> Data {
+      let handle: HANDLE = file.path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(GENERIC_READ),
+          DWORD(FILE_SHARE_READ),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
       }
-      if errno == EINTR { continue }
+      guard handle != INVALID_HANDLE_VALUE else { throw GitEvidenceError.unsafeGitAttributes }
+      defer { _ = CloseHandle(handle) }
+      var information = BY_HANDLE_FILE_INFORMATION()
+      guard GetFileInformationByHandle(handle, &information),
+        information.dwFileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0,
+        information.dwFileAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
+      else {
+        throw GitEvidenceError.unsafeGitAttributes
+      }
+      let size = (UInt64(information.nFileSizeHigh) << 32) | UInt64(information.nFileSizeLow)
+      guard size <= UInt64(256 * 1_024) else { throw GitEvidenceError.unsafeGitAttributes }
+      var output = Data()
+      var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+      while true {
+        var received: DWORD = 0
+        let succeeded = buffer.withUnsafeMutableBytes { bytes in
+          ReadFile(handle, bytes.baseAddress, DWORD(bytes.count), &received, nil)
+        }
+        guard succeeded else { throw GitEvidenceError.unsafeGitAttributes }
+        if received == 0 { return output }
+        output.append(contentsOf: buffer.prefix(Int(received)))
+      }
+    }
+  #else
+    private func readAttributeFile(_ file: URL) throws -> Data {
+      let descriptor = Darwin.open(file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+      guard descriptor >= 0 else { throw GitEvidenceError.unsafeGitAttributes }
+      defer { Darwin.close(descriptor) }
+      var information = stat()
+      guard fstat(descriptor, &information) == 0,
+        information.st_mode & S_IFMT == S_IFREG,
+        information.st_size >= 0,
+        information.st_size <= 256 * 1_024
+      else {
+        throw GitEvidenceError.unsafeGitAttributes
+      }
+      var output = Data()
+      var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+      while output.count <= 256 * 1_024 {
+        let count = Darwin.read(descriptor, &buffer, buffer.count)
+        if count == 0 { return output }
+        if count > 0 {
+          output.append(contentsOf: buffer.prefix(count))
+          continue
+        }
+        if errno == EINTR { continue }
+        throw GitEvidenceError.unsafeGitAttributes
+      }
       throw GitEvidenceError.unsafeGitAttributes
     }
-    throw GitEvidenceError.unsafeGitAttributes
-  }
+  #endif
 
   private func containsFilterAttribute(_ data: Data) -> Bool {
     let text = String(decoding: data, as: UTF8.self)
@@ -394,10 +448,16 @@ public struct GitEvidenceCollector: Sendable {
       "color.ui=false", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
       "-c", "submodule.recurse=false",
     ]
+    #if os(Windows)
+      // Git for Windows resolves through PATH; there is no /usr/bin/git.
+      let executableURL = URL(fileURLWithPath: "git")
+    #else
+      let executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    #endif
     do {
       return try await runner.run(
         BoundedProcessConfiguration(
-          executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+          executableURL: executableURL,
           arguments: globalArguments + command,
           workingDirectory: root,
           environment: Self.gitEnvironment,
@@ -454,16 +514,40 @@ public struct GitEvidenceCollector: Sendable {
       ? .mixedWithPreexistingChanges : .attributableFromCleanBaseline
   }
 
-  private static let gitEnvironment = [
-    "PATH=/usr/bin:/bin",
-    "LANG=C",
-    "LC_ALL=C",
-    "GIT_CONFIG_NOSYSTEM=1",
-    "GIT_CONFIG_GLOBAL=/dev/null",
-    "GIT_ATTR_NOSYSTEM=1",
-    "GIT_OPTIONAL_LOCKS=0",
-    "GIT_TERMINAL_PROMPT=0",
-    "GIT_PAGER=cat",
-    "PAGER=cat",
-  ]
+  #if os(Windows)
+    private static let gitEnvironment: [String] = {
+      var environment = [
+        "LANG=C",
+        "LC_ALL=C",
+        "GIT_CONFIG_NOSYSTEM=1",
+        // Windows has no /dev/null; the NUL device fills the same role.
+        "GIT_CONFIG_GLOBAL=NUL",
+        "GIT_ATTR_NOSYSTEM=1",
+        "GIT_OPTIONAL_LOCKS=0",
+        "GIT_TERMINAL_PROMPT=0",
+        "GIT_PAGER=cat",
+        "PAGER=cat",
+      ]
+      let processEnvironment = ProcessInfo.processInfo.environment
+      for key in ["PATH", "SystemRoot", "SystemDrive", "TEMP", "TMP", "COMSPEC"] {
+        if let value = processEnvironment[key] {
+          environment.append("\(key)=\(value)")
+        }
+      }
+      return environment
+    }()
+  #else
+    private static let gitEnvironment = [
+      "PATH=/usr/bin:/bin",
+      "LANG=C",
+      "LC_ALL=C",
+      "GIT_CONFIG_NOSYSTEM=1",
+      "GIT_CONFIG_GLOBAL=/dev/null",
+      "GIT_ATTR_NOSYSTEM=1",
+      "GIT_OPTIONAL_LOCKS=0",
+      "GIT_TERMINAL_PROMPT=0",
+      "GIT_PAGER=cat",
+      "PAGER=cat",
+    ]
+  #endif
 }

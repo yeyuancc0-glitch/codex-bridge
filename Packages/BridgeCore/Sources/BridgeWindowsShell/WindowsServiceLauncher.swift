@@ -80,7 +80,7 @@
       guard length > 0, length < DWORD(buffer.count) else { return nil }
       let executable = String(decoding: buffer.prefix(Int(length)), as: UTF16.self)
       guard let directoryEnd = executable.lastIndex(of: "\\") else { return nil }
-      return executable[..<directoryEnd] + "\\" + serviceExecutableName
+      return String(executable[..<directoryEnd]) + "\\" + serviceExecutableName
     }
   }
 #endif

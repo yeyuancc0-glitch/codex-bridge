@@ -1,7 +1,7 @@
 import AppKit
 import BridgeIPC
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 struct BridgeServiceWorkbenchApprovalTray: View {
   @ObservedObject var model: BridgeServiceAppModel

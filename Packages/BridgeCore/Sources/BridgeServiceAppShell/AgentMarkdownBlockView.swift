@@ -1,5 +1,5 @@
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 struct AgentMarkdownTableLayout: Equatable, Sendable {
   let columnCount: Int

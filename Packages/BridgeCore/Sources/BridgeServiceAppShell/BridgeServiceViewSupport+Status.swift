@@ -1,6 +1,6 @@
 import BridgeMCP
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 public struct ToastHUDView: View {
   let toast: ToastNotice

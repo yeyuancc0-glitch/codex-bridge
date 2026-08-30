@@ -28,9 +28,10 @@
           Comment: nil,
           LastWritten: FILETIME(dwLowDateTime: 0, dwHighDateTime: 0),
           CredentialBlobSize: UInt32(secret.count),
-          CredentialBlob: UnsafeMutablePointer(mutating: secret.withUnsafeBytes {
-            $0.baseAddress?.assumingMemoryBound(to: Byte.self)
-          }),
+          CredentialBlob: UnsafeMutablePointer(
+            mutating: secret.withUnsafeBytes {
+              $0.baseAddress?.assumingMemoryBound(to: Byte.self)
+            }),
           Persist: UInt32(CRED_PERSIST_LOCAL_MACHINE),
           AttributeCount: 0,
           Attributes: nil,

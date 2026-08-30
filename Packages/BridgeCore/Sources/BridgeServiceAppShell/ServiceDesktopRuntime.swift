@@ -1,8 +1,8 @@
 import BridgeIPC
 import BridgeMCP
+import BridgeServiceAppCore
 import Foundation
 import WebKit
-import BridgeServiceAppCore
 
 extension BridgeServiceAppModel {
   func startAsync() async {

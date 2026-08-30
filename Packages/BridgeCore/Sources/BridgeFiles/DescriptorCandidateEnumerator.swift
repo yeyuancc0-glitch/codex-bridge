@@ -1,6 +1,11 @@
 import BridgeSecurity
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif os(Windows)
+  import WinSDK
+#endif
 
 struct ProjectFileCandidates: Equatable, Sendable {
   let paths: [String]
@@ -23,162 +28,384 @@ struct DescriptorCandidateEnumerator {
   private var candidates: [String] = []
 
   mutating func candidates(scope: SecureRelativePath?) async throws -> ProjectFileCandidates {
-    let rootDescriptor = Darwin.open(
-      root.canonicalPath,
-      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-    )
-    guard rootDescriptor >= 0 else { throw ProjectFileError.unsafeFilesystemState }
-    defer { Darwin.close(rootDescriptor) }
-    try validateRootDescriptor(rootDescriptor)
-
-    let trackedPaths = try await GitIndexPathReader(limits: limits).read(
-      rootDescriptor: rootDescriptor
-    )
-    let scopeDescriptor = try openScope(scope, rootDescriptor: rootDescriptor)
-    defer { Darwin.close(scopeDescriptor) }
-    try await scanDirectory(
-      descriptor: scopeDescriptor,
-      relativeDirectory: scope?.value ?? "",
-      depth: 0
-    )
-    try root.validateCurrentIdentity()
-    return prioritize(trackedPaths: trackedPaths, scope: scope)
-  }
-
-  private mutating func scanDirectory(
-    descriptor: Int32,
-    relativeDirectory: String,
-    depth: Int
-  ) async throws {
-    guard depth <= limits.maximumDirectoryDepth else {
-      throw ProjectFileError.directoryDepthExceeded
-    }
-    for name in try directoryEntries(descriptor) {
-      try Task.checkCancellation()
-      if enumeratedEntries.isMultiple(of: 64) { await Task.yield() }
-      try await inspect(
-        name: name,
-        descriptor: descriptor,
-        relativeDirectory: relativeDirectory,
-        depth: depth
+    #if canImport(Darwin)
+      let rootDescriptor = Darwin.open(
+        root.canonicalPath,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
       )
-    }
-  }
+      guard rootDescriptor >= 0 else { throw ProjectFileError.unsafeFilesystemState }
+      defer { Darwin.close(rootDescriptor) }
+      try validateRootDescriptor(rootDescriptor)
 
-  private mutating func inspect(
-    name: String,
-    descriptor: Int32,
-    relativeDirectory: String,
-    depth: Int
-  ) async throws {
-    enumeratedEntries += 1
-    guard enumeratedEntries <= limits.maximumEnumeratedEntries else {
-      throw ProjectFileError.enumerationLimitExceeded
-    }
-    let relativePath = relativeDirectory.isEmpty ? name : "\(relativeDirectory)/\(name)"
-    guard relativePath.utf8.count <= Self.maximumPathBytes else {
-      throw ProjectFileError.pathLengthExceeded
-    }
-
-    var metadata = stat()
-    let status = name.withCString {
-      fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
-    }
-    guard status == 0 else { throw ProjectFileError.unsafeFilesystemState }
-    guard UInt64(metadata.st_dev) == root.identity.device else { return }
-    let type = metadata.st_mode & S_IFMT
-    if type == S_IFDIR {
-      try await inspectDirectory(
-        name: name,
-        relativePath: relativePath,
-        descriptor: descriptor,
-        depth: depth
+      let trackedPaths = try await GitIndexPathReader(limits: limits).read(
+        rootDescriptor: rootDescriptor
       )
-      return
-    }
-    guard type == S_IFREG, metadata.st_size >= 0, metadata.st_size <= limits.maximumFileBytes
-    else { return }
-    guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
-      return
-    }
-    guard aggregatePathBytes <= Self.maximumAggregatePathBytes - relativePath.utf8.count else {
-      throw ProjectFileError.enumerationLimitExceeded
-    }
-    aggregatePathBytes += relativePath.utf8.count
-    candidates.append(relativePath)
-    guard candidates.count <= limits.maximumCandidateFiles else {
-      throw ProjectFileError.candidateLimitExceeded
-    }
+      let scopeDescriptor = try openScope(scope, rootDescriptor: rootDescriptor)
+      defer { Darwin.close(scopeDescriptor) }
+      try await scanDirectory(
+        descriptor: scopeDescriptor,
+        relativeDirectory: scope?.value ?? "",
+        depth: 0
+      )
+      try root.validateCurrentIdentity()
+      return prioritize(trackedPaths: trackedPaths, scope: scope)
+    #elseif os(Windows)
+      let rootPath = root.canonicalPath
+      guard let rootHandle = Self.openDirectoryHandle(rootPath) else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+      defer { _ = CloseHandle(rootHandle) }
+      try validateRootHandle(rootHandle)
+
+      let trackedPaths = try await GitIndexPathReader(limits: limits).read(rootPath: rootPath)
+      let scopePath = try openScope(scope, rootPath: rootPath)
+      try await scanDirectory(
+        path: scopePath,
+        relativeDirectory: scope?.value ?? "",
+        depth: 0
+      )
+      try root.validateCurrentIdentity()
+      return prioritize(trackedPaths: trackedPaths, scope: scope)
+    #endif
   }
 
-  private mutating func inspectDirectory(
-    name: String,
-    relativePath: String,
-    descriptor: Int32,
-    depth: Int
-  ) async throws {
-    guard !Self.ignoredDirectories.contains(name.lowercased()) else { return }
-    guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
-      return
+  #if canImport(Darwin)
+    private mutating func scanDirectory(
+      descriptor: Int32,
+      relativeDirectory: String,
+      depth: Int
+    ) async throws {
+      guard depth <= limits.maximumDirectoryDepth else {
+        throw ProjectFileError.directoryDepthExceeded
+      }
+      for name in try directoryEntries(descriptor) {
+        try Task.checkCancellation()
+        if enumeratedEntries.isMultiple(of: 64) { await Task.yield() }
+        try await inspect(
+          name: name,
+          descriptor: descriptor,
+          relativeDirectory: relativeDirectory,
+          depth: depth
+        )
+      }
     }
-    let child = name.withCString {
-      openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-    }
-    guard child >= 0 else { throw ProjectFileError.unsafeFilesystemState }
-    defer { Darwin.close(child) }
-    try validateDirectoryDescriptor(child)
-    try await scanDirectory(descriptor: child, relativeDirectory: relativePath, depth: depth + 1)
-  }
 
-  private mutating func directoryEntries(_ descriptor: Int32) throws -> [String] {
-    let duplicate = dup(descriptor)
-    guard duplicate >= 0, let directory = fdopendir(duplicate) else {
-      if duplicate >= 0 { Darwin.close(duplicate) }
-      throw ProjectFileError.unsafeFilesystemState
-    }
-    defer { closedir(directory) }
-
-    var names: [String] = []
-    errno = 0
-    while let entry = readdir(directory) {
-      try Task.checkCancellation()
-      let name = Self.entryName(entry)
-      if name != "." && name != ".." { names.append(name) }
-      guard names.count <= limits.maximumEnumeratedEntries - enumeratedEntries else {
+    private mutating func inspect(
+      name: String,
+      descriptor: Int32,
+      relativeDirectory: String,
+      depth: Int
+    ) async throws {
+      enumeratedEntries += 1
+      guard enumeratedEntries <= limits.maximumEnumeratedEntries else {
         throw ProjectFileError.enumerationLimitExceeded
       }
-      errno = 0
-    }
-    guard errno == 0 else { throw ProjectFileError.unsafeFilesystemState }
-    return names.sorted()
-  }
+      let relativePath = relativeDirectory.isEmpty ? name : "\(relativeDirectory)/\(name)"
+      guard relativePath.utf8.count <= Self.maximumPathBytes else {
+        throw ProjectFileError.pathLengthExceeded
+      }
 
-  private func openScope(
-    _ scope: SecureRelativePath?,
-    rootDescriptor: Int32
-  ) throws -> Int32 {
-    var descriptor = dup(rootDescriptor)
-    guard descriptor >= 0 else { throw ProjectFileError.unsafeFilesystemState }
-    for component in scope?.components ?? [] {
-      let next = component.withCString {
+      var metadata = stat()
+      let status = name.withCString {
+        fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
+      }
+      guard status == 0 else { throw ProjectFileError.unsafeFilesystemState }
+      guard UInt64(metadata.st_dev) == root.identity.device else { return }
+      let type = metadata.st_mode & S_IFMT
+      if type == S_IFDIR {
+        try await inspectDirectory(
+          name: name,
+          relativePath: relativePath,
+          descriptor: descriptor,
+          depth: depth
+        )
+        return
+      }
+      guard type == S_IFREG, metadata.st_size >= 0, metadata.st_size <= limits.maximumFileBytes
+      else { return }
+      guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
+        return
+      }
+      guard aggregatePathBytes <= Self.maximumAggregatePathBytes - relativePath.utf8.count else {
+        throw ProjectFileError.enumerationLimitExceeded
+      }
+      aggregatePathBytes += relativePath.utf8.count
+      candidates.append(relativePath)
+      guard candidates.count <= limits.maximumCandidateFiles else {
+        throw ProjectFileError.candidateLimitExceeded
+      }
+    }
+
+    private mutating func inspectDirectory(
+      name: String,
+      relativePath: String,
+      descriptor: Int32,
+      depth: Int
+    ) async throws {
+      guard !Self.ignoredDirectories.contains(name.lowercased()) else { return }
+      guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
+        return
+      }
+      let child = name.withCString {
         openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
       }
-      let openError = errno
-      guard next >= 0 else {
-        Darwin.close(descriptor)
-        throw PathSecurityError.readFailed(openError)
+      guard child >= 0 else { throw ProjectFileError.unsafeFilesystemState }
+      defer { Darwin.close(child) }
+      try validateDirectoryDescriptor(child)
+      try await scanDirectory(descriptor: child, relativeDirectory: relativePath, depth: depth + 1)
+    }
+
+    private mutating func directoryEntries(_ descriptor: Int32) throws -> [String] {
+      let duplicate = dup(descriptor)
+      guard duplicate >= 0, let directory = fdopendir(duplicate) else {
+        if duplicate >= 0 { Darwin.close(duplicate) }
+        throw ProjectFileError.unsafeFilesystemState
       }
-      Darwin.close(descriptor)
-      descriptor = next
-      do {
-        try validateDirectoryDescriptor(descriptor)
-      } catch {
+      defer { closedir(directory) }
+
+      var names: [String] = []
+      errno = 0
+      while let entry = readdir(directory) {
+        try Task.checkCancellation()
+        let name = Self.entryName(entry)
+        if name != "." && name != ".." { names.append(name) }
+        guard names.count <= limits.maximumEnumeratedEntries - enumeratedEntries else {
+          throw ProjectFileError.enumerationLimitExceeded
+        }
+        errno = 0
+      }
+      guard errno == 0 else { throw ProjectFileError.unsafeFilesystemState }
+      return names.sorted()
+    }
+
+    private func openScope(
+      _ scope: SecureRelativePath?,
+      rootDescriptor: Int32
+    ) throws -> Int32 {
+      var descriptor = dup(rootDescriptor)
+      guard descriptor >= 0 else { throw ProjectFileError.unsafeFilesystemState }
+      for component in scope?.components ?? [] {
+        let next = component.withCString {
+          openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        }
+        let openError = errno
+        guard next >= 0 else {
+          Darwin.close(descriptor)
+          throw PathSecurityError.readFailed(openError)
+        }
         Darwin.close(descriptor)
-        throw error
+        descriptor = next
+        do {
+          try validateDirectoryDescriptor(descriptor)
+        } catch {
+          Darwin.close(descriptor)
+          throw error
+        }
+      }
+      return descriptor
+    }
+  #elseif os(Windows)
+    private mutating func scanDirectory(
+      path: String,
+      relativeDirectory: String,
+      depth: Int
+    ) async throws {
+      guard depth <= limits.maximumDirectoryDepth else {
+        throw ProjectFileError.directoryDepthExceeded
+      }
+      for name in try directoryEntries(path: path) {
+        try Task.checkCancellation()
+        if enumeratedEntries.isMultiple(of: 64) { await Task.yield() }
+        try await inspect(
+          name: name,
+          in: path,
+          relativeDirectory: relativeDirectory,
+          depth: depth
+        )
       }
     }
-    return descriptor
-  }
+
+    private mutating func inspect(
+      name: String,
+      in directoryPath: String,
+      relativeDirectory: String,
+      depth: Int
+    ) async throws {
+      enumeratedEntries += 1
+      guard enumeratedEntries <= limits.maximumEnumeratedEntries else {
+        throw ProjectFileError.enumerationLimitExceeded
+      }
+      let relativePath = relativeDirectory.isEmpty ? name : "\(relativeDirectory)/\(name)"
+      guard relativePath.utf8.count <= Self.maximumPathBytes else {
+        throw ProjectFileError.pathLengthExceeded
+      }
+
+      guard let information = Self.entryInformation(directoryPath + "\\" + name) else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+      guard information.device == root.identity.device else { return }
+      if information.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) != 0 { return }
+      if information.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        try await inspectDirectory(
+          name: name,
+          relativePath: relativePath,
+          parentPath: directoryPath,
+          depth: depth
+        )
+        return
+      }
+      guard information.size >= 0, information.size <= limits.maximumFileBytes else { return }
+      guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
+        return
+      }
+      guard aggregatePathBytes <= Self.maximumAggregatePathBytes - relativePath.utf8.count else {
+        throw ProjectFileError.enumerationLimitExceeded
+      }
+      aggregatePathBytes += relativePath.utf8.count
+      candidates.append(relativePath)
+      guard candidates.count <= limits.maximumCandidateFiles else {
+        throw ProjectFileError.candidateLimitExceeded
+      }
+    }
+
+    private mutating func inspectDirectory(
+      name: String,
+      relativePath: String,
+      parentPath: String,
+      depth: Int
+    ) async throws {
+      guard !Self.ignoredDirectories.contains(name.lowercased()) else { return }
+      guard let securePath = try? SecureRelativePath(relativePath), policy.allows(securePath) else {
+        return
+      }
+      let childPath = parentPath + "\\" + name
+      guard let child = Self.openDirectoryHandle(childPath) else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+      defer { _ = CloseHandle(child) }
+      try validateDirectoryHandle(child)
+      try await scanDirectory(path: childPath, relativeDirectory: relativePath, depth: depth + 1)
+    }
+
+    private mutating func directoryEntries(path: String) throws -> [String] {
+      let pattern = path + "\\*"
+      var findData = WIN32_FIND_DATAW()
+      let findHandle: HANDLE = pattern.withCString(encodedAs: UTF16.self) {
+        FindFirstFileW($0, &findData)
+      }
+      guard findHandle != INVALID_HANDLE_VALUE else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+      defer { _ = FindClose(findHandle) }
+
+      var names: [String] = []
+      repeat {
+        try Task.checkCancellation()
+        let name = withUnsafeBytes(of: &findData.cFileName) { raw in
+          String(
+            decodingCString: raw.bindMemory(to: UTF16.CodeUnit.self).baseAddress!,
+            as: UTF16.self
+          )
+        }
+        if name != "." && name != ".." {
+          names.append(name)
+          guard names.count <= limits.maximumEnumeratedEntries - enumeratedEntries else {
+            throw ProjectFileError.enumerationLimitExceeded
+          }
+        }
+      } while FindNextFileW(findHandle, &findData)
+      guard GetLastError() == DWORD(ERROR_NO_MORE_FILES) else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+      return names.sorted()
+    }
+
+    private func openScope(
+      _ scope: SecureRelativePath?,
+      rootPath: String
+    ) throws -> String {
+      var directoryPath = rootPath
+      for component in scope?.components ?? [] {
+        let next = directoryPath + "\\" + component
+        guard let handle = Self.openDirectoryHandle(next) else {
+          throw PathSecurityError.readFailed(Int32(bitPattern: GetLastError()))
+        }
+        defer { _ = CloseHandle(handle) }
+        try validateDirectoryHandle(handle)
+        directoryPath = next
+      }
+      return directoryPath
+    }
+
+    private func validateRootHandle(_ handle: HANDLE) throws {
+      guard let information = Self.information(handle),
+        information.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0,
+        information.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+        information.device == root.identity.device,
+        information.inode == root.identity.inode
+      else {
+        throw PathSecurityError.rootIdentityChanged
+      }
+    }
+
+    private func validateDirectoryHandle(_ handle: HANDLE) throws {
+      guard let information = Self.information(handle),
+        information.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0,
+        information.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+        information.device == root.identity.device
+      else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+    }
+
+    private static func openDirectoryHandle(_ path: String) -> HANDLE? {
+      let handle: HANDLE = path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(FILE_READ_ATTRIBUTES),
+          DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
+      }
+      return handle == INVALID_HANDLE_VALUE ? nil : handle
+    }
+
+    private static func entryInformation(_ path: String) -> (
+      device: UInt64, inode: UInt64, size: Int64, attributes: DWORD
+    )? {
+      let handle: HANDLE = path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(FILE_READ_ATTRIBUTES),
+          DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
+      }
+      guard handle != INVALID_HANDLE_VALUE else { return nil }
+      defer { _ = CloseHandle(handle) }
+      return information(handle)
+    }
+
+    private static func information(_ handle: HANDLE) -> (
+      device: UInt64, inode: UInt64, size: Int64, attributes: DWORD
+    )? {
+      var data = BY_HANDLE_FILE_INFORMATION()
+      guard GetFileInformationByHandle(handle, &data) else { return nil }
+      let size = (UInt64(data.nFileSizeHigh) << 32) | UInt64(data.nFileSizeLow)
+      return (
+        device: UInt64(data.dwVolumeSerialNumber),
+        inode: (UInt64(data.nFileIndexHigh) << 32) | UInt64(data.nFileIndexLow),
+        size: Int64(bitPattern: size),
+        attributes: data.dwFileAttributes
+      )
+    }
+  #endif
 
   private func prioritize(
     trackedPaths: [String]?,
@@ -202,36 +429,38 @@ struct DescriptorCandidateEnumerator {
     return path.hasPrefix(scope.value + "/")
   }
 
-  private func validateRootDescriptor(_ descriptor: Int32) throws {
-    var metadata = stat()
-    guard fstat(descriptor, &metadata) == 0 else {
-      throw ProjectFileError.unsafeFilesystemState
+  #if canImport(Darwin)
+    private func validateRootDescriptor(_ descriptor: Int32) throws {
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0 else {
+        throw ProjectFileError.unsafeFilesystemState
+      }
+      let identity = FileSystemIdentity(
+        device: UInt64(metadata.st_dev),
+        inode: UInt64(metadata.st_ino)
+      )
+      guard identity == root.identity else { throw PathSecurityError.rootIdentityChanged }
     }
-    let identity = FileSystemIdentity(
-      device: UInt64(metadata.st_dev),
-      inode: UInt64(metadata.st_ino)
-    )
-    guard identity == root.identity else { throw PathSecurityError.rootIdentityChanged }
-  }
 
-  private func validateDirectoryDescriptor(_ descriptor: Int32) throws {
-    var metadata = stat()
-    guard
-      fstat(descriptor, &metadata) == 0,
-      metadata.st_mode & S_IFMT == S_IFDIR,
-      UInt64(metadata.st_dev) == root.identity.device
-    else {
-      throw ProjectFileError.unsafeFilesystemState
-    }
-  }
-
-  private static func entryName(_ entry: UnsafeMutablePointer<dirent>) -> String {
-    withUnsafePointer(to: &entry.pointee.d_name) { name in
-      name.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
-        String(cString: $0)
+    private func validateDirectoryDescriptor(_ descriptor: Int32) throws {
+      var metadata = stat()
+      guard
+        fstat(descriptor, &metadata) == 0,
+        metadata.st_mode & S_IFMT == S_IFDIR,
+        UInt64(metadata.st_dev) == root.identity.device
+      else {
+        throw ProjectFileError.unsafeFilesystemState
       }
     }
-  }
+
+    private static func entryName(_ entry: UnsafeMutablePointer<dirent>) -> String {
+      withUnsafePointer(to: &entry.pointee.d_name) { name in
+        name.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) {
+          String(cString: $0)
+        }
+      }
+    }
+  #endif
 }
 
 private struct GitIndexPathReader {
@@ -239,57 +468,112 @@ private struct GitIndexPathReader {
   private static let maximumPathBytes = 4_096
   let limits: ProjectFileLimits
 
-  func read(rootDescriptor: Int32) async throws -> [String]? {
-    guard let rootDevice = device(of: rootDescriptor) else { return nil }
-    let gitDescriptor = ".git".withCString {
-      openat(rootDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+  #if os(Windows)
+    func read(rootPath: String) async throws -> [String]? {
+      guard let rootInformation = DescriptorCandidateEnumerator.entryInformation(rootPath)
+      else { return nil }
+      let gitPath = rootPath + "\\.git"
+      guard
+        let gitInformation = DescriptorCandidateEnumerator.entryInformation(gitPath),
+        gitInformation.device == rootInformation.device,
+        gitInformation.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0,
+        gitInformation.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
+      else { return nil }
+      let indexPath = gitPath + "\\index"
+      guard
+        let indexInformation = DescriptorCandidateEnumerator.entryInformation(indexPath),
+        indexInformation.device == rootInformation.device,
+        indexInformation.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0,
+        indexInformation.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+        indexInformation.size >= 0,
+        indexInformation.size <= Self.maximumIndexBytes
+      else { return nil }
+      guard let data = try await boundedData(path: indexPath) else { return nil }
+      return try await parse(data)
     }
-    guard gitDescriptor >= 0, device(of: gitDescriptor) == rootDevice else {
-      if gitDescriptor >= 0 { Darwin.close(gitDescriptor) }
-      return nil
-    }
-    defer { Darwin.close(gitDescriptor) }
-    let indexDescriptor = "index".withCString {
-      openat(gitDescriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    }
-    guard indexDescriptor >= 0, device(of: indexDescriptor) == rootDevice else {
-      if indexDescriptor >= 0 { Darwin.close(indexDescriptor) }
-      return nil
-    }
-    defer { Darwin.close(indexDescriptor) }
-    guard let data = try await boundedData(indexDescriptor) else { return nil }
-    return try await parse(data)
-  }
 
-  private func device(of descriptor: Int32) -> UInt64? {
-    var metadata = stat()
-    guard fstat(descriptor, &metadata) == 0 else { return nil }
-    return UInt64(metadata.st_dev)
-  }
-
-  private func boundedData(_ descriptor: Int32) async throws -> Data? {
-    var metadata = stat()
-    guard
-      fstat(descriptor, &metadata) == 0,
-      metadata.st_mode & S_IFMT == S_IFREG,
-      metadata.st_size >= 0,
-      metadata.st_size <= Self.maximumIndexBytes
-    else { return nil }
-    var data = Data()
-    var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
-    while data.count <= Self.maximumIndexBytes {
-      try Task.checkCancellation()
-      await Task.yield()
-      let count = Darwin.read(descriptor, &buffer, buffer.count)
-      if count == 0 { return data }
-      if count > 0 {
-        data.append(contentsOf: buffer.prefix(count))
-        continue
+    private func boundedData(path: String) async throws -> Data? {
+      let handle: HANDLE = path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(GENERIC_READ),
+          DWORD(FILE_SHARE_READ),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
       }
-      if errno != EINTR { return nil }
+      guard handle != INVALID_HANDLE_VALUE else { return nil }
+      defer { _ = CloseHandle(handle) }
+      var data = Data()
+      var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+      while data.count <= Self.maximumIndexBytes {
+        try Task.checkCancellation()
+        await Task.yield()
+        var received: DWORD = 0
+        let succeeded = buffer.withUnsafeMutableBytes { bytes in
+          ReadFile(handle, bytes.baseAddress, DWORD(bytes.count), &received, nil)
+        }
+        guard succeeded else { return nil }
+        if received == 0 { return data }
+        data.append(contentsOf: buffer.prefix(Int(received)))
+      }
+      return nil
     }
-    return nil
-  }
+  #else
+    func read(rootDescriptor: Int32) async throws -> [String]? {
+      guard let rootDevice = device(of: rootDescriptor) else { return nil }
+      let gitDescriptor = ".git".withCString {
+        openat(rootDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+      }
+      guard gitDescriptor >= 0, device(of: gitDescriptor) == rootDevice else {
+        if gitDescriptor >= 0 { Darwin.close(gitDescriptor) }
+        return nil
+      }
+      defer { Darwin.close(gitDescriptor) }
+      let indexDescriptor = "index".withCString {
+        openat(gitDescriptor, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+      }
+      guard indexDescriptor >= 0, device(of: indexDescriptor) == rootDevice else {
+        if indexDescriptor >= 0 { Darwin.close(indexDescriptor) }
+        return nil
+      }
+      defer { Darwin.close(indexDescriptor) }
+      guard let data = try await boundedData(indexDescriptor) else { return nil }
+      return try await parse(data)
+    }
+
+    private func device(of descriptor: Int32) -> UInt64? {
+      var metadata = stat()
+      guard fstat(descriptor, &metadata) == 0 else { return nil }
+      return UInt64(metadata.st_dev)
+    }
+
+    private func boundedData(_ descriptor: Int32) async throws -> Data? {
+      var metadata = stat()
+      guard
+        fstat(descriptor, &metadata) == 0,
+        metadata.st_mode & S_IFMT == S_IFREG,
+        metadata.st_size >= 0,
+        metadata.st_size <= Self.maximumIndexBytes
+      else { return nil }
+      var data = Data()
+      var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+      while data.count <= Self.maximumIndexBytes {
+        try Task.checkCancellation()
+        await Task.yield()
+        let count = Darwin.read(descriptor, &buffer, buffer.count)
+        if count == 0 { return data }
+        if count > 0 {
+          data.append(contentsOf: buffer.prefix(count))
+          continue
+        }
+        if errno != EINTR { return nil }
+      }
+      return nil
+    }
+  #endif
 
   private func parse(_ data: Data) async throws -> [String]? {
     guard

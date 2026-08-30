@@ -1,8 +1,8 @@
 import AppKit
 import BridgeIPC
+import BridgeServiceAppCore
 import SwiftUI
 import UniformTypeIdentifiers
-import BridgeServiceAppCore
 
 struct BridgeServiceAgentSettingsSection: View {
   @ObservedObject var model: BridgeServiceAppModel

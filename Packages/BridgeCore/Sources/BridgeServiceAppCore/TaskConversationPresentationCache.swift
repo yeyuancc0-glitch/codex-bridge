@@ -1,6 +1,6 @@
 public struct TaskConversationPresentationSnapshot {
-  public   let entries: [TaskConversationModel.Entry]
-  public   let canLoadEarlier: Bool
+  public let entries: [TaskConversationModel.Entry]
+  public let canLoadEarlier: Bool
 }
 
 public struct TaskConversationPresentationCache {

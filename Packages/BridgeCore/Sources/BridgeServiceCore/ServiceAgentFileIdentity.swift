@@ -19,7 +19,7 @@ import Foundation
       var attributes: DWORD
     }
 
-    static func open(_ path: String) -> OpaquePointer? {
+    static func open(_ path: String) -> HANDLE {
       path.withCString(encodedAs: UTF16.self) {
         CreateFileW(
           $0,
@@ -33,9 +33,9 @@ import Foundation
       }
     }
 
-    static func snapshot(_ handle: OpaquePointer) -> Snapshot? {
+    static func snapshot(_ handle: HANDLE) -> Snapshot? {
       var information = BY_HANDLE_FILE_INFORMATION()
-      guard GetFileInformationByHandle(handle, &information) != 0 else { return nil }
+      guard GetFileInformationByHandle(handle, &information) else { return nil }
       let lastWrite = information.ftLastWriteTime
       return Snapshot(
         device: UInt64(information.dwVolumeSerialNumber),
@@ -67,7 +67,7 @@ import Foundation
       }
     }
 
-    static func digest(_ handle: OpaquePointer, errorField: String) throws -> String {
+    static func digest(_ handle: HANDLE, errorField: String) throws -> String {
       var hasher = SHA256()
       var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
       while true {
@@ -75,7 +75,7 @@ import Foundation
         let succeeded = buffer.withUnsafeMutableBytes { bytes in
           ReadFile(handle, bytes.baseAddress, DWORD(bytes.count), &readBytes, nil)
         }
-        guard succeeded != 0 else {
+        guard succeeded else {
           throw ServiceStoreError.invalidArgument(errorField)
         }
         if readBytes == 0 { break }
@@ -122,31 +122,31 @@ public struct ServiceAgentFileIdentity: Codable, Equatable, Sendable {
     sha256: String
   ) throws {
     #if os(Windows)
-    // Windows paths carry drive letters instead of a leading slash.
-    guard canonicalPath.utf8.count <= 16 * 1_024,
-      !canonicalPath.contains("\0"),
-      canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil,
-      inode > 0,
-      fileSize > 0,
-      fileSize <= Self.maximumFileBytes,
-      modificationTimeNanoseconds >= 0,
-      Self.isLowercaseSHA256(sha256)
-    else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
-    }
+      // Windows paths carry drive letters instead of a leading slash.
+      guard canonicalPath.utf8.count <= 16 * 1_024,
+        !canonicalPath.contains("\0"),
+        canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil,
+        inode > 0,
+        fileSize > 0,
+        fileSize <= Self.maximumFileBytes,
+        modificationTimeNanoseconds >= 0,
+        Self.isLowercaseSHA256(sha256)
+      else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
+      }
     #else
-    guard canonicalPath.hasPrefix("/"),
-      canonicalPath.utf8.count <= 16 * 1_024,
-      !canonicalPath.contains("\0"),
-      canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil,
-      inode > 0,
-      fileSize > 0,
-      fileSize <= Self.maximumFileBytes,
-      modificationTimeNanoseconds >= 0,
-      Self.isLowercaseSHA256(sha256)
-    else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
-    }
+      guard canonicalPath.hasPrefix("/"),
+        canonicalPath.utf8.count <= 16 * 1_024,
+        !canonicalPath.contains("\0"),
+        canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil,
+        inode > 0,
+        fileSize > 0,
+        fileSize <= Self.maximumFileBytes,
+        modificationTimeNanoseconds >= 0,
+        Self.isLowercaseSHA256(sha256)
+      else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
+      }
     #endif
     self.canonicalPath = canonicalPath
     self.device = device
@@ -163,66 +163,67 @@ public struct ServiceAgentFileIdentity: Codable, Equatable, Sendable {
       .standardizedFileURL
       .path
     #if os(Windows)
-    guard let handle = ServiceAgentArtifactInspection.open(canonicalPath) else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
-    }
-    defer { CloseHandle(handle) }
+      let handle = ServiceAgentArtifactInspection.open(canonicalPath)
+      guard handle != INVALID_HANDLE_VALUE else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
+      }
+      defer { _ = CloseHandle(handle) }
 
-    guard let before = ServiceAgentArtifactInspection.snapshot(handle) else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
-    }
-    try ServiceAgentArtifactInspection.validate(
-      before,
-      requiresExecutable: requiresExecutable,
-      errorField: "agentInstallation.artifactIdentity"
-    )
-    let digest = try ServiceAgentArtifactInspection.digest(
-      handle,
-      errorField: "agentInstallation.artifactIdentity"
-    )
+      guard let before = ServiceAgentArtifactInspection.snapshot(handle) else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
+      }
+      try ServiceAgentArtifactInspection.validate(
+        before,
+        requiresExecutable: requiresExecutable,
+        errorField: "agentInstallation.artifactIdentity"
+      )
+      let digest = try ServiceAgentArtifactInspection.digest(
+        handle,
+        errorField: "agentInstallation.artifactIdentity"
+      )
 
-    guard let after = ServiceAgentArtifactInspection.snapshot(handle), before == after else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactChanged")
-    }
-    let modificationTime = try ServiceAgentArtifactInspection.modificationTimeNanoseconds(
-      after.lastWriteFileTime,
-      errorField: "agentInstallation.artifactIdentity"
-    )
-    try self.init(
-      canonicalPath: canonicalPath,
-      device: after.device,
-      inode: after.inode,
-      fileSize: after.size,
-      modificationTimeNanoseconds: modificationTime,
-      sha256: digest
-    )
+      guard let after = ServiceAgentArtifactInspection.snapshot(handle), before == after else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactChanged")
+      }
+      let modificationTime = try ServiceAgentArtifactInspection.modificationTimeNanoseconds(
+        after.lastWriteFileTime,
+        errorField: "agentInstallation.artifactIdentity"
+      )
+      try self.init(
+        canonicalPath: canonicalPath,
+        device: after.device,
+        inode: after.inode,
+        fileSize: after.size,
+        modificationTimeNanoseconds: modificationTime,
+        sha256: digest
+      )
     #elseif canImport(Darwin)
-    let descriptor = Darwin.open(canonicalPath, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-    guard descriptor >= 0 else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
-    }
-    defer { Darwin.close(descriptor) }
+      let descriptor = Darwin.open(canonicalPath, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+      guard descriptor >= 0 else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
+      }
+      defer { Darwin.close(descriptor) }
 
-    var before = stat()
-    guard fstat(descriptor, &before) == 0 else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
-    }
-    try Self.validateFile(before, requiresExecutable: requiresExecutable)
-    let digest = try Self.digest(descriptor)
+      var before = stat()
+      guard fstat(descriptor, &before) == 0 else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactIdentity")
+      }
+      try Self.validateFile(before, requiresExecutable: requiresExecutable)
+      let digest = try Self.digest(descriptor)
 
-    var after = stat()
-    guard fstat(descriptor, &after) == 0, Self.sameSnapshot(before, after) else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactChanged")
-    }
-    let modificationTime = try Self.modificationTimeNanoseconds(after)
-    try self.init(
-      canonicalPath: canonicalPath,
-      device: UInt64(after.st_dev),
-      inode: UInt64(after.st_ino),
-      fileSize: UInt64(after.st_size),
-      modificationTimeNanoseconds: modificationTime,
-      sha256: digest
-    )
+      var after = stat()
+      guard fstat(descriptor, &after) == 0, Self.sameSnapshot(before, after) else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactChanged")
+      }
+      let modificationTime = try Self.modificationTimeNanoseconds(after)
+      try self.init(
+        canonicalPath: canonicalPath,
+        device: UInt64(after.st_dev),
+        inode: UInt64(after.st_ino),
+        fileSize: UInt64(after.st_size),
+        modificationTimeNanoseconds: modificationTime,
+        sha256: digest
+      )
     #endif
   }
 
@@ -232,21 +233,21 @@ public struct ServiceAgentFileIdentity: Codable, Equatable, Sendable {
 
   private static func validate(path: String) throws {
     #if os(Windows)
-    // Windows paths carry drive letters instead of a leading slash.
-    guard path.utf8.count <= 16 * 1_024,
-      !path.contains("\0"),
-      path.rangeOfCharacter(from: .controlCharacters) == nil
-    else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
-    }
+      // Windows paths carry drive letters instead of a leading slash.
+      guard path.utf8.count <= 16 * 1_024,
+        !path.contains("\0"),
+        path.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
+      }
     #else
-    guard path.hasPrefix("/"),
-      path.utf8.count <= 16 * 1_024,
-      !path.contains("\0"),
-      path.rangeOfCharacter(from: .controlCharacters) == nil
-    else {
-      throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
-    }
+      guard path.hasPrefix("/"),
+        path.utf8.count <= 16 * 1_024,
+        !path.contains("\0"),
+        path.rangeOfCharacter(from: .controlCharacters) == nil
+      else {
+        throw ServiceStoreError.invalidArgument("agentInstallation.artifactPath")
+      }
     #endif
   }
 

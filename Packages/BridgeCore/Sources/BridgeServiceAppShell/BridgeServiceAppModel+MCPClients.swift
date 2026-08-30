@@ -1,7 +1,7 @@
 import AppKit
 import BridgeMCP
-import Foundation
 import BridgeServiceAppCore
+import Foundation
 
 extension BridgeServiceAppModel {
   public func setQwenStudioEnabled(_ enabled: Bool) {

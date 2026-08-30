@@ -14,13 +14,13 @@ final class DirectGitIndexTransaction: @unchecked Sendable {
   private let lockURL: URL
   private let snapshotURL: URL
   #if os(Windows)
-    private var lockHandle: OpaquePointer?
+    private var lockHandle: HANDLE = INVALID_HANDLE_VALUE
 
     private init(
       indexURL: URL,
       lockURL: URL,
       snapshotURL: URL,
-      lockHandle: OpaquePointer?
+      lockHandle: HANDLE
     ) {
       self.indexURL = indexURL
       self.lockURL = lockURL
@@ -65,51 +65,51 @@ final class DirectGitIndexTransaction: @unchecked Sendable {
     let snapshotURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("codex-bridge-real-git-index-\(UUID().uuidString)")
     #if os(Windows)
-    let lockHandle: OpaquePointer? = lockURL.path.withCString(encodedAs: UTF16.self) {
-      CreateFileW(
-        $0,
-        DWORD(GENERIC_WRITE),
-        0,
-        nil,
-        DWORD(CREATE_NEW),
-        DWORD(FILE_ATTRIBUTE_NORMAL),
-        nil
-      )
-    }
-    guard let acquiredHandle = lockHandle else {
-      throw DirectGitCommitError.gitFailed(
-        GetLastError() == DWORD(ERROR_FILE_EXISTS)
-          ? "The Git index is busy; no commit was created."
-          : "The Git index could not be locked; no commit was created."
-      )
-    }
+      let lockHandle: HANDLE = lockURL.path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(GENERIC_WRITE),
+          0,
+          nil,
+          DWORD(CREATE_NEW),
+          DWORD(FILE_ATTRIBUTE_NORMAL),
+          nil
+        )
+      }
+      guard lockHandle != INVALID_HANDLE_VALUE else {
+        throw DirectGitCommitError.gitFailed(
+          GetLastError() == DWORD(ERROR_FILE_EXISTS)
+            ? "The Git index is busy; no commit was created."
+            : "The Git index could not be locked; no commit was created."
+        )
+      }
 
-    let transaction = DirectGitIndexTransaction(
-      indexURL: indexURL,
-      lockURL: lockURL,
-      snapshotURL: snapshotURL,
-      lockHandle: acquiredHandle
-    )
+      let transaction = DirectGitIndexTransaction(
+        indexURL: indexURL,
+        lockURL: lockURL,
+        snapshotURL: snapshotURL,
+        lockHandle: lockHandle
+      )
     #else
-    let descriptor = open(
-      lockURL.path,
-      O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-      S_IRUSR | S_IWUSR
-    )
-    guard descriptor >= 0 else {
-      throw DirectGitCommitError.gitFailed(
-        errno == EEXIST
-          ? "The Git index is busy; no commit was created."
-          : "The Git index could not be locked; no commit was created."
+      let descriptor = open(
+        lockURL.path,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        S_IRUSR | S_IWUSR
       )
-    }
+      guard descriptor >= 0 else {
+        throw DirectGitCommitError.gitFailed(
+          errno == EEXIST
+            ? "The Git index is busy; no commit was created."
+            : "The Git index could not be locked; no commit was created."
+        )
+      }
 
-    let transaction = DirectGitIndexTransaction(
-      indexURL: indexURL,
-      lockURL: lockURL,
-      snapshotURL: snapshotURL,
-      lockDescriptor: descriptor
-    )
+      let transaction = DirectGitIndexTransaction(
+        indexURL: indexURL,
+        lockURL: lockURL,
+        snapshotURL: snapshotURL,
+        lockDescriptor: descriptor
+      )
     #endif
     do {
       if FileManager.default.fileExists(atPath: indexURL.path) {
@@ -152,114 +152,114 @@ final class DirectGitIndexTransaction: @unchecked Sendable {
 
   func cancel() {
     #if os(Windows)
-    if let lockHandle {
-      _ = CloseHandle(lockHandle)
-      self.lockHandle = nil
-    }
-    _ = lockURL.path.withCString(encodedAs: UTF16.self) { DeleteFileW($0) }
+      if lockHandle != INVALID_HANDLE_VALUE {
+        _ = CloseHandle(lockHandle)
+        lockHandle = INVALID_HANDLE_VALUE
+      }
+      _ = lockURL.path.withCString(encodedAs: UTF16.self) { DeleteFileW($0) }
     #else
-    if lockDescriptor >= 0 {
-      _ = close(lockDescriptor)
-      lockDescriptor = -1
-    }
-    _ = unlink(lockURL.path)
+      if lockDescriptor >= 0 {
+        _ = close(lockDescriptor)
+        lockDescriptor = -1
+      }
+      _ = unlink(lockURL.path)
     #endif
     try? FileManager.default.removeItem(at: snapshotURL)
   }
 
   private func installSnapshot() throws {
     #if os(Windows)
-    guard let lockHandle else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index lock was lost."
-      )
-    }
-    guard let source: OpaquePointer = snapshotURL.path.withCString(encodedAs: UTF16.self)({
-      CreateFileW(
-        $0,
-        DWORD(GENERIC_READ),
-        DWORD(FILE_SHARE_READ),
-        nil,
-        DWORD(OPEN_EXISTING),
-        DWORD(FILE_FLAG_OPEN_REPARSE_POINT),
-        nil
-      )
-    })
-    else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index snapshot could not be opened."
-      )
-    }
-    defer { CloseHandle(source) }
-
-    // Windows uses ACLs; the POSIX mode reset does not apply.
-    guard SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) != INVALID_SET_FILE_POINTER,
-      SetEndOfFile(lockHandle) != 0,
-      SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) != INVALID_SET_FILE_POINTER,
-      copyBytes(from: source, to: lockHandle),
-      FlushFileBuffers(lockHandle) != 0
-    else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index could not be written."
-      )
-    }
-
-    _ = CloseHandle(lockHandle)
-    self.lockHandle = nil
-    let installed = indexURL.path.withCString(encodedAs: UTF16.self) { indexWide in
-      lockURL.path.withCString(encodedAs: UTF16.self) { lockWide in
-        MoveFileExW(lockWide, indexWide, DWORD(MOVEFILE_REPLACE_EXISTING))
+      guard lockHandle != INVALID_HANDLE_VALUE else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index lock was lost."
+        )
       }
-    }
-    guard installed != 0 else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index could not be installed."
-      )
-    }
-    try? FileManager.default.removeItem(at: snapshotURL)
+      let source: HANDLE = snapshotURL.path.withCString(encodedAs: UTF16.self) {
+        CreateFileW(
+          $0,
+          DWORD(GENERIC_READ),
+          DWORD(FILE_SHARE_READ),
+          nil,
+          DWORD(OPEN_EXISTING),
+          DWORD(FILE_FLAG_OPEN_REPARSE_POINT),
+          nil
+        )
+      }
+      guard source != INVALID_HANDLE_VALUE else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index snapshot could not be opened."
+        )
+      }
+      defer { _ = CloseHandle(source) }
+
+      // Windows uses ACLs; the POSIX mode reset does not apply.
+      guard SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) != INVALID_SET_FILE_POINTER,
+        SetEndOfFile(lockHandle),
+        SetFilePointer(lockHandle, 0, nil, DWORD(FILE_BEGIN)) != INVALID_SET_FILE_POINTER,
+        copyBytes(from: source, to: lockHandle),
+        FlushFileBuffers(lockHandle)
+      else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index could not be written."
+        )
+      }
+
+      _ = CloseHandle(lockHandle)
+      lockHandle = INVALID_HANDLE_VALUE
+      let installed = indexURL.path.withCString(encodedAs: UTF16.self) { indexWide in
+        lockURL.path.withCString(encodedAs: UTF16.self) { lockWide in
+          MoveFileExW(lockWide, indexWide, DWORD(MOVEFILE_REPLACE_EXISTING))
+        }
+      }
+      guard installed else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index could not be installed."
+        )
+      }
+      try? FileManager.default.removeItem(at: snapshotURL)
     #else
-    guard lockDescriptor >= 0 else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index lock was lost."
-      )
-    }
-    let source = open(snapshotURL.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-    guard source >= 0 else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index snapshot could not be opened."
-      )
-    }
-    defer { _ = close(source) }
+      guard lockDescriptor >= 0 else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index lock was lost."
+        )
+      }
+      let source = open(snapshotURL.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+      guard source >= 0 else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index snapshot could not be opened."
+        )
+      }
+      defer { _ = close(source) }
 
-    guard ftruncate(lockDescriptor, 0) == 0, lseek(lockDescriptor, 0, SEEK_SET) == 0,
-      copyBytes(from: source, to: lockDescriptor), fchmod(lockDescriptor, S_IRUSR | S_IWUSR) == 0,
-      fsync(lockDescriptor) == 0
-    else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index could not be written."
-      )
-    }
+      guard ftruncate(lockDescriptor, 0) == 0, lseek(lockDescriptor, 0, SEEK_SET) == 0,
+        copyBytes(from: source, to: lockDescriptor), fchmod(lockDescriptor, S_IRUSR | S_IWUSR) == 0,
+        fsync(lockDescriptor) == 0
+      else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index could not be written."
+        )
+      }
 
-    _ = close(lockDescriptor)
-    lockDescriptor = -1
-    guard rename(lockURL.path, indexURL.path) == 0 else {
-      throw DirectGitCommitError.gitFailed(
-        "The commit was created, but the real Git index could not be installed."
-      )
-    }
-    try? FileManager.default.removeItem(at: snapshotURL)
+      _ = close(lockDescriptor)
+      lockDescriptor = -1
+      guard rename(lockURL.path, indexURL.path) == 0 else {
+        throw DirectGitCommitError.gitFailed(
+          "The commit was created, but the real Git index could not be installed."
+        )
+      }
+      try? FileManager.default.removeItem(at: snapshotURL)
     #endif
   }
 
   #if os(Windows)
-    private func copyBytes(from source: OpaquePointer, to destination: OpaquePointer) -> Bool {
+    private func copyBytes(from source: HANDLE, to destination: HANDLE) -> Bool {
       var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
       while true {
         var received: DWORD = 0
         let readSucceeded = buffer.withUnsafeMutableBytes { bytes in
           ReadFile(source, bytes.baseAddress, DWORD(bytes.count), &received, nil)
         }
-        guard readSucceeded != 0 else { return false }
+        guard readSucceeded else { return false }
         if received == 0 { return true }
         var offset = 0
         while offset < Int(received) {
@@ -273,31 +273,31 @@ final class DirectGitIndexTransaction: @unchecked Sendable {
               nil
             )
           }
-          guard writeSucceeded != 0, written > 0 else { return false }
+          guard writeSucceeded, written > 0 else { return false }
           offset += Int(written)
         }
       }
     }
   #else
-  private func copyBytes(from source: Int32, to destination: Int32) -> Bool {
-    var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
-    while true {
-      var count: Int
-      repeat {
-        count = read(source, &buffer, buffer.count)
-      } while count < 0 && errno == EINTR
-      if count == 0 { return true }
-      guard count > 0 else { return false }
-      var offset = 0
-      while offset < count {
-        let written = buffer.withUnsafeBytes { bytes in
-          write(destination, bytes.baseAddress!.advanced(by: offset), count - offset)
+    private func copyBytes(from source: Int32, to destination: Int32) -> Bool {
+      var buffer = [UInt8](repeating: 0, count: 64 * 1_024)
+      while true {
+        var count: Int
+        repeat {
+          count = read(source, &buffer, buffer.count)
+        } while count < 0 && errno == EINTR
+        if count == 0 { return true }
+        guard count > 0 else { return false }
+        var offset = 0
+        while offset < count {
+          let written = buffer.withUnsafeBytes { bytes in
+            write(destination, bytes.baseAddress!.advanced(by: offset), count - offset)
+          }
+          if written < 0, errno == EINTR { continue }
+          guard written > 0 else { return false }
+          offset += written
         }
-        if written < 0, errno == EINTR { continue }
-        guard written > 0 else { return false }
-        offset += written
       }
     }
-  }
   #endif
 }

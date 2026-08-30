@@ -1,7 +1,7 @@
 import BridgeIPC
 import BridgeMCP
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 @MainActor
 struct BridgeServiceWorkbenchInspectorContext {

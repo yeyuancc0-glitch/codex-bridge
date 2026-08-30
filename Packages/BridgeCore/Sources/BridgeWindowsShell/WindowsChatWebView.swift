@@ -155,11 +155,10 @@
     }
 
     private static func loadCreateFunction(_ loader: HMODULE) -> WebView2CreateEnvironmentFn? {
-      guard
-        let address = "CreateCoreWebView2EnvironmentWithOptions".withCString {
-          GetProcAddress(loader, $0)
-        }
-      else { return nil }
+      let address = "CreateCoreWebView2EnvironmentWithOptions".withCString {
+        GetProcAddress(loader, $0)
+      }
+      guard let address else { return nil }
       return unsafeBitCast(address, to: WebView2CreateEnvironmentFn.self)
     }
 
@@ -187,7 +186,8 @@
     }
 
     private static func ensureDirectoryExists(_ path: String) {
-      let root = path.dropLast("/WebView2".count)
+      // Create both levels; ERROR_ALREADY_EXISTS is ignored.
+      let root = path.dropLast("\\WebView2".count)
       for directory in [String(root), path] {
         directory.withCString(encodedAs: UTF16.self) {
           _ = CreateDirectoryW($0, nil)

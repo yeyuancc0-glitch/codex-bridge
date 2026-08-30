@@ -135,11 +135,11 @@ ChatGPT / Qwen ──[run_skill_action]──► 沙盒隔离检查 (sandbox-exe
 ## 🛠️ 快速开始
 
 ### 1. 环境准备
-- **操作系统**：macOS 14.0 (Sonoma) 或更高版本（支持 Apple Silicon 与 Intel）。
+- **操作系统**：macOS 14.0 (Sonoma) 或更高版本（支持 Apple Silicon 与 Intel）；Windows 10/11 x64 与 ARM64 预览支持（见 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md)）。
 - **Agent 环境**：
   - **Codex**：本地已安装并登录 **Codex 桌面端**（或系统 PATH 具备可执行的 `codex` 命令）。
   - **OpenCode（可选）**：本地已安装 **OpenCode** 并具备可执行命令。
-- **编译工具**：Xcode 16+ / Swift 6.0 工具链。
+- **编译工具**：Xcode 16+ / Swift 6.0 工具链；Windows 构建使用 Swift 6.1 工具链（`Scripts/build-windows.ps1`）。
 
 ### 2. 构建与启动
 ```bash

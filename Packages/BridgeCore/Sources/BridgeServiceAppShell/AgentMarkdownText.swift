@@ -1,6 +1,6 @@
+import BridgeServiceAppCore
 import Foundation
 import SwiftUI
-import BridgeServiceAppCore
 
 struct AgentMarkdownText: View {
   let content: String

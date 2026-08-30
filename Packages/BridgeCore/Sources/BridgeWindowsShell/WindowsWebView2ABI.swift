@@ -41,7 +41,7 @@
       && lhs.Data4.6 == rhs.Data4.6 && lhs.Data4.7 == rhs.Data4.7
   }
 
-  // HRESULT values: cast macros in objbase.h are not imported by WinSDK.
+  // HRESULT values: the cast-macro definitions are not imported by WinSDK.
   let webview2SOK: HRESULT = 0
   private let webview2EPointer = HRESULT(bitPattern: 0x8000_4003)
   private let webview2ENoInterface = HRESULT(bitPattern: 0x8000_400B)
@@ -58,33 +58,38 @@
   }
 
   /// `CreateCoreWebView2EnvironmentWithOptions` from WebView2Loader.dll.
-  typealias WebView2CreateEnvironmentFn = @convention(c) (
-    UnsafePointer<WCHAR>?,
-    UnsafePointer<WCHAR>?,
-    UnsafeMutableRawPointer?,
-    UnsafeMutableRawPointer?
-  ) -> HRESULT
+  typealias WebView2CreateEnvironmentFn =
+    @convention(c) (
+      UnsafePointer<WCHAR>?,
+      UnsafePointer<WCHAR>?,
+      UnsafeMutableRawPointer?,
+      UnsafeMutableRawPointer?
+    ) -> HRESULT
 
-  typealias WebView2CreateControllerFn = @convention(c) (
-    UnsafeMutableRawPointer?,
-    HWND,
-    UnsafeMutableRawPointer?
-  ) -> HRESULT
+  typealias WebView2CreateControllerFn =
+    @convention(c) (
+      UnsafeMutableRawPointer?,
+      HWND,
+      UnsafeMutableRawPointer?
+    ) -> HRESULT
 
-  typealias WebView2PutBoundsFn = @convention(c) (
-    UnsafeMutableRawPointer?,
-    RECT
-  ) -> HRESULT
+  typealias WebView2PutBoundsFn =
+    @convention(c) (
+      UnsafeMutableRawPointer?,
+      RECT
+    ) -> HRESULT
 
-  typealias WebView2GetCoreWebView2Fn = @convention(c) (
-    UnsafeMutableRawPointer?,
-    UnsafeMutablePointer<UnsafeMutableRawPointer?>?
-  ) -> HRESULT
+  typealias WebView2GetCoreWebView2Fn =
+    @convention(c) (
+      UnsafeMutableRawPointer?,
+      UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+    ) -> HRESULT
 
-  typealias WebView2NavigateFn = @convention(c) (
-    UnsafeMutableRawPointer?,
-    UnsafePointer<WCHAR>?
-  ) -> HRESULT
+  typealias WebView2NavigateFn =
+    @convention(c) (
+      UnsafeMutableRawPointer?,
+      UnsafePointer<WCHAR>?
+    ) -> HRESULT
 
   /// Loads a member function pointer of a COM interface by vtable slot.
   func webView2Method<F>(_ object: UnsafeMutableRawPointer, _ slot: Int, as type: F.Type) -> F {
@@ -92,9 +97,10 @@
     return vtable.load(fromByteOffset: slot * MemoryLayout<UnsafeRawPointer>.size, as: F.self)
   }
 
-  typealias WebView2UnknownFn = @convention(c) (
-    UnsafeMutableRawPointer?
-  ) -> UInt32
+  typealias WebView2UnknownFn =
+    @convention(c) (
+      UnsafeMutableRawPointer?
+    ) -> UInt32
 
   func webView2AddRef(_ object: UnsafeMutableRawPointer) {
     let addRef: WebView2UnknownFn = webView2Method(object, 1, as: WebView2UnknownFn.self)
@@ -130,15 +136,17 @@
   }
 
   private struct CompletionHandlerVTable {
-    var queryInterface: @convention(c) (
-      UnsafeMutableRawPointer?, UnsafePointer<GUID>?,
-      UnsafeMutablePointer<UnsafeMutableRawPointer?>?
-    ) -> HRESULT
+    var queryInterface:
+      @convention(c) (
+        UnsafeMutableRawPointer?, UnsafePointer<GUID>?,
+        UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+      ) -> HRESULT
     var addRef: @convention(c) (UnsafeMutableRawPointer?) -> UInt32
     var release: @convention(c) (UnsafeMutableRawPointer?) -> UInt32
-    var invoke: @convention(c) (
-      UnsafeMutableRawPointer?, HRESULT, UnsafeMutableRawPointer?
-    ) -> HRESULT
+    var invoke:
+      @convention(c) (
+        UnsafeMutableRawPointer?, HRESULT, UnsafeMutableRawPointer?
+      ) -> HRESULT
   }
 
   private let completionHandlerVTable: UnsafeMutablePointer<CompletionHandlerVTable> = {

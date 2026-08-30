@@ -2,6 +2,7 @@ import BridgeCodexRPC
 import BridgeIPC
 import BridgeLegacyImport
 import Foundation
+
 #if os(Windows)
   import ucrt
   import WinSDK
@@ -150,10 +151,11 @@ public enum ServiceProcessRunner {
       lock.unlock()
       // A C function pointer cannot capture context, so the handler reports
       // to the process-wide shared state.
-      _ = SetConsoleCtrlHandler({ (_, _) -> Bool in
-        TerminationState.shared.finish()
-        return true
-      }, true)
+      _ = SetConsoleCtrlHandler(
+        { (_, _) -> Bool in
+          TerminationState.shared.finish()
+          return true
+        }, true)
     }
 
     func finish() {

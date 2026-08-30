@@ -116,7 +116,6 @@ extension IPCAgentInstallationSummary {
   }
 }
 
-
 public enum WorkbenchApprovalResolutionKey {
   public static func task(_ approvalID: String) -> String {
     "codex:\(approvalID)"

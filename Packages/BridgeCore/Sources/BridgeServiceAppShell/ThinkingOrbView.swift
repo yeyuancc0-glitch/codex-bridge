@@ -1,5 +1,5 @@
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 /// 原生 SwiftUI 动态思考光球组件，参考 `thinking-orbs` 视觉风格。
 /// 基于 `TimelineView(.animation)` 与 `Canvas` 硬件加速绘制多层呼吸光核与轨道粒子。

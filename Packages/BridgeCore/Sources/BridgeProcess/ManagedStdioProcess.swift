@@ -44,100 +44,100 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     onStandardError: @escaping OutputHandler = { _ in }
   ) throws {
     #if os(Windows)
-    guard let executable = argv.first,
-      !executable.isEmpty,
-      argv.count <= 128,
-      argv.allSatisfy({ !$0.contains("\0") }),
-      environment.allSatisfy({ !$0.key.contains("\0") && !$0.value.contains("\0") }),
-      workingDirectory.map({ !$0.isEmpty && !$0.contains("\0") }) ?? true
-    else {
-      throw ManagedProcessError.invalidArgument
-    }
+      guard let executable = argv.first,
+        !executable.isEmpty,
+        argv.count <= 128,
+        argv.allSatisfy({ !$0.contains("\0") }),
+        environment.allSatisfy({ !$0.key.contains("\0") && !$0.value.contains("\0") }),
+        workingDirectory.map({ !$0.isEmpty && !$0.contains("\0") }) ?? true
+      else {
+        throw ManagedProcessError.invalidArgument
+      }
 
-    standardOutputSink = onStandardOutput
-    standardErrorSink = onStandardError
+      standardOutputSink = onStandardOutput
+      standardErrorSink = onStandardError
 
-    let inputPipe = Pipe()
-    let outputPipe = Pipe()
-    let errorPipe = mergeStandardError ? nil : Pipe()
-    let launched: Foundation.Process
-    do {
-      launched = try Self.spawnWindows(
-        argv: argv,
-        workingDirectory: workingDirectory,
-        environment: environment,
-        standardInput: inputPipe,
-        standardOutput: outputPipe,
-        standardError: errorPipe
-      )
-    } catch {
+      let inputPipe = Pipe()
+      let outputPipe = Pipe()
+      let errorPipe = mergeStandardError ? nil : Pipe()
+      let launched: Foundation.Process
+      do {
+        launched = try Self.spawnWindows(
+          argv: argv,
+          workingDirectory: workingDirectory,
+          environment: environment,
+          standardInput: inputPipe,
+          standardOutput: outputPipe,
+          standardError: errorPipe
+        )
+      } catch {
+        inputPipe.fileHandleForReading.closeFile()
+        inputPipe.fileHandleForWriting.closeFile()
+        outputPipe.fileHandleForReading.closeFile()
+        outputPipe.fileHandleForWriting.closeFile()
+        errorPipe?.fileHandleForReading.closeFile()
+        errorPipe?.fileHandleForWriting.closeFile()
+        throw error
+      }
+
       inputPipe.fileHandleForReading.closeFile()
-      inputPipe.fileHandleForWriting.closeFile()
-      outputPipe.fileHandleForReading.closeFile()
       outputPipe.fileHandleForWriting.closeFile()
-      errorPipe?.fileHandleForReading.closeFile()
       errorPipe?.fileHandleForWriting.closeFile()
-      throw error
-    }
 
-    inputPipe.fileHandleForReading.closeFile()
-    outputPipe.fileHandleForWriting.closeFile()
-    errorPipe?.fileHandleForWriting.closeFile()
-
-    pid = Int32(launched.processIdentifier)
-    windowsProcess = launched
-    standardInputHandle = inputPipe.fileHandleForWriting
-    standardOutputHandle = outputPipe.fileHandleForReading
-    standardErrorHandle = errorPipe?.fileHandleForReading
-    identityStorage = Self.identity(of: pid)
+      pid = Int32(launched.processIdentifier)
+      windowsProcess = launched
+      standardInputHandle = inputPipe.fileHandleForWriting
+      standardOutputHandle = outputPipe.fileHandleForReading
+      standardErrorHandle = errorPipe?.fileHandleForReading
+      identityStorage = Self.identity(of: pid)
     #else
-    guard let executable = argv.first,
-      executable.hasPrefix("/"),
-      argv.count <= 128,
-      argv.allSatisfy({ !$0.contains("\0") }),
-      environment.allSatisfy({ !$0.key.contains("\0") && !$0.value.contains("\0") }),
-      workingDirectory.map({ !$0.isEmpty && !$0.contains("\0") }) ?? true
-    else {
-      throw ManagedProcessError.invalidArgument
-    }
+      guard let executable = argv.first,
+        executable.hasPrefix("/"),
+        argv.count <= 128,
+        argv.allSatisfy({ !$0.contains("\0") }),
+        environment.allSatisfy({ !$0.key.contains("\0") && !$0.value.contains("\0") }),
+        workingDirectory.map({ !$0.isEmpty && !$0.contains("\0") }) ?? true
+      else {
+        throw ManagedProcessError.invalidArgument
+      }
 
-    standardOutputSink = onStandardOutput
-    standardErrorSink = onStandardError
+      standardOutputSink = onStandardOutput
+      standardErrorSink = onStandardError
 
-    let inputPipe = Pipe()
-    let outputPipe = Pipe()
-    let errorPipe = mergeStandardError ? nil : Pipe()
-    let processID: pid_t
-    do {
-      processID = try Self.spawn(
-        argv: argv,
-        workingDirectory: workingDirectory,
-        environment: environment,
-        standardInput: inputPipe.fileHandleForReading.fileDescriptor,
-        standardOutput: outputPipe.fileHandleForWriting.fileDescriptor,
-        standardError: mergeStandardError
-          ? outputPipe.fileHandleForWriting.fileDescriptor
-          : errorPipe!.fileHandleForWriting.fileDescriptor
-      )
-    } catch {
+      let inputPipe = Pipe()
+      let outputPipe = Pipe()
+      let errorPipe = mergeStandardError ? nil : Pipe()
+      let processID: pid_t
+      do {
+        processID = try Self.spawn(
+          argv: argv,
+          workingDirectory: workingDirectory,
+          environment: environment,
+          standardInput: inputPipe.fileHandleForReading.fileDescriptor,
+          standardOutput: outputPipe.fileHandleForWriting.fileDescriptor,
+          standardError: mergeStandardError
+            ? outputPipe.fileHandleForWriting.fileDescriptor
+            : errorPipe!.fileHandleForWriting.fileDescriptor
+        )
+      } catch {
+        inputPipe.fileHandleForReading.closeFile()
+        inputPipe.fileHandleForWriting.closeFile()
+        outputPipe.fileHandleForReading.closeFile()
+        outputPipe.fileHandleForWriting.closeFile()
+        errorPipe?.fileHandleForReading.closeFile()
+        errorPipe?.fileHandleForWriting.closeFile()
+        throw error
+      }
+
       inputPipe.fileHandleForReading.closeFile()
-      inputPipe.fileHandleForWriting.closeFile()
-      outputPipe.fileHandleForReading.closeFile()
       outputPipe.fileHandleForWriting.closeFile()
-      errorPipe?.fileHandleForReading.closeFile()
       errorPipe?.fileHandleForWriting.closeFile()
-      throw error
-    }
 
-    inputPipe.fileHandleForReading.closeFile()
-    outputPipe.fileHandleForWriting.closeFile()
-    errorPipe?.fileHandleForWriting.closeFile()
-
-    pid = processID
-    standardInputHandle = inputPipe.fileHandleForWriting
-    standardOutputHandle = outputPipe.fileHandleForReading
-    standardErrorHandle = errorPipe?.fileHandleForReading
-    identityStorage = Self.identity(of: processID)
+      pid = processID
+      standardInputHandle = inputPipe.fileHandleForWriting
+      standardOutputHandle = outputPipe.fileHandleForReading
+      standardErrorHandle = errorPipe?.fileHandleForReading
+      identityStorage = Self.identity(of: processID)
     #endif
 
     standardOutputHandle.readabilityHandler = { [weak self] handle in
@@ -166,90 +166,87 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     defer { inputLock.unlock() }
     guard !inputClosed else { throw ManagedProcessError.stdinUnavailable }
     #if os(Windows)
-    let descriptor = standardInputHandle.fileDescriptor
-    guard let handle = OpaquePointer(bitPattern: Int(_get_osfhandle(descriptor))),
-      handle != INVALID_HANDLE_VALUE
-    else {
-      throw ManagedProcessError.stdinUnavailable
-    }
-    // Anonymous pipes do not support overlapped writes; PIPE_NOWAIT emulates
-    // EAGAIN so this loop can poll until the deadline expires.
-    var nonBlocking = DWORD(PIPE_READMODE_BYTE | PIPE_NOWAIT)
-    var blocking = DWORD(PIPE_READMODE_BYTE | PIPE_WAIT)
-    guard SetNamedPipeHandleState(handle, &nonBlocking, nil, nil) != 0 else {
-      throw ManagedProcessError.stdinUnavailable
-    }
-    defer { SetNamedPipeHandleState(handle, &blocking, nil, nil) }
-
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    do {
-      try data.withUnsafeBytes { buffer in
-        guard let baseAddress = buffer.baseAddress else { return }
-        var offset = 0
-        while offset < buffer.count {
-          var written: DWORD = 0
-          let succeeded = WriteFile(
-            handle,
-            baseAddress.advanced(by: offset),
-            DWORD(buffer.count - offset),
-            &written,
-            nil
-          )
-          if succeeded != 0, written > 0 {
-            offset += Int(written)
-            continue
-          }
-          if succeeded != 0 { throw ManagedProcessError.stdinUnavailable }
-          let error = GetLastError()
-          if error == ERROR_BROKEN_PIPE { throw ManagedProcessError.stdinUnavailable }
-          guard error == ERROR_NO_DATA, ContinuousClock.now < deadline else {
-            throw ManagedProcessError.stdinUnavailable
-          }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
+      // Anonymous pipes do not support overlapped writes; PIPE_NOWAIT emulates
+      // EAGAIN so this loop can poll until the deadline expires.
+      guard let handle = windowsStdioHandle(standardInputHandle) else {
+        throw ManagedProcessError.stdinUnavailable
       }
-    } catch let error as ManagedProcessError {
-      throw error
-    } catch {
-      throw ManagedProcessError.stdinUnavailable
-    }
+      var nonBlocking = DWORD(PIPE_READMODE_BYTE | PIPE_NOWAIT)
+      var blocking = DWORD(PIPE_READMODE_BYTE | PIPE_WAIT)
+      guard SetNamedPipeHandleState(handle, &nonBlocking, nil, nil) else {
+        throw ManagedProcessError.stdinUnavailable
+      }
+      defer { SetNamedPipeHandleState(handle, &blocking, nil, nil) }
+
+      let deadline = ContinuousClock.now.advanced(by: timeout)
+      do {
+        try data.withUnsafeBytes { buffer in
+          guard let baseAddress = buffer.baseAddress else { return }
+          var offset = 0
+          while offset < buffer.count {
+            var written: DWORD = 0
+            let succeeded = WriteFile(
+              handle,
+              baseAddress.advanced(by: offset),
+              DWORD(buffer.count - offset),
+              &written,
+              nil
+            )
+            if succeeded, written > 0 {
+              offset += Int(written)
+              continue
+            }
+            if succeeded { throw ManagedProcessError.stdinUnavailable }
+            let error = GetLastError()
+            if error == ERROR_BROKEN_PIPE { throw ManagedProcessError.stdinUnavailable }
+            guard error == ERROR_NO_DATA, ContinuousClock.now < deadline else {
+              throw ManagedProcessError.stdinUnavailable
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+          }
+        }
+      } catch let error as ManagedProcessError {
+        throw error
+      } catch {
+        throw ManagedProcessError.stdinUnavailable
+      }
     #else
-    let descriptor = standardInputHandle.fileDescriptor
-    let previousFlags = fcntl(descriptor, F_GETFL)
-    guard previousFlags >= 0,
-      fcntl(descriptor, F_SETFL, previousFlags | O_NONBLOCK) == 0
-    else {
-      throw ManagedProcessError.stdinUnavailable
-    }
-    defer { _ = fcntl(descriptor, F_SETFL, previousFlags) }
-
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    do {
-      try data.withUnsafeBytes { buffer in
-        guard let baseAddress = buffer.baseAddress else { return }
-        var offset = 0
-        while offset < buffer.count {
-          let written = systemWrite(
-            descriptor,
-            baseAddress.advanced(by: offset),
-            buffer.count - offset
-          )
-          if written > 0 {
-            offset += written
-            continue
-          }
-          if written == -1, errno == EINTR { continue }
-          guard written == -1, errno == EAGAIN || errno == EWOULDBLOCK,
-            ContinuousClock.now < deadline
-          else {
-            throw ManagedProcessError.stdinUnavailable
-          }
-          Thread.sleep(forTimeInterval: 0.01)
-        }
+      let descriptor = standardInputHandle.fileDescriptor
+      let previousFlags = fcntl(descriptor, F_GETFL)
+      guard previousFlags >= 0,
+        fcntl(descriptor, F_SETFL, previousFlags | O_NONBLOCK) == 0
+      else {
+        throw ManagedProcessError.stdinUnavailable
       }
-    } catch {
-      throw ManagedProcessError.stdinUnavailable
-    }
+      defer { _ = fcntl(descriptor, F_SETFL, previousFlags) }
+
+      let deadline = ContinuousClock.now.advanced(by: timeout)
+      do {
+        try data.withUnsafeBytes { buffer in
+          guard let baseAddress = buffer.baseAddress else { return }
+          var offset = 0
+          while offset < buffer.count {
+            let written = systemWrite(
+              descriptor,
+              baseAddress.advanced(by: offset),
+              buffer.count - offset
+            )
+            if written > 0 {
+              offset += written
+              continue
+            }
+            if written == -1, errno == EINTR { continue }
+            guard written == -1, errno == EAGAIN || errno == EWOULDBLOCK,
+              ContinuousClock.now < deadline
+            else {
+              throw ManagedProcessError.stdinUnavailable
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+          }
+        }
+      } catch {
+        throw ManagedProcessError.stdinUnavailable
+      }
     #endif
   }
 
@@ -267,7 +264,7 @@ public final class ManagedStdioProcess: @unchecked Sendable {
       // Windows has no process groups; terminate the process itself.
       Self.terminateProcessByID(pid)
     #else
-    _ = systemKill(-pid, SIGTERM)
+      _ = systemKill(-pid, SIGTERM)
     #endif
   }
 
@@ -277,7 +274,7 @@ public final class ManagedStdioProcess: @unchecked Sendable {
       // Windows cannot deliver SIGINT without a shared console; force termination.
       Self.terminateProcessByID(pid)
     #else
-    _ = systemKill(-pid, SIGINT)
+      _ = systemKill(-pid, SIGINT)
     #endif
   }
 
@@ -285,7 +282,7 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     #if os(Windows)
       if isRunning { Self.terminateProcessByID(pid) }
     #else
-    if isRunning { _ = systemKill(-pid, SIGKILL) }
+      if isRunning { _ = systemKill(-pid, SIGKILL) }
     #endif
   }
 
@@ -386,35 +383,41 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   private func reapIfExitedLocked() -> ManagedProcessTermination? {
     if let terminationStorage { return terminationStorage }
     #if os(Windows)
-    guard let process = windowsProcess else { return nil }
-    guard !process.isRunning else { return nil }
-    let termination = ManagedProcessTermination.exited(Int32(process.terminationStatus))
-    terminationStorage = termination
-    return termination
+      guard let process = windowsProcess else { return nil }
+      guard !process.isRunning else { return nil }
+      let termination = ManagedProcessTermination.exited(Int32(process.terminationStatus))
+      terminationStorage = termination
+      return termination
     #else
-    var status: Int32 = 0
-    let result = systemWaitPID(pid, &status, WNOHANG)
-    guard result == pid else { return nil }
-    let signal = status & 0x7F
-    let termination: ManagedProcessTermination =
-      signal == 0 ? .exited((status >> 8) & 0xFF) : .killed(signal)
-    terminationStorage = termination
-    return termination
+      var status: Int32 = 0
+      let result = systemWaitPID(pid, &status, WNOHANG)
+      guard result == pid else { return nil }
+      let signal = status & 0x7F
+      let termination: ManagedProcessTermination =
+        signal == 0 ? .exited((status >> 8) & 0xFF) : .killed(signal)
+      terminationStorage = termination
+      return termination
     #endif
   }
 }
 
 #if os(Windows)
   extension ManagedStdioProcess {
+    /// Bridges a ucrt descriptor to its WinSDK handle; nil when the descriptor
+    /// does not wrap a kernel handle.
+    fileprivate static func windowsStdioHandle(_ fileHandle: FileHandle) -> HANDLE? {
+      let raw = _get_osfhandle(fileHandle.fileDescriptor)
+      guard raw >= 0, let value = UInt(exactly: raw) else { return nil }
+      return HANDLE(Value: value)
+    }
+
     fileprivate static func terminateProcessByID(_ processID: Int32) -> Bool {
-      guard let handle = OpenProcess(
+      let handle = OpenProcess(
         DWORD(PROCESS_TERMINATE),
         false,
         DWORD(UInt32(bitPattern: processID))
-      ) else {
-        return false
-      }
-      defer { CloseHandle(handle) }
+      )
+      defer { _ = CloseHandle(handle) }
       return TerminateProcess(handle, 1)
     }
   }

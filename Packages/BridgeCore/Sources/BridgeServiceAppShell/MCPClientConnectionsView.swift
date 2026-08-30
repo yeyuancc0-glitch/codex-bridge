@@ -1,7 +1,7 @@
 import BridgeIPC
 import BridgeMCP
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 struct MCPClientConnectionsView: View {
   private enum Confirmation: String, Identifiable {

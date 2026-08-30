@@ -1,6 +1,7 @@
 import BridgeSecurity
 import BridgeTunnel
 import Foundation
+
 #if canImport(Darwin)
   import Darwin
 #endif
@@ -60,7 +61,8 @@ public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {
 
   private static func readDigest(from url: URL) throws -> String {
     let bytes = try readDigestBytes(from: url)
-    guard let value = String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(
+    guard
+      let value = String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(
         in: .whitespacesAndNewlines
       ),
       value.utf8.count == 64,

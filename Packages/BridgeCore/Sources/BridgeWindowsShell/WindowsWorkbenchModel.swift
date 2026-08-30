@@ -98,7 +98,7 @@
       do {
         tasks = try await client.tasks(IPCTaskListRequest())
         errorMessage = nil
-        if connectionState != .unavailable { connectionState = .connected }
+        connectionState = .connected
         publishDisplay()
       } catch {
         fail(BridgeServiceErrorMessage.message(error))

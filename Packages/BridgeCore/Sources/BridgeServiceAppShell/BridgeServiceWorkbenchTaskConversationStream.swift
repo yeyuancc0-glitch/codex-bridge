@@ -1,5 +1,5 @@
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 struct BridgeServiceWorkbenchTaskConversationStream: View {
   @ObservedObject var conversation: TaskConversationModel

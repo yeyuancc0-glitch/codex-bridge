@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 public struct SectionHeader: View {
   public let title: String

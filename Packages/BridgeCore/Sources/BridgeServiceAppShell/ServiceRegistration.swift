@@ -1,7 +1,7 @@
+import BridgeServiceAppCore
 import Darwin
 import Foundation
 import ServiceManagement
-import BridgeServiceAppCore
 
 public enum BridgeServiceRegistrationError: Error, LocalizedError, Sendable {
   case executableNotFound

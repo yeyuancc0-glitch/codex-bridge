@@ -207,185 +207,185 @@
   }
 #endif
 #if os(Windows)
-extension WindowsSecureFile {
-  /// Reads a file through the validated traversal and returns its bytes and
-  /// identity, mirroring the POSIX fd-validated read path.
-  static func readValidated(
-    root: RegisteredRoot,
-    components: [String],
-    expectedIdentity: FileSystemIdentity?,
-    maximumBytes: Int
-  ) throws -> (Data, Identity) {
-    try validateRootIdentity(root: root)
-    let (handle, metadata) = try openResolving(
-      rootPath: root.canonicalPath,
-      components: components,
-      desiredAccess: DWORD(GENERIC_READ),
-      creationDisposition: DWORD(OPEN_EXISTING),
-      finalIsDirectory: false
-    )
-    defer { close(handle) }
-    if let expectedIdentity, metadata.identity != expectedIdentity {
-      throw PathSecurityError.fileIdentityChanged
-    }
-    guard metadata.size <= maximumBytes else {
-      throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
-    }
-    return (try readFile(handle, maximumBytes: maximumBytes), metadata.identity)
-  }
-
-  /// Creates a file exclusively and writes content durably (CREATE_NEW).
-  static func createExclusive(
-    root: RegisteredRoot,
-    components: [String],
-    content: Data
-  ) throws {
-    try validateRootIdentity(root: root)
-    let (handle, _) = try openResolving(
-      rootPath: root.canonicalPath,
-      components: components,
-      desiredAccess: DWORD(GENERIC_WRITE),
-      creationDisposition: DWORD(CREATE_NEW),
-      finalIsDirectory: false
-    )
-    defer { close(handle) }
-    try writeFile(handle, data: content)
-  }
-
-  /// Stages content next to the target and atomically renames over it.
-  static func replaceFile(
-    root: RegisteredRoot,
-    components: [String],
-    content: Data,
-    expectedSHA256: String?
-  ) throws -> SecureFileRevision {
-    try validateRootIdentity(root: root)
-    let parentComponents = Array(components.dropLast())
-    let name = components.last!
-    let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
-    let parentPath = ([root.canonicalPath] + parentComponents).joined(separator: "\\")
-
-    let (existing, _) = try readValidated(
-      root: root,
-      components: components,
-      expectedIdentity: nil,
-      maximumBytes: 1 << 30
-    )
-    let oldRevision = SecureFileRevision.digest(of: existing)
-    if let expectedSHA256, expectedSHA256 != oldRevision.sha256 {
-      throw PathSecurityError.revisionConflict
-    }
-
-    let staging = ".codexbridge.staging.\(UUID().uuidString.lowercased())"
-    let stagingPath = parentPath + "\\" + staging
-    try createExclusive(
-      root: root,
-      components: parentComponents + [staging],
-      content: content
-    )
-    let replaced = stagingPath.withCString(encodedAs: UTF16.self) { stagingWide in
-      targetPath.withCString(encodedAs: UTF16.self) { targetWide in
-        MoveFileExW(stagingWide, targetWide, DWORD(MOVEFILE_REPLACE_EXISTING))
+  extension WindowsSecureFile {
+    /// Reads a file through the validated traversal and returns its bytes and
+    /// identity, mirroring the POSIX fd-validated read path.
+    static func readValidated(
+      root: RegisteredRoot,
+      components: [String],
+      expectedIdentity: FileSystemIdentity?,
+      maximumBytes: Int
+    ) throws -> (Data, Identity) {
+      try validateRootIdentity(root: root)
+      let (handle, metadata) = try openResolving(
+        rootPath: root.canonicalPath,
+        components: components,
+        desiredAccess: DWORD(GENERIC_READ),
+        creationDisposition: DWORD(OPEN_EXISTING),
+        finalIsDirectory: false
+      )
+      defer { close(handle) }
+      if let expectedIdentity, metadata.identity != expectedIdentity {
+        throw PathSecurityError.fileIdentityChanged
       }
+      guard metadata.size <= maximumBytes else {
+        throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
+      }
+      return (try readFile(handle, maximumBytes: maximumBytes), metadata.identity)
     }
-    guard replaced else {
-      _ = stagingPath.withCString(encodedAs: UTF16.self) { wide in
+
+    /// Creates a file exclusively and writes content durably (CREATE_NEW).
+    static func createExclusive(
+      root: RegisteredRoot,
+      components: [String],
+      content: Data
+    ) throws {
+      try validateRootIdentity(root: root)
+      let (handle, _) = try openResolving(
+        rootPath: root.canonicalPath,
+        components: components,
+        desiredAccess: DWORD(GENERIC_WRITE),
+        creationDisposition: DWORD(CREATE_NEW),
+        finalIsDirectory: false
+      )
+      defer { close(handle) }
+      try writeFile(handle, data: content)
+    }
+
+    /// Stages content next to the target and atomically renames over it.
+    static func replaceFile(
+      root: RegisteredRoot,
+      components: [String],
+      content: Data,
+      expectedSHA256: String?
+    ) throws -> SecureFileRevision {
+      try validateRootIdentity(root: root)
+      let parentComponents = Array(components.dropLast())
+      let name = components.last!
+      let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
+      let parentPath = ([root.canonicalPath] + parentComponents).joined(separator: "\\")
+
+      let (existing, _) = try readValidated(
+        root: root,
+        components: components,
+        expectedIdentity: nil,
+        maximumBytes: 1 << 30
+      )
+      let oldRevision = SecureFileRevision.digest(of: existing)
+      if let expectedSHA256, expectedSHA256 != oldRevision.sha256 {
+        throw PathSecurityError.revisionConflict
+      }
+
+      let staging = ".codexbridge.staging.\(UUID().uuidString.lowercased())"
+      let stagingPath = parentPath + "\\" + staging
+      try createExclusive(
+        root: root,
+        components: parentComponents + [staging],
+        content: content
+      )
+      let replaced = stagingPath.withCString(encodedAs: UTF16.self) { stagingWide in
+        targetPath.withCString(encodedAs: UTF16.self) { targetWide in
+          MoveFileExW(stagingWide, targetWide, DWORD(MOVEFILE_REPLACE_EXISTING))
+        }
+      }
+      guard replaced else {
+        _ = stagingPath.withCString(encodedAs: UTF16.self) { wide in
+          DeleteFileW(wide)
+        }
+        throw PathSecurityError.writeFailed(Int32(GetLastError()))
+      }
+      return oldRevision
+    }
+
+    static func deleteFileValidated(root: RegisteredRoot, components: [String]) throws {
+      try validateRootIdentity(root: root)
+      try validateComponents(rootPath: root.canonicalPath, components: components)
+      let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
+      let deleted = targetPath.withCString(encodedAs: UTF16.self) { wide in
         DeleteFileW(wide)
       }
-      throw PathSecurityError.writeFailed(Int32(GetLastError()))
-    }
-    return oldRevision
-  }
-
-  static func deleteFileValidated(root: RegisteredRoot, components: [String]) throws {
-    try validateRootIdentity(root: root)
-    try validateComponents(rootPath: root.canonicalPath, components: components)
-    let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
-    let deleted = targetPath.withCString(encodedAs: UTF16.self) { wide in
-      DeleteFileW(wide)
-    }
-    guard deleted else {
-      throw PathSecurityError.writeFailed(Int32(GetLastError()))
-    }
-  }
-
-  static func moveFileValidated(
-    root: RegisteredRoot,
-    sourceComponents: [String],
-    destinationComponents: [String],
-    expectDestinationAbsent: Bool
-  ) throws {
-    try validateRootIdentity(root: root)
-    try validateComponents(rootPath: root.canonicalPath, components: sourceComponents)
-    try validateComponents(rootPath: root.canonicalPath, components: destinationComponents)
-    let destinationPath = ([root.canonicalPath] + destinationComponents).joined(separator: "\\")
-    if expectDestinationAbsent {
-      let attributes = destinationPath.withCString(encodedAs: UTF16.self) { wide in
-        GetFileAttributesW(wide)
-      }
-      guard attributes == INVALID_FILE_ATTRIBUTES else {
-        throw PathSecurityError.targetAlreadyExists
+      guard deleted else {
+        throw PathSecurityError.writeFailed(Int32(GetLastError()))
       }
     }
-    let sourcePath = ([root.canonicalPath] + sourceComponents).joined(separator: "\\")
-    let moved = sourcePath.withCString(encodedAs: UTF16.self) { sourceWide in
-      destinationPath.withCString(encodedAs: UTF16.self) { destinationWide in
-        MoveFileExW(sourceWide, destinationWide, DWORD(MOVEFILE_REPLACE_EXISTING))
-      }
-    }
-    guard moved else {
-      throw PathSecurityError.writeFailed(Int32(GetLastError()))
-    }
-  }
 
-  static func createDirectoryValidated(root: RegisteredRoot, components: [String]) throws {
-    try validateRootIdentity(root: root)
-    try validateComponents(rootPath: root.canonicalPath, components: Array(components.dropLast()))
-    let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
-    let created = targetPath.withCString(encodedAs: UTF16.self) { wide in
-      CreateDirectoryW(wide, nil)
-    }
-    guard created else {
-      throw PathSecurityError.writeFailed(Int32(GetLastError()))
-    }
-  }
-
-  static func deleteEmptyDirectoryValidated(
-    root: RegisteredRoot,
-    components: [String]
-  ) throws {
-    try validateRootIdentity(root: root)
-    try validateComponents(rootPath: root.canonicalPath, components: components)
-    let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
-    guard directoryIsEmpty(targetPath) else {
-      throw PathSecurityError.writeFailed(Int32(ERROR_DIR_NOT_EMPTY))
-    }
-    let removed = targetPath.withCString(encodedAs: UTF16.self) { wide in
-      RemoveDirectoryW(wide)
-    }
-    guard removed else {
-      throw PathSecurityError.writeFailed(Int32(GetLastError()))
-    }
-  }
-
-  static func directoryIsEmpty(_ path: String) -> Bool {
-    let pattern = path + "\\*"
-    return pattern.withCString(encodedAs: UTF16.self) { wide -> Bool in
-      var findData = WIN32_FIND_DATAW()
-      let handle = FindFirstFileW(wide, &findData)
-      guard handle != INVALID_HANDLE_VALUE else { return false }
-      defer { _ = FindClose(handle) }
-      repeat {
-        var fileName = findData.cFileName
-        let name = withUnsafeBytes(of: &fileName) { raw -> String in
-          let units = raw.bindMemory(to: UInt16.self)
-          let count = units.firstIndex(of: 0) ?? units.count
-          return String(decoding: units.prefix(count), as: UTF16.self)
+    static func moveFileValidated(
+      root: RegisteredRoot,
+      sourceComponents: [String],
+      destinationComponents: [String],
+      expectDestinationAbsent: Bool
+    ) throws {
+      try validateRootIdentity(root: root)
+      try validateComponents(rootPath: root.canonicalPath, components: sourceComponents)
+      try validateComponents(rootPath: root.canonicalPath, components: destinationComponents)
+      let destinationPath = ([root.canonicalPath] + destinationComponents).joined(separator: "\\")
+      if expectDestinationAbsent {
+        let attributes = destinationPath.withCString(encodedAs: UTF16.self) { wide in
+          GetFileAttributesW(wide)
         }
-        if name != "." && name != ".." { return false }
-      } while FindNextFileW(handle, &findData)
-      return true
+        guard attributes == INVALID_FILE_ATTRIBUTES else {
+          throw PathSecurityError.targetAlreadyExists
+        }
+      }
+      let sourcePath = ([root.canonicalPath] + sourceComponents).joined(separator: "\\")
+      let moved = sourcePath.withCString(encodedAs: UTF16.self) { sourceWide in
+        destinationPath.withCString(encodedAs: UTF16.self) { destinationWide in
+          MoveFileExW(sourceWide, destinationWide, DWORD(MOVEFILE_REPLACE_EXISTING))
+        }
+      }
+      guard moved else {
+        throw PathSecurityError.writeFailed(Int32(GetLastError()))
+      }
+    }
+
+    static func createDirectoryValidated(root: RegisteredRoot, components: [String]) throws {
+      try validateRootIdentity(root: root)
+      try validateComponents(rootPath: root.canonicalPath, components: Array(components.dropLast()))
+      let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
+      let created = targetPath.withCString(encodedAs: UTF16.self) { wide in
+        CreateDirectoryW(wide, nil)
+      }
+      guard created else {
+        throw PathSecurityError.writeFailed(Int32(GetLastError()))
+      }
+    }
+
+    static func deleteEmptyDirectoryValidated(
+      root: RegisteredRoot,
+      components: [String]
+    ) throws {
+      try validateRootIdentity(root: root)
+      try validateComponents(rootPath: root.canonicalPath, components: components)
+      let targetPath = ([root.canonicalPath] + components).joined(separator: "\\")
+      guard directoryIsEmpty(targetPath) else {
+        throw PathSecurityError.writeFailed(Int32(ERROR_DIR_NOT_EMPTY))
+      }
+      let removed = targetPath.withCString(encodedAs: UTF16.self) { wide in
+        RemoveDirectoryW(wide)
+      }
+      guard removed else {
+        throw PathSecurityError.writeFailed(Int32(GetLastError()))
+      }
+    }
+
+    static func directoryIsEmpty(_ path: String) -> Bool {
+      let pattern = path + "\\*"
+      return pattern.withCString(encodedAs: UTF16.self) { wide -> Bool in
+        var findData = WIN32_FIND_DATAW()
+        let handle = FindFirstFileW(wide, &findData)
+        guard handle != INVALID_HANDLE_VALUE else { return false }
+        defer { _ = FindClose(handle) }
+        repeat {
+          var fileName = findData.cFileName
+          let name = withUnsafeBytes(of: &fileName) { raw -> String in
+            let units = raw.bindMemory(to: UInt16.self)
+            let count = units.firstIndex(of: 0) ?? units.count
+            return String(decoding: units.prefix(count), as: UTF16.self)
+          }
+          if name != "." && name != ".." { return false }
+        } while FindNextFileW(handle, &findData)
+        return true
+      }
     }
   }
-}
 #endif

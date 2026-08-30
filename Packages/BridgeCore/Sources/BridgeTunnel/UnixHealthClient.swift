@@ -1,7 +1,8 @@
+import Foundation
+
 #if canImport(Darwin)
   import Darwin
 #endif
-import Foundation
 
 struct TunnelHealthSnapshot: Equatable, Sendable {
   let isReady: Bool
@@ -78,90 +79,90 @@ struct LoopbackHealthClient: Sendable {
       throw TunnelHealthError.unavailable
     }
   #else
-  private func request(path: String, baseURL: URL) throws -> HTTPResponse {
-    guard let port = baseURL.port else { throw TunnelHealthError.invalidURLFile }
-    let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-    guard descriptor >= 0 else {
-      throw TunnelHealthError.unavailable
-    }
-    defer { Darwin.close(descriptor) }
-    try setTimeout(descriptor)
-    try connect(descriptor, port: port)
-    let request = Data(
-      "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nConnection: close\r\n\r\n".utf8
-    )
-    try write(request, to: descriptor)
-    return try readResponse(from: descriptor)
-  }
-
-  private func setTimeout(_ descriptor: Int32) throws {
-    var timeout = timeval(tv_sec: 2, tv_usec: 0)
-    let size = socklen_t(MemoryLayout<timeval>.size)
-    guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
-      setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0
-    else {
-      throw TunnelHealthError.unavailable
-    }
-  }
-
-  private func connect(_ descriptor: Int32, port: Int) throws {
-    var address = sockaddr_in()
-    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-    address.sin_family = sa_family_t(AF_INET)
-    address.sin_port = in_port_t(UInt16(port).bigEndian)
-    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-    let status = withUnsafePointer(to: &address) { pointer in
-      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-        Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-      }
-    }
-    guard status == 0 else {
-      throw TunnelHealthError.unavailable
-    }
-  }
-
-  private func write(_ data: Data, to descriptor: Int32) throws {
-    try data.withUnsafeBytes { bytes in
-      guard let baseAddress = bytes.baseAddress else { return }
-      var offset = 0
-      while offset < bytes.count {
-        let count = Darwin.send(
-          descriptor,
-          baseAddress.advanced(by: offset),
-          bytes.count - offset,
-          MSG_NOSIGNAL
-        )
-        guard count > 0 else {
-          throw TunnelHealthError.unavailable
-        }
-        offset += count
-      }
-    }
-  }
-
-  private func readResponse(from descriptor: Int32) throws -> HTTPResponse {
-    var response = Data()
-    var chunk = [UInt8](repeating: 0, count: 16_384)
-    while response.count <= maximumResponseBytes {
-      let count = Darwin.recv(descriptor, &chunk, chunk.count, 0)
-      if count == 0 { break }
-      guard count > 0 else {
-        if errno == EAGAIN || errno == EWOULDBLOCK {
-          break
-        }
+    private func request(path: String, baseURL: URL) throws -> HTTPResponse {
+      guard let port = baseURL.port else { throw TunnelHealthError.invalidURLFile }
+      let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+      guard descriptor >= 0 else {
         throw TunnelHealthError.unavailable
       }
-      response.append(chunk, count: count)
+      defer { Darwin.close(descriptor) }
+      try setTimeout(descriptor)
+      try connect(descriptor, port: port)
+      let request = Data(
+        "GET \(path) HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nConnection: close\r\n\r\n".utf8
+      )
+      try write(request, to: descriptor)
+      return try readResponse(from: descriptor)
     }
-    guard response.count <= maximumResponseBytes else {
-      throw TunnelHealthError.responseTooLarge
-    }
-    guard !response.isEmpty else {
-      throw TunnelHealthError.invalidResponse
-    }
-    return try HTTPResponse(data: response)
-  }  #endif
 
+    private func setTimeout(_ descriptor: Int32) throws {
+      var timeout = timeval(tv_sec: 2, tv_usec: 0)
+      let size = socklen_t(MemoryLayout<timeval>.size)
+      guard setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, size) == 0,
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, size) == 0
+      else {
+        throw TunnelHealthError.unavailable
+      }
+    }
+
+    private func connect(_ descriptor: Int32, port: Int) throws {
+      var address = sockaddr_in()
+      address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+      address.sin_family = sa_family_t(AF_INET)
+      address.sin_port = in_port_t(UInt16(port).bigEndian)
+      address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+      let status = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+          Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+      }
+      guard status == 0 else {
+        throw TunnelHealthError.unavailable
+      }
+    }
+
+    private func write(_ data: Data, to descriptor: Int32) throws {
+      try data.withUnsafeBytes { bytes in
+        guard let baseAddress = bytes.baseAddress else { return }
+        var offset = 0
+        while offset < bytes.count {
+          let count = Darwin.send(
+            descriptor,
+            baseAddress.advanced(by: offset),
+            bytes.count - offset,
+            MSG_NOSIGNAL
+          )
+          guard count > 0 else {
+            throw TunnelHealthError.unavailable
+          }
+          offset += count
+        }
+      }
+    }
+
+    private func readResponse(from descriptor: Int32) throws -> HTTPResponse {
+      var response = Data()
+      var chunk = [UInt8](repeating: 0, count: 16_384)
+      while response.count <= maximumResponseBytes {
+        let count = Darwin.recv(descriptor, &chunk, chunk.count, 0)
+        if count == 0 { break }
+        guard count > 0 else {
+          if errno == EAGAIN || errno == EWOULDBLOCK {
+            break
+          }
+          throw TunnelHealthError.unavailable
+        }
+        response.append(chunk, count: count)
+      }
+      guard response.count <= maximumResponseBytes else {
+        throw TunnelHealthError.responseTooLarge
+      }
+      guard !response.isEmpty else {
+        throw TunnelHealthError.invalidResponse
+      }
+      return try HTTPResponse(data: response)
+    }
+  #endif
 
   package static func pollTimestamp(in body: Data) -> TimeInterval? {
     let text = String(decoding: body, as: UTF8.self)

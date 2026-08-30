@@ -1,7 +1,7 @@
 import BridgeIPC
 import BridgeMCP
-import Foundation
 import BridgeServiceAppCore
+import Foundation
 
 extension BridgeServiceAppModel {
   func refreshCollections(

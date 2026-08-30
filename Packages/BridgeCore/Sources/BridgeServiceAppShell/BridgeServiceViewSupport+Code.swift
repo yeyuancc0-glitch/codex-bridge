@@ -1,6 +1,6 @@
 import AppKit
-import SwiftUI
 import BridgeServiceAppCore
+import SwiftUI
 
 public struct CodeSnippetBlock: View {
   public let text: String
