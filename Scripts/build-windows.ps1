@@ -30,6 +30,10 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     swift test @swiftArguments --filter "BridgeAgentCoreTests"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    swift test @swiftArguments --filter "BridgeSecurityTests"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    swift test @swiftArguments --filter "BridgeCodexRPCTests"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
 
   New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

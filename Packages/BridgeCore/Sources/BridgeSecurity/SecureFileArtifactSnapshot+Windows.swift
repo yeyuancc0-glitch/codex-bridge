@@ -32,7 +32,12 @@
       guard let before = windowsMetadata(of: handle) else {
         throw SecureFileArtifactError.metadataUnavailable
       }
-      try validate(before, requiresExecutable: requiresExecutable, maximumBytes: maximumBytes)
+      try validate(
+        before,
+        handle: handle,
+        requiresExecutable: requiresExecutable,
+        maximumBytes: maximumBytes
+      )
       let digest = try digest(handle, maximumBytes: maximumBytes)
       guard let after = windowsMetadata(of: handle) else {
         throw SecureFileArtifactError.metadataUnavailable
@@ -130,11 +135,10 @@
 
     private static func validate(
       _ metadata: WindowsMetadata,
+      handle: HANDLE,
       requiresExecutable: Bool,
       maximumBytes: UInt64
     ) throws {
-      // Windows uses ACLs and loader rules; POSIX owner/mode bits do not apply.
-      _ = requiresExecutable
       let regular =
         metadata.attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0
         && metadata.attributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
@@ -142,6 +146,82 @@
       guard metadata.inode > 0 else { throw SecureFileArtifactError.metadataUnavailable }
       guard metadata.size > 0 else { throw SecureFileArtifactError.metadataUnavailable }
       guard metadata.size <= maximumBytes else { throw SecureFileArtifactError.fileTooLarge }
+      if requiresExecutable {
+        guard try isPortableExecutable(handle: handle, fileSize: metadata.size) else {
+          throw SecureFileArtifactError.executableRequired
+        }
+        guard resetToBeginning(handle) else {
+          throw SecureFileArtifactError.readFailed
+        }
+      }
+    }
+
+    private static func isPortableExecutable(handle: HANDLE, fileSize: UInt64) throws -> Bool {
+      guard fileSize >= 64, resetToBeginning(handle) else { return false }
+      defer { _ = resetToBeginning(handle) }
+
+      guard let dosHeader = try readExactly(handle, count: 64),
+        dosHeader[0] == 0x4D,
+        dosHeader[1] == 0x5A,
+        let peOffset = littleEndianUInt32(dosHeader, at: 0x3C),
+        peOffset >= 64,
+        peOffset <= maximumPEHeaderOffset,
+        UInt64(peOffset) + 4 + 20 <= fileSize,
+        resetToOffset(handle, peOffset),
+        let signature = try readExactly(handle, count: 4),
+        signature == [0x50, 0x45, 0x00, 0x00],
+        let coffHeader = try readExactly(handle, count: 20),
+        let machine = littleEndianUInt16(coffHeader, at: 0),
+        let characteristics = littleEndianUInt16(coffHeader, at: 18)
+      else {
+        return false
+      }
+      return machine != 0 && characteristics & UInt16(0x0002) != 0
+    }
+
+    private static let maximumPEHeaderOffset: UInt32 = 1 * 1_024 * 1_024
+
+    private static func readExactly(_ handle: HANDLE, count: Int) throws -> [UInt8]? {
+      guard count > 0, count <= 64 else { return nil }
+      var result = [UInt8](repeating: 0, count: count)
+      var offset = 0
+      while offset < count {
+        var readBytes: DWORD = 0
+        let succeeded = result.withUnsafeMutableBytes { bytes in
+          ReadFile(
+            handle,
+            bytes.baseAddress!.advanced(by: offset),
+            DWORD(count - offset),
+            &readBytes,
+            nil
+          )
+        }
+        guard succeeded else { throw SecureFileArtifactError.readFailed }
+        guard readBytes > 0 else { return nil }
+        offset += Int(readBytes)
+      }
+      return result
+    }
+
+    private static func littleEndianUInt32(_ bytes: [UInt8], at offset: Int) -> UInt32? {
+      guard offset >= 0, offset <= bytes.count - 4 else { return nil }
+      return UInt32(bytes[offset])
+        | (UInt32(bytes[offset + 1]) << 8)
+        | (UInt32(bytes[offset + 2]) << 16)
+        | (UInt32(bytes[offset + 3]) << 24)
+    }
+
+    private static func littleEndianUInt16(_ bytes: [UInt8], at offset: Int) -> UInt16? {
+      guard offset >= 0, offset <= bytes.count - 2 else { return nil }
+      return UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+    }
+
+    private static func resetToBeginning(_ handle: HANDLE) -> Bool {
+      resetToOffset(handle, 0)
+    }
+
+    private static func resetToOffset(_ handle: HANDLE, _ offset: UInt32) -> Bool {
+      SetFilePointer(handle, Int32(offset), nil, DWORD(FILE_BEGIN)) != DWORD.max
     }
 
     private static func digest(_ handle: HANDLE, maximumBytes: UInt64) throws -> String {

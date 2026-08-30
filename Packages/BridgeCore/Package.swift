@@ -218,6 +218,34 @@ var macOSOnlyTargets: [Target] = []
   ]
 #endif
 
+#if os(Windows)
+  testTargets += [
+    .testTarget(
+      name: "BridgeSecurityTests",
+      dependencies: ["BridgeSecurity"],
+      path: "Tests/BridgeSecurityTests",
+      exclude: [
+        "KeychainSecretStoreTests.swift",
+        "PathSecurityTests.swift",
+        "SecureFileArtifactSnapshotTests.swift",
+      ]
+    ),
+    .testTarget(
+      name: "BridgeCodexRPCTests",
+      dependencies: ["BridgeCodexRPC"],
+      path: "Tests/BridgeCodexRPCTests",
+      exclude: [
+        "AccountMethodsTests.swift",
+        "CodexApprovalWireDecoderTests.swift",
+        "FakeAppServerTests.swift",
+        "RPCValueTests.swift",
+        "ThreadCatalogMethodsTests.swift",
+        "TypedCodexMethodsTests.swift",
+      ]
+    ),
+  ]
+#endif
+
 let package = Package(
   name: "BridgeCore",
   platforms: [.macOS(.v14)],
@@ -284,7 +312,10 @@ let package = Package(
         .product(name: "Crypto", package: "swift-crypto")
       ]
     ),
-    .target(name: "BridgeCodexRPC"),
+    .target(
+      name: "BridgeCodexRPC",
+      dependencies: ["BridgeAgentCore", "BridgeSecurity"]
+    ),
     .target(
       name: "BridgeProjects",
       dependencies: ["BridgeDomain", "BridgeSecurity"]

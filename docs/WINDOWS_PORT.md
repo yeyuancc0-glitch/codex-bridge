@@ -36,6 +36,7 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 | 后台服务注册 | `SMAppService` LaunchAgent | —（Windows 为按需拉起） | 壳启动时探测管道，不存在则拉起同目录 `codex-bridge-service.exe` |
 | 文件安全边界 | openat + O_NOFOLLOW 相对 fd 遍历 | `SecureFileReader` / `SecureProjectFileWriter` / `SecureProjectDirectoryMutation` | 逐组件 reparse-point 校验 + CreateFileW（CREATE_NEW / 暂存替换 / MoveFileExW） |
 | Provider 路径与工件 | POSIX 路径、fd/stat 身份 | `AgentPathSemantics` / `SecureFileArtifactSnapshot` / `SecureFileArtifactReader` | 盘符、UNC、大小写与 `;` PATH 语义；逐组件 reparse 校验后按句柄读取身份与摘要 |
+| Codex app-server 发现 | App bundle / Homebrew / 用户工具目录，最后经 `/usr/bin/env` | `AppServerConfiguration` | `PATH`、用户安装目录与 npm/Bun/standalone 包；`.cmd` 只解析到真实 `codex.exe`，并校验 PE 架构；找不到时明确失败 |
 | 代码签名校验 | SecCode（SecStaticCode/SecCode） | `TunnelCodeSignatureVerifier` | 不可用（见下节 Tunnel 限制） |
 | SHA-256 | swift-crypto（macOS 上转发 CryptoKit） | `import Crypto` | swift-crypto（BoringSSL 后端） |
 
@@ -56,6 +57,10 @@ WebView2 聊天页还需要系统安装 Evergreen Runtime，并让目标架构�
 
 GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest 上构建 x64 与
 ARM64 两套服务/壳产物；x64 运行平台无关测试子集，ARM64 只做交叉编译与链接。
+
+Windows 可通过 `CODEX_BRIDGE_CODEX_EXECUTABLE` 指定 `codex.exe` 或标准 npm
+`codex.cmd`；后者不会直接作为子进程启动，而是解析并验证其架构对应的原生
+`codex.exe`。未显式配置时依次检查常见用户安装位置与 `PATH`。
 
 macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 `Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore`。
@@ -87,13 +92,16 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    `node_modules` 目录链接到隔离运行目录；Windows 创建目录符号链接可能要求
    Developer Mode 或 `SeCreateSymbolicLinkPrivilege`，失败时保持 fail-closed。
    是否需要改为受控 junction，待 Windows 真机验收后决定。
+   Windows 上 Node 解释器必须是有效 PE；由 Node 间接执行的 Harness 脚本入口
+   仍按正规文件、句柄身份与摘要校验，不误要求脚本本身是 PE。
 
 ## 验证路径与 CI 现状
 
 - macOS：全量 `swift test`（所有套件 0 失败为门禁）+ Xcode Debug 构建。
 - Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
   `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
-  编译。ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
+  编译；x64 还运行 Domain、AgentCore、Security 与 Codex RPC resolver 测试。
+  ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
 - Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
   因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由
   filter 选择已适配的冒烟套件。

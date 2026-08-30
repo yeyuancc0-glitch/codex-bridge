@@ -48,6 +48,14 @@ enum DeepSeekHarnessACPArtifactRuntime {
     return parsed.major >= 24
   }
 
+  static var launchEntryRequiresNativeExecutable: Bool {
+    #if os(Windows)
+      false
+    #else
+      true
+    #endif
+  }
+
   static func canonicalPath(_ path: String, field: String) throws -> String {
     guard AgentPathSemantics.isAbsolute(path), !path.contains("\0"),
       path.utf8.count <= 16 * 1_024,

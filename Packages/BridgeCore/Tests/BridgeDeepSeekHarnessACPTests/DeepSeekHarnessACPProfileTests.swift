@@ -36,6 +36,14 @@ final class DeepSeekHarnessACPProfileTests: XCTestCase {
     XCTAssertFalse(DeepSeekHarnessACPProfile.isCompatibleNodeVersion("v23.0.0"))
   }
 
+  func testLaunchEntryUsesPlatformAppropriateExecutableSemantics() {
+    #if os(Windows)
+      XCTAssertFalse(DeepSeekHarnessACPArtifactRuntime.launchEntryRequiresNativeExecutable)
+    #else
+      XCTAssertTrue(DeepSeekHarnessACPArtifactRuntime.launchEntryRequiresNativeExecutable)
+    #endif
+  }
+
   func testRegistrationDiscoveryReturnsFourCanonicalArtifactsWithoutReadingEnvironmentFiles()
     throws
   {

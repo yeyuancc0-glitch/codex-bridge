@@ -162,7 +162,7 @@ jobs:
           swift build @swiftArguments --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build @swiftArguments --product codex-bridge-windows-app
-      - name: Smoke tests (platform-neutral targets)
+      - name: Smoke tests
         if: matrix.run_tests
         working-directory: Packages/BridgeCore
         shell: pwsh
@@ -170,3 +170,8 @@ jobs:
           swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeDomainTests"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeAgentCoreTests"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeSecurityTests"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeCodexRPCTests"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

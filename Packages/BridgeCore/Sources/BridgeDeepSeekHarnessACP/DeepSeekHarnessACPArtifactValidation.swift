@@ -247,7 +247,10 @@ enum DeepSeekHarnessACPArtifactValidator {
     guard AgentPathSemantics.isContained(canonical, in: sourceRoot) else {
       throw DeepSeekHarnessACPError.artifactInvalid("launch.executable.source_root")
     }
-    _ = try DeepSeekHarnessACPFileSnapshot(capturing: canonical, requiresExecutable: true)
+    _ = try DeepSeekHarnessACPFileSnapshot(
+      capturing: canonical,
+      requiresExecutable: DeepSeekHarnessACPArtifactRuntime.launchEntryRequiresNativeExecutable
+    )
     return canonical
   }
 

@@ -12,6 +12,8 @@ public struct AppServerConfiguration: Equatable, Sendable {
   public let maximumProtocolLineBytes: Int
   public let stderrBufferBytes: Int
 
+  let launchFailureReason: String?
+
   public init(
     executableURL: URL,
     arguments: [String],
@@ -20,53 +22,33 @@ public struct AppServerConfiguration: Equatable, Sendable {
     maximumProtocolLineBytes: Int = 64 * 1024 * 1024,
     stderrBufferBytes: Int = 64 * 1024
   ) {
+    self.init(
+      executableURL: executableURL,
+      arguments: arguments,
+      currentDirectoryURL: currentDirectoryURL,
+      environment: environment,
+      maximumProtocolLineBytes: maximumProtocolLineBytes,
+      stderrBufferBytes: stderrBufferBytes,
+      launchFailureReason: nil
+    )
+  }
+
+  init(
+    executableURL: URL,
+    arguments: [String],
+    currentDirectoryURL: URL?,
+    environment: [String: String]?,
+    maximumProtocolLineBytes: Int,
+    stderrBufferBytes: Int,
+    launchFailureReason: String?
+  ) {
     self.executableURL = executableURL
     self.arguments = arguments
     self.currentDirectoryURL = currentDirectoryURL
     self.environment = environment
     self.maximumProtocolLineBytes = max(1, maximumProtocolLineBytes)
     self.stderrBufferBytes = max(0, stderrBufferBytes)
-  }
-
-  public static func codex(executableURL: URL? = nil) -> AppServerConfiguration {
-    if let executableURL {
-      return AppServerConfiguration(
-        executableURL: executableURL,
-        arguments: ["app-server", "--stdio"]
-      )
-    }
-    if let discovered = defaultCodexExecutableURL() {
-      return AppServerConfiguration(
-        executableURL: discovered,
-        arguments: ["app-server", "--stdio"]
-      )
-    }
-    return AppServerConfiguration(
-      executableURL: URL(fileURLWithPath: "/usr/bin/env"),
-      arguments: ["codex", "app-server", "--stdio"]
-    )
-  }
-
-  public static func defaultCodexExecutableURL() -> URL? {
-    let home = FileManager.default.homeDirectoryForCurrentUser
-    let candidates: [URL] = [
-      URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
-      home.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex"),
-      URL(fileURLWithPath: "/opt/homebrew/bin/codex"),
-      URL(fileURLWithPath: "/usr/local/bin/codex"),
-      home.appendingPathComponent(".local/bin/codex"),
-      home.appendingPathComponent(".cargo/bin/codex"),
-      home.appendingPathComponent(".npm-global/bin/codex"),
-      home.appendingPathComponent(
-        "Library/Application Support/codex-plusplus/backup/Codex.app/Contents/Resources/codex"
-      ),
-    ]
-    for candidate in candidates {
-      if FileManager.default.isExecutableFile(atPath: candidate.path) {
-        return candidate
-      }
-    }
-    return nil
+    self.launchFailureReason = launchFailureReason
   }
 }
 
@@ -174,6 +156,11 @@ public actor AppServerProcess {
   public func start(dispatcher: RPCDispatcher) async throws {
     guard !hasStarted else { throw CodexRPCError.alreadyStarted }
     hasStarted = true
+
+    if let reason = configuration.launchFailureReason {
+      await dispatcher.terminate(with: .processLaunchFailed(reason))
+      throw CodexRPCError.processLaunchFailed(reason)
+    }
 
     let state = AppServerProcessState()
     configure(state.process, with: configuration, pipes: state)
