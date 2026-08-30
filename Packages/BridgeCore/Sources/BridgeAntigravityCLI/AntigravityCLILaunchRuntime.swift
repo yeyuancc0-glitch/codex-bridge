@@ -36,6 +36,21 @@ enum AntigravityCLILaunchRuntime {
     ]
     #if os(Windows)
       environment["USERPROFILE"] = home
+      environment["TEMP"] = temporary
+      environment["TMP"] = temporary
+      for key in [
+        "SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "LOCALAPPDATA", "APPDATA",
+      ] {
+        if let value = source.first(where: {
+          $0.key.caseInsensitiveCompare(key) == .orderedSame
+        })?.value,
+          !value.isEmpty,
+          !value.contains("\0"),
+          value.rangeOfCharacter(from: .controlCharacters) == nil
+        {
+          environment[key] = value
+        }
+      }
     #endif
     for key in ["USER", "LOGNAME", "LANG", "LC_ALL", "SHELL"] {
       if let value = source[key], !value.isEmpty, !value.contains("\0") {
@@ -60,9 +75,8 @@ enum AntigravityCLILaunchRuntime {
       guard let resolved = existingFilesystemPath(path) else {
         throw AgentRuntimeError.installationUnavailable(AgentInstallationID(rawValue: path))
       }
-      var isDirectory = ObjCBool(false)
-      guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory),
-        !isDirectory.boolValue
+      guard let attributes = try? FileManager.default.attributesOfItem(atPath: resolved),
+        attributes[.type] as? FileAttributeType == .typeRegular
       else {
         throw AgentRuntimeError.installationUnavailable(AgentInstallationID(rawValue: path))
       }
@@ -131,7 +145,7 @@ enum AntigravityCLILaunchRuntime {
           withIntermediateDirectories: true
         )
         guard let resolved = existingFilesystemPath(requested),
-          AgentPathSemantics.isContained(resolved, in: requested)
+          samePath(resolved, requested)
         else {
           throw AgentRuntimeError.processUnavailable
         }
@@ -209,6 +223,11 @@ enum AntigravityCLILaunchRuntime {
       let resolved = URL(fileURLWithPath: lexical)
         .resolvingSymlinksInPath().standardizedFileURL.path
       return canonicalFoundationPath(resolved)
+    }
+
+    private static func samePath(_ lhs: String, _ rhs: String) -> Bool {
+      AgentPathSemantics.isContained(lhs, in: rhs)
+        && AgentPathSemantics.isContained(rhs, in: lhs)
     }
   #endif
 

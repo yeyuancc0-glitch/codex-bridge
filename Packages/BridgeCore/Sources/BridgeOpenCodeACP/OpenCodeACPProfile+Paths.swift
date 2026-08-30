@@ -28,6 +28,11 @@ enum OpenCodeACPPathSupport {
     #endif
   }
 
+  static func samePath(_ lhs: String, _ rhs: String) -> Bool {
+    AgentPathSemantics.isContained(lhs, in: rhs)
+      && AgentPathSemantics.isContained(rhs, in: lhs)
+  }
+
   #if os(Windows)
     private static func normalizeFoundationPath(_ path: String) -> String {
       guard path.count > 3, path.first == "/" else { return path }
@@ -101,7 +106,8 @@ extension OpenCodeACPLaunchBuilder {
       let resolved = OpenCodeACPPathSupport.canonicalFilesystemPath(
         canonical,
         isDirectory: true
-      )
+      ),
+      OpenCodeACPPathSupport.samePath(resolved, canonical)
     else {
       throw AgentRuntimeError.processUnavailable
     }
@@ -115,10 +121,16 @@ extension OpenCodeACPLaunchBuilder {
     else {
       throw AgentRuntimeError.invalidRequest(field)
     }
+    #if os(Windows)
+      let resolvingSymlinks = false
+    #else
+      let resolvingSymlinks = true
+    #endif
     guard
       let resolved = OpenCodeACPPathSupport.canonicalFilesystemPath(
         path,
-        isDirectory: true
+        isDirectory: true,
+        resolvingSymlinks: resolvingSymlinks
       )
     else {
       throw AgentRuntimeError.invalidRequest(field)
@@ -134,11 +146,16 @@ extension OpenCodeACPLaunchBuilder {
         attributes: Self.privateDirectoryAttributes
       )
       #if os(Windows)
-        // Windows uses ACLs; only existence and directory type are portable checks.
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-          isDirectory.boolValue
+          isDirectory.boolValue,
+          let resolved = OpenCodeACPPathSupport.canonicalFilesystemPath(
+            path,
+            isDirectory: true
+          ),
+          OpenCodeACPPathSupport.samePath(resolved, path)
         else {
+          // Windows uses ACLs; Foundation creation retains the current user's ACL.
           throw AgentRuntimeError.processUnavailable
         }
       #else

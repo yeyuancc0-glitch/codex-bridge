@@ -295,6 +295,7 @@ public actor AntigravityCLIEventNormalizer {
       }
       absolute = normalized
     } else {
+      guard AgentPathSemantics.relativeComponents(raw) != nil else { return nil }
       guard
         let joined = AntigravityCLILaunchRuntime.canonicalFoundationPath(
           URL(fileURLWithPath: projectRoot, isDirectory: true)

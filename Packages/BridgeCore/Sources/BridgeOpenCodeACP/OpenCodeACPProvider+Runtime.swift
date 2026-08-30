@@ -19,22 +19,27 @@ extension OpenCodeACPProvider {
     let path = URL(fileURLWithPath: base, isDirectory: true)
       .appendingPathComponent("\(prefix)-\(UUID().uuidString.lowercased())", isDirectory: true)
       .path
+    guard
+      let requested = OpenCodeACPPathSupport.canonicalFilesystemPath(
+        path,
+        isDirectory: true,
+        resolvingSymlinks: false
+      )
+    else {
+      throw AgentRuntimeError.processUnavailable
+    }
     do {
       try FileManager.default.createDirectory(
-        atPath: path,
+        atPath: requested,
         withIntermediateDirectories: false,
         attributes: Self.privateDirectoryAttributes
       )
       #if !os(Windows)
-        guard chmod(path, 0o700) == 0 else {
+        guard chmod(requested, 0o700) == 0 else {
           throw AgentRuntimeError.processUnavailable
         }
       #endif
-      try Self.validatePrivateDirectory(path)
-      return URL(fileURLWithPath: path, isDirectory: true)
-        .resolvingSymlinksInPath()
-        .standardizedFileURL
-        .path
+      return try Self.canonicalPrivateDirectory(requested)
     } catch let error as AgentRuntimeError {
       throw error
     } catch {
@@ -66,24 +71,35 @@ extension OpenCodeACPProvider {
     else {
       throw AgentRuntimeError.invalidRequest("runtimeBaseDirectory")
     }
-    let requested = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL.path
+    guard
+      let requested = OpenCodeACPPathSupport.canonicalFilesystemPath(
+        value,
+        isDirectory: true,
+        resolvingSymlinks: false
+      )
+    else {
+      throw AgentRuntimeError.invalidRequest("runtimeBaseDirectory")
+    }
     do {
       try FileManager.default.createDirectory(
         atPath: requested,
         withIntermediateDirectories: true,
         attributes: Self.privateDirectoryAttributes
       )
-      let canonical = URL(fileURLWithPath: requested, isDirectory: true)
-        .resolvingSymlinksInPath()
-        .standardizedFileURL
-        .path
+      guard
+        let canonical = OpenCodeACPPathSupport.canonicalFilesystemPath(
+          requested,
+          isDirectory: true
+        )
+      else {
+        throw AgentRuntimeError.processUnavailable
+      }
       #if !os(Windows)
         guard chmod(canonical, 0o700) == 0 else {
           throw AgentRuntimeError.processUnavailable
         }
       #endif
-      try Self.validatePrivateDirectory(canonical)
-      return canonical
+      return try Self.canonicalPrivateDirectory(requested)
     } catch let error as AgentRuntimeError {
       throw error
     } catch {
@@ -121,7 +137,15 @@ extension OpenCodeACPProvider {
     else {
       throw AgentRuntimeError.invalidRequest(field)
     }
-    let requested = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL.path
+    guard
+      let requested = OpenCodeACPPathSupport.canonicalFilesystemPath(
+        value,
+        isDirectory: true,
+        resolvingSymlinks: false
+      )
+    else {
+      throw AgentRuntimeError.invalidRequest(field)
+    }
     do {
       try FileManager.default.createDirectory(
         atPath: requested,
@@ -131,11 +155,7 @@ extension OpenCodeACPProvider {
       #if !os(Windows)
         guard chmod(requested, 0o700) == 0 else { throw AgentRuntimeError.processUnavailable }
       #endif
-      try Self.validatePrivateDirectory(requested)
-      let canonical = URL(fileURLWithPath: requested, isDirectory: true)
-        .resolvingSymlinksInPath()
-        .standardizedFileURL.path
-      return canonical
+      return try Self.canonicalPrivateDirectory(requested)
     } catch let error as AgentRuntimeError {
       throw error
     } catch {
@@ -162,6 +182,24 @@ extension OpenCodeACPProvider {
         throw AgentRuntimeError.processUnavailable
       }
     #endif
+  }
+
+  private static func canonicalPrivateDirectory(_ requested: String) throws -> String {
+    guard
+      let canonical = OpenCodeACPPathSupport.canonicalFilesystemPath(
+        requested,
+        isDirectory: true
+      )
+    else {
+      throw AgentRuntimeError.processUnavailable
+    }
+    #if os(Windows)
+      guard OpenCodeACPPathSupport.samePath(canonical, requested) else {
+        throw AgentRuntimeError.processUnavailable
+      }
+    #endif
+    try validatePrivateDirectory(canonical)
+    return canonical
   }
 
   private static var privateDirectoryAttributes: [FileAttributeKey: Any]? {
