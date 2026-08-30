@@ -17,7 +17,7 @@
       maximumBytes: UInt64
     ) throws -> Self {
       try validateCaptureLimit(maximumBytes)
-      let canonicalPath = try canonicalPath(for: path)
+      let canonicalPath = try windowsCanonicalPath(for: path)
       let handle = canonicalPath.withCString(encodedAs: UTF16.self) { wide in
         CreateFileW(
           wide,
@@ -34,12 +34,12 @@
       }
       defer { _ = CloseHandle(handle) }
 
-      guard let before = metadata(of: handle) else {
+      guard let before = windowsMetadata(of: handle) else {
         throw SecureFileArtifactError.metadataUnavailable
       }
       try validate(before, requiresExecutable: requiresExecutable, maximumBytes: maximumBytes)
       let digest = try digest(handle, maximumBytes: maximumBytes)
-      guard let after = metadata(of: handle) else {
+      guard let after = windowsMetadata(of: handle) else {
         throw SecureFileArtifactError.metadataUnavailable
       }
       guard before == after else { throw SecureFileArtifactError.changed }
@@ -54,7 +54,7 @@
       )
     }
 
-    private struct Metadata: Equatable {
+    struct WindowsMetadata: Equatable {
       let device: UInt64
       let inode: UInt64
       let size: UInt64
@@ -68,7 +68,7 @@
         && path.rangeOfCharacter(from: .controlCharacters) == nil
     }
 
-    private static func canonicalPath(for path: String) throws -> String {
+    static func windowsCanonicalPath(for path: String) throws -> String {
       let standardized = URL(fileURLWithPath: path)
         .resolvingSymlinksInPath()
         .standardizedFileURL
@@ -119,11 +119,11 @@
       return (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
     }
 
-    private static func metadata(of handle: HANDLE) -> Metadata? {
+    static func windowsMetadata(of handle: HANDLE) -> WindowsMetadata? {
       var information = BY_HANDLE_FILE_INFORMATION()
       guard GetFileInformationByHandle(handle, &information) else { return nil }
       let lastWrite = information.ftLastWriteTime
-      return Metadata(
+      return WindowsMetadata(
         device: UInt64(information.dwVolumeSerialNumber),
         inode: (UInt64(information.nFileIndexHigh) << 32) | UInt64(information.nFileIndexLow),
         size: (UInt64(information.nFileSizeHigh) << 32) | UInt64(information.nFileSizeLow),
@@ -134,7 +134,7 @@
     }
 
     private static func validate(
-      _ metadata: Metadata,
+      _ metadata: WindowsMetadata,
       requiresExecutable: Bool,
       maximumBytes: UInt64
     ) throws {

@@ -1,11 +1,6 @@
 import BridgeAgentCore
+import BridgeSecurity
 import Foundation
-
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
 
 enum DeepSeekHarnessACPArtifactRuntime {
   struct PackageManifest: Sendable {
@@ -54,36 +49,40 @@ enum DeepSeekHarnessACPArtifactRuntime {
   }
 
   static func canonicalPath(_ path: String, field: String) throws -> String {
-    guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 16 * 1_024,
-      path.rangeOfCharacter(from: .controlCharacters) == nil
+    guard AgentPathSemantics.isAbsolute(path), !path.contains("\0"),
+      path.utf8.count <= 16 * 1_024,
+      path.rangeOfCharacter(from: .controlCharacters) == nil,
+      let canonical = AgentPathSemantics.canonicalPath(
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+      )
     else {
       throw AgentRuntimeError.invalidRequest(field)
     }
-    return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    return canonical
   }
 
   static func findSourceRoot(startingAt executable: String) throws -> String {
     var candidate = URL(fileURLWithPath: executable).deletingLastPathComponent()
     var matches: [String] = []
-    while candidate.path != "/" {
-      let package = candidate.appendingPathComponent("package.json").path
-      let lock = candidate.appendingPathComponent("pnpm-lock.yaml").path
+    while true {
+      guard let candidatePath = AgentPathSemantics.canonicalPath(candidate.path) else {
+        throw DeepSeekHarnessACPError.artifactInvalid("source_root")
+      }
+      let package = try DeepSeekHarnessACPPathSupport.append("package.json", to: candidatePath)
+      let lock = try DeepSeekHarnessACPPathSupport.append("pnpm-lock.yaml", to: candidatePath)
       if FileManager.default.fileExists(atPath: package),
         FileManager.default.fileExists(atPath: lock)
       {
-        matches.append(candidate.standardizedFileURL.path)
+        matches.append(candidatePath)
       }
-      candidate = candidate.deletingLastPathComponent()
-    }
-    if FileManager.default.fileExists(atPath: "/package.json"),
-      FileManager.default.fileExists(atPath: "/pnpm-lock.yaml")
-    {
-      matches.append("/")
+      let parent = candidate.deletingLastPathComponent()
+      guard !DeepSeekHarnessACPPathSupport.samePath(parent.path, candidate.path) else { break }
+      candidate = parent
     }
     guard matches.count == 1, let root = matches.first else {
       throw DeepSeekHarnessACPError.artifactInvalid("source_root")
     }
-    guard executable == root || executable.hasPrefix(root + "/") else {
+    guard AgentPathSemantics.isContained(executable, in: root) else {
       throw DeepSeekHarnessACPError.artifactInvalid("launch.executable.source_root")
     }
     return root
@@ -100,9 +99,12 @@ enum DeepSeekHarnessACPArtifactRuntime {
         sourceEnvironment: sourceEnvironment
       )
     var seen = Set<String>()
-    for candidate in pathCandidates where seen.insert(candidate).inserted {
-      let canonical = URL(fileURLWithPath: candidate).resolvingSymlinksInPath()
-        .standardizedFileURL.path
+    for candidate in pathCandidates {
+      guard let canonical = try? canonicalPath(candidate, field: "node_interpreter") else {
+        continue
+      }
+      let key = AgentPathStyle.current == .windows ? canonical.lowercased() : canonical
+      guard seen.insert(key).inserted else { continue }
       if (try? DeepSeekHarnessACPFileSnapshot(capturing: canonical, requiresExecutable: true))
         != nil
       {
@@ -122,35 +124,46 @@ enum DeepSeekHarnessACPArtifactRuntime {
     let words = line.dropFirst(2).split { $0 == " " || $0 == "\t" }.map(String.init)
     guard let first = words.first else { return [] }
     if URL(fileURLWithPath: first).lastPathComponent == "env" {
-      return words.dropFirst().filter { $0.hasPrefix("/") }
+      return words.dropFirst().filter { AgentPathSemantics.isAbsolute($0) }
     }
-    return first.hasPrefix("/") ? [first] : []
+    return AgentPathSemantics.isAbsolute(first) ? [first] : []
   }
 
   private static func trustedNodeCandidates(sourceEnvironment: [String: String]) -> [String] {
-    var candidates = [
-      "/opt/homebrew/opt/node@22/bin/node",
-      "/opt/homebrew/bin/node",
-      "/usr/local/opt/node@22/bin/node",
-      "/usr/local/bin/node",
-      "/usr/bin/node",
-      "/bin/node",
-    ]
-    if let path = sourceEnvironment["PATH"] {
-      for component in path.split(separator: ":") {
-        let directory = String(component)
-        guard directory.hasPrefix("/"), !directory.contains("\0") else { continue }
-        candidates.append(URL(fileURLWithPath: directory).appendingPathComponent("node").path)
-      }
+    #if os(Windows)
+      var candidates: [String] = []
+      let executableName = "node.exe"
+    #else
+      var candidates = [
+        "/opt/homebrew/opt/node@22/bin/node",
+        "/opt/homebrew/bin/node",
+        "/usr/local/opt/node@22/bin/node",
+        "/usr/local/bin/node",
+        "/usr/bin/node",
+        "/bin/node",
+      ]
+      let executableName = "node"
+    #endif
+    let path = sourceEnvironment.first(where: {
+      $0.key.caseInsensitiveCompare("PATH") == .orderedSame
+    })?.value
+    for directory in AgentPathSemantics.splitPathList(path ?? "") {
+      guard AgentPathSemantics.isAbsolute(directory), !directory.contains("\0"),
+        let candidate = try? DeepSeekHarnessACPPathSupport.append(
+          executableName,
+          to: directory
+        )
+      else { continue }
+      candidates.append(candidate)
     }
     return candidates
   }
 
   static func commonSourceRoot(_ manifest: String, _ lock: String) throws -> String {
-    let manifestRoot = URL(fileURLWithPath: manifest).deletingLastPathComponent()
-      .standardizedFileURL.path
-    let lockRoot = URL(fileURLWithPath: lock).deletingLastPathComponent().standardizedFileURL.path
-    guard manifestRoot == lockRoot else {
+    guard let manifestRoot = AgentPathSemantics.directoryPath(of: manifest),
+      let lockRoot = AgentPathSemantics.directoryPath(of: lock),
+      DeepSeekHarnessACPPathSupport.samePath(manifestRoot, lockRoot)
+    else {
       throw DeepSeekHarnessACPError.artifactInvalid("source_root")
     }
     return manifestRoot
@@ -206,37 +219,10 @@ enum DeepSeekHarnessACPArtifactRuntime {
   }
 
   static func boundedData(at path: String, maximumBytes: Int, field: String) throws -> Data {
-    let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-    guard descriptor >= 0 else {
+    do {
+      return try SecureFileArtifactReader.read(at: path, maximumBytes: maximumBytes)
+    } catch {
       throw DeepSeekHarnessACPError.artifactInvalid(field)
     }
-    defer { close(descriptor) }
-    var metadata = stat()
-    guard fstat(descriptor, &metadata) == 0,
-      metadata.st_mode & S_IFMT == S_IFREG,
-      metadata.st_size >= 0,
-      UInt64(metadata.st_size) <= UInt64(maximumBytes)
-    else {
-      throw DeepSeekHarnessACPError.artifactInvalid(field)
-    }
-    var result = Data()
-    result.reserveCapacity(Int(metadata.st_size))
-    var buffer = [UInt8](repeating: 0, count: min(64 * 1_024, maximumBytes + 1))
-    while true {
-      let count = buffer.withUnsafeMutableBytes { bytes in
-        read(descriptor, bytes.baseAddress, bytes.count)
-      }
-      if count == 0 { break }
-      if count < 0 {
-        if errno == EINTR { continue }
-        throw DeepSeekHarnessACPError.artifactInvalid(field)
-      }
-      guard result.count + count <= maximumBytes else {
-        throw DeepSeekHarnessACPError.artifactInvalid(field)
-      }
-      result.append(contentsOf: buffer.prefix(count))
-    }
-    return result
   }
-
 }

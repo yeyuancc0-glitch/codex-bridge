@@ -357,6 +357,9 @@ let package = Package(
         "BridgeACP",
         "BridgeAgentCore",
         "BridgeDomain",
+        "BridgeProcess",
+        "BridgeSecurity",
+        .product(name: "Crypto", package: "swift-crypto"),
       ],
       resources: [.process("Resources")]
     ),

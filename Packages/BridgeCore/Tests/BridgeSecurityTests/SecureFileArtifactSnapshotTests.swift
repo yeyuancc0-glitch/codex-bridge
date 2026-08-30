@@ -66,4 +66,20 @@ final class SecureFileArtifactSnapshotTests: XCTestCase {
       XCTAssertEqual(error as? SecureFileArtifactError, .fileTooLarge)
     }
   }
+
+  func testReadsRegularFileWithinExplicitBoundary() throws {
+    let file = directory.appending(path: "artifact.bin")
+    let data = Data("bounded-artifact".utf8)
+    try data.write(to: file)
+
+    XCTAssertEqual(
+      try SecureFileArtifactReader.read(at: file.path, maximumBytes: data.count),
+      data
+    )
+    XCTAssertThrowsError(
+      try SecureFileArtifactReader.read(at: file.path, maximumBytes: data.count - 1)
+    ) { error in
+      XCTAssertEqual(error as? SecureFileArtifactError, .fileTooLarge)
+    }
+  }
 }
