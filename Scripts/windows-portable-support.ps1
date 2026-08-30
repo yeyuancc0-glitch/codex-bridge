@@ -95,6 +95,40 @@ function Get-PEMachine([string]$Path) {
   }
 }
 
+function Test-PEArchitectureCompatible(
+  [string]$Path,
+  [ValidateSet("x64", "arm64")]
+  [string]$Architecture
+) {
+  $expected = if ($Architecture -eq "x64") { [UInt16]0x8664 } else { [UInt16]0xAA64 }
+  if ((Get-PEMachine $Path) -eq $expected) {
+    return $true
+  }
+  if ($Architecture -ne "arm64") {
+    return $false
+  }
+  if (-not ("CodexBridgePortable.ImageMachineProbe" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System.Runtime.InteropServices;
+namespace CodexBridgePortable {
+  public static class ImageMachineProbe {
+    [DllImport("ntdll.dll", CharSet = CharSet.Unicode)]
+    public static extern int RtlGetImageFileMachines(string path, out uint machines);
+  }
+}
+"@
+  }
+  [UInt32]$machines = 0
+  try {
+    $status = [CodexBridgePortable.ImageMachineProbe]::RtlGetImageFileMachines(
+      (Get-FullPath $Path),
+      [ref]$machines)
+  } catch {
+    throw "ARM64X validation requires Windows 11 22H2 or Windows Server 2025."
+  }
+  return $status -eq 0 -and ($machines -band [UInt32]0x8) -ne 0
+}
+
 function Get-Sha256([string]$Path) {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }

@@ -45,7 +45,8 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 Windows 使用 Swift 6.3.3 工具链（swift.org 官方支持 x86_64 与 aarch64）：
 构建机还需 Visual Studio C++/Windows SDK、vcpkg sqlite3 和 WiX Toolset 3；WiX
 `dark.exe` 仅用于从 Swift 官方 MSM 提取 portable runtime。GitHub Windows runner
-已包含这些构建工具。
+已包含这些构建工具。ARM64 portable 打包使用系统 ARM64X 兼容性探测，构建机需
+Windows 11 22H2+ 或 Windows Server 2025；产物仍由 x64 runner 交叉生成。
 
 ```powershell
 powershell -File Scripts\build-windows.ps1            # 构建服务 + 壳
@@ -84,7 +85,8 @@ Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Ru
 `File/@Name` 恢复 DLL 安装文件名。构建产物使用 release 配置，并从
 Visual Studio `%VCToolsRedistDir%` 对应架构的 CRT 目录收集 Microsoft 允许 app-local
 部署的 VC runtime（见 [Microsoft C++ local deployment](https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp?view=msvc-170)）；
-Windows 10/11 自带的 UCRT 仍作为系统组件使用。
+其中 ARM64X 混合镜像通过 Windows `RtlGetImageFileMachines` 验证其 ARM64
+兼容位，普通镜像仍校验 COFF Machine。Windows 10/11 自带的 UCRT 仍作为系统组件使用。
 
 GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest 上构建 x64 与
 ARM64 两套服务/壳产物，在构建与测试后分别上传

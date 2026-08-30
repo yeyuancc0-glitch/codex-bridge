@@ -167,7 +167,7 @@ try {
   }
   foreach ($vcRuntimeFile in $vcRuntimeFiles) {
     Assert-RegularFile $vcRuntimeFile.FullName | Out-Null
-    if ((Get-PEMachine $vcRuntimeFile.FullName) -ne $expectedMachine) {
+    if (-not (Test-PEArchitectureCompatible $vcRuntimeFile.FullName $Architecture)) {
       throw "Visual C++ runtime DLL has the wrong architecture: $($vcRuntimeFile.FullName)"
     }
     Stage-File $vcRuntimeFile.FullName $vcRuntimeFile.Name
