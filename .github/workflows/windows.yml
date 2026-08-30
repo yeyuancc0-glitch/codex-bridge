@@ -81,7 +81,24 @@ jobs:
           $triplet = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64-windows" } else { "x64-windows" }
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "sqlite3:$triplet"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content $env:GITHUB_ENV "INCLUDE=$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\include"
+          $archDir = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+          $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -property installationPath | Select-Object -First 1
+          $msvcRoot = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
+            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          $kitsLib = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Lib" -Directory `
+            -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          $kitsInc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory `
+            -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          $inc = @(
+            "$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\include",
+            "$msvcRoot\include",
+            "$kitsInc\ucrt",
+            "$kitsInc\um",
+            "$kitsInc\shared",
+            "$kitsInc\winrt"
+          ) -join ";"
+          Add-Content $env:GITHUB_ENV "INCLUDE=$inc"
           # Compose the linker library path: vcpkg + MSVC + Windows SDK, since
           # setting LIB overrides the toolchain's own MSVC discovery.
           $archDir = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
