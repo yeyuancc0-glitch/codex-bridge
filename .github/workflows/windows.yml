@@ -90,16 +90,15 @@ jobs:
           $msvcLib = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
             Sort-Object Name -Descending | ForEach-Object { "$($_.FullName)\lib\$archDir" } |
             Where-Object { Test-Path $_ } | Select-Object -First 1
-          $sdkLibs = Get-ChildItem "$env:SDKROOT\Lib" -Directory -ErrorAction SilentlyContinue |
-            ForEach-Object { "$($_.FullName)\um\$archDir"; "$($_.FullName)\ucrt\$archDir" } |
-            Where-Object { Test-Path $_ }
+          $kitsLib = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Lib" -Directory `
+            -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+          $sdkLibs = @()
+          if ($kitsLib) {
+            $sdkLibs = @("$kitsLib\um\$archDir", "$kitsLib\ucrt\$archDir") |
+              Where-Object { Test-Path $_ }
+          }
           $lib = (@("$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\lib", $msvcLib) + $sdkLibs) -join ";"
           Write-Host "LIB=$lib"
-          Write-Host "--- SDKROOT Lib tree ---"
-          Get-ChildItem "$env:SDKROOT" -Directory -ErrorAction SilentlyContinue | Select-Object Name
-          Get-ChildItem "$env:SDKROOT\Lib" -Directory -ErrorAction SilentlyContinue | Select-Object Name
-          Write-Host "--- Windows Kits ---"
-          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Lib" -Directory -ErrorAction SilentlyContinue | Select-Object Name
           Add-Content $env:GITHUB_ENV "LIB=$lib"
       - name: Build service and Windows shell
         working-directory: Packages/BridgeCore
