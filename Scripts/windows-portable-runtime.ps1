@@ -50,10 +50,10 @@ function Resolve-SwiftRuntimeMergeModule(
   $redistributablesRoot = Join-Path $swiftRoot.FullName "Redistributables\$($versionDirectory.Name)"
   Assert-Directory $redistributablesRoot | Out-Null
   $moduleArchitecture = if ($Architecture -eq "x64") { "amd64" } else { "arm64" }
-  $moduleName = "rtl.dynamic.private.$moduleArchitecture.msm"
+  $moduleName = "rtl.shared.$moduleArchitecture.msm"
   $modules = @(Get-ChildItem -LiteralPath $redistributablesRoot -File -Recurse -Filter $moduleName)
   if ($modules.Count -ne 1) {
-    throw "Expected exactly one Swift private runtime merge module: $moduleName"
+    throw "Expected exactly one Swift runtime merge module: $moduleName"
   }
   Assert-RegularFile $modules[0].FullName | Out-Null
   return $modules[0].FullName

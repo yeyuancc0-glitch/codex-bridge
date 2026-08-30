@@ -74,9 +74,10 @@ Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Ru
 时壳保留任务管理功能并明确显示聊天页不可用。按
 [Swift Windows toolchain packaging](https://github.com/swiftlang/swift/blob/main/docs/WindowsToolchain.md)，
 安装器只安装宿主架构的 runtime，
-因此 staging 从 SDK `Redistributables` 中对应的
-`rtl.dynamic.private.<arch>.msm` 提取目标 DLL，再逐个校验 PE 架构。构建产物使用
-release 配置，并从
+因此 staging 从 SDK `Redistributables` 中对应的 Swift 6.3.3
+`rtl.shared.<arch>.msm` 提取目标 DLL，再逐个校验 PE 架构；该命名由
+[6.3.3 installer manifest](https://github.com/swiftlang/swift-installer-scripts/blob/swift-6.3.3-RELEASE/platforms/Windows/platforms/windows/windows.wxs)
+定义。构建产物使用 release 配置，并从
 Visual Studio `%VCToolsRedistDir%` 对应架构的 CRT 目录收集 Microsoft 允许 app-local
 部署的 VC runtime（见 [Microsoft C++ local deployment](https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp?view=msvc-170)）；
 Windows 10/11 自带的 UCRT 仍作为系统组件使用。
