@@ -1,9 +1,10 @@
 name: windows
 
 on:
-  pull_request:
   push:
-    branches: [main, win]
+    branches: [win]
+  pull_request:
+    branches: [win]
   workflow_dispatch:
 
 jobs:
@@ -11,13 +12,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-11-arm]
+        include:
+          - os: windows-latest
+            swift-url: https://download.swift.org/swift-6.1.2-release/windows10/swift-6.1.2-RELEASE/swift-6.1.2-RELEASE-windows10.exe
+          - os: windows-11-arm
+            swift-url: https://download.swift.org/swift-6.1.2-release/windows10-arm64/swift-6.1.2-RELEASE/swift-6.1.2-RELEASE-windows10-arm64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.1.2"
+      - name: Install Swift 6.1.2 toolchain
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "${{ matrix.swift-url }}" -OutFile swift-installer.exe
+          Start-Process -Wait -FilePath .\swift-installer.exe -ArgumentList "/quiet"
+          Remove-Item .\swift-installer.exe
+          $bin = Get-ChildItem "C:\Library\Developer\Toolchains" -Directory |
+            Select-Object -First 1 -ExpandProperty FullName
+          Add-Content $env:GITHUB_PATH "$bin\usr\bin"
       - name: Build service and Windows shell
         working-directory: Packages/BridgeCore
         shell: pwsh
