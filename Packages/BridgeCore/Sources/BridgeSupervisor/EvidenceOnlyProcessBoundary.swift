@@ -192,7 +192,7 @@ public enum EvidenceOnlyProcessBoundary {
       // Windows uses ACLs; owner check applies to POSIX.
       let attributes = path.withCString(encodedAs: UTF16.self) { GetFileAttributesW($0) }
       return attributes != INVALID_FILE_ATTRIBUTES
-        && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+        && attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0
     #else
       var metadata = stat()
       return lstat(path, &metadata) == 0

@@ -16,7 +16,7 @@ struct LoopbackHealthClient: Sendable {
 
   func snapshot(
     urlFileDirectory: TunnelDirectoryHandle,
-    expectedPeerPID: pid_t
+    expectedPeerPID: Int32
   ) throws -> TunnelHealthSnapshot {
     let baseURL = try healthBaseURL(in: urlFileDirectory)
     guard Self.process(expectedPeerPID, ownsListeningPort: baseURL.port!) else {
@@ -182,50 +182,58 @@ struct LoopbackHealthClient: Sendable {
     return nil
   }
 
-  private static func process(_ processID: pid_t, ownsListeningPort port: Int) -> Bool {
-    let requiredBytes = proc_pidinfo(processID, PROC_PIDLISTFDS, 0, nil, 0)
-    guard requiredBytes > 0 else { return false }
-    let stride = MemoryLayout<proc_fdinfo>.stride
-    var descriptors = [
-      proc_fdinfo
-    ](repeating: proc_fdinfo(), count: Int(requiredBytes) / stride + 16)
-    let returnedBytes = descriptors.withUnsafeMutableBytes { buffer in
-      proc_pidinfo(
-        processID,
-        PROC_PIDLISTFDS,
-        0,
-        buffer.baseAddress,
-        Int32(buffer.count)
-      )
+  #if os(Windows)
+    private static func process(_ processID: Int32, ownsListeningPort port: Int) -> Bool {
+      false
     }
-    guard returnedBytes > 0 else { return false }
-    let count = min(Int(returnedBytes) / stride, descriptors.count)
-    return descriptors.prefix(count).contains { descriptor in
-      guard descriptor.proc_fdtype == PROX_FDTYPE_SOCKET else { return false }
-      var socket = socket_fdinfo()
-      let bytes = withUnsafeMutablePointer(to: &socket) { pointer in
-        proc_pidfdinfo(
+  #else
+    private static func process(_ processID: Int32, ownsListeningPort port: Int) -> Bool {
+      let requiredBytes = proc_pidinfo(processID, PROC_PIDLISTFDS, 0, nil, 0)
+      guard requiredBytes > 0 else { return false }
+      let stride = MemoryLayout<proc_fdinfo>.stride
+      var descriptors = [
+        proc_fdinfo
+      ](repeating: proc_fdinfo(), count: Int(requiredBytes) / stride + 16)
+      let returnedBytes = descriptors.withUnsafeMutableBytes { buffer in
+        proc_pidinfo(
           processID,
-          descriptor.proc_fd,
-          PROC_PIDFDSOCKETINFO,
-          pointer,
-          Int32(MemoryLayout<socket_fdinfo>.size)
+          PROC_PIDLISTFDS,
+          0,
+          buffer.baseAddress,
+          Int32(buffer.count)
         )
       }
-      guard bytes == MemoryLayout<socket_fdinfo>.size,
-        socket.psi.soi_family == AF_INET || socket.psi.soi_family == AF_INET6,
-        socket.psi.soi_kind == SOCKINFO_TCP,
-        socket.psi.soi_proto.pri_tcp.tcpsi_state == TSI_S_LISTEN
-      else {
-        return false
+      guard returnedBytes > 0 else { return false }
+      let count = min(Int(returnedBytes) / stride, descriptors.count)
+      return descriptors.prefix(count).contains { descriptor in
+        guard descriptor.proc_fdtype == PROX_FDTYPE_SOCKET else { return false }
+        var socket = socket_fdinfo()
+        let bytes = withUnsafeMutablePointer(to: &socket) { pointer in
+          proc_pidfdinfo(
+            processID,
+            descriptor.proc_fd,
+            PROC_PIDFDSOCKETINFO,
+            pointer,
+            Int32(MemoryLayout<socket_fdinfo>.size)
+          )
+        }
+        guard bytes == MemoryLayout<socket_fdinfo>.size,
+          socket.psi.soi_family == AF_INET || socket.psi.soi_family == AF_INET6,
+          socket.psi.soi_kind == SOCKINFO_TCP,
+          socket.psi.soi_proto.pri_tcp.tcpsi_state == TSI_S_LISTEN
+        else {
+          return false
+        }
+        let localPort = Int(
+          UInt16(
+            bigEndian: UInt16(
+              truncatingIfNeeded: socket.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport)
+          )
+        )
+        return localPort == port
       }
-      let localPort = Int(
-        UInt16(
-          bigEndian: UInt16(truncatingIfNeeded: socket.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport))
-      )
-      return localPort == port
     }
-  }
+  #endif
 }
 
 package struct HTTPResponse {

@@ -402,7 +402,7 @@ package actor SupervisorSession {
       // Windows uses ACLs; owner check applies to POSIX.
       let attributes = url.path.withCString(encodedAs: UTF16.self) { GetFileAttributesW($0) }
       return attributes != INVALID_FILE_ATTRIBUTES
-        && attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+        && attributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0
     #else
       var metadata = stat()
       return lstat(url.path, &metadata) == 0

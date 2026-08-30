@@ -423,7 +423,7 @@ public actor TunnelManager {
       let deadline = clock.now.advanced(by: duration)
       while clock.now < deadline {
         if let exit = child.pollExit() { return exit }
-        usleep(50_000)
+        try? await Task.sleep(for: .milliseconds(50))
       }
       return child.pollExit()
     }.value
