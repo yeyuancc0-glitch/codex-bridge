@@ -73,7 +73,7 @@ There is no method-discovery response. Capability support is derived from `codex
 
 ## Isolated real task results
 
-Verified on 2026-08-12 with the production `BridgeCodexRPC` adapter and an internal compatibility fixture that is not included in the public source snapshot:
+Verified on 2026-08-12 with the production `BridgeCodexRPC` adapter and `CodexRPCFixture` executable:
 
 - basic read-only turn: default live model at its first advertised effort returned exactly `READY`, status `completed`, and exact cwd match;
 - steer: after the matching `turn/started` event, same-turn steer replaced the synthetic long response with `STEERED`, status `completed`;

@@ -11,143 +11,69 @@
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License">
 </p>
 
-**Codex Bridge** 是一个**零云端中转、个人自托管、纯本地优先**的 macOS 桥接中枢与 MCP 网关。
+**Codex Bridge** 是一个面向个人自托管场景的原生 macOS App 与后台 Service。它把 ChatGPT 网页版、Qwen Studio 和本机工作台连接到已授权的本地项目，并在同一套任务、审批、对话和持久化系统中运行 Codex、OpenCode、DeepSeek Harness 与 Antigravity。
 
-它致力于**全面打通 Chat 对话端与本地工程环境及 Coding Agent 引擎**：
-- 🌟 **多 Chat 端原生接入**：支持 **ChatGPT 网页版**、**通义千问桌面版 (Qwen Studio)** 等现代 AI 客户端；
-- 📂 **本地项目直读直写**：赋予 Chat 客户端直接检索代码树、读取项目源码、原子编辑、应用 Unified Diff Patch 与受控 Git 提交的能力；
-- 🤖 **多 Agent 统一调度**：无缝桥接本地 **Codex** 与 **OpenCode** 执行引擎，支持深度多轮与自主编码；
-- 🎯 **安全 Skill 扩展系统**：基于标准 `SKILL.md` 规范与 Action 契约，支持 `sandbox-exec` 沙盒隔离执行，无缝扩展专用脚本、全网调研与自动化能力；
-- 🛡️ **本地唯一授权（Local-Only Approval）**：任何高危文件写入、命令执行与 Git 提交，均由 Mac 桌面原生弹窗由用户手动授权，代码与凭据全程不出本机。
+Bridge 不依赖开发者自建的云端中转、账号系统或远程数据库。通过 ChatGPT、模型 API 或 Provider 执行任务时，请求内容仍会发送给你主动选择和配置的对应服务；“本地优先”不等于所有数据永远不离开 Mac。
 
----
+## 当前能力
 
-## 🌟 核心能力矩阵
+| 层级 | 当前实现 |
+| --- | --- |
+| ChatGPT 网页版 | OpenAI Secure MCP Tunnel；Tunnel Helper 随正式 App 打包并由 Service 管理 |
+| Qwen Studio | 本机回环 Streamable HTTP `/mcp`；App 一键复制带认证 Header 的 JSON |
+| Codex | 默认 Provider；`codex app-server --stdio`、Thread/Turn、实时 steer、interrupt、审批与 Supervisor |
+| OpenCode | ACP stdio；Plan/Build、动态模型与 effort、permission 回传、同 Session 排队继续 |
+| DeepSeek Harness | 固定版本 ACP 适配；外部 `cordis.yml`、模型/effort、Web/工具/子代理、执行证据与本机审批 |
+| Antigravity | `agy` CLI stream-json；Plan/Accept Edits、原生 sandbox、会话继续、模型/effort 与 queued steer |
+| Direct Workspace | 受控读写、revision 校验、Patch、结构化命令、进程会话和本地 Git 提交 |
+| Skills | 安全发现 `SKILL.md`，只执行显式声明的 Action |
 
-```text
-  【Chat 端接入】                                           【能力与执行引擎】
-┌──────────────────┐                                     ┌──────────────────┐
-│  ChatGPT 网页版   │ ──(OpenAI Secure Tunnel 穿透)──┐   ├─► 本机 Codex 引擎 │ (app-server + 独立监督)
-└──────────────────┘                                │   ├──────────────────┤
-┌──────────────────┐                                ├──►│本机 OpenCode 引擎│ (ACP 协议 + Plan/Build)
-│ Qwen Studio 桌面版│ ──(本地回环 HTTP /mcp 端点)───┘   ├──────────────────┤
-└──────────────────┘                                    ├─► 本地项目直接读写│ (检索/编辑/Patch/受控 Git)
-                                                        ├──────────────────┤
-                                                        └─► Skill 扩展系统  │ (Action 契约/沙盒隔离)
-```
+外部 Agent 必须由用户明确登记、Probe、启用并在任务中显式选择；没有 `provider_id` 的 `submit_task` 始终使用 Codex。
 
-- 🌐 **多 Chat 端原生适配**：
-  - **ChatGPT 网页版**：通过 OpenAI 官方 Secure MCP Tunnel 端到端安全穿透，在网页端直接调度本地工程环境。
-  - **Qwen Studio (通义千问桌面版)**：通过稳定的本地回环 Streamable HTTP `/mcp` 端点极速直连，一键复制配置即用。
-- 📂 **本地项目原生读写与版本控制**：
-  - **目录与源码检索**：Chat 端可直接获取受限工程目录树、全文读取文件内容、检查上下文。
-  - **精确 Patch 与原子写入**：支持 Bridge 标准语法及 Unified Diff 标准补丁，写入受 Mac 本地弹窗二次确认保护。
-  - **受控 Git 提交**：使用独立临时 index 隔离变更，自动扫描并拦截私钥凭据，严禁破坏性 `push` 或重写历史。
-- 🎯 **安全 Skill 扩展生态**：
-  - **标准规范**：兼容 `SKILL.md` 规范与 YAML Frontmatter，支持复杂 Action 契约与自动发现。
-  - **沙盒隔离**：支持 `sandbox-exec` 禁网环境隔离执行，未声明网络能力的脚本默认限制网络外连。
-- 🧩 **多 Agent 引擎统一桥接**：
-  - **Codex 深度引擎**：基于官方 `codex app-server` stdio 协议，支持多轮对话、子代理协作、独立 Supervisor 监督与打字机实时流。
-  - **OpenCode ACP 引擎**：基于 Agent Client Protocol (ACP) stdio 协议，支持原生 Plan / Build 模式切换与动态模型/推理强度（effort）自适应。
-- 🔒 **纯本地自托管（Zero-Cloud）**：无任何第三方云服务器中转、无开发者数据库、无账号系统，代码与凭据全程不出本机。
-- 🖥️ **原生 macOS 架构（SwiftUI + AppKit + LaunchAgent）**：后台独立常驻守护服务，退出 App 界面不中断任务；内置工作台支持打字机实时流式对话、思考链折叠与工具进度卡片。
-
----
-
-## 🏗️ 架构拓扑
+## 架构
 
 ```text
-┌────────────────────────┐      ┌────────────────────────┐
-│      ChatGPT 网页版     │      │   Qwen Studio 桌面版   │
-│  (OpenAI Secure Tunnel)│      │  (本地 HTTP /mcp 端点)  │
-└───────────┬────────────┘      └───────────┬────────────┘
-            │                               │
-            └───────────────┬───────────────┘
-                            ▼
-            ┌──────────────────────────────────────────────┐
-            │        CodexBridgeService (后台常驻守护)      │
-            │  ├─ 统一 MCP 网关 (ChatGPT / Qwen Client)     │
-            │  ├─ Agent 调度中心 (Codex / OpenCode Runner)  │
-            │  ├─ Direct 项目读写与 Git 管理 (Direct Tools) │
-            │  ├─ Skill 沙盒执行引擎 (BridgeSkills)        │
-            │  ├─ 单 SQLite 存储 (任务、项目、设置)          │
-            │  └─ 本机安全与审批中心 (Local Approval Center)│
-            └──────┬──────────────┬──────────────┬─────────┘
-                   │              │              │
-     Mach XPC 通信 │   stdio RPC  │    stdio ACP │  posix_spawn / sandbox-exec
-                   ▼              ▼              ▼         ▼
-      ┌──────────────────┐ ┌────────────┐ ┌────────────┐ ┌───────────────────┐
-      │ CodexBridge.app  │ │ 本机 Codex │ │本机 OpenCode│ │ Direct 项目读写 / │
-      │(原生 macOS 工作台)│ │ (深度引擎) │ │ (ACP 引擎)  │ │ Skill 扩展执行    │
-      └──────────────────┘ └────────────┘ └────────────┘ └───────────────────┘
+ChatGPT Web                         Qwen Studio
+    │ OpenAI Secure MCP Tunnel          │ localhost /mcp
+    └──────────────────┬────────────────┘
+                       ▼
+              CodexBridgeService
+              ├─ MCP / XPC 应用服务
+              ├─ 单一 service.sqlite
+              ├─ 项目策略与本机审批
+              ├─ Provider 任务协调
+              ├─ Direct Workspace
+              └─ Tunnel / Skill 生命周期
+                       │
+        ┌──────────────┼───────────────┬────────────────┐
+        ▼              ▼               ▼                ▼
+ Codex app-server  OpenCode ACP  DeepSeek Harness ACP  agy CLI
+        │
+        └─ Supervisor（当前仅 Codex）
+
+CodexBridge.app ── XPC ──► CodexBridgeService
+   项目 / 工作台 / 连接 / 设置 / 审批 / 状态
 ```
 
----
+生产 Service 只使用一个 SQLite 数据库保存项目、设置、任务、消息和展示事件。App 负责配置、查看和本机授权，不持有 Provider、MCP、Tunnel 或 Supervisor 的进程生命周期。
 
-## 🚀 四大核心工作流
+## 快速开始
 
-### 1. Codex 深度编码工作流（主推模式）
-```text
-ChatGPT / Qwen ──[submit_task]──► CodexBridgeService ──► 本地 Codex 引擎 (app-server)
-      ▲                                                         │
-      │                                                         ▼
-  [get_task] 实时获取进度与报告   ◄──── 打字机流式同步 / 独立 Supervisor 监督
-```
-- **适用场景**：大型工程开发、多步复杂重构、端到端测试与环境排错。
-- **特性**：自动绑定 Codex Thread，支持思考链折叠展示、工具执行进度可视化，后台异步执行，退出 App 任务不中断。
+完整首次配置请直接阅读 [详细使用指南](./docs/USER_GUIDE.md)。以下步骤用于快速建立正确顺序。
 
-### 2. OpenCode ACP 编码工作流
-```text
-ChatGPT / Qwen / Bridge 工作台 ──[provider_id=opencode]──► 本机审批中心
-                                                         │
-                                                         ▼
-                                         OpenCode ACP (Plan / Build)
-```
-- **适用场景**：多模型对比评估、基于 ACP 协议的标准 Agent 执行、灵活切换 Plan（只读规划）与 Build（写操作）模式。
-- **特性**：模型目录从 ACP `session/new.configOptions` 动态获取，支持原生推理强度（effort）自适应调节。
+### 1. 安装并启动
 
-### 3. Direct 项目直读直写与受控 Git 工作流
-```text
-ChatGPT / Qwen ──[direct_write_file]──► Mac 桌面审批弹窗 (Payload Digest 签名校验)
-                                                  │
-                                         [用户点击 允许 / 拒绝]
-                                                  │
-                                                  ▼
-                                        原子写入本地工作区文件
-```
-- **适用场景**：快速修改配置文件、应用小型 Patch、查看工程目录、执行受控 Git 提交与安全只读命令。
-- **特性**：单次有效签名凭据、防刷冷却机制、支持受控 `direct_git_commit`（隔离临时 index，敏感文件自动防泄漏）。
+- 运行环境：macOS 14.0 或更高版本，支持 Apple Silicon 与 Intel。
+- 发布包按 `arm64` 与 `x86_64` 分开提供；请选择与 Mac 一致的架构。
+- 首次打开后，如果 App 显示“等待 macOS 登录项批准”，点击“打开系统设置”并允许 Codex Bridge 后台 Service，然后回到 App 刷新状态。
+- 关闭窗口不会停止 Service。`设置 → 后台运行与远程 Agent 授权` 中的“退出 App 后保持后台服务运行”决定按 ⌘Q 后是否继续，默认开启。
 
-### 4. Skill 自动化与沙盒扩展工作流
-```text
-ChatGPT / Qwen ──[run_skill_action]──► 沙盒隔离检查 (sandbox-exec 禁网 / 权限)
-                                                │
-                                       [执行专项 Action 脚本]
-                                                │
-                                                ▼
-                                      返回结构化执行收据与产物
-```
-- **适用场景**：执行项目内专用辅助脚本、自动化数据处理、网络信息收集与专业平台调研。
-- **特性**：自动解析 `SKILL.md`，精确暴露 Action 契约，支持动态超时计算与沙盒隔离。
+从源码构建：
 
----
-
-## 🛠️ 快速开始
-
-### 1. 环境准备
-- **操作系统**：macOS 14.0 (Sonoma) 或更高版本（支持 Apple Silicon 与 Intel）。
-- **Agent 环境**：
-  - **Codex**：本地已安装并登录 **Codex 桌面端**（或系统 PATH 具备可执行的 `codex` 命令）。
-  - **OpenCode（可选）**：本地已安装 **OpenCode** 并具备可执行命令。
-- **编译工具**：Xcode 16+ / Swift 6.0 工具链。
-
-### 2. 构建与启动
 ```bash
-# 克隆仓库
 git clone https://github.com/yeyuancc0-glitch/codex-bridge.git
 cd codex-bridge
 
-# 编译并在本机运行
 Scripts/with-xcode.sh xcodebuild \
   -project CodexBridge.xcodeproj \
   -scheme CodexBridge \
@@ -157,104 +83,140 @@ Scripts/with-xcode.sh xcodebuild \
   build CODE_SIGNING_ALLOWED=NO
 ```
 
-启动 `CodexBridge.app` 后，应用会自动注册并启动内置的后台常驻服务 `CodexBridgeService`。
+普通 Debug 构建可能没有打包 OpenAI `tunnel-client`，因此可以使用本地 MCP，但未必能连接 ChatGPT Secure Tunnel。ChatGPT 接入请使用“连接”页面显示 Helper 就绪的正式构建。
 
-### 3. 注册本地工程与 Skill
-在 App 中点击 **添加项目**，选择你允许 AI 访问的本地工程目录。Bridge 将严格锁定该目录的规范路径、设备 ID 与 Inode，防止符号链接逃逸，并自动识别项目内的 Skill 目录。
+### 2. 添加项目并设置硬权限
 
-### 4. 配置 Agent 执行端
-- **Codex 引擎**：检测到本地 `codex` 命令后默认开箱即用。
-- **OpenCode 引擎**：在 Bridge 的“设置 → 本机 Agent Provider”中登记 OpenCode 可执行文件路径，Probe 检测为“可用”后点击启用。
+1. 打开 `项目 → 添加`，选择允许 Bridge 访问的项目根目录。
+2. 在项目的“访问与执行权限”中配置读取、写入与网络策略。
+3. 需要 Direct 命令时，再配置命令模式、允许命令和工作目录。
 
-### 5. 连接你的 Chat 客户端
+Bridge 只接受已登记项目。项目硬策略优先于 Workbench 默认和单任务请求；项目禁止写入时，任何 Provider 的写模式都会被收窄。
 
-#### 方式 A：连接 ChatGPT 网页版
-1. 在 Bridge App 的“连接”页面选择 **Secure MCP Tunnel**，填入你的 OpenAI `Tunnel ID` 与 `Runtime Key`（密钥安全存入系统 Keychain）。
-2. 打开 ChatGPT 网页端 → **Settings** → **Connected apps / Developer Mode** → **Add New Server**。
-3. 选择 **OpenAI Secure Tunnel**，填入相同的 `Tunnel ID`，路径填写 `/mcp`。
-4. 详细接入指南与 Prompt 示范请查阅：[👉 ChatGPT Developer Mode 详细接入手册](./docs/CHATGPT_DEVELOPER_MODE.md)。
+### 3. 选择远程任务默认项目与模式
 
-#### 方式 B：连接 Qwen Studio (通义千问桌面版)
-1. 在 Bridge App 的“连接”页面开启 **Qwen Studio 支持**。
-2. 点击 **复制 MCP 配置 JSON**。
-3. 打开 Qwen Studio 设置 → **MCP 服务配置**，粘贴配置即可直接开始对话！
+打开 `工作台`：
 
----
+1. 选择 ChatGPT/Qwen 新任务应使用的项目。
+2. 在“GPT/Qwen 新任务”中选择 `Read Only` 或 `Write`。
 
-## 🛡️ 安全与权限边界
+远程请求省略 `project_id` 时使用这里选中的项目。若显式传入 `project_id`，它必须来自 MCP `list_projects`，不能填写项目显示名。远程客户端通常应省略权限覆盖字段，使用 Workbench 的统一默认值。
 
-| 安全防线 | 实现机制 |
-| :--- | :--- |
-| **本地唯一审批** | 外部 AI、Supervisor 均无权代替用户授权，高危操作必须在 Mac 桌面弹窗中人工确认。 |
-| **工作区严格封闭** | 仅允许访问用户显式注册的项目目录，严禁访问系统敏感目录（如 `~/.ssh`、`.env*`、`/etc`）。 |
-| **并发写锁互斥** | 同一项目同一时间仅允许一个活跃写任务（`project_busy` 互斥保护），彻底消除并发写冲突。 |
-| **受控 Git 提交** | `direct_git_commit` 使用独立临时 index 隔离提交，自动拦截私钥敏感文件，严禁破坏性 `push` 或历史改写。 |
-| **Skill 沙盒隔离** | 支持 Action 契约与 `sandbox-exec` 禁网环境隔离，未声明网络的脚本默认受限。 |
-| **零凭据外泄** | 严禁读取、存储或上传 Codex `auth.json`、系统 Token 或浏览器 Cookie。 |
+### 4. 配置执行 Provider
 
----
+- **Codex**：默认 Provider，不在“本机 Agent 引擎连接”中登记。请先在官方 Codex/ChatGPT 环境完成登录，再到 `设置 → Codex 执行默认偏好` 选择模型、effort、访问权限和 Fast 模式。Bridge 不读取 Codex 认证文件。
+- **OpenCode**：`连接 → 本机 Agent 引擎连接 → 登记 Agent → OpenCode`，选择真实 `opencode` 可执行文件并 Probe。详见 [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)。
+- **DeepSeek Harness**：登记官方 `dsh-v0.1.1-rc.2` 构建出的 `packages/examples/acp-demo/lib/bin.js`，再选择 DSH 源码树之外的 `cordis.yml`；为隔离凭据，建议 Profile 也位于任务项目和 Bridge 仓库之外。`.env` 与 `cordis.yml` 同目录，由 Harness 自己读取。详见 [DeepSeek Harness 接入指南](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)。
+- **Antigravity**：登记真实 `agy` CLI，而不是 Desktop App。Bridge 会检查版本与当前 `--help` 中的 stream-json、mode、sandbox、conversation、model 和 effort 能力。
 
-## 📂 项目结构导览
+外部 Provider 登记成功后还要打开“启用”，然后到 `设置` 中刷新该 Provider 的模型目录并保存默认模型/effort。模型 ID 以当前 Provider 实际返回值为准，不要跨 Provider 猜别名。
+
+### 5. 连接 Chat 客户端
+
+#### ChatGPT 网页版
+
+1. 在 [OpenAI Platform Tunnels](https://platform.openai.com/settings/organization/tunnels) 创建或取得 Tunnel。
+2. 在 [OpenAI Platform API Keys](https://platform.openai.com/settings/organization/api-keys) 创建 Restricted Runtime API Key，并只授予 Tunnel `Read` 与 `Use`。
+3. 在 Bridge 的 `连接 → 远程 AI 客户端 (OpenAI Secure Tunnel)` 填入 `Tunnel ID` 和 `Runtime API Key`，点击“保存并启动连接”。Runtime Key 只保存在 macOS Keychain。
+4. 按当前 OpenAI 官方页面，在 ChatGPT 的 Apps/Developer Mode 中创建 MCP App；常见流程是选择 **Tunnel**、选择或粘贴同一个 Tunnel ID、扫描工具并创建连接，实际入口以当前账号与 Workspace 页面为准。
+
+Runtime API Key 只填在 Bridge，不填进 ChatGPT 对话或 MCP App；ChatGPT Tunnel 配置也不填写 `127.0.0.1`、`/mcp` 或 Bridge 为 ChatGPT profile 单独生成的本地 Header Secret。账号权限、当前页面入口和完整步骤见 [ChatGPT Developer Mode 接入指南](./docs/CHATGPT_DEVELOPER_MODE.md)。
+
+#### Qwen Studio
+
+1. 打开 `连接 → 本地 MCP 客户端通道`。
+2. 打开“启用 Qwen Studio”，选择“只读”或“完整”。
+3. 点击“复制 Qwen JSON 配置”，在 Qwen Studio 的 MCP 页面选择使用 JSON 添加。
+
+JSON 中包含本地认证 Header，不要提交到 Git、公开文档或聊天群。重新生成凭证后，旧 JSON 会立即失效，需要重新复制。
+
+## 任务、审批与结果
+
+远程 Provider 任务的正常状态流：
 
 ```text
-App/                              macOS 原生客户端 (SwiftUI + AppKit)
-CodexBridge.xcodeproj/            Xcode 组合工程 (App + 后台 LaunchAgent Target)
-Packages/BridgeCore/
-  Sources/BridgeServiceCore/      单 SQLite 数据层 (项目、任务、设置、事件)
-  Sources/BridgeAgentCore/        Provider、安装、能力与执行契约
-  Sources/BridgeOpenCodeACP/      OpenCode ACP stdio 适配、模型目录与事件归一化
-  Sources/BridgeCodexRPC/         Codex app-server 协议适配器与 stdio 通信
-  Sources/BridgeCodexService/     ExecutionManager、Supervisor、协调器与实时对话流
-  Sources/BridgeServiceApplication/ MCP 与 XPC 共用的轻量业务服务层
-  Sources/BridgeMCP/              受限 MCP 网关 (ChatGPT 与 Qwen Studio Profile)
-  Sources/BridgeIPC/              版本化、高安全 XPC 进程间通信 Hub
-  Sources/BridgeServiceHost/      后台 Service 组合根与生命周期管理
-  Sources/BridgeServiceAppShell/  纯 UI 控制台：工作台、项目管理、审批弹窗
-  Sources/BridgeDirectCommand/    Direct 进程管理、受控 Git 与命令安全策略
-  Sources/BridgeSkills/           Skill 发现、YAML Frontmatter 解析与沙盒隔离
-  Sources/BridgeTunnel/           Secure MCP Tunnel 进程管理与健康探测
-  Sources/BridgeSecurity/         路径规范化、Device/Inode 校验与敏感信息拦截
-Scripts/                          构建、代码检查、测试与 Tunnel 校验脚本
-docs/                             详细技术规范与开发者接入手册
+submit_task
+    ↓
+awaiting_local_approval（默认）
+    ↓ 本机“批准启动”
+starting → running ↔ waiting_for_codex_approval
+               ↓
+    completed / failed / interrupted
+
+unknown：失去原运行绑定后的非终态，需要本机复核
 ```
 
----
+- “自动批准远程 Agent 启动请求”默认关闭。开启后只自动批准远程 Provider 的启动，不会连带批准 Provider 工具或 Direct 操作。
+- 同一项目最多一个活动的 `workspace-write` 任务；只读任务可并行。
+- `get_task` 的终态是任务成败权威。按其 `wait_policy` 等待；暂时没有活动或更新时间不变不代表失败。
+- 终态继续从 `get_task` 读取 `result_summary`、`failure_code`、`changed_files` 和 Provider 绑定。当前 MCP 工具目录没有 `get_final_report`；`wait_policy.next_action=read_final_report` 只是提示字符串，不是可调用工具。
+- OpenCode 与 Antigravity 可以在严格匹配的历史 Session 上继续；DeepSeek Harness 当前为每个任务创建新 Session，不支持历史 Session 续接。外部 Provider 的 steer 通常是当前 prompt 完成后的排队 prompt，不等同于 Codex 的 in-flight steer。
 
-## 🧪 开发与测试基线
+## 权限与隐私边界
 
-本项目遵循严格的质量与工程标准：
+| 边界 | 行为 |
+| --- | --- |
+| 已登记项目 | MCP 只接受不透明项目 ID；文件路径必须位于项目根内且通过身份校验 |
+| 敏感文件 | 拒绝 `.env*`、私钥、认证文件、浏览器数据等敏感路径 |
+| 写入并发 | 同一项目只有一个活动写任务；Direct 与 Provider 共享工作区门禁 |
+| Provider 授权 | 远程启动、Provider 执行期 permission 与 Direct 操作是不同审批层级 |
+| 凭据 | Tunnel Runtime Key 与按客户端 profile 分离的本地 MCP Secret 存入 Keychain；Bridge 不读取 Provider 的账号凭据或 DSH `.env` |
+| 网络 | 由项目策略、任务请求和 Provider 原生策略共同决定；外部 Provider 不由 Bridge 伪装成逐包网络沙箱 |
+| Git | `direct_git_commit` 只创建受控本地提交，不允许 push、amend、reset 或历史改写 |
+
+## 项目结构
+
+```text
+App/                                  macOS App 入口
+Packages/BridgeCore/Sources/
+  BridgeServiceCore/                  service.sqlite、项目、设置、任务、消息
+  BridgeServiceApplication/           MCP/XPC 共用业务门面与权限边界
+  BridgeCodexRPC/                      codex app-server 协议适配
+  BridgeCodexService/                  Codex 执行、Supervisor、协调与对话
+  BridgeAgentCore/                     外部 Provider、安装、能力与事件契约
+  BridgeACP/                           ACP 共用 transport 与 request broker
+  BridgeOpenCodeACP/                   OpenCode ACP 适配
+  BridgeDeepSeekHarnessACP/            DeepSeek Harness ACP 与随包 Profile
+  BridgeAntigravityCLI/                Antigravity CLI 适配
+  BridgeMCP/                           唯一 MCP 控制面
+  BridgeDirectCommand/                 Direct 命令、Git、进程与审批
+  BridgeSkills/                        Skill 发现与显式 Action
+  BridgeTunnel/                        Secure MCP Tunnel 生命周期与健康检查
+  BridgeIPC/                           版本化 XPC DTO 与 Client
+  BridgeServiceHost/                   后台 Service 组合根
+  BridgeServiceAppShell/               工作台、项目、连接、设置和本机审批 UI
+Scripts/                              构建、检查、打包与发布脚本
+docs/                                 用户与开发文档
+```
+
+## 开发与验证
 
 ```bash
-# 运行全部 Package 单元测试与集成测试
-Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore
-
-# 运行严格 Swift-Format 代码规范检查
+Scripts/with-xcode.sh swift build --package-path Packages/BridgeCore
 Scripts/with-xcode.sh xcrun swift-format lint --strict --recursive \
-  Packages/BridgeCore/Sources Packages/BridgeCore/Tests App
-
-# 运行官方 MCP Inspector 验收门禁
-Scripts/verify-mcp-inspector.sh
-
-# 运行 Tunnel Helper 兼容性检查
-Scripts/test-tunnel-helper-config.sh
+  Packages/BridgeCore/Sources App Service
+Scripts/with-xcode.sh xcodebuild \
+  -project CodexBridge.xcodeproj \
+  -scheme CodexBridge \
+  -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath .build/Xcode \
+  build CODE_SIGNING_ALLOWED=NO
 ```
 
-- **当前验证基准**：Swift 6 严格并发检查、完整 Package 测试、Universal 2 构建、MCP Inspector 2.1.0 与官方 tunnel-client 门禁均以本次 Release CI 和发布记录为准。
+Xcode/Swift 命令统一经 `Scripts/with-xcode.sh` 选择工具链。App 打包、安装和签名只能证明本地产物状态；真实 ChatGPT、Qwen 与各 Provider 登录、联网、工具和审批体验仍需要使用对应账号手动验收。
 
----
+## 文档
 
-## 📚 详细文档
-
+- [详细使用指南](./docs/USER_GUIDE.md)
 - [ChatGPT Developer Mode 接入指南](./docs/CHATGPT_DEVELOPER_MODE.md)
 - [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)
+- [DeepSeek Harness 接入指南](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)
 - [系统与环境兼容性矩阵](./docs/COMPATIBILITY.md)
-- [依赖版本与开源许可证明](./docs/DEPENDENCIES.md)
-- [Secure Tunnel Helper 对接技术规范](./docs/TUNNEL_CLIENT_INTEGRATION.md)
+- [Secure Tunnel Helper 技术说明](./docs/TUNNEL_CLIENT_INTEGRATION.md)
 - [构建、签名与发布流程](./docs/RELEASE.md)
+- [依赖版本与许可](./docs/DEPENDENCIES.md)
 
----
+## 许可与安全报告
 
-## 📄 开源协议与隐私
-
-- **开源协议**：本项目基于 [Apache License 2.0](./LICENSE) 开源。第三方依赖版权声明参见 [NOTICE](./NOTICE)。
-- **隐私与安全策略**：详情参见 [PRIVACY.md](./PRIVACY.md) 与 [SECURITY.md](./SECURITY.md)。请勿在 Issue 或讨论中公开私钥、Token 或敏感项目源码。
+项目基于 [Apache License 2.0](./LICENSE) 开源，第三方声明见 [NOTICE](./NOTICE)。隐私与漏洞报告方式见 [PRIVACY.md](./PRIVACY.md) 与 [SECURITY.md](./SECURITY.md)。请勿在 Issue、日志或截图中公开 API Key、Token、Cookie、`.env` 或敏感项目源码。

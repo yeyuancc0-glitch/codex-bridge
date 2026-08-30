@@ -1,32 +1,12 @@
 import Foundation
 
-public protocol BridgeMCPQueries: Sendable {
-  func statusSnapshot(deadline: ContinuousClock.Instant) async throws -> BridgeStatusSnapshot
-
-  func listMCPVisibleProjects(
-    cursor: String?,
-    limit: Int,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPProjectPage
-
-  func listThreads(
-    projectID: String,
-    cursor: String?,
-    limit: Int,
-    search: String?,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPThreadPage
-
-  func readThread(
-    projectID: String,
-    threadID: String,
-    detail: MCPThreadDetail,
-    cursor: String?,
-    limit: Int,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPThreadReadPage
-
-  func listModels(deadline: ContinuousClock.Instant) async throws -> MCPModelList
+public enum MCPCommandDenialReason: String, Codable, Equatable, Sendable {
+  case commandModeDenied = "command_mode_denied"
+  case commandNotRegistered = "command_not_registered"
+  case invalidArguments = "invalid_command_arguments"
+  case networkDenied = "command_network_denied"
+  case writeDenied = "command_write_denied"
+  case blacklisted = "command_blacklisted"
 }
 
 public enum BridgeMCPQueryError: Error, Equatable, Sendable {
@@ -53,6 +33,10 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case approvalExpired
   case approvalDenied
   case invalidPatch
+  case invalidPatchSyntax
+  case patchContextNotFound
+  case patchContextNonUnique
+  case patchContextStale
   case notGitRepository
   case revisionConflict(RevisionConflictDetail)
   case commandSessionNotFound
@@ -68,6 +52,8 @@ public enum BridgeMCPQueryError: Error, Equatable, Sendable {
   case skillActionNotRunnable
   case networkIsolationUnavailable
   case unsafeContentDetected
+  case binaryContentUnsupported
+  case patchPartialCommit(MCPPartialCommit)
 }
 
 public struct RevisionConflictDetail: Codable, Equatable, Sendable {

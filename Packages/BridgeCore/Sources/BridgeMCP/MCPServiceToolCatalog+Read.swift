@@ -19,6 +19,8 @@ extension MCPServiceToolCatalog {
         "app_version": stringSchema,
         "mcp_state": stringSchema,
         "tunnel_state": stringSchema,
+        "codex_version": stringSchema,
+        "login_mode": stringSchema,
         "execution_state": stringSchema,
         "supervisor_state": stringSchema,
         "degradations": arraySchema(stringSchema),
@@ -57,10 +59,21 @@ extension MCPServiceToolCatalog {
     title: "List registered Agent installations",
     description:
       "List user-registered Agent installations and their persisted Probe results. "
-      + "A selectable OpenCode installation can receive tasks through submit_task; the local "
-      + "user still approves each task before execution.",
+      + "A selectable OpenCode installation can receive tasks through submit_task; DeepSeek "
+      + "Harness supports fresh sessions with provider-native read-only or "
+      + "workspace-write modes. Selectable OpenCode and Antigravity installations can receive "
+      + "explicit provider tasks through submit_task. Antigravity supports native plan/accept-edits "
+      + "modes, mapping Plan/read-only "
+      + "(agy mode: plan) and Accept Edits/workspace-write (agy mode: accept-edits) to its native "
+      + "in-place modes, and may expose exact "
+      + "session continuation and queued steer when effective_capabilities reports them. "
+      + "Antigravity has no Supervisor support; sandboxed headless tools use its Provider-native "
+      + "permission policy. The local user still approves each task before execution, while "
+      + "DeepSeek execution-time permission requests are surfaced for local approval; "
+      + "steer input for ACP and Antigravity providers is queued as a follow-up on the same session. "
+      + "Inspect network_enforcement to see whether Bridge or the Provider owns network policy.",
     inputSchema: objectSchema(
-      properties: ["project_id": nullableStringSchema(maximum: 128)]
+      properties: ["project_id": optionalOpaqueProjectIDSchema]
     ),
     annotations: readAnnotations,
     outputSchema: outputSchema(
@@ -87,7 +100,7 @@ extension MCPServiceToolCatalog {
     description: "Search bounded text inside one approved project.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "query": boundedStringSchema(maximum: 512),
         "relative_directory": nullableStringSchema(maximum: 1_024),
         "case_sensitive": boolSchema,
@@ -115,7 +128,7 @@ extension MCPServiceToolCatalog {
       + "project path; larger files page via next_start_line.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "relative_path": boundedStringSchema(maximum: 1_024),
         "start_line": integerSchema(minimum: 1),
         "line_count": integerSchema(minimum: 1, maximum: 10_000),
@@ -151,7 +164,7 @@ extension MCPServiceToolCatalog {
       + "is a valid result and means no matching Thread is currently available.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "cursor": nullableStringSchema(maximum: 2_048),
         "limit": integerSchema(minimum: 1, maximum: 100),
         "search": nullableStringSchema(maximum: 200),
@@ -177,7 +190,7 @@ extension MCPServiceToolCatalog {
       + "a Codex component or process failure remains unavailable.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "thread_id": boundedStringSchema(maximum: 1_024),
         "detail": ["type": "string", "enum": ["summary", "full"]],
         "cursor": nullableStringSchema(maximum: 2_048),
@@ -214,7 +227,7 @@ extension MCPServiceToolCatalog {
     title: "List skills",
     description: "List safe, locally discoverable Skills available to the approved project.",
     inputSchema: objectSchema(
-      properties: ["project_id": nullableStringSchema(maximum: 128)]
+      properties: ["project_id": optionalOpaqueProjectIDSchema]
     ),
     annotations: readAnnotations,
     outputSchema: outputSchema(
@@ -230,7 +243,7 @@ extension MCPServiceToolCatalog {
     inputSchema: objectSchema(
       properties: [
         "skill_name": boundedStringSchema(maximum: 128),
-        "project_id": nullableStringSchema(maximum: 128),
+        "project_id": optionalOpaqueProjectIDSchema,
         "subpath": nullableStringSchema(maximum: 1_024),
       ],
       required: ["skill_name"]
@@ -273,7 +286,8 @@ extension MCPServiceToolCatalog {
     title: "List project commands",
     description:
       "Read the built-in safe rules, registered Direct commands, and command mode for an approved project. "
-      + "These commands only run when the user explicitly asks the MCP client to execute them locally.",
+      + "These commands only run when the user explicitly asks the MCP client to execute them locally. "
+      + "Use recommended_usage to copy an allowed argv and command_id when present without guessing executables.",
     inputSchema: projectIDInput,
     annotations: readAnnotations,
     outputSchema: outputSchema(
@@ -282,8 +296,22 @@ extension MCPServiceToolCatalog {
         "built_in_commands": arraySchema(builtInCommandSchema),
         "registered_commands": arraySchema(projectCommandSchema),
         "commands": arraySchema(projectCommandSchema),
+        "recommended_usage": [
+          "type": "object",
+          "additionalProperties": objectSchema(
+            properties: [
+              "command_id": stringSchema,
+              "argv": arraySchema(stringSchema),
+              "working_directory": stringSchema,
+            ],
+            required: ["argv"]
+          ),
+        ],
       ],
-      required: ["command_mode", "built_in_commands", "registered_commands", "commands"]
+      required: [
+        "command_mode", "built_in_commands", "registered_commands", "commands",
+        "recommended_usage",
+      ]
     )
   )
 }

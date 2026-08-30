@@ -106,6 +106,49 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     }
   }
 
+  public func writeStdin(_ data: Data, timeout: Duration) throws {
+    inputLock.lock()
+    defer { inputLock.unlock() }
+    guard !inputClosed else { throw ManagedProcessError.stdinUnavailable }
+
+    let descriptor = standardInputHandle.fileDescriptor
+    let previousFlags = fcntl(descriptor, F_GETFL)
+    guard previousFlags >= 0,
+      fcntl(descriptor, F_SETFL, previousFlags | O_NONBLOCK) == 0
+    else {
+      throw ManagedProcessError.stdinUnavailable
+    }
+    defer { _ = fcntl(descriptor, F_SETFL, previousFlags) }
+
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    do {
+      try data.withUnsafeBytes { buffer in
+        guard let baseAddress = buffer.baseAddress else { return }
+        var offset = 0
+        while offset < buffer.count {
+          let written = systemWrite(
+            descriptor,
+            baseAddress.advanced(by: offset),
+            buffer.count - offset
+          )
+          if written > 0 {
+            offset += written
+            continue
+          }
+          if written == -1, errno == EINTR { continue }
+          guard written == -1, errno == EAGAIN || errno == EWOULDBLOCK,
+            ContinuousClock.now < deadline
+          else {
+            throw ManagedProcessError.stdinUnavailable
+          }
+          Thread.sleep(forTimeInterval: 0.01)
+        }
+      }
+    } catch {
+      throw ManagedProcessError.stdinUnavailable
+    }
+  }
+
   public func closeStdin() {
     inputLock.lock()
     defer { inputLock.unlock() }
@@ -117,6 +160,11 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   public func terminateGroup() {
     guard isRunning else { return }
     _ = systemKill(-pid, SIGTERM)
+  }
+
+  public func interruptGroup() {
+    guard isRunning else { return }
+    _ = systemKill(-pid, SIGINT)
   }
 
   public func killGroup() {
@@ -228,256 +276,13 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     terminationStorage = termination
     return termination
   }
-
-  public static func identity(of processID: Int32) -> ManagedProcessIdentity? {
-    guard processID > 1,
-      systemGetPGID(processID) == processID,
-      let startTimeMicros = startTimeMicros(processID)
-    else { return nil }
-    return ManagedProcessIdentity(
-      pid: processID,
-      startTimeMicros: startTimeMicros,
-      processGroupID: processID
-    )
-  }
-
-  public static func matchesCurrentProcess(_ identity: ManagedProcessIdentity) -> Bool {
-    Self.identity(of: identity.pid) == identity
-  }
 }
-
-extension ManagedStdioProcess {
-  fileprivate static func spawn(
-    argv: [String],
-    workingDirectory: String?,
-    environment: [String: String],
-    standardInput: Int32,
-    standardOutput: Int32,
-    standardError: Int32
-  ) throws -> pid_t {
-    #if canImport(Darwin)
-      return try spawnDarwin(
-        argv: argv,
-        workingDirectory: workingDirectory,
-        environment: environment,
-        standardInput: standardInput,
-        standardOutput: standardOutput,
-        standardError: standardError
-      )
-    #else
-      return try spawnGlibc(
-        argv: argv,
-        workingDirectory: workingDirectory,
-        environment: environment,
-        standardInput: standardInput,
-        standardOutput: standardOutput,
-        standardError: standardError
-      )
-    #endif
-  }
-
-  #if canImport(Darwin)
-    fileprivate static func spawnDarwin(
-      argv: [String],
-      workingDirectory: String?,
-      environment: [String: String],
-      standardInput: Int32,
-      standardOutput: Int32,
-      standardError: Int32
-    ) throws -> pid_t {
-      var actions: posix_spawn_file_actions_t?
-      var attributes: posix_spawnattr_t?
-      guard posix_spawn_file_actions_init(&actions) == 0 else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      defer { posix_spawn_file_actions_destroy(&actions) }
-      guard posix_spawnattr_init(&attributes) == 0 else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      defer { posix_spawnattr_destroy(&attributes) }
-
-      try configureDarwinActions(
-        &actions,
-        workingDirectory: workingDirectory,
-        standardInput: standardInput,
-        standardOutput: standardOutput,
-        standardError: standardError
-      )
-      let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
-      guard posix_spawnattr_setflags(&attributes, flags) == 0,
-        posix_spawnattr_setpgroup(&attributes, 0) == 0
-      else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      return try performSpawn(
-        executable: argv[0],
-        argv: argv,
-        environment: environment,
-        actions: &actions,
-        attributes: &attributes
-      )
-    }
-
-    fileprivate static func configureDarwinActions(
-      _ actions: inout posix_spawn_file_actions_t?,
-      workingDirectory: String?,
-      standardInput: Int32,
-      standardOutput: Int32,
-      standardError: Int32
-    ) throws {
-      guard posix_spawn_file_actions_adddup2(&actions, standardInput, STDIN_FILENO) == 0,
-        posix_spawn_file_actions_adddup2(&actions, standardOutput, STDOUT_FILENO) == 0,
-        posix_spawn_file_actions_adddup2(&actions, standardError, STDERR_FILENO) == 0,
-        posix_spawn_file_actions_addclose(&actions, standardInput) == 0,
-        posix_spawn_file_actions_addclose(&actions, standardOutput) == 0,
-        standardError == standardOutput
-          || posix_spawn_file_actions_addclose(&actions, standardError) == 0
-      else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      if let workingDirectory {
-        let result: Int32
-        if #available(macOS 26.0, *) {
-          result = posix_spawn_file_actions_addchdir(&actions, workingDirectory)
-        } else {
-          result = posix_spawn_file_actions_addchdir_np(&actions, workingDirectory)
-        }
-        guard result == 0 else { throw ManagedProcessError.processLaunchFailed(result) }
-      }
-    }
-
-    fileprivate static func performSpawn(
-      executable: String,
-      argv: [String],
-      environment: [String: String],
-      actions: inout posix_spawn_file_actions_t?,
-      attributes: inout posix_spawnattr_t?
-    ) throws -> pid_t {
-      let entries = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-      return try withCStringArray(argv) { argvPointer in
-        try withCStringArray(entries) { environmentPointer in
-          var processID: pid_t = 0
-          let result = posix_spawn(
-            &processID,
-            executable,
-            &actions,
-            &attributes,
-            argvPointer,
-            environmentPointer
-          )
-          guard result == 0, processID > 1 else {
-            throw ManagedProcessError.processLaunchFailed(result)
-          }
-          return processID
-        }
-      }
-    }
-  #else
-    fileprivate static func spawnGlibc(
-      argv: [String],
-      workingDirectory: String?,
-      environment: [String: String],
-      standardInput: Int32,
-      standardOutput: Int32,
-      standardError: Int32
-    ) throws -> pid_t {
-      var actions = posix_spawn_file_actions_t()
-      var attributes = posix_spawnattr_t()
-      guard posix_spawn_file_actions_init(&actions) == 0 else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      defer { posix_spawn_file_actions_destroy(&actions) }
-      guard posix_spawnattr_init(&attributes) == 0 else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      defer { posix_spawnattr_destroy(&attributes) }
-
-      guard posix_spawn_file_actions_adddup2(&actions, standardInput, STDIN_FILENO) == 0,
-        posix_spawn_file_actions_adddup2(&actions, standardOutput, STDOUT_FILENO) == 0,
-        posix_spawn_file_actions_adddup2(&actions, standardError, STDERR_FILENO) == 0,
-        posix_spawn_file_actions_addclose(&actions, standardInput) == 0,
-        posix_spawn_file_actions_addclose(&actions, standardOutput) == 0,
-        standardError == standardOutput
-          || posix_spawn_file_actions_addclose(&actions, standardError) == 0
-      else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-      if let workingDirectory {
-        let result = posix_spawn_file_actions_addchdir_np(&actions, workingDirectory)
-        guard result == 0 else { throw ManagedProcessError.processLaunchFailed(result) }
-      }
-      let flags = Int16(POSIX_SPAWN_SETPGROUP)
-      guard posix_spawnattr_setflags(&attributes, flags) == 0,
-        posix_spawnattr_setpgroup(&attributes, 0) == 0
-      else {
-        throw ManagedProcessError.processLaunchFailed(Int32(errno))
-      }
-
-      let entries = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-      return try withCStringArray(argv) { argvPointer in
-        try withCStringArray(entries) { environmentPointer in
-          var processID: pid_t = 0
-          let result = posix_spawn(
-            &processID,
-            argv[0],
-            &actions,
-            &attributes,
-            argvPointer,
-            environmentPointer
-          )
-          guard result == 0, processID > 1 else {
-            throw ManagedProcessError.processLaunchFailed(result)
-          }
-          return processID
-        }
-      }
-    }
-  #endif
-
-  fileprivate static func withCStringArray<Result>(
-    _ strings: [String],
-    _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) throws -> Result
-  ) rethrows -> Result {
-    var storage = strings.map { strdup($0) }
-    defer { for pointer in storage { free(pointer) } }
-    storage.append(nil)
-    return try storage.withUnsafeMutableBufferPointer { buffer in
-      try body(buffer.baseAddress!)
-    }
-  }
-
-  fileprivate static func startTimeMicros(_ processID: Int32) -> Int64? {
-    #if canImport(Darwin)
-      var info = proc_bsdinfo()
-      let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
-      let result = withUnsafeMutablePointer(to: &info) { pointer in
-        proc_pidinfo(processID, PROC_PIDTBSDINFO, 0, pointer, expectedSize)
-      }
-      guard result == expectedSize else { return nil }
-      let (base, overflow) = Int64(info.pbi_start_tvsec).multipliedReportingOverflow(by: 1_000_000)
-      guard !overflow else { return nil }
-      let (total, additionOverflow) = base.addingReportingOverflow(Int64(info.pbi_start_tvusec))
-      return additionOverflow ? nil : total
-    #else
-      guard let data = FileManager.default.contents(atPath: "/proc/\(processID)/stat"),
-        let stat = String(data: data, encoding: .utf8),
-        let close = stat.lastIndex(of: ")")
-      else { return nil }
-      let fields = stat[stat.index(after: close)...].split(separator: " ")
-      guard fields.count > 19, let ticks = Int64(fields[19]) else { return nil }
-      let ticksPerSecond = Int64(sysconf(Int32(_SC_CLK_TCK)))
-      guard ticksPerSecond > 0 else { return nil }
-      return ticks * 1_000_000 / ticksPerSecond
-    #endif
-  }
-}
-
 #if canImport(Darwin)
   private let systemKill = Darwin.kill
   private let systemWaitPID = Darwin.waitpid
-  private let systemGetPGID = Darwin.getpgid
+  private let systemWrite = Darwin.write
 #else
   private let systemKill = Glibc.kill
   private let systemWaitPID = Glibc.waitpid
-  private let systemGetPGID = Glibc.getpgid
+  private let systemWrite = Glibc.write
 #endif

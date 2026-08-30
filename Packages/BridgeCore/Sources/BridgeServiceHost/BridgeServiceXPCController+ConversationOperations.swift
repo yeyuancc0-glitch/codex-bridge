@@ -122,12 +122,14 @@ extension BridgeServiceXPCController {
       from: request
     )
     let taskID = TaskID(rawValue: payload.taskID)
-    let registration = streams.take(taskID)
+    let registration = streams.take(taskID, subscriptionID: payload.subscriptionID)
     registration?.forwarder.cancel()
-    await composition.application.serviceUnsubscribeConversation(
-      taskID: taskID,
-      subscriptionID: registration?.subscriptionID ?? payload.subscriptionID
-    )
+    if let registration {
+      await composition.application.serviceUnsubscribeConversation(
+        taskID: taskID,
+        subscriptionID: registration.subscriptionID
+      )
+    }
     return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
   }
 

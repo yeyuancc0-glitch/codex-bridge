@@ -1,9 +1,10 @@
 import BridgeMCP
 import SwiftUI
 
-struct WorkbenchProviderTaskPicker: View {
+struct WorkbenchAgentTaskPicker: View {
   @ObservedObject var model: BridgeServiceAppModel
   let tasks: [MCPServiceTaskSnapshot]
+  let threads: [MCPThreadSummary]
 
   var body: some View {
     HStack(spacing: 6) {
@@ -11,35 +12,119 @@ struct WorkbenchProviderTaskPicker: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
 
-      Menu {
-        ForEach(tasks, id: \.taskID) { task in
-          Button {
-            model.openTask(task.taskID)
-          } label: {
-            Label(
-              WorkbenchTaskTextPresentation.menuTitle(for: task),
-              systemImage: task.providerSystemImage
-            )
+      if itemCount == 0 {
+        Text("暂无 Agent 任务")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        Menu {
+          if !tasks.isEmpty {
+            Section("Agent 任务") {
+              ForEach(tasks, id: \.taskID) { task in
+                taskButton(task)
+              }
+            }
           }
+
+          if !orphanThreads.isEmpty {
+            Section("Codex 历史会话") {
+              ForEach(orphanThreads, id: \.threadID) { thread in
+                Button {
+                  model.openThread(thread.threadID)
+                } label: {
+                  Label(
+                    threadTitle(thread),
+                    systemImage: thread.threadID == model.selectedThreadID
+                      ? "checkmark" : AgentProviderPresentation.systemImage("codex")
+                  )
+                }
+              }
+            }
+          }
+        } label: {
+          Text(selectedItemLabel)
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 250, alignment: .leading)
         }
-      } label: {
-        Text(selectedTaskLabel)
-          .font(.caption.weight(.medium))
-          .lineLimit(1)
-          .truncationMode(.tail)
-          .frame(maxWidth: 250, alignment: .leading)
+        .menuStyle(.borderlessButton)
+        .frame(maxWidth: 250, alignment: .leading)
+        .help(selectedItemLabel)
+        .accessibilityLabel("当前 Agent 任务：\(selectedItemLabel)")
       }
-      .menuStyle(.borderlessButton)
-      .frame(maxWidth: 250, alignment: .leading)
-      .help(selectedTaskLabel)
     }
   }
 
-  private var selectedTaskLabel: String {
-    guard let task = tasks.first(where: { $0.taskID == model.selectedTaskID }) else {
-      return "选择 Agent 任务（\(tasks.count)）"
+  @ViewBuilder
+  private func taskButton(_ task: MCPServiceTaskSnapshot) -> some View {
+    Button {
+      model.openTask(task.taskID)
+    } label: {
+      Label(
+        WorkbenchTaskTextPresentation.menuTitle(for: task),
+        systemImage: task.taskID == model.selectedTaskID ? "checkmark" : task.providerSystemImage
+      )
     }
-    return WorkbenchTaskTextPresentation.menuTitle(for: task)
+  }
+
+  private var selectedItemLabel: String {
+    if let task = WorkbenchAgentTaskPickerContent.selectedTask(
+      tasks: tasks,
+      selectedTaskID: model.selectedTaskID
+    ) {
+      return WorkbenchTaskTextPresentation.menuTitle(for: task)
+    }
+    if let thread = threads.first(where: { $0.threadID == model.selectedThreadID }) {
+      return "Codex · \(threadTitle(thread))"
+    }
+    if let task = tasks.first(where: { $0.taskID == model.selectedTaskID }) {
+      return WorkbenchTaskTextPresentation.menuTitle(for: task)
+    }
+    return "选择 Agent 任务（\(itemCount)）"
+  }
+
+  private var itemCount: Int {
+    WorkbenchAgentTaskPickerContent.itemCount(tasks: tasks, threads: threads)
+  }
+
+  private var orphanThreads: [MCPThreadSummary] {
+    WorkbenchAgentTaskPickerContent.orphanThreads(tasks: tasks, threads: threads)
+  }
+
+  private func threadTitle(_ thread: MCPThreadSummary) -> String {
+    WorkbenchThreadTitlePresentation.compact(
+      thread.title ?? thread.preview ?? thread.threadID,
+      maximumCharacters: 48
+    )
+  }
+}
+
+package enum WorkbenchAgentTaskPickerContent {
+  package static func selectedTask(
+    tasks: [MCPServiceTaskSnapshot],
+    selectedTaskID: String?
+  ) -> MCPServiceTaskSnapshot? {
+    guard let selectedTaskID else { return nil }
+    return tasks.first(where: { $0.taskID == selectedTaskID })
+  }
+
+  package static func orphanThreads(
+    tasks: [MCPServiceTaskSnapshot],
+    threads: [MCPThreadSummary]
+  ) -> [MCPThreadSummary] {
+    let taskThreadIDs = Set(
+      tasks.compactMap { task in
+        task.isCodexTask ? task.threadID : nil
+      })
+    return threads.filter { !taskThreadIDs.contains($0.threadID) }
+  }
+
+  package static func itemCount(
+    tasks: [MCPServiceTaskSnapshot],
+    threads: [MCPThreadSummary]
+  ) -> Int {
+    tasks.count + orphanThreads(tasks: tasks, threads: threads).count
   }
 }
 
@@ -65,9 +150,26 @@ struct WorkbenchExternalTaskCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
 
+        if let modelLabel = WorkbenchTaskModelPresentation.label(
+          modelID: task.executionModel,
+          effort: task.executionEffort,
+          displayName: nil
+        ) {
+          Label("使用模型 \(modelLabel)", systemImage: "cpu")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+
         Text("原生 \(WorkbenchAgentPermissionPresentation.title(task.permissionMode))")
           .font(.caption2)
           .foregroundStyle(.secondary)
+
+        if task.providerIdentifier == "deepseek-harness" {
+          Text("每个任务使用独立会话")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .help("DeepSeek Harness 当前不支持续接历史会话。")
+        }
 
         if let failureDescription = task.failureDescription {
           Label {

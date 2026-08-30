@@ -44,7 +44,7 @@ extension ExecutionSession {
       guard let object = item.objectValue, let itemID = object["id"]?.stringValue else { continue }
       switch object["type"]?.stringValue {
       case "agentMessage":
-        guard let text = object["text"]?.stringValue,
+        guard let text = agentMessageContent(from: object),
           let message = try? ExecutionAgentMessage(
             key: "agent:" + itemID,
             role: .agent,
@@ -90,6 +90,25 @@ extension ExecutionSession {
       if messages.count >= 256 { break }
     }
     return messages
+  }
+
+  private static func agentMessageContent(from object: [String: JSONValue]) -> String? {
+    if let text = object["text"]?.stringValue, !text.isEmpty {
+      return text
+    }
+    guard let content = object["content"] else { return nil }
+    switch content {
+    case .string(let text):
+      return text
+    case .array(let parts):
+      let text = parts.compactMap { part -> String? in
+        if let text = part.stringValue { return text }
+        return part.objectValue?["text"]?.stringValue
+      }.joined(separator: "\n")
+      return text.isEmpty ? nil : text
+    default:
+      return nil
+    }
   }
 
   static func toolCall(from params: JSONValue?) -> ExecutionToolCall? {
@@ -160,7 +179,7 @@ extension ExecutionSession {
     for item in turn.items.reversed() {
       guard let object = item.objectValue,
         object["type"]?.stringValue == "agentMessage",
-        let text = object["text"]?.stringValue
+        let text = agentMessageContent(from: object)
       else { continue }
       let result = OutboundContentSecurity.redacted(text, maximumUTF8Bytes: 32 * 1_024)
       if !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -36,6 +36,11 @@ extension MCPServiceTaskSnapshot {
     !isCodexTask
   }
 
+  var expectedControlID: String? {
+    guard status == "running" else { return nil }
+    return isCodexTask ? turnID : providerRunID
+  }
+
   var workbenchTitle: String {
     for value in [currentStep, resultSummary] {
       if let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -86,6 +91,8 @@ enum AgentProviderPresentation {
     switch identifier(providerID) {
     case "codex": return "Codex"
     case "opencode": return "OpenCode"
+    case "deepseek-harness": return "DeepSeek Harness"
+    case "antigravity": return "Antigravity"
     default:
       let value = providerID.trimmingCharacters(in: .whitespacesAndNewlines)
       return value.isEmpty ? "Codex" : value
@@ -96,8 +103,52 @@ enum AgentProviderPresentation {
     switch identifier(providerID) {
     case "codex": return "cpu.fill"
     case "opencode": return "chevron.left.forwardslash.chevron.right"
+    case "deepseek-harness": return "gearshape.2.fill"
+    case "antigravity": return "sparkles"
     default: return "point.3.connected.trianglepath.dotted"
     }
+  }
+}
+
+extension IPCAgentInstallationSummary {
+  var supportsEffortSelection: Bool {
+    effectiveCapabilities.contains("selection.effort")
+  }
+}
+
+extension BridgeServiceAppModel {
+  func selectedAgentInstallation(
+    providerID: String,
+    installationID: String?
+  ) -> IPCAgentInstallationSummary? {
+    guard let installationID else { return nil }
+    return agentInstallations.first {
+      $0.providerID == providerID && $0.installationID == installationID
+    }
+  }
+
+  func supportsAgentEffortSelection(
+    providerID: String,
+    installationID: String?
+  ) -> Bool {
+    if providerID == "opencode" {
+      guard
+        selectedAgentInstallation(
+          providerID: providerID,
+          installationID: installationID
+        ) != nil
+      else { return false }
+      return agentSelectedModel(for: providerID)?.supportedReasoningEfforts.isEmpty == false
+    }
+    guard
+      let installation = selectedAgentInstallation(
+        providerID: providerID,
+        installationID: installationID
+      )
+    else {
+      return providerID != "antigravity"
+    }
+    return installation.supportsEffortSelection
   }
 }
 
@@ -135,6 +186,7 @@ struct CodexActivityPresentation: Equatable {
     case "running":
       (statusText, showsBubble) = Self.runningPresentation(
         activity,
+        providerID: task.providerIdentifier,
         providerName: providerName
       )
       isActive = true
@@ -171,19 +223,29 @@ struct CodexActivityPresentation: Equatable {
 
   private static func runningPresentation(
     _ activity: TaskConversationModel.Activity,
+    providerID: String,
     providerName: String
   ) -> (String, Bool) {
     switch activity {
     case .executing(let tool):
-      return (
-        tool.map { "\(providerName) 正在执行 \($0)…" }
-          ?? "\(providerName) 正在执行工具…",
-        true
+      guard let tool, !tool.isEmpty else {
+        return ("\(providerName) 正在处理任务…", true)
+      }
+      let presentation = CodexTranscriptPresentation.tool(
+        providerID: providerID,
+        name: tool,
+        status: "inProgress"
       )
+      if CodexTranscriptPresentation.category(providerID: providerID, name: tool) == .other {
+        return ("\(presentation.title)…", true)
+      }
+      return ("\(providerName) \(presentation.title)…", true)
     case .responding:
       return ("\(providerName) 正在输出…", false)
-    case .idle, .thinking:
-      return ("\(providerName) 正在思考…", true)
+    case .thinking:
+      return ("\(providerName) 正在分析…", true)
+    case .idle:
+      return ("\(providerName) 正在处理任务…", true)
     }
   }
 }

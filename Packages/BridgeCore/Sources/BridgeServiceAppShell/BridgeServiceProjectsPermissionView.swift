@@ -105,7 +105,7 @@ struct ProjectPermissionEditor: View {
     switch draft.networkPermission {
     case "allowed": "允许执行联网命令或外部请求。"
     case "requiresLocalApproval": "每次尝试联网操作均需本机用户批准。"
-    default: "严格禁止网络连接（sandbox 拦截）。"
+    default: "项目策略禁止网络连接。"
     }
   }
 

@@ -34,6 +34,13 @@ extension BridgeServiceAppModel {
     connectionState = .idle
   }
 
+  public func shutdownForApplicationTermination() async {
+    if !keepServiceRunningAfterAppExit {
+      await disableBackgroundService()
+    }
+    await shutdownUI()
+  }
+
   func enableBackgroundService() async {
     guard !stopped else { return }
     errorMessage = nil
@@ -85,9 +92,34 @@ extension BridgeServiceAppModel {
       projects = []
       agentProviders = []
       agentInstallations = []
+      agentModelOptions = []
+      agentModelOptionsByProvider = [:]
+      agentModelRefreshingProviders = []
+      agentModelHydratingProviders = []
+      agentModelRefreshErrorsByProvider = [:]
+      agentModelCatalogGenerations = [:]
+      agentModelCatalogScopes = [:]
+      agentModelHydrationGenerations = [:]
+      agentModelRefreshGenerations = [:]
+      agentModelHydrationSuppressions = [:]
+      agentModelDefaultLoadGenerations = [:]
+      agentModelDefaultRevisions = [:]
+      for task in agentModelDefaultMutationTasks.values {
+        task.cancel()
+      }
+      agentModelDefaultMutationTasks = [:]
+      agentModelDefaults = [:]
+      openCodeDefaultModel = nil
+      openCodeDefaultPermissionMode = "build"
+      openCodeDefaultEffort = nil
+      isRefreshingAgentModels = false
+      agentModelRefreshError = nil
       isManagingAgents = false
       tasks = []
       approvals = []
+      taskStartApprovalMode = "require"
+      workbenchPermissionMode = "workspace-write"
+      confirmedWorkbenchPermissionMode = "workspace-write"
       resolvingApprovalKeys = []
       resolvedTaskApprovalKeys = []
       resolvedDirectApprovalKeys = []
@@ -101,6 +133,7 @@ extension BridgeServiceAppModel {
       selectedThread = nil
       selectedTaskID = nil
       selectedProjectID = nil
+      conversationPresentationCache.removeAll()
     } catch {
       registrationStatus = registration.status
       connectionState = .unavailable
@@ -112,7 +145,13 @@ extension BridgeServiceAppModel {
     silent: Bool,
     includeCatalog: Bool
   ) async {
-    guard !stopped, !isRefreshing else { return }
+    guard !stopped else { return }
+    if refreshInProgress {
+      pendingRefresh = true
+      pendingVisibleRefresh = pendingVisibleRefresh || !silent
+      pendingCatalogRefresh = pendingCatalogRefresh || includeCatalog
+      return
+    }
     registrationStatus = registration.status
     guard registrationStatus == .enabled else {
       connectionState =
@@ -126,12 +165,14 @@ extension BridgeServiceAppModel {
       return
     }
 
-    isRefreshing = true
-    defer { isRefreshing = false }
+    refreshInProgress = true
+    if !silent { isRefreshing = true }
     do {
-      serviceStatus = try await client.status()
-      connectionState = .connected
-      lastRefreshAt = Date()
+      let refreshedStatus = try await client.status()
+      if serviceStatus != refreshedStatus { serviceStatus = refreshedStatus }
+      applyWorkbenchPermissionMode(refreshedStatus.workbenchPermissionMode)
+      if connectionState != .connected { connectionState = .connected }
+      if !silent { lastRefreshAt = Date() }
       if !silent { errorMessage = nil }
       await refreshCollections(
         client: client,
@@ -140,9 +181,22 @@ extension BridgeServiceAppModel {
       )
     } catch {
       await closeClient()
-      connectionState = .unavailable
+      if connectionState != .unavailable { connectionState = .unavailable }
       if !silent { errorMessage = Self.message(error) }
     }
+    refreshInProgress = false
+    if !silent { isRefreshing = false }
+    await runPendingRefreshIfNeeded()
+  }
+
+  private func runPendingRefreshIfNeeded() async {
+    guard pendingRefresh, !stopped else { return }
+    let visible = pendingVisibleRefresh
+    let includeCatalog = pendingCatalogRefresh
+    pendingRefresh = false
+    pendingVisibleRefresh = false
+    pendingCatalogRefresh = false
+    await refresh(silent: !visible, includeCatalog: includeCatalog)
   }
 
   func connect(includeCatalog: Bool) async {
@@ -164,7 +218,9 @@ extension BridgeServiceAppModel {
       guard !stopped, registration.status == .enabled else { return }
       let candidate = clientFactory()
       do {
-        serviceStatus = try await candidate.status()
+        let status = try await candidate.status()
+        serviceStatus = status
+        applyWorkbenchPermissionMode(status.workbenchPermissionMode)
         client = candidate
         connectionState = .connected
         registrationStatus = .enabled
@@ -199,115 +255,6 @@ extension BridgeServiceAppModel {
     }
   }
 
-  func refreshCollections(
-    client: any BridgeServiceClientProtocol,
-    includeCatalog: Bool,
-    includeThreads: Bool
-  ) async {
-    async let projectResult = optional { try await client.projects() }
-    async let agentCatalogResult = optional { try await client.agentCatalog() }
-    async let taskResult = optional {
-      try await client.tasks(IPCTaskListRequest(limit: 200))
-    }
-    async let approvalResult = optional { try await client.approvals(taskID: nil) }
-    async let directApprovalResult = optional { try await client.pendingDirectApprovals() }
-    async let directApprovalModeResult = optional { try await client.directApprovalMode() }
-    async let mcpClientResult = optional { try await client.mcpClients() }
-
-    if let value = await projectResult {
-      projects = value
-      reconcileProjectSelection()
-      if selectedProjectID == nil {
-        selectedProjectID =
-          value.first(where: { $0.projectID == serviceStatus?.workbenchProjectID })?.projectID
-          ?? value.first?.projectID
-      }
-    }
-
-    if let value = await agentCatalogResult {
-      agentProviders = value.providers
-      agentInstallations = value.installations
-    }
-
-    if let projectID = selectedProjectID, projectDetails[projectID] == nil,
-      let detail = await optional({ try await client.projectCommands(projectID: projectID) }),
-      selectedProjectID == projectID
-    {
-      projectDetails[projectID] = detail
-    }
-
-    var shouldRefreshThreads = includeThreads || threadCatalogRefreshDue()
-    if let value = await taskResult {
-      shouldRefreshThreads =
-        shouldRefreshThreads || Self.taskCatalogChanged(from: tasks, to: value)
-      tasks = value
-      reconcileTaskSelection()
-      if let activeAgentTask = value.first(where: { $0.isExternalAgentTask && $0.isActive }),
-        selectedTaskID != activeAgentTask.taskID || conversation?.taskID != activeAgentTask.taskID
-      {
-        selectedProjectID = activeAgentTask.projectID
-        persistWorkbenchProjectSelection(activeAgentTask.projectID)
-        selectedTaskID = activeAgentTask.taskID
-        selectedThreadID = nil
-        selectedThread = nil
-        openConversation(taskID: activeAgentTask.taskID)
-      } else if let activeTask = value.first(where: \.isRunning),
-        let threadID = activeTask.threadID,
-        selectedThreadID != threadID || conversation?.taskID != activeTask.taskID
-      {
-        selectedProjectID = activeTask.projectID
-        persistWorkbenchProjectSelection(activeTask.projectID)
-        selectedTaskID = activeTask.taskID
-        selectedThreadID = threadID
-        selectedThread = nil
-        openConversation(taskID: activeTask.taskID)
-      }
-    }
-
-    if shouldRefreshThreads, let projectID = selectedProjectID {
-      lastThreadCatalogRefreshAt = Date()
-      async let skillResult = optional { try await client.skills(projectID: projectID) }
-      let threadPage = await optional {
-        try await client.threads(IPCThreadListRequest(projectID: projectID, limit: 100))
-      }
-      if selectedProjectID == projectID, let value = await skillResult {
-        skills = value.skills
-      }
-      if selectedProjectID == projectID, let threadPage {
-        threads = threadPage.threads
-        reconcileThreadSelection()
-      }
-    }
-
-    if let value = await approvalResult {
-      applyApprovalSnapshot(value)
-    }
-    if let value = await directApprovalResult {
-      applyDirectApprovalSnapshot(value)
-    }
-    if let value = await directApprovalModeResult {
-      directApprovalMode = value
-    }
-    if let value = await mcpClientResult {
-      mcpClients = value
-    }
-    if includeCatalog {
-      do {
-        let catalog = try await client.modelCatalog()
-        models = catalog.models
-        modelPreferences = catalog.preferences
-        modelCatalogError = nil
-      } catch {
-        models = []
-        modelPreferences = nil
-        modelCatalogError = Self.message(error)
-      }
-      if let value = await optional({ try await client.customInstructions() }) {
-        customInstructions = value
-      }
-    }
-  }
-
   func reconcileThreadSelection() {
     guard let selectedThreadID else { return }
     let remainsVisible = threads.contains { $0.threadID == selectedThreadID }
@@ -334,9 +281,10 @@ extension BridgeServiceAppModel {
       resolvedTaskApprovalKeys.formIntersection(incomingKeys)
     }
     let hiddenKeys = resolvingApprovalKeys.union(resolvedTaskApprovalKeys)
-    approvals = value.filter {
+    let visible = value.filter {
       !hiddenKeys.contains(WorkbenchApprovalResolutionKey.task($0.approvalID))
     }
+    if approvals != visible { approvals = visible }
   }
 
   func applyDirectApprovalSnapshot(_ value: [IPCPendingDirectApproval]) {
@@ -345,9 +293,10 @@ extension BridgeServiceAppModel {
       resolvedDirectApprovalKeys.formIntersection(incomingKeys)
     }
     let hiddenKeys = resolvingApprovalKeys.union(resolvedDirectApprovalKeys)
-    directApprovals = value.filter {
+    let visible = value.filter {
       !hiddenKeys.contains(WorkbenchApprovalResolutionKey.direct($0.approvalID))
     }
+    if directApprovals != visible { directApprovals = visible }
   }
 
   func updateChatBrowserVisibility() {
@@ -372,6 +321,12 @@ extension BridgeServiceAppModel {
   func cancelChatBrowserSleep() {
     chatWebViewSleepTask?.cancel()
     chatWebViewSleepTask = nil
+  }
+
+  func reloadChatBrowser() {
+    guard isChatBrowserEnabled else { return }
+    cancelChatBrowserSleep()
+    chatBrowserReloadRequest &+= 1
   }
 
   func releaseChatWebView() {
@@ -417,7 +372,8 @@ extension BridgeServiceAppModel {
       localMCPURL: serviceStatus.localMCPURL,
       exposureMode: mode,
       tunnel: serviceStatus.tunnel,
-      workbenchProjectID: serviceStatus.workbenchProjectID
+      workbenchProjectID: serviceStatus.workbenchProjectID,
+      workbenchPermissionMode: serviceStatus.workbenchPermissionMode
     )
   }
 
@@ -428,8 +384,32 @@ extension BridgeServiceAppModel {
       localMCPURL: serviceStatus.localMCPURL,
       exposureMode: serviceStatus.exposureMode,
       tunnel: serviceStatus.tunnel,
-      workbenchProjectID: projectID
+      workbenchProjectID: projectID,
+      workbenchPermissionMode: serviceStatus.workbenchPermissionMode
     )
+  }
+
+  func updateWorkbenchPermissionModeState(_ mode: String) {
+    guard let serviceStatus else { return }
+    self.serviceStatus = IPCServiceStatusResponse(
+      status: serviceStatus.status,
+      localMCPURL: serviceStatus.localMCPURL,
+      exposureMode: serviceStatus.exposureMode,
+      tunnel: serviceStatus.tunnel,
+      workbenchProjectID: serviceStatus.workbenchProjectID,
+      workbenchPermissionMode: mode
+    )
+  }
+
+  func applyWorkbenchPermissionMode(_ mode: String?) {
+    guard workbenchPermissionModeSyncTask == nil else { return }
+    guard let mode, mode == "read-only" || mode == "workspace-write" else {
+      workbenchPermissionMode = "workspace-write"
+      confirmedWorkbenchPermissionMode = "workspace-write"
+      return
+    }
+    workbenchPermissionMode = mode
+    confirmedWorkbenchPermissionMode = mode
   }
 
   static func message(_ error: any Error) -> String {
@@ -464,65 +444,24 @@ extension BridgeServiceAppModel {
     guard let pollInterval, pollingTask == nil else { return }
     pollingTask = Task { [weak self] in
       while !Task.isCancelled {
+        guard let self, !self.stopped else { return }
+        let delay = self.nextPollingDelay(base: pollInterval)
         do {
-          try await Task.sleep(for: pollInterval)
+          try await Task.sleep(for: delay)
         } catch {
           return
         }
-        guard let self, !self.stopped else { return }
+        guard !self.stopped else { return }
         await self.refresh(silent: true, includeCatalog: false)
       }
     }
   }
 
-  private func threadCatalogRefreshDue(now: Date = Date()) -> Bool {
-    guard let lastThreadCatalogRefreshAt else { return true }
-    return
-      now.timeIntervalSince(lastThreadCatalogRefreshAt) >= threadCatalogRefreshInterval
+  func nextPollingDelay(base: Duration) -> Duration {
+    let needsLiveUpdates =
+      tasks.contains(where: \.isActive) || !approvals.isEmpty || !directApprovals.isEmpty
+      || !resolvingApprovalKeys.isEmpty
+    return needsLiveUpdates ? base : max(base, idlePollInterval)
   }
 
-  private func reconcileProjectSelection() {
-    guard let selectedProjectID,
-      !projects.contains(where: { $0.projectID == selectedProjectID })
-    else { return }
-    self.selectedProjectID = nil
-    selectedTaskID = nil
-    threads = []
-    selectedThread = nil
-  }
-
-  private static func taskCatalogChanged(
-    from previous: [MCPServiceTaskSnapshot],
-    to current: [MCPServiceTaskSnapshot]
-  ) -> Bool {
-    taskCatalogSignature(previous) != taskCatalogSignature(current)
-  }
-
-  private static func taskCatalogSignature(
-    _ values: [MCPServiceTaskSnapshot]
-  ) -> [TaskCatalogKey] {
-    values
-      .map {
-        TaskCatalogKey(
-          taskID: $0.taskID,
-          projectID: $0.projectID,
-          status: $0.status,
-          threadID: $0.threadID
-        )
-      }
-      .sorted { $0.taskID < $1.taskID }
-  }
-}
-
-private struct TaskCatalogKey: Equatable {
-  let taskID: String
-  let projectID: String
-  let status: String
-  let threadID: String?
-}
-
-private func optional<Value: Sendable>(
-  _ operation: @escaping @Sendable () async throws -> Value
-) async -> Value? {
-  try? await operation()
 }

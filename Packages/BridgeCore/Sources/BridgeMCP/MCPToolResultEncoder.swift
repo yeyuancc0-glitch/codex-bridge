@@ -34,10 +34,6 @@ public struct MCPToolResultEncoder: Sendable {
     return result
   }
 
-  public func encodeTaskDiffPage(_ page: MCPTaskDiffPage) throws -> CallTool.Result {
-    try encode(GetTaskDiffOutput(page: page))
-  }
-
   private static func makeJSONEncoder() -> JSONEncoder {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -45,15 +41,50 @@ public struct MCPToolResultEncoder: Sendable {
   }
 }
 
+public enum MCPToolErrorCategory: String, Codable, Equatable, Sendable {
+  case callerError = "caller_error"
+  case stateConflict = "state_conflict"
+  case policyDenied = "policy_denied"
+  case approvalRequired = "approval_required"
+  case capabilityUnavailable = "capability_unavailable"
+  case infrastructureFailure = "infrastructure_failure"
+}
+
 public struct MCPToolErrorDTO: Codable, Equatable, Sendable {
   public let code: String
+  public let category: MCPToolErrorCategory
   public let message: String
   public let retryable: Bool
+  public let nextAction: String
   public let owner: String?
   public let taskID: String?
   public let operationID: String?
   public let sessionID: String?
   public let data: [String: String]?
+
+  public init(
+    code: String,
+    category: MCPToolErrorCategory,
+    message: String,
+    retryable: Bool,
+    nextAction: String,
+    owner: String? = nil,
+    taskID: String? = nil,
+    operationID: String? = nil,
+    sessionID: String? = nil,
+    data: [String: String]? = nil
+  ) {
+    self.code = code
+    self.category = category
+    self.message = message
+    self.retryable = retryable
+    self.nextAction = nextAction
+    self.owner = owner
+    self.taskID = taskID
+    self.operationID = operationID
+    self.sessionID = sessionID
+    self.data = data
+  }
 
   public init(
     code: String,
@@ -65,25 +96,47 @@ public struct MCPToolErrorDTO: Codable, Equatable, Sendable {
     sessionID: String? = nil,
     data: [String: String]? = nil
   ) {
-    self.code = code
-    self.message = message
-    self.retryable = retryable
-    self.owner = owner
-    self.taskID = taskID
-    self.operationID = operationID
-    self.sessionID = sessionID
-    self.data = data
+    self.init(
+      code: code,
+      category: .infrastructureFailure,
+      message: message,
+      retryable: retryable,
+      nextAction: "inspect_error",
+      owner: owner,
+      taskID: taskID,
+      operationID: operationID,
+      sessionID: sessionID,
+      data: data
+    )
   }
 
   private enum CodingKeys: String, CodingKey {
     case code
+    case category
     case message
     case retryable
+    case nextAction = "next_action"
     case owner
     case taskID = "task_id"
     case operationID = "operation_id"
     case sessionID = "session_id"
     case data
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    code = try container.decode(String.self, forKey: .code)
+    category =
+      try container.decodeIfPresent(MCPToolErrorCategory.self, forKey: .category)
+      ?? .infrastructureFailure
+    message = try container.decode(String.self, forKey: .message)
+    retryable = try container.decode(Bool.self, forKey: .retryable)
+    nextAction = try container.decodeIfPresent(String.self, forKey: .nextAction) ?? "inspect_error"
+    owner = try container.decodeIfPresent(String.self, forKey: .owner)
+    taskID = try container.decodeIfPresent(String.self, forKey: .taskID)
+    operationID = try container.decodeIfPresent(String.self, forKey: .operationID)
+    sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+    data = try container.decodeIfPresent([String: String].self, forKey: .data)
   }
 }
 

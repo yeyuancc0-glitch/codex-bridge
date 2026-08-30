@@ -10,6 +10,11 @@ public enum ServiceDirectApprovalMode: String, Codable, CaseIterable, Sendable {
   case auto
 }
 
+public enum ServiceTaskStartApprovalMode: String, Codable, CaseIterable, Sendable {
+  case require
+  case auto
+}
+
 public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case customInstructions = "mcp.custom_instructions"
   case mcpExposureMode = "mcp.exposure_mode"
@@ -17,6 +22,7 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case qwenStudioEnabled = "mcp.client.qwen-studio.enabled"
   case qwenStudioExposureMode = "mcp.client.qwen-studio.exposure_mode"
   case directApprovalMode = "direct.approval_mode"
+  case taskStartApprovalMode = "tasks.start_approval_mode"
   case defaultExecutionModel = "models.execution.default"
   case defaultExecutionEffort = "models.execution.effort"
   case defaultSupervisorModel = "models.supervisor.default"
@@ -25,9 +31,16 @@ public enum ServiceSettingKey: String, CaseIterable, Sendable {
   case executionAccessMode = "execution.access_mode"
   case executionFastMode = "execution.fast_mode"
   case workbenchProjectID = "workbench.project_id"
+  case workbenchPermissionMode = "workbench.permission_mode"
   case openCodeDefaultModel = "agent.opencode.default_model"
   case openCodeDefaultPermissionMode = "agent.opencode.default_permission_mode"
   case openCodeDefaultEffort = "agent.opencode.default_effort"
+  case deepSeekHarnessDefaultModel = "agent.deepseek-harness.default_model"
+  case deepSeekHarnessDefaultPermissionMode = "agent.deepseek-harness.default_permission_mode"
+  case deepSeekHarnessDefaultEffort = "agent.deepseek-harness.default_effort"
+  case antigravityDefaultModel = "agent.antigravity.default_model"
+  case antigravityDefaultPermissionMode = "agent.antigravity.default_permission_mode"
+  case antigravityDefaultEffort = "agent.antigravity.default_effort"
   case tunnelID = "tunnel.id"
   case tunnelEnabled = "tunnel.enabled"
 }
@@ -158,6 +171,32 @@ public actor ServiceSettings {
     try await set(mode.rawValue, for: .directApprovalMode)
   }
 
+  public func taskStartApprovalMode() async throws -> ServiceTaskStartApprovalMode {
+    guard let value = try await string(for: .taskStartApprovalMode) else { return .require }
+    guard let mode = ServiceTaskStartApprovalMode(rawValue: value) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return mode
+  }
+
+  public func setTaskStartApprovalMode(_ mode: ServiceTaskStartApprovalMode) async throws {
+    try await set(mode.rawValue, for: .taskStartApprovalMode)
+  }
+
+  public func workbenchPermissionMode() async throws -> ServicePermissionMode {
+    guard let value = try await string(for: .workbenchPermissionMode) else {
+      return .workspaceWrite
+    }
+    guard let mode = ServicePermissionMode(rawValue: value) else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return mode
+  }
+
+  public func setWorkbenchPermissionMode(_ mode: ServicePermissionMode) async throws {
+    try await set(mode.rawValue, for: .workbenchPermissionMode)
+  }
+
   public func setModelPreferences(_ preferences: ServiceModelPreferences) async throws {
     let updatedAt = now()
     try await store.setSettings([
@@ -253,6 +292,65 @@ public actor ServiceSettings {
       throw ServiceStoreError.invalidArgument("agent.opencode.default_permission_mode")
     }
     try await set(mode, for: .openCodeDefaultPermissionMode)
+  }
+
+  public func deepSeekHarnessDefaultPermissionMode() async throws -> String {
+    guard let value = try await string(for: .deepSeekHarnessDefaultPermissionMode) else {
+      return "workspace-write"
+    }
+    guard value == "workspace-write" || value == "read-only" else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return value
+  }
+
+  public func setDeepSeekHarnessDefaultPermissionMode(_ mode: String) async throws {
+    guard mode == "workspace-write" || mode == "read-only" else {
+      throw ServiceStoreError.invalidArgument("agent.deepseek-harness.default_permission_mode")
+    }
+    try await set(mode, for: .deepSeekHarnessDefaultPermissionMode)
+  }
+
+  public func antigravityDefaultPermissionMode() async throws -> String {
+    guard let value = try await string(for: .antigravityDefaultPermissionMode) else {
+      return "workspace-write"
+    }
+    guard value == "workspace-write" || value == "read-only" else {
+      throw ServiceStoreError.corruptRecord
+    }
+    return value
+  }
+
+  public func setAntigravityDefaultPermissionMode(_ mode: String) async throws {
+    guard mode == "workspace-write" || mode == "read-only" else {
+      throw ServiceStoreError.invalidArgument(
+        "agent.antigravity.default_permission_mode"
+      )
+    }
+    try await set(mode, for: .antigravityDefaultPermissionMode)
+  }
+
+  public func antigravityDefaultModel() async throws -> String? {
+    try await string(for: .antigravityDefaultModel)
+  }
+
+  public func setAntigravityDefaultModel(_ model: String?) async throws {
+    try await set(model, for: .antigravityDefaultModel)
+  }
+
+  public func antigravityDefaultEffort() async throws -> String? {
+    try await string(for: .antigravityDefaultEffort)
+  }
+
+  public func setAntigravityDefaultEffort(_ effort: String?) async throws {
+    if let effort {
+      try ServiceValidation.identifier(
+        effort,
+        field: "agent.antigravity.default_effort",
+        maximumBytes: 64
+      )
+    }
+    try await set(effort, for: .antigravityDefaultEffort)
   }
 
   public func openCodeDefaultEffort() async throws -> String? {

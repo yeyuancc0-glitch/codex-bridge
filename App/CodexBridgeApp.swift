@@ -43,7 +43,7 @@ private final class CodexBridgeAppDelegate: NSObject, NSApplicationDelegate {
     guard !isClosingClient, let model else { return .terminateNow }
     isClosingClient = true
     Task {
-      await model.shutdownUI()
+      await model.shutdownForApplicationTermination()
       canTerminate = true
       sender.reply(toApplicationShouldTerminate: true)
     }

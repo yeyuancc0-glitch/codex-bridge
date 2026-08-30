@@ -4,13 +4,16 @@ import WebKit
 
 public struct ChatGPTWebView: NSViewRepresentable {
   public let initialURL: URL
+  public let reloadRequest: UInt64
   @Binding public var webViewReference: WKWebView?
 
   public init(
     initialURL: URL = URL(string: "https://chatgpt.com")!,
+    reloadRequest: UInt64 = 0,
     webViewReference: Binding<WKWebView?> = .constant(nil)
   ) {
     self.initialURL = initialURL
+    self.reloadRequest = reloadRequest
     self._webViewReference = webViewReference
   }
 
@@ -54,6 +57,18 @@ public struct ChatGPTWebView: NSViewRepresentable {
 
   public func updateNSView(_ nsView: WKWebView, context: Context) {
     Self.attachDelegates(to: nsView, coordinator: context.coordinator)
+    guard context.coordinator.consumeReloadRequest(reloadRequest) else { return }
+    if nsView.url == nil {
+      nsView.load(
+        URLRequest(
+          url: initialURL,
+          cachePolicy: .reloadRevalidatingCacheData,
+          timeoutInterval: 30
+        )
+      )
+    } else {
+      nsView.reloadFromOrigin()
+    }
   }
 
   static func attachDelegates(to webView: WKWebView, coordinator: Coordinator) {
@@ -63,6 +78,7 @@ public struct ChatGPTWebView: NSViewRepresentable {
 
   public final class Coordinator: NSObject, WKDownloadDelegate, WKNavigationDelegate, WKUIDelegate {
     let parent: ChatGPTWebView
+    private var handledReloadRequest: UInt64
     private var downloadDestinations: [ObjectIdentifier: DownloadDestination] = [:]
 
     private struct DownloadDestination {
@@ -72,6 +88,13 @@ public struct ChatGPTWebView: NSViewRepresentable {
 
     init(_ parent: ChatGPTWebView) {
       self.parent = parent
+      handledReloadRequest = parent.reloadRequest
+    }
+
+    func consumeReloadRequest(_ request: UInt64) -> Bool {
+      guard request != handledReloadRequest else { return false }
+      handledReloadRequest = request
+      return true
     }
 
     // Direct new-window navigations back into the same WKWebView. Download

@@ -117,6 +117,8 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleSetProjectCommandMode(request)
     case .setWorkbenchProject:
       return try await handleSetWorkbenchProject(request)
+    case .setWorkbenchPermissionMode:
+      return try await handleSetWorkbenchPermissionMode(request)
     case .getAgentCatalog:
       return try await handleGetAgentCatalog(request)
     case .registerAgentInstallation:
@@ -153,6 +155,10 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleGetTask(request)
     case .stopTask:
       return try await handleStopTask(request)
+    case .steerTask:
+      return try await handleSteerTask(request)
+    case .interruptTask:
+      return try await handleInterruptTask(request)
     case .deleteTask:
       return try await handleDeleteTask(request)
     case .getTaskConversation:
@@ -175,6 +181,10 @@ public final class BridgeServiceXPCController: NSObject, CodexBridgeServiceXPCPr
       return try await handleGetDirectApprovalMode(request)
     case .setDirectApprovalMode:
       return try await handleSetDirectApprovalMode(request)
+    case .getTaskStartApprovalMode:
+      return try await handleGetTaskStartApprovalMode(request)
+    case .setTaskStartApprovalMode:
+      return try await handleSetTaskStartApprovalMode(request)
     case .submitAgentTask:
       return try await handleSubmitAgentTask(request)
     case .listAgentModels:

@@ -5,6 +5,7 @@ public enum AgentCapability: String, Codable, CaseIterable, Hashable, Sendable {
   case sessionContinue = "lifecycle.session_continue"
   case interrupt = "lifecycle.interrupt"
   case steer = "lifecycle.steer"
+  case steerInterruptAndContinue = "lifecycle.steer_interrupt_and_continue"
   case textDelta = "presentation.text_delta"
   case reasoningDelta = "presentation.reasoning_delta"
   case toolLifecycle = "presentation.tool_lifecycle"
@@ -21,6 +22,14 @@ public enum AgentCapability: String, Codable, CaseIterable, Hashable, Sendable {
   case effortSelection = "selection.effort"
   case profileSelection = "selection.profile"
   case structuredOutput = "selection.structured_output"
+  case shell = "tools.shell"
+  case webSearch = "tools.web_search"
+  case webFetch = "tools.web_fetch"
+  case codeExecution = "tools.code_execution"
+  case mcpClient = "tools.mcp_client"
+  case subagents = "tools.subagents"
+  case workflow = "tools.workflow"
+  case skills = "tools.skills"
 }
 
 public struct AgentCapabilitySnapshot: Codable, Equatable, Sendable {

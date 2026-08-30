@@ -1,20 +1,37 @@
 import Foundation
 
 public final class CodexBridgeTaskStreamHub: @unchecked Sendable {
+  public struct Registration: Sendable {
+    public let token: UUID
+    public let stream: AsyncStream<IPCTaskConversationPush>
+  }
+
   private let lock = NSLock()
   private var streams: [String: [UUID: AsyncStream<IPCTaskConversationPush>.Continuation]] = [:]
 
   public init() {}
 
   public func register(taskID: String) -> AsyncStream<IPCTaskConversationPush> {
+    registerWithToken(taskID: taskID).stream
+  }
+
+  public func registerWithToken(taskID: String) -> Registration {
     lock.lock()
     defer { lock.unlock() }
     var continuation: AsyncStream<IPCTaskConversationPush>.Continuation!
     let stream = AsyncStream<IPCTaskConversationPush>(
       bufferingPolicy: .bufferingNewest(128)
     ) { continuation = $0 }
-    streams[taskID, default: [:]][UUID()] = continuation
-    return stream
+    let token = UUID()
+    streams[taskID, default: [:]][token] = continuation
+    return Registration(token: token, stream: stream)
+  }
+
+  public func unregister(taskID: String, token: UUID) {
+    lock.lock()
+    streams[taskID]?[token] = nil
+    if streams[taskID]?.isEmpty == true { streams[taskID] = nil }
+    lock.unlock()
   }
 
   public func unregisterAll(taskID: String) {

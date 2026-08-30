@@ -14,6 +14,7 @@ Secrets/
 *.runtime-key
 .env
 .env.*
+!Examples/DeepSeekHarnessProfile/.env.example
 *.pem
 *.p12
 *.key

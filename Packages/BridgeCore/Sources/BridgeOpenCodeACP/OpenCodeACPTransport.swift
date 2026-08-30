@@ -1,213 +1,76 @@
+import BridgeACP
 import BridgeProcess
 import Foundation
 
-public protocol OpenCodeACPTransport: Sendable {
-  var incoming: AsyncThrowingStream<Data, any Error> { get }
-  func send(_ frame: Data) async throws
-  func close() async
-}
-
-public struct OpenCodeACPProcessTransportConfiguration: Sendable {
-  public let argv: [String]
-  public let workingDirectory: String
-  public let environment: [String: String]
-  public let maximumFrameBytes: Int
-  public let maximumStandardErrorBytes: Int
-  public let maximumLifetime: Duration
-
-  public init(
-    argv: [String],
-    workingDirectory: String,
-    environment: [String: String],
-    maximumFrameBytes: Int = 1_048_576,
-    maximumStandardErrorBytes: Int = 256 * 1_024,
-    maximumLifetime: Duration = .seconds(24 * 60 * 60)
-  ) {
-    self.argv = argv
-    self.workingDirectory = workingDirectory
-    self.environment = environment
-    self.maximumFrameBytes = max(1, maximumFrameBytes)
-    self.maximumStandardErrorBytes = max(1, maximumStandardErrorBytes)
-    self.maximumLifetime = maximumLifetime
-  }
-}
+public typealias OpenCodeACPTransport = BridgeACP.ACPTransport
+public typealias OpenCodeACPProcessTransportConfiguration =
+  BridgeACP.ACPProcessTransportConfiguration
 
 public final class OpenCodeACPProcessTransport: OpenCodeACPTransport, @unchecked Sendable {
-  public var incoming: AsyncThrowingStream<Data, any Error> { state.stream }
+  public let incoming: AsyncThrowingStream<Data, any Error>
 
-  private let process: ManagedStdioProcess
-  private let state: ProcessTransportState
-  private let standardError: BoundedProcessOutputCollector
-  private let runner: ManagedProcessRunner
-  private let maximumFrameBytes: Int
-  private let lock = NSLock()
-  private var closing = false
-  private var monitorTask: Task<Void, Never>?
+  private let base: BridgeACP.ACPProcessTransport
 
   public static func launch(
     configuration: OpenCodeACPProcessTransportConfiguration
   ) throws -> OpenCodeACPProcessTransport {
-    let state = ProcessTransportState(maximumFrameBytes: configuration.maximumFrameBytes)
-    let standardError = BoundedProcessOutputCollector(
-      maximumBytes: configuration.maximumStandardErrorBytes
-    )
-    let process = try ManagedStdioProcess(
-      argv: configuration.argv,
-      workingDirectory: configuration.workingDirectory,
-      environment: configuration.environment,
-      mergeStandardError: false,
-      onStandardOutput: { state.receive($0) },
-      onStandardError: { standardError.append($0) }
-    )
-    let transport = OpenCodeACPProcessTransport(
-      process: process,
-      state: state,
-      standardError: standardError,
-      maximumFrameBytes: configuration.maximumFrameBytes,
-      runner: ManagedProcessRunner(defaultTimeout: configuration.maximumLifetime)
-    )
-    transport.startMonitoring()
-    return transport
+    let base = try BridgeACP.ACPProcessTransport.launch(configuration: configuration)
+    return OpenCodeACPProcessTransport(base: base)
   }
 
-  private init(
-    process: ManagedStdioProcess,
-    state: ProcessTransportState,
-    standardError: BoundedProcessOutputCollector,
-    maximumFrameBytes: Int,
-    runner: ManagedProcessRunner
-  ) {
-    self.process = process
-    self.state = state
-    self.standardError = standardError
-    self.maximumFrameBytes = maximumFrameBytes
-    self.runner = runner
-  }
-
-  public func send(_ frame: Data) async throws {
-    guard !frame.isEmpty, frame.count <= maximumFrameBytes, !frame.contains(0x0A) else {
-      throw OpenCodeACPError.oversizedFrame
-    }
-    let isClosing = lock.withLock { closing }
-    guard !isClosing else { throw OpenCodeACPError.transportClosed }
-    var line = frame
-    line.append(0x0A)
-    do {
-      try process.writeStdin(line)
-    } catch {
-      throw OpenCodeACPError.transportClosed
-    }
-  }
-
-  public func close() async {
-    let closeState = lock.withLock { () -> (Bool, Task<Void, Never>?) in
-      guard !closing else { return (false, nil) }
-      closing = true
-      return (true, monitorTask)
-    }
-    guard closeState.0 else { return }
-    let task = closeState.1
-
-    process.closeStdin()
-    if let task {
-      task.cancel()
-      await task.value
-    } else {
-      _ = process.terminateAndWait()
-      process.drainRemainingOutput()
-      process.close()
-    }
-    state.finish()
-  }
-
-  public func standardErrorSnapshot() -> BoundedProcessOutput {
-    standardError.snapshot()
-  }
-
-  private func startMonitoring() {
-    let task = Task.detached { [weak self] in
-      guard let self else { return }
-      let result = await runner.monitor(process: process)
-      let wasClosing = lock.withLock { closing }
-      if wasClosing {
-        state.finish()
-      } else {
-        state.finish(throwing: Self.exitError(result.termination))
-      }
-    }
-    lock.withLock { monitorTask = task }
-  }
-
-  private static func exitError(_ termination: ManagedProcessTermination) -> OpenCodeACPError {
-    switch termination {
-    case .exited(let code): .processExited(code)
-    case .killed: .processExited(nil)
-    case .notStarted: .processExited(nil)
-    }
-  }
-}
-
-private final class ProcessTransportState: @unchecked Sendable {
-  let stream: AsyncThrowingStream<Data, any Error>
-  private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-  private let lock = NSLock()
-  private var decoder: ACPLineDecoder
-  private var finished = false
-
-  init(maximumFrameBytes: Int) {
+  private init(base: BridgeACP.ACPProcessTransport) {
+    self.base = base
     let pair = AsyncThrowingStream.makeStream(
       of: Data.self,
       throwing: (any Error).self,
       bufferingPolicy: .bufferingOldest(256)
     )
-    stream = pair.stream
-    continuation = pair.continuation
-    decoder = ACPLineDecoder(maximumFrameBytes: maximumFrameBytes)
-  }
-
-  func receive(_ data: Data) {
-    lock.lock()
-    guard !finished else {
-      lock.unlock()
-      return
-    }
-    do {
-      let frames = try decoder.append(data)
-      lock.unlock()
-      for frame in frames {
-        if case .dropped = continuation.yield(frame) {
-          finish(throwing: OpenCodeACPError.transportClosed)
-          return
+    incoming = pair.stream
+    let continuation = pair.continuation
+    Task {
+      do {
+        for try await frame in base.incoming {
+          guard case .enqueued = continuation.yield(frame) else {
+            await base.close()
+            return
+          }
         }
+        continuation.finish()
+      } catch {
+        continuation.finish(throwing: Self.compatibilityError(for: error))
       }
-    } catch {
-      finished = true
-      lock.unlock()
-      continuation.finish(throwing: error)
     }
   }
 
-  func finish(throwing error: (any Error)? = nil) {
-    lock.lock()
-    guard !finished else {
-      lock.unlock()
-      return
-    }
-    finished = true
-    let remaining: [Data]
+  public func send(_ frame: Data) async throws {
     do {
-      remaining = try decoder.finish()
+      try await base.send(frame)
     } catch {
-      lock.unlock()
-      continuation.finish(throwing: error)
-      return
+      throw Self.compatibilityError(for: error)
     }
-    lock.unlock()
-    for frame in remaining { _ = continuation.yield(frame) }
-    if let error {
-      continuation.finish(throwing: error)
-    } else {
-      continuation.finish()
+  }
+
+  public func close() async {
+    await base.close()
+  }
+
+  public func standardErrorSnapshot() -> BoundedProcessOutput {
+    base.standardErrorSnapshot()
+  }
+
+  private static func compatibilityError(for error: any Error) -> OpenCodeACPError {
+    if let error = error as? OpenCodeACPError { return error }
+    if let error = error as? BridgeACP.ACPError {
+      switch error {
+      case .invalidMessage: return .invalidMessage
+      case .malformedResponse: return .malformedResponse
+      case .remote(let code, let message): return .remote(code: code, message: message)
+      case .requestTimedOut: return .requestTimedOut
+      case .transportClosed: return .transportClosed
+      case .processExited(let code): return .processExited(code)
+      case .oversizedFrame: return .oversizedFrame
+      }
     }
+    return .transportClosed
   }
 }

@@ -9,23 +9,10 @@ let package = Package(
     .library(name: "BridgeDomain", targets: ["BridgeDomain"]),
     .library(name: "BridgeSecurity", targets: ["BridgeSecurity"]),
     .library(name: "BridgeCodexRPC", targets: ["BridgeCodexRPC"]),
-    .library(name: "BridgePersistence", targets: ["BridgePersistence"]),
-    .library(name: "BridgePolicy", targets: ["BridgePolicy"]),
     .library(name: "BridgeProjects", targets: ["BridgeProjects"]),
-    .library(name: "BridgeExecution", targets: ["BridgeExecution"]),
-    .library(name: "BridgeCoordinator", targets: ["BridgeCoordinator"]),
     .library(name: "BridgeGit", targets: ["BridgeGit"]),
-    .library(name: "BridgeReporting", targets: ["BridgeReporting"]),
     .library(name: "BridgeSupervisor", targets: ["BridgeSupervisor"]),
-    .library(name: "BridgeRepositories", targets: ["BridgeRepositories"]),
-    .library(name: "BridgeRuntime", targets: ["BridgeRuntime"]),
-    .library(name: "BridgePipeline", targets: ["BridgePipeline"]),
-    .library(name: "BridgeApplication", targets: ["BridgeApplication"]),
-    .library(name: "BridgeVerification", targets: ["BridgeVerification"]),
     .library(name: "BridgeFiles", targets: ["BridgeFiles"]),
-    .library(name: "BridgePresentation", targets: ["BridgePresentation"]),
-    .library(name: "BridgeAppModel", targets: ["BridgeAppModel"]),
-    .library(name: "BridgeAppShell", targets: ["BridgeAppShell"]),
     .library(name: "BridgeMCP", targets: ["BridgeMCP"]),
     .library(name: "BridgeTunnel", targets: ["BridgeTunnel"]),
     .library(name: "BridgeServiceCore", targets: ["BridgeServiceCore"]),
@@ -34,6 +21,8 @@ let package = Package(
     .library(name: "BridgeCodexService", targets: ["BridgeCodexService"]),
     .library(name: "BridgeAgentCore", targets: ["BridgeAgentCore"]),
     .library(name: "BridgeOpenCodeACP", targets: ["BridgeOpenCodeACP"]),
+    .library(name: "BridgeDeepSeekHarnessACP", targets: ["BridgeDeepSeekHarnessACP"]),
+    .library(name: "BridgeAntigravityCLI", targets: ["BridgeAntigravityCLI"]),
     .library(name: "BridgeProcess", targets: ["BridgeProcess"]),
     .library(name: "BridgeServiceApplication", targets: ["BridgeServiceApplication"]),
     .library(name: "BridgeDirectCommand", targets: ["BridgeDirectCommand"]),
@@ -65,126 +54,17 @@ let package = Package(
     .target(name: "BridgeSecurity"),
     .target(name: "BridgeCodexRPC"),
     .target(
-      name: "BridgePersistence",
-      dependencies: [
-        "BridgeDomain",
-        .product(name: "GRDB", package: "GRDB.swift"),
-        .product(name: "Logging", package: "swift-log"),
-      ]
-    ),
-    .target(
-      name: "BridgePolicy",
-      dependencies: ["BridgeProjects", "BridgeSecurity"]
-    ),
-    .target(
       name: "BridgeProjects",
       dependencies: ["BridgeDomain", "BridgeSecurity"]
     ),
-    .target(
-      name: "BridgeExecution",
-      dependencies: ["BridgeCodexRPC", "BridgeDomain", "BridgeProjects", "BridgeSecurity"]
-    ),
-    .target(
-      name: "BridgeCoordinator",
-      dependencies: ["BridgeDomain", "BridgePersistence", "BridgeProjects"]
-    ),
     .target(name: "BridgeGit"),
-    .target(name: "BridgeReporting"),
     .target(
       name: "BridgeSupervisor",
       dependencies: ["BridgeCodexRPC", "BridgeSecurity"]
     ),
     .target(
-      name: "BridgeRepositories",
-      dependencies: [
-        "BridgeDomain",
-        "BridgePersistence",
-        "BridgeSecurity",
-        "BridgeProjects",
-        "BridgeExecution",
-        "BridgeReporting",
-        .product(name: "GRDB", package: "GRDB.swift"),
-      ]
-    ),
-    .target(
-      name: "BridgeRuntime",
-      dependencies: [
-        "BridgeCodexRPC",
-        "BridgeCoordinator",
-        "BridgeDomain",
-        "BridgeProjects",
-        "BridgeSecurity",
-      ]
-    ),
-    .target(
-      name: "BridgePipeline",
-      dependencies: [
-        "BridgeCoordinator",
-        "BridgeDomain",
-        "BridgeGit",
-        "BridgePersistence",
-        "BridgeProjects",
-        "BridgeReporting",
-        "BridgeRepositories",
-        "BridgeSecurity",
-        "BridgeSupervisor",
-        "BridgeVerification",
-        .product(name: "GRDB", package: "GRDB.swift"),
-      ]
-    ),
-    .target(
-      name: "BridgeApplication",
-      dependencies: [
-        "BridgeCodexRPC",
-        "BridgeCoordinator",
-        "BridgeDomain",
-        "BridgeFiles",
-        "BridgeMCP",
-        "BridgePersistence",
-        "BridgeProjects",
-        "BridgeReporting",
-        "BridgeRepositories",
-        "BridgeSecurity",
-      ]
-    ),
-    .target(
-      name: "BridgeVerification",
-      dependencies: ["BridgeProjects", "BridgeSecurity", "BridgePolicy"]
-    ),
-    .target(
       name: "BridgeFiles",
       dependencies: ["BridgeDomain", "BridgeGit", "BridgeSecurity", "BridgeProjects"]
-    ),
-    .target(name: "BridgePresentation"),
-    .target(
-      name: "BridgeAppModel",
-      dependencies: ["BridgePresentation"]
-    ),
-    .target(
-      name: "BridgeAppShell",
-      dependencies: [
-        "BridgeApplication",
-        "BridgeAppModel",
-        "BridgeCodexRPC",
-        "BridgeCoordinator",
-        "BridgeDomain",
-        "BridgeGit",
-        "BridgeMCP",
-        "BridgePipeline",
-        "BridgePersistence",
-        "BridgePresentation",
-        "BridgeProjects",
-        "BridgeRepositories",
-        "BridgeReporting",
-        "BridgeRuntime",
-        "BridgeSecurity",
-        "BridgeSupervisor",
-        "BridgeTunnel",
-        "BridgeVerification",
-        .product(name: "GRDB", package: "GRDB.swift"),
-        .product(name: "Logging", package: "swift-log"),
-        .product(name: "MCP", package: "swift-sdk"),
-      ]
     ),
     .target(
       name: "BridgeMCP",
@@ -244,11 +124,34 @@ let package = Package(
       dependencies: ["BridgeDomain"]
     ),
     .target(
+      name: "BridgeACP",
+      dependencies: ["BridgeProcess"]
+    ),
+    .target(
       name: "BridgeOpenCodeACP",
+      dependencies: [
+        "BridgeACP",
+        "BridgeAgentCore",
+        "BridgeDomain",
+        "BridgeProcess",
+      ]
+    ),
+    .target(
+      name: "BridgeDeepSeekHarnessACP",
+      dependencies: [
+        "BridgeACP",
+        "BridgeAgentCore",
+        "BridgeDomain",
+      ],
+      resources: [.process("Resources")]
+    ),
+    .target(
+      name: "BridgeAntigravityCLI",
       dependencies: [
         "BridgeAgentCore",
         "BridgeDomain",
         "BridgeProcess",
+        "BridgeSecurity",
       ]
     ),
     .target(
@@ -286,10 +189,13 @@ let package = Package(
     .target(
       name: "BridgeServiceHost",
       dependencies: [
+        "BridgeAgentCore",
+        "BridgeAntigravityCLI",
         "BridgeCodexRPC",
         "BridgeCodexService",
         "BridgeDirectCommand",
         "BridgeDomain",
+        "BridgeDeepSeekHarnessACP",
         "BridgeLegacyImport",
         "BridgeIPC",
         "BridgeMCP",

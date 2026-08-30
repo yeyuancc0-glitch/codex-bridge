@@ -18,6 +18,7 @@ extension MCPServiceToolCatalog {
 
   static let directMutationOutputSchema = outputSchema(
     properties: [
+      "receipt_type": receiptTypeSchema(["file_mutation"]),
       "relative_path": stringSchema,
       "operation": stringSchema,
       "old_sha256": stringSchema,
@@ -33,7 +34,7 @@ extension MCPServiceToolCatalog {
         required: ["removed_lines", "added_lines", "truncated", "byte_count"]
       ),
     ],
-    required: ["relative_path", "operation", "byte_count", "bounded_diff"]
+    required: ["receipt_type", "relative_path", "operation", "byte_count", "bounded_diff"]
   )
 
   static let directMutationReceiptSchema = objectSchema(
@@ -58,6 +59,7 @@ extension MCPServiceToolCatalog {
 
   static let directManagePathOutputSchema = outputSchema(
     properties: [
+      "receipt_type": receiptTypeSchema(["file_mutation"]),
       "relative_path": stringSchema,
       "source_relative_path": stringSchema,
       "destination_relative_path": stringSchema,
@@ -67,7 +69,9 @@ extension MCPServiceToolCatalog {
       "new_sha256": stringSchema,
       "byte_count": integerSchema(minimum: 0),
     ],
-    required: ["relative_path", "source_relative_path", "operation", "byte_count"]
+    required: [
+      "receipt_type", "relative_path", "source_relative_path", "operation", "byte_count",
+    ]
   )
 
   static let directWriteProjectFile = Tool(
@@ -79,7 +83,7 @@ extension MCPServiceToolCatalog {
       + "atomically replaces an existing file inside the approved project root.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "relative_path": boundedStringSchema(maximum: 1_024),
         "mode": ["type": "string", "enum": ["create", "replace"]],
         "content": boundedStringSchema(maximum: 256 * 1_024),
@@ -107,7 +111,7 @@ extension MCPServiceToolCatalog {
       + "replacement guarded by the file revision read earlier.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "relative_path": boundedStringSchema(maximum: 1_024),
         "expected_sha256": boundedStringSchema(maximum: 64),
         "old_text": boundedStringSchema(maximum: 256 * 1_024),
@@ -141,10 +145,12 @@ extension MCPServiceToolCatalog {
       + "one space, removed lines prefixed with `-`, and added lines prefixed with `+`. An update "
       + "must include at least one exact removed or context line. Example: "
       + "`*** Begin Patch\n*** Update File: notes.txt\n@@\n-old\n+new\n*** End Patch`. "
-      + "Read the current file first; a non-unique or stale exact context returns invalid_patch.",
+      + "Read the current file first. Invalid syntax returns invalid_patch_syntax; missing, "
+      + "non-unique, or changed exact context returns patch_context_not_found, "
+      + "patch_context_non_unique, or patch_context_stale with a retry next_action.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "patch": boundedStringSchema(maximum: 256 * 1_024),
         "client_request_id": nullableStringSchema(maximum: 512),
       ],
@@ -158,16 +164,10 @@ extension MCPServiceToolCatalog {
     ),
     outputSchema: outputSchema(
       properties: [
+        "receipt_type": receiptTypeSchema(["file_mutation"]),
         "operations": arraySchema(directMutationReceiptSchema),
-        "partial_commit": objectSchema(
-          properties: [
-            "changed_files": arraySchema(stringSchema),
-            "rollback_status": stringSchema,
-          ],
-          required: ["changed_files", "rollback_status"]
-        ),
       ],
-      required: ["operations"]
+      required: ["receipt_type", "operations"]
     )
   )
 
@@ -180,7 +180,7 @@ extension MCPServiceToolCatalog {
       + "revision read earlier.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "action": [
           "type": "string",
           "enum": ["delete_file", "move_file", "create_directory", "delete_empty_directory"],
@@ -209,13 +209,23 @@ extension MCPServiceToolCatalog {
     description:
       "Explicit Direct Workspace action that runs a user-registered project command (or a "
       + "built-in safe command) on the local machine. Use only when the user explicitly asks "
-      + "the MCP client to run a command inside the project. The session streams bounded "
+      + "the MCP client to run a command inside the project. For unfamiliar commands, call "
+      + "list_project_commands first and copy the non-empty argv plus command_id when present "
+      + "from recommended_usage. "
+      + "Absolute executable paths and project scripts may be "
+      + "rejected unless registered. After command_not_registered, do not probe alternate "
+      + "executables; follow next_action and list the allowed project commands. The session streams bounded "
       + "output and can be read with direct_read_command. tty must be false in this version.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "command_id": nullableStringSchema(maximum: 256),
-        "argv": arraySchema(boundedStringSchema(maximum: 4_096)),
+        "argv": [
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": boundedStringSchema(maximum: 4_096),
+        ],
         "working_directory": nullableStringSchema(maximum: 1_024),
         "tty": ["type": "boolean", "const": false],
         "yield_time_ms": integerSchema(minimum: 0, maximum: 60_000),
@@ -276,10 +286,12 @@ extension MCPServiceToolCatalog {
     ),
     outputSchema: outputSchema(
       properties: [
+        "receipt_type": receiptTypeSchema(["direct_command_input"]),
+        "session_id": stringSchema,
         "bytes_written": integerSchema(minimum: 0, maximum: 64 * 1_024),
         "stdin_closed": boolSchema,
       ],
-      required: ["bytes_written", "stdin_closed"]
+      required: ["receipt_type", "session_id", "bytes_written", "stdin_closed"]
     )
   )
 
@@ -322,6 +334,7 @@ extension MCPServiceToolCatalog {
 
   static let directCommandOutputSchema = outputSchema(
     properties: [
+      "receipt_type": receiptTypeSchema(["direct_command"]),
       "session_id": stringSchema,
       "status": stringSchema,
       "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
@@ -335,18 +348,32 @@ extension MCPServiceToolCatalog {
       "truncated": boolSchema,
       "execution_environment": executionEnvironmentSchema,
     ],
-    required: ["session_id", "status", "timed_out", "head", "tail", "byte_count", "truncated"]
+    required: [
+      "receipt_type", "session_id", "status", "timed_out", "head", "tail", "byte_count",
+      "truncated",
+    ]
   )
 
-  static let directExecOutputSchema = outputSchema(
-    properties: [
-      "session_id": stringSchema,
-      "status": stringSchema,
-      "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
-      "started_at": stringSchema,
-      "output": directCommandPayloadSchema,
-    ],
-    required: ["session_id", "status"]
+  static func commandLaunchOutputSchema(receiptType: String) -> Value {
+    outputSchema(
+      properties: [
+        "receipt_type": receiptTypeSchema([receiptType]),
+        "session_id": stringSchema,
+        "status": stringSchema,
+        "exit_code": integerSchema(minimum: Int(Int32.min), maximum: Int(Int32.max)),
+        "started_at": stringSchema,
+        "output": directCommandPayloadSchema,
+      ],
+      required: ["receipt_type", "session_id", "status"]
+    )
+  }
+
+  static let directExecOutputSchema = commandLaunchOutputSchema(
+    receiptType: "direct_command"
+  )
+
+  static let skillActionOutputSchema = commandLaunchOutputSchema(
+    receiptType: "skill_action"
   )
 
   static let directGitCommit = Tool(
@@ -360,7 +387,7 @@ extension MCPServiceToolCatalog {
       + "never performed.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "message": boundedStringSchema(maximum: 4_096),
         "files": arraySchema(boundedStringSchema(maximum: 1_024)),
         "client_request_id": nullableStringSchema(maximum: 512),
@@ -375,6 +402,7 @@ extension MCPServiceToolCatalog {
     ),
     outputSchema: outputSchema(
       properties: [
+        "receipt_type": receiptTypeSchema(["git_commit"]),
         "commit_hash": nullableStringSchema(maximum: 64),
         "changed_files": arraySchema(boundedStringSchema(maximum: 1_024)),
         "summary": stringSchema,
@@ -382,7 +410,9 @@ extension MCPServiceToolCatalog {
         "index_synchronized": boolSchema,
         "index_synchronization_error": nullableStringSchema(maximum: 4_096),
       ],
-      required: ["changed_files", "summary", "exit_code", "index_synchronized"],
+      required: [
+        "receipt_type", "changed_files", "summary", "exit_code", "index_synchronized",
+      ],
       successSchemaVersion: 2
     )
   )

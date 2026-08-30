@@ -5,11 +5,13 @@ Evidence checked on 2026-08-17 against official repositories and releases. Versi
 | Dependency | Pin | Product | License | Project boundary | Primary evidence |
 |---|---:|---|---|---|---|
 | modelcontextprotocol/swift-sdk | 0.12.1 | `MCP` | mixed migration: Apache-2.0/MIT; docs CC-BY-4.0 | only `BridgeMCP`; SDK types never enter Domain | [release](https://github.com/modelcontextprotocol/swift-sdk/releases/tag/0.12.1) |
-| groue/GRDB.swift | 7.11.1 | `GRDB` | MIT | only `BridgePersistence`; avoid experimental APIs | [release](https://github.com/groue/GRDB.swift/releases/tag/v7.11.1) |
+| groue/GRDB.swift | 7.11.1 | `GRDB` | MIT | `BridgeServiceCore` storage and one-time `BridgeLegacyImport`; avoid experimental APIs | [release](https://github.com/groue/GRDB.swift/releases/tag/v7.11.1) |
 | apple/swift-log | 1.15.0 | `Logging` | Apache-2.0 + NOTICE | adapter logging only; one bootstrap and central redaction | [release](https://github.com/apple/swift-log/releases/tag/1.15.0) |
 | apple/swift-nio | 2.101.3 | `NIOCore`, `NIOHTTP1`, `NIOPosix` | Apache-2.0 + NOTICE | only the hardened `BridgeMCP` loopback HTTP adapter; direct dependency, never an assumed transitive product | [release](https://github.com/apple/swift-nio/releases/tag/2.101.3) |
 | openai/tunnel-client | 0.0.10 | helper executable | Apache-2.0 + NOTICE | `BridgeTunnel` process boundary; not an SPM binary target | [release](https://github.com/openai/tunnel-client/releases/tag/v0.0.10) |
 | OpenCode | user-selected compatible installation (`1.18.20 <= version < 1.19.0`) | external ACP executable | OpenCode's own distribution terms | `BridgeOpenCodeACP` process boundary; never bundled and never an SPM dependency | [OpenCode connection guide](./OPENCODE_CONNECTION_GUIDE.md) |
+| DeepSeek Harness | user-built pinned source tag `dsh-v0.1.1-rc.2` | external ACP executable | upstream project terms | `BridgeDeepSeekHarnessACP` process boundary; Bridge bundles only its validated `cordis.yml` template and never bundles Harness or reads its `.env` | [DeepSeek Harness guide](./DEEPSEEK_HARNESS_CONNECTION_GUIDE.md) |
+| Antigravity CLI | user-selected compatible installation (`1.1.21 <= version < 1.2.0`) | external `agy` executable | provider distribution terms | `BridgeAntigravityCLI` process boundary; never bundled or authenticated by Bridge | [user guide](./USER_GUIDE.md#54-antigravity) |
 | @modelcontextprotocol/inspector | 2.1.0 | development CLI | MIT | test-only Streamable HTTP acceptance gate; never bundled in the App | [release](https://github.com/modelcontextprotocol/inspector/releases/tag/2.1.0) |
 
 ## Version and platform facts
@@ -20,6 +22,8 @@ Evidence checked on 2026-08-17 against official repositories and releases. Versi
 - swift-nio 2.101.3 supplies the listener, HTTP/1 codec and explicit write-backpressure primitives; it is pinned directly because `BridgeMCP` imports its products.
 - tunnel-client v0.0.10 is the current public stable release. Its macOS release assets are separate arm64/amd64 executables, not Universal 2. The Platform Tunnels page remains the source of truth for the version supported by the control plane. The integration and secret-passing contract is recorded in [`TUNNEL_CLIENT_INTEGRATION.md`](./TUNNEL_CLIENT_INTEGRATION.md).
 - OpenCode is not downloaded, embedded, or authenticated by Bridge. The user selects an absolute executable path, Bridge probes the ACP handshake, and each task uses isolated runtime/cache/state/database directories while inheriting OpenCode's own configuration and plugins. See [`OPENCODE_CONNECTION_GUIDE.md`](./OPENCODE_CONNECTION_GUIDE.md).
+- DeepSeek Harness is not downloaded or bundled. The user checks out and builds the pinned official tag, selects `packages/examples/acp-demo/lib/bin.js`, and provides an external Bridge-matched profile. Bridge validates the source/runtime/config identity; Harness loads its own adjacent `.env`. See [`DEEPSEEK_HARNESS_CONNECTION_GUIDE.md`](./DEEPSEEK_HARNESS_CONNECTION_GUIDE.md).
+- Antigravity is not downloaded, bundled, or authenticated by Bridge. The user registers a compatible `agy` CLI; Bridge verifies the current command surface and uses provider-native modes, sandbox, configuration, and authentication.
 - MCP Inspector 2.1.0 requires Node 22.19.0+; the repository invokes that exact package version without a global installation and never passes a production Keychain secret to it.
 
 ## Tunnel helper supply-chain contract
@@ -41,13 +45,13 @@ Release packaging must:
 1. download only the pinned archives and validate the official hashes;
 2. combine both `tunnel-client` Mach-O files into a derived Universal 2 helper;
 3. keep both archive hashes, thin-binary hashes, the pinned LICENSE hash and the unsigned Universal 2 hash (`1f1d76a01673bd2037178c8e9c8829a6bf18ed7b3260c6fa373bf1aa66e9e371`) in the supply record;
-4. sign the helper explicitly before the main App with Developer ID and Hardened Runtime, then recompute its post-sign SHA-256 into an App-signature-covered resource used by `TunnelConfiguration`;
-5. notarize and run Gatekeeper verification on the final App;
+4. for an unsigned preview package, ad-hoc sign the selected architecture slice and recompute its post-sign SHA-256 into an App resource used by `TunnelConfiguration`;
+5. for a Developer ID release, sign the helper explicitly before the main App with the same identity and Hardened Runtime, then notarize and run Gatekeeper verification on the final App;
 6. retain all required LICENSE/NOTICE texts.
 
 `verify-tunnel-helper.sh` requires the trusted unsigned hash as a separate argument and performs static checks without executing its input; the manifest cannot self-attest. On Apple Silicon, `test-tunnel-helper-config.sh` separately pins both the official arm64 archive hash and its embedded linker-signed helper hash, then executes that exact image through the production suspended-process/CDHash boundary to prove official `doctor` accepts the non-secret `/mcp` URL plus fd-backed static header. These are pre-sign supply/compatibility gates, not substitutes for the final Developer ID signature and post-sign runtime hash.
 
-Do not publish either thin release executable unchanged: the arm64 file is ad-hoc linker-signed with no Team Identifier and the final App requires a same-Team signed Universal 2 helper. The v0.0.10 platform archives contain only `tunnel-client`; no adjacent `cloudflared` binary is bundled.
+Do not publish either upstream thin executable unchanged. The release pipeline first verifies the Universal 2 supply artifact, extracts the matching package architecture, signs that staged helper according to the selected release mode, and records its final digest. The v0.0.10 platform archives contain only `tunnel-client`; no adjacent `cloudflared` binary is bundled.
 
 ## Component Decision Register note
 

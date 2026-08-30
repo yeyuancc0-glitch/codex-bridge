@@ -6,13 +6,15 @@ extension MCPServiceToolCatalog {
     title: "Run skill action",
     description:
       "Run a discovered Skill script through the project's existing Direct command policy. "
-      + "Use only when the user explicitly requests local Skill script execution.",
+      + "Use only when the user explicitly requests local Skill script execution. This is not "
+      + "a general command execution tool. Do not use it for pwd, git, swift, xcodebuild, or "
+      + "arbitrary scripts; use direct_exec_project_command instead.",
     inputSchema: objectSchema(
       properties: [
         "skill_name": boundedStringSchema(maximum: 128),
         "action_name": boundedStringSchema(maximum: 128),
         "arguments": arraySchema(boundedStringSchema(maximum: 4_096)),
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": opaqueProjectIDSchema,
         "yield_time_ms": integerSchema(minimum: 0, maximum: 60_000),
         "timeout_ms": integerSchema(minimum: 1, maximum: 3_600_000),
         "client_request_id": nullableStringSchema(maximum: 512),
@@ -25,7 +27,7 @@ extension MCPServiceToolCatalog {
       idempotentHint: false,
       openWorldHint: false
     ),
-    outputSchema: directExecOutputSchema
+    outputSchema: skillActionOutputSchema
   )
 
   static let getTask = Tool(
@@ -74,30 +76,62 @@ extension MCPServiceToolCatalog {
       + "that default. Omit all model and effort fields unless the user explicitly requests a "
       + "different model for this task; omitted values use the defaults configured in Codex Bridge. "
       + "Model and effort fields are applied only when model_override is true. "
+      + "For ChatGPT and Qwen submissions, omit permission_mode. If a client sends a default "
+      + "permission_mode without permission_mode_override=true, Bridge treats it as an implicit "
+      + "client default and uses the Workbench default task mode shared by Codex, OpenCode, "
+      + "DeepSeek Harness, and Antigravity. A permission_mode value only replaces that default "
+      + "when permission_mode_override=true and the user explicitly requested it. "
       + "Set provider_id to route the task to another registered agent provider (for example "
-      + "opencode). For OpenCode, omit permission_mode to use the saved Bridge default. Set "
-      + "permission_mode_override=true together with permission_mode only when the user explicitly "
-      + "asks for native ACP Plan/read-only or native ACP Build/workspace-write; an unmarked client-selected "
-      + "mode is ignored. OpenCode network access follows its native permissions; the "
+      + "opencode or deepseek-harness). DeepSeek Harness supports fresh "
+      + "sessions with provider-native read-only or workspace-write sandbox modes; omit thread_id, "
+      + "supervisor_model and supervisor_effort, and use an explicitly requested model, effort, "
+      + "permission mode, or Skill only when it is supported by the registered installation. "
+      + "DeepSeek Harness uses its verified native tool composition; Web, network, MCP, file, command, "
+      + "and subagent work should be routed to it when the registered installation exposes those "
+      + "capabilities. Its execution-time permission requests are surfaced for local approval. For "
+      + "OpenCode, native ACP Plan/read-only or native ACP Build/workspace-write follows the Workbench default "
+      + "for ChatGPT and Qwen; local Provider API callers may retain their saved Provider default. "
+      + "OpenCode network access follows its native permissions; the "
       + "network_access field does not override them. OpenCode supports model override through the same model_override rule as "
       + "Codex. For OpenCode, execution_effort accepts only the selected model's ACP effort values; "
       + "when omitted, Bridge uses the saved OpenCode default when supported and otherwise the Provider default. "
-      + "If permission_mode is omitted, Bridge uses the saved OpenCode default mode; supervisor, "
-      + "skill and thread fields must also be omitted. The response includes wait_policy; follow "
+      + "If permission_mode is omitted or unmarked, Bridge uses the Workbench default for ChatGPT and Qwen; "
+      + "supervisor and skill fields must also be omitted. To continue an OpenCode conversation, pass the "
+      + "provider_session_id returned by get_task as thread_id; Bridge resumes or loads that exact "
+      + "ACP session in the selected project. For Antigravity, set provider_id=antigravity; it "
+      + "uses the registered official agy stream-json installation and supports native plan/accept-edits "
+      + "modes: Plan/read-only "
+      + "(agy mode: plan) or Accept Edits/workspace-write (agy mode: accept-edits) in-place modes. "
+      + "Model, effort, and session continuation are "
+      + "available only when list_agents reports the corresponding effective capability; thread_id "
+      + "must be a prior Bridge-bound Antigravity conversation from the same project and installation. "
+      + "steer_task queues follow-up input on the same Antigravity session after the current prompt, "
+      + "not real-time insertion. Bridge can inject an explicitly requested skill_name. Antigravity "
+      + "does not support Supervisor. Network and sandboxed tools follow agy's native policy; Bridge "
+      + "must not reject a task solely because it requests network access. A provider permission denial "
+      + "is reported as task failure. The response includes wait_policy; follow "
       + "its recommended_poll_after_seconds before checking get_task again. The three profiles are "
       + "fast (120 seconds, approval), standard (300 seconds, default active work), and deep (600 "
-      + "seconds, quiet long-running work). Never treat a non-terminal status or unchanged "
+      + "seconds, quiet long-running work). External Provider network execution is Provider-native; "
+      + "network_access records the user's explicit task request but does not claim Bridge-level packet "
+      + "isolation. Set network_access=true whenever the user explicitly requests web search, URL "
+      + "fetches, external APIs, or other network use; false or omitted does not grant task-level "
+      + "network access. For Antigravity, a locally selected full-access mode plus network_access=true "
+      + "uses agy's documented non-interactive approval while retaining agy's native sandbox and the "
+      + "requested Plan/Accept Edits mode. Bridge controls task admission, project policy, and local "
+      + "start approval without wrapping Agent processes in a filesystem or network sandbox. Never "
+      + "treat a non-terminal status or unchanged "
       + "updated_at as failure.",
     inputSchema: objectSchema(
       properties: [
-        "project_id": boundedStringSchema(maximum: 128),
+        "project_id": optionalOpaqueProjectIDSchema,
         "prompt": boundedStringSchema(maximum: 32 * 1_024),
         "skill_name": nullableStringSchema(maximum: 128),
         "thread_id": nullableStringSchema(maximum: 1_024),
         "provider_id": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit for Codex. Set to opencode to run the task with a locally registered OpenCode installation; list_agents shows availability."
+            "Omit for Codex. Set to opencode, deepseek-harness, or antigravity only when the user explicitly selected a locally registered installation; list_agents shows availability, effective capabilities, and enforcement."
         ),
         "installation_id": nullableStringSchema(
           maximum: 256,
@@ -107,12 +141,12 @@ extension MCPServiceToolCatalog {
         "execution_model": nullableStringSchema(
           maximum: 256,
           description:
-            "Omit to use the Codex Bridge default. Set only when the user explicitly requests a per-task model override."
+            "Omit to use the Codex Bridge default or the selected provider default. For OpenCode, DeepSeek Harness, or Antigravity, use only a model advertised by the local Provider catalog when selection.model is effective."
         ),
         "execution_effort": nullableStringSchema(
           maximum: 64,
           description:
-            "Omit to use the Codex Bridge/OpenCode default effort. For OpenCode, set only to a value advertised for the selected model when the user explicitly requests a per-task override."
+            "Omit to use the selected provider default effort. For OpenCode, DeepSeek Harness, or Antigravity, set only a value advertised for the selected model when the user explicitly requests a per-task override and selection.effort is effective; external providers require model_override=true."
         ),
         "model_override": [
           "type": ["boolean", "null"],
@@ -133,17 +167,17 @@ extension MCPServiceToolCatalog {
           "type": ["string", "null"],
           "enum": ["read-only", "workspace-write", .null],
           "description":
-            "For Codex, selects the native sandbox. For OpenCode, this is applied only when permission_mode_override is true; read-only maps to native ACP Plan and workspace-write maps to native ACP Build.",
+            "For ChatGPT and Qwen submissions, omitting this field or sending it without permission_mode_override=true uses the Workbench default task mode across Codex and registered external agents. A permission_mode value only replaces that default when permission_mode_override=true and the user explicitly requested it. Codex selects its native sandbox. OpenCode maps these modes to native ACP Plan/Build. DeepSeek Harness applies them to a private provider profile and surfaces execution-time permission requests for local approval. Antigravity selects agy Plan or Accept Edits and uses its native sandbox permission policy for headless tools.",
         ],
         "permission_mode_override": [
           "type": ["boolean", "null"],
           "description":
-            "For OpenCode, set true only when the user's request explicitly asks for Plan/read-only or Build/workspace-write. Otherwise omit so Bridge uses the saved default mode; a supplied unmarked permission_mode is ignored.",
+            "Set true only when the user explicitly requests a per-task permission override. For ChatGPT and Qwen, absent or false uses the Workbench default even when a client supplies permission_mode: read-only.",
         ],
         "network_access": [
           "type": "boolean",
           "description":
-            "Requests network access for Codex. OpenCode follows its native permissions and this field does not override them.",
+            "Set true whenever the user's task explicitly requires web search, URL fetches, external APIs, or other network use. False or omitted does not grant task-level network access. Codex applies its native sandbox policy. OpenCode, DeepSeek Harness, and Antigravity execute network-capable tools under their Provider-native policies; this field records the explicit request and project admission but does not claim Bridge-level packet isolation.",
         ],
         "acceptance_criteria": [
           "type": "array",
@@ -162,6 +196,7 @@ extension MCPServiceToolCatalog {
     ),
     outputSchema: outputSchema(
       properties: [
+        "receipt_type": receiptTypeSchema(["provider_task"]),
         "task_id": stringSchema,
         "status": stringSchema,
         "reused_existing_task": boolSchema,
@@ -169,7 +204,8 @@ extension MCPServiceToolCatalog {
         "wait_policy": taskWaitPolicySchema,
       ],
       required: [
-        "task_id", "status", "reused_existing_task", "local_approval_required", "wait_policy",
+        "receipt_type", "task_id", "status", "reused_existing_task",
+        "local_approval_required", "wait_policy",
       ]
     )
   )
@@ -178,12 +214,18 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.steerTask.rawValue,
     title: "Steer task",
     description:
-      "Send bounded corrective input to the exact active provider run. For Codex this is sent to the active Turn; for OpenCode use provider_run_id from get_task and the input is queued as the next prompt on the same ACP session.",
+      "Send bounded corrective input to the exact active provider run. The default queued mode preserves existing behavior. For DeepSeek Harness, mode=interrupt-current-then-continue cancels only the current prompt and sends the correction on the same session without terminating the task. Other external providers currently accept queued mode only.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
         "expected_turn_id": boundedStringSchema(maximum: 1_024),
         "input": boundedStringSchema(maximum: 32 * 1_024),
+        "mode": [
+          "type": "string",
+          "enum": ["queued", "interrupt-current-then-continue"],
+          "description":
+            "Delivery mode. Omit or use queued for compatibility. interrupt-current-then-continue is available only when list_agents reports lifecycle.steer_interrupt_and_continue.",
+        ],
       ],
       required: ["task_id", "expected_turn_id", "input"]
     ),
@@ -200,7 +242,7 @@ extension MCPServiceToolCatalog {
     name: MCPServiceToolName.interruptTask.rawValue,
     title: "Interrupt task",
     description:
-      "Request interruption of the exact active provider run. For Codex, expected_turn_id is the active Turn ID; for OpenCode, use provider_run_id from get_task.",
+      "Request interruption of the exact active provider run. For Codex, expected_turn_id is the active Turn ID; for OpenCode, DeepSeek Harness, and Antigravity, use provider_run_id from get_task.",
     inputSchema: objectSchema(
       properties: [
         "task_id": boundedStringSchema(maximum: 128),
@@ -219,10 +261,11 @@ extension MCPServiceToolCatalog {
 
   static let mutationOutputSchema = outputSchema(
     properties: [
+      "receipt_type": receiptTypeSchema(["task_mutation"]),
       "task_id": stringSchema,
       "status": stringSchema,
       "accepted": boolSchema,
     ],
-    required: ["task_id", "status", "accepted"]
+    required: ["receipt_type", "task_id", "status", "accepted"]
   )
 }

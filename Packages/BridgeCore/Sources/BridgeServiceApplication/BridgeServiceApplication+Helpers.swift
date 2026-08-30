@@ -182,6 +182,21 @@ extension BridgeServiceApplication {
     return defaultMode
   }
 
+  static func permissionModeRequest(
+    _ rawValue: String?,
+    override: Bool?,
+    requirePermissionModeOverride: Bool
+  ) throws -> String? {
+    guard let rawValue else { return nil }
+    guard let mode = ServicePermissionMode(rawValue: rawValue) else {
+      throw BridgeMCPQueryError.contractRejected
+    }
+    if requirePermissionModeOverride, override != true {
+      return nil
+    }
+    return mode.rawValue
+  }
+
   static func prompt(_ prompt: String, acceptanceCriteria: [String]) -> String {
     guard !acceptanceCriteria.isEmpty else { return prompt }
     let lines = acceptanceCriteria.enumerated().map { index, value in
@@ -415,9 +430,13 @@ extension BridgeServiceApplication {
     case .pathChanged, .unsupportedHardLink, .unsafeFilesystemState:
       return .pathChanged
     case .binaryContent:
-      return .pathDenied
-    case .invalidPatch:
-      return .invalidPatch
+      return .binaryContentUnsupported
+    case .invalidPatch, .invalidPatchSyntax:
+      return .invalidPatchSyntax
+    case .patchContextNotFound:
+      return .patchContextNotFound
+    case .patchContextNonUnique:
+      return .patchContextNonUnique
     case .partialCommit:
       return .unavailable
     case .durabilityUncertain:

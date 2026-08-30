@@ -223,6 +223,9 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
   case binaryContent
   case contentTooLarge
   case invalidPatch
+  case invalidPatchSyntax
+  case patchContextNotFound
+  case patchContextNonUnique
   case partialCommit(changedFiles: [String], rollbackStatus: String)
   case durabilityUncertain
   case unsafeFilesystemState
@@ -256,8 +259,12 @@ public enum ProjectMutationError: Error, LocalizedError, Equatable, Sendable {
       "Only UTF-8 text content is supported."
     case .contentTooLarge:
       "The content exceeds the allowed size."
-    case .invalidPatch:
-      "The patch syntax or exact context did not match."
+    case .invalidPatch, .invalidPatchSyntax:
+      "The patch syntax is invalid."
+    case .patchContextNotFound:
+      "The patch context was not found in the current file."
+    case .patchContextNonUnique:
+      "The patch context matched more than one location."
     case .partialCommit:
       "Some files changed before a write failed; the service attempted a rollback."
     case .durabilityUncertain:

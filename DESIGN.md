@@ -55,7 +55,7 @@ Codex Bridge 是一个原生 macOS 开发者工具。它连接 ChatGPT 网页版
 ## Reference Intake Record
 
 - Mode: delegated no-reference。
-- Source: 已确认的产品原则、macOS 原生平台惯例、真实运行状态。
+- Source: 产品 V2.0 方案、macOS 原生平台惯例、真实运行状态。
 - Emulate: 原生控制层级、系统设置的可访问性与清楚的开发工具证据表达。
 - Avoid: 复制其他产品品牌、专有资产或营销文案。
 - Motion/media evidence: 无外部视频或图像证据；不发明叙事动效。

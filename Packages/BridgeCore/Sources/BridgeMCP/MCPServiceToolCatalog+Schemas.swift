@@ -2,9 +2,12 @@ import MCP
 
 extension MCPServiceToolCatalog {
   static let projectIDInput = objectSchema(
-    properties: ["project_id": boundedStringSchema(maximum: 128)],
+    properties: ["project_id": opaqueProjectIDSchema],
     required: ["project_id"]
   )
+
+  static let opaqueProjectIDSchema = MCPSharedToolSchemas.opaqueProjectID
+  static let optionalOpaqueProjectIDSchema = MCPSharedToolSchemas.optionalOpaqueProjectID
 
   static let capabilitiesSchema = objectSchema(
     properties: [
@@ -27,7 +30,11 @@ extension MCPServiceToolCatalog {
 
   static let agentSummarySchema = objectSchema(
     properties: [
-      "provider_id": stringSchema,
+      "provider_id": [
+        "type": "string",
+        "description":
+          "Provider identifier. Omit for Codex. Set to opencode, deepseek-harness, or antigravity only when the user explicitly selected a registered installation; list_agents is authoritative for effective capabilities and enforcement. Antigravity supports native plan/accept-edits modes: Plan/read-only (agy mode: plan) and Accept Edits/workspace-write (agy mode: accept-edits), plus exact session continuation, model/effort selection, and queued steer when those capabilities are effective.",
+      ],
       "installation_id": stringSchema,
       "display_name": stringSchema,
       "availability": [
@@ -38,12 +45,21 @@ extension MCPServiceToolCatalog {
       "version": stringSchema,
       "protocol_revision": stringSchema,
       "adapter_revision": integerSchema(minimum: 1),
-      "effective_capabilities": arraySchema(stringSchema),
+      "effective_capabilities": [
+        "type": "array",
+        "items": stringSchema,
+        "description":
+          "Capabilities actually available after provider observation and service policy. Tool capabilities include tools.shell, tools.web_search, tools.web_fetch, tools.code_execution, tools.mcp_client, tools.subagents, tools.workflow, and tools.skills. DeepSeek Harness and Antigravity expose the subset verified for the registered profile or current native tool roster, alongside lifecycle, workspace, approval, model, and effort capabilities. An absent capability identifies an integration gap to verify; it must not be treated as a reason to suppress unrelated Provider-native tools.",
+      ],
       "trust_profile": ["type": "string", "enum": ["managed", "user_trusted"]],
       "security_profile_id": stringSchema,
       "workspace_enforcement": stringSchema,
       "approval_enforcement": stringSchema,
-      "network_enforcement": stringSchema,
+      "network_enforcement": [
+        "type": "string",
+        "description":
+          "Network enforcement owner. provider_native means the Provider applies its own network and tool policy; Bridge records task intent and project admission without claiming packet-level isolation.",
+      ],
       "models_summary": arraySchema(stringSchema),
       "unavailable_reason": stringSchema,
       "last_verified_at": stringSchema,
@@ -261,14 +277,36 @@ extension MCPServiceToolCatalog {
   static let errorSchema = objectSchema(
     properties: [
       "code": stringSchema,
+      "category": errorCategorySchema,
       "message": stringSchema,
       "retryable": boolSchema,
+      "next_action": stringSchema,
+      "owner": stringSchema,
+      "task_id": stringSchema,
+      "operation_id": stringSchema,
+      "session_id": stringSchema,
+      "data": MCPSharedToolSchemas.errorData,
     ],
-    required: ["code", "message", "retryable"]
+    required: ["code", "category", "message", "retryable", "next_action"]
   )
+
+  static let errorCategorySchema: Value = [
+    "type": "string",
+    "enum": [
+      "caller_error", "state_conflict", "policy_denied", "approval_required",
+      "capability_unavailable", "infrastructure_failure",
+    ],
+  ]
 
   static let stringSchema: Value = ["type": "string"]
   static let boolSchema: Value = ["type": "boolean"]
+
+  static func receiptTypeSchema(_ values: [String]) -> Value {
+    if values.count == 1, let value = values.first {
+      return ["type": "string", "const": .string(value)]
+    }
+    return ["type": "string", "enum": .array(values.map(Value.string))]
+  }
 
   static func boundedStringSchema(maximum: Int) -> Value {
     ["type": "string", "maxLength": .int(maximum)]

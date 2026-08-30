@@ -39,21 +39,18 @@ public struct BridgeServiceRootView: View {
         ToolbarItem(placement: .automatic) {
           Button {
             model.refresh()
-            model.postToast("正在刷新状态…", symbol: "arrow.clockwise", tone: .neutral)
           } label: {
-            HStack(spacing: 4) {
-              Image(systemName: "arrow.clockwise")
-                .rotationEffect(model.isRefreshing ? .degrees(360) : .degrees(0))
-                .animation(
-                  model.isRefreshing
-                    ? .linear(duration: 1).repeatForever(autoreverses: false)
-                    : .default,
-                  value: model.isRefreshing
-                )
-              Text("刷新状态")
-            }
+            Image(systemName: "arrow.clockwise")
+              .rotationEffect(model.isRefreshing ? .degrees(360) : .degrees(0))
+              .animation(
+                model.isRefreshing
+                  ? .linear(duration: 1).repeatForever(autoreverses: false)
+                  : .default,
+                value: model.isRefreshing
+              )
           }
           .disabled(model.isRefreshing)
+          .accessibilityLabel("刷新状态")
           .help("刷新后台 Service、项目、Skills 及连接状态")
         }
       }

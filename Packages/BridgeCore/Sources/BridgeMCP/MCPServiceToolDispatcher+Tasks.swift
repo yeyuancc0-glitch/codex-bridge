@@ -35,7 +35,9 @@ extension MCPServiceToolDispatcher {
     let receipt = try await withToolDeadline(until: deadline) {
       try await service.serviceRunSkillAction(request, deadline: deadline)
     }
-    return try resultEncoder.encode(ServiceDirectExecOutput(receipt: receipt))
+    return try resultEncoder.encode(
+      ServiceDirectExecOutput(receipt: receipt, receiptType: .skillAction)
+    )
   }
 
   private func callGetTask(_ arguments: [String: Value]?) async throws -> CallTool.Result {
@@ -83,14 +85,24 @@ extension MCPServiceToolDispatcher {
   private func callSteerTask(_ arguments: [String: Value]?) async throws -> CallTool.Result {
     let values = try StrictToolArguments(
       arguments,
-      allowed: ["task_id", "expected_turn_id", "input"],
+      allowed: ["task_id", "expected_turn_id", "input", "mode"],
       required: ["task_id", "expected_turn_id", "input"]
     )
     let taskID = try values.requiredIdentifier("task_id", maximumUTF8Bytes: 128)
     let turnID = try values.requiredIdentifier("expected_turn_id", maximumUTF8Bytes: 1_024)
     let input = try values.requiredText("input", maximumUTF8Bytes: 32 * 1_024)
     guard OutboundContentSecurity.isSafe(input) else {
-      throw MCPError.invalidParams("Task input contains restricted local data.")
+      throw BridgeMCPQueryError.unsafeContentDetected
+    }
+    let rawMode = try values.optionalIdentifier("mode", maximumUTF8Bytes: 64)
+    let mode: MCPTaskSteerMode
+    if let rawMode {
+      guard let parsed = MCPTaskSteerMode(rawValue: rawMode) else {
+        throw BridgeMCPQueryError.contractRejected
+      }
+      mode = parsed
+    } else {
+      mode = .queued
     }
     let deadline = clock.now.advanced(by: deadlines.mutation)
     let receipt = try await withToolDeadline(until: deadline) {
@@ -98,6 +110,7 @@ extension MCPServiceToolDispatcher {
         taskID: taskID,
         expectedTurnID: turnID,
         input: input,
+        mode: mode,
         deadline: deadline
       )
     }

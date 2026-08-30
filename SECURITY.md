@@ -8,7 +8,7 @@ The project is pre-release and no public version is currently supported. Verifie
 
 ## Reporting
 
-Use the repository's Security tab to report a vulnerability privately. Do not open a public issue containing real credentials, private project paths or source code.
+Open a private security advisory in the future GitHub repository once it exists. Until then, do not post a public proof of concept containing real credentials, private project paths or source code.
 
 Never include:
 
@@ -22,11 +22,11 @@ Use synthetic fixtures and describe the affected version, trust boundary, expect
 
 ## Non-negotiable boundaries
 
-- The local MCP listener binds only to loopback and authenticates each supported client with its own Keychain-backed secret; remote ChatGPT access is carried by the pinned Tunnel helper.
+- MCP binds only to loopback and a random Keychain-backed path secret.
 - All remote project access uses an opaque `project_id` plus validated relative path.
 - Symbolic links and filesystem identity are checked; sensitive files remain hard-denied.
 - Policy code, not a model, is the authorization boundary.
-- Supervisor cannot approve operations; a Supervisor failure only degrades supervision and does not take ownership of execution.
+- Supervisor is read-only, offline and unable to approve operations.
 - Runtime Keys never enter Codex, logs, reports or support bundles.
 - Non-idempotent app-server actions are reconciled after failure and are not blindly retried.
 
@@ -43,9 +43,9 @@ No mechanism can make a locally delivered macOS binary impossible to reverse eng
 
 When the user explicitly asks ChatGPT itself to edit files or run commands (instead of delegating to Codex), the Service enforces the following boundaries:
 
-- `direct_command_mode` per project (`denied` / `safe` / `full`) is a policy decision resolved by code, never by the model.
+- `direct_command_mode` per project (`denied` / `registered` / `safe`) is a policy decision resolved by code, never by the model.
 - Direct mutations run inside the same workspace gate as Codex write tasks: only one workspace-write owner per project at a time, so Direct and Codex never interleave writes.
 - Direct file writes, destructive path actions, registered elevated commands and network-requiring commands each require a local approval that is bound to the exact payload digest plus `client_request_id`; approvals live in memory only and expire, so a Service restart cannot replay a stale grant.
-- In safe mode, command execution is limited to explicitly registered project commands or validated built-in safe programs; arguments are structured and never shell-joined. Full mode still enforces hard-denied operations, project capabilities and local approval.
+- Command execution is limited to registered project commands or built-in safe programs with exact `argv` matching; arguments are not shell-joined.
 - Direct commands run in a dedicated process group with a bounded timeout, bounded stdin, and bounded output (head/tail); process groups are terminated on interrupt, shutdown and Service-crash orphan reaping.
 - Direct sessions live in the background Service, not in the App, so quitting the App never stops a running local command; a tunnel disconnect only blocks new remote submissions and never cancels running local work.

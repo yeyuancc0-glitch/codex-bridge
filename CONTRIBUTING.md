@@ -4,8 +4,8 @@ Codex Bridge accepts focused changes that preserve its local-first architecture 
 
 ## Before changing code
 
-1. Read `DESIGN.md`, the public architecture documentation and the closest relevant source module.
-2. Keep dependencies one-way: `AppShell -> Presentation -> Application Services -> Domain -> Infrastructure Adapters`.
+1. Read `README.md`, `DESIGN.md`, the public architecture documentation and the closest relevant source module.
+2. Keep dependencies one-way: `App -> BridgeServiceAppShell -> BridgeIPC -> BridgeServiceHost -> application and provider modules`.
 3. Do not read or commit Codex credentials, Runtime Keys, browser data, project secrets or local support bundles.
 4. Preserve public API and persisted-data compatibility. Additive defaults and explicit migrations are preferred.
 
@@ -21,7 +21,7 @@ Set `CODEX_BRIDGE_XCODE_DEVELOPER_DIR` when complete Xcode is installed somewher
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs credential-free package, native Debug and Universal 2 build checks. It uses a read-only repository token and does not load Runtime Keys, ChatGPT credentials, signing identities or notarization credentials. A green workflow does not replace signed release or clean-Mac acceptance.
+`.github/workflows/ci.yml` runs credential-free package, native Debug and architecture build checks. It uses a read-only repository token and does not load Runtime Keys, ChatGPT credentials, signing identities or notarization credentials. A green workflow does not replace release-artifact or clean-Mac acceptance.
 
 ## Pull requests
 

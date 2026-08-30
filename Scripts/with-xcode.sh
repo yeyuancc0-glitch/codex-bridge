@@ -1,11 +1,14 @@
 #!/bin/zsh
 set -euo pipefail
 
+readonly verified_external_xcode="/Volumes/fanch/Applications/Xcode-beta.app/Contents/Developer"
 readonly default_xcode="/Applications/Xcode.app/Contents/Developer"
 readonly beta_xcode="/Applications/Xcode-beta.app/Contents/Developer"
 
 if [[ -n "${CODEX_BRIDGE_XCODE_DEVELOPER_DIR:-}" ]]; then
   readonly CODEX_BRIDGE_XCODE="${CODEX_BRIDGE_XCODE_DEVELOPER_DIR}"
+elif [[ -x "${verified_external_xcode}/usr/bin/xcodebuild" ]]; then
+  readonly CODEX_BRIDGE_XCODE="${verified_external_xcode}"
 elif [[ -x "${default_xcode}/usr/bin/xcodebuild" ]]; then
   readonly CODEX_BRIDGE_XCODE="${default_xcode}"
 else

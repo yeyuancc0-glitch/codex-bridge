@@ -75,6 +75,11 @@ public enum BridgeServiceConnectionState: Equatable, Sendable {
 public typealias BridgeServiceClientFactory =
   @MainActor @Sendable () -> any BridgeServiceClientProtocol
 
+struct AgentModelCatalogScope: Equatable {
+  let installationID: String?
+  let projectID: String?
+}
+
 @MainActor
 public final class BridgeServiceAppModel: ObservableObject {
   @Published public var selection: BridgeServiceNavigation? = .overview {
@@ -87,7 +92,16 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var projectDetails: [String: MCPProjectDetail] = [:]
   @Published public internal(set) var agentProviders: [IPCAgentProviderSummary] = []
   @Published public internal(set) var agentInstallations: [IPCAgentInstallationSummary] = []
-  @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = []
+  @Published public internal(set) var agentModelOptionsByProvider:
+    [String: [IPCAgentModelSummary]] = [:]
+  @Published public internal(set) var agentModelRefreshingProviders: Set<String> = []
+  @Published public internal(set) var agentModelRefreshErrorsByProvider: [String: String] = [:]
+  @Published public internal(set) var agentModelOptions: [IPCAgentModelSummary] = [] {
+    didSet { agentModelOptionsByProvider["opencode"] = agentModelOptions }
+  }
+  @Published public internal(set) var agentModelDefaults: [String: IPCAgentModelDefaultResponse] =
+    [:]
+  @Published public internal(set) var agentModelHydratingProviders: Set<String> = []
   @Published public internal(set) var openCodeDefaultModel: String?
   @Published public internal(set) var openCodeDefaultPermissionMode = "build"
   @Published public internal(set) var openCodeDefaultEffort: String?
@@ -99,6 +113,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var directApprovals: [IPCPendingDirectApproval] = []
   @Published public internal(set) var resolvingApprovalKeys: Set<String> = []
   @Published public internal(set) var directApprovalMode = "require"
+  @Published public internal(set) var taskStartApprovalMode = "require"
   @Published public internal(set) var mcpClients: [IPCMCPClientStatus] = []
   @Published public internal(set) var models: [MCPModelSummary] = []
   @Published public internal(set) var modelPreferences: IPCModelPreferences?
@@ -111,6 +126,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var selectedThreadID: String?
   @Published public internal(set) var selectedTaskID: String?
   @Published public internal(set) var selectedProjectID: String?
+  @Published public internal(set) var workbenchPermissionMode = "workspace-write"
   @Published public var chatWebView: WKWebView? {
     didSet {
       if chatWebView != nil {
@@ -118,6 +134,7 @@ public final class BridgeServiceAppModel: ObservableObject {
       }
     }
   }
+  @Published public internal(set) var chatBrowserReloadRequest: UInt64 = 0
   @Published public internal(set) var isRefreshing = false
   @Published public internal(set) var lastRefreshAt: Date?
   @Published public internal(set) var conversation: TaskConversationModel?
@@ -125,7 +142,7 @@ public final class BridgeServiceAppModel: ObservableObject {
   @Published public internal(set) var toast: ToastNotice?
   @Published public var isChatBrowserEnabled: Bool {
     didSet {
-      UserDefaults.standard.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
+      userDefaults.set(isChatBrowserEnabled, forKey: Self.chatBrowserEnabledKey)
       if isChatBrowserEnabled {
         updateChatBrowserVisibility()
       } else {
@@ -134,25 +151,45 @@ public final class BridgeServiceAppModel: ObservableObject {
       }
     }
   }
+  @Published public var keepServiceRunningAfterAppExit: Bool {
+    didSet {
+      userDefaults.set(
+        keepServiceRunningAfterAppExit,
+        forKey: Self.keepServiceRunningAfterAppExitKey
+      )
+    }
+  }
 
   let registration: any BridgeServiceRegistrationManaging
   let clientFactory: BridgeServiceClientFactory
+  let userDefaults: UserDefaults
   let pollInterval: Duration?
   let connectionRetryDelay: Duration
   let maximumConnectionAttempts: Int
   let chatBrowserSleepDelay: Duration
   let threadCatalogRefreshInterval: TimeInterval = 60
+  let idlePollInterval: Duration = .seconds(10)
   var client: (any BridgeServiceClientProtocol)?
+  var conversationPresentationCache = TaskConversationPresentationCache()
   var pollingTask: Task<Void, Never>?
+  var refreshInProgress = false
+  var pendingRefresh = false
+  var pendingVisibleRefresh = false
+  var pendingCatalogRefresh = false
   var chatWebViewSleepTask: Task<Void, Never>?
   var toastDismissTask: Task<Void, Never>?
   var workbenchProjectSyncTask: Task<Void, Never>?
-  var agentModelCatalogGeneration: UInt64 = 0
-  var agentModelRefreshGeneration: UInt64 = 0
-  var agentModelHydrationSuppression: AgentModelHydrationID?
-  var agentModelDefaultLoadGeneration: UInt64 = 0
-  var agentModelDefaultRevision: UInt64 = 0
-  var agentModelDefaultMutationTask: Task<Void, Never>?
+  var workbenchPermissionModeSyncTask: Task<Void, Never>?
+  var workbenchPermissionModeSyncGeneration: UInt64 = 0
+  var confirmedWorkbenchPermissionMode = "workspace-write"
+  var agentModelCatalogGenerations: [String: UInt64] = [:]
+  var agentModelCatalogScopes: [String: AgentModelCatalogScope] = [:]
+  var agentModelHydrationGenerations: [String: UInt64] = [:]
+  var agentModelRefreshGenerations: [String: UInt64] = [:]
+  var agentModelHydrationSuppressions: [String: AgentModelHydrationID] = [:]
+  var agentModelDefaultLoadGenerations: [String: UInt64] = [:]
+  var agentModelDefaultRevisions: [String: UInt64] = [:]
+  var agentModelDefaultMutationTasks: [String: Task<Void, Never>] = [:]
   var resolvedTaskApprovalKeys: Set<String> = []
   var resolvedDirectApprovalKeys: Set<String> = []
   var chatBrowserResumeURL = URL(string: "https://chatgpt.com")!
@@ -161,6 +198,8 @@ public final class BridgeServiceAppModel: ObservableObject {
   var stopped = false
 
   private static let chatBrowserEnabledKey = "chatBrowserEnabled"
+  private static let keepServiceRunningAfterAppExitKey =
+    "keepServiceRunningAfterAppExit"
 
   public convenience init() {
     self.init(
@@ -175,7 +214,8 @@ public final class BridgeServiceAppModel: ObservableObject {
     pollInterval: Duration? = .seconds(2),
     connectionRetryDelay: Duration = .milliseconds(200),
     maximumConnectionAttempts: Int = 20,
-    chatBrowserSleepDelay: Duration = .seconds(180)
+    chatBrowserSleepDelay: Duration = .seconds(180),
+    userDefaults: UserDefaults = .standard
   ) {
     precondition(maximumConnectionAttempts > 0)
     self.registration = registration
@@ -184,9 +224,13 @@ public final class BridgeServiceAppModel: ObservableObject {
     self.connectionRetryDelay = connectionRetryDelay
     self.maximumConnectionAttempts = maximumConnectionAttempts
     self.chatBrowserSleepDelay = chatBrowserSleepDelay
+    self.userDefaults = userDefaults
     registrationStatus = registration.status
     isChatBrowserEnabled =
-      UserDefaults.standard.object(forKey: Self.chatBrowserEnabledKey)
+      userDefaults.object(forKey: Self.chatBrowserEnabledKey)
+      as? Bool ?? true
+    keepServiceRunningAfterAppExit =
+      userDefaults.object(forKey: Self.keepServiceRunningAfterAppExitKey)
       as? Bool ?? true
   }
 
@@ -195,7 +239,10 @@ public final class BridgeServiceAppModel: ObservableObject {
     chatWebViewSleepTask?.cancel()
     toastDismissTask?.cancel()
     workbenchProjectSyncTask?.cancel()
-    agentModelDefaultMutationTask?.cancel()
+    workbenchPermissionModeSyncTask?.cancel()
+    for task in agentModelDefaultMutationTasks.values {
+      task.cancel()
+    }
   }
 
   public func projectName(for projectID: String) -> String {
@@ -209,6 +256,39 @@ public final class BridgeServiceAppModel: ObservableObject {
   public var navigation: BridgeServiceNavigation {
     get { selection ?? .overview }
     set { selection = newValue }
+  }
+
+  func agentModelDefault(for providerID: String) -> IPCAgentModelDefaultResponse {
+    agentModelDefaults[providerID]
+      ?? IPCAgentModelDefaultResponse(
+        providerID: providerID,
+        model: providerID == "opencode" ? openCodeDefaultModel : nil,
+        permissionMode:
+          providerID == "opencode" ? openCodeDefaultPermissionMode : "workspace-write",
+        effort: providerID == "opencode" ? openCodeDefaultEffort : nil
+      )
+  }
+
+  func agentModelOptions(for providerID: String) -> [IPCAgentModelSummary] {
+    agentModelOptionsByProvider[providerID]
+      ?? (providerID == "opencode" ? agentModelOptions : [])
+  }
+
+  func agentSelectedModel(for providerID: String) -> IPCAgentModelSummary? {
+    let options = agentModelOptions(for: providerID)
+    if let modelID = agentModelDefault(for: providerID).model {
+      return options.first(where: { $0.modelID == modelID })
+    }
+    return options.first(where: { !$0.supportedReasoningEfforts.isEmpty }) ?? options.first
+  }
+
+  func isRefreshingAgentModels(for providerID: String) -> Bool {
+    agentModelRefreshingProviders.contains(providerID)
+      || agentModelHydratingProviders.contains(providerID)
+  }
+
+  func agentModelRefreshError(for providerID: String) -> String? {
+    agentModelRefreshErrorsByProvider[providerID]
   }
 
   public var exposureMode: MCPServiceExposureMode {
@@ -285,9 +365,22 @@ public final class BridgeServiceAppModel: ObservableObject {
 }
 
 struct AgentModelHydrationID: Equatable {
+  let providerID: String
   let installationID: String?
   let projectID: String?
   let modelID: String?
+
+  init(
+    providerID: String = "opencode",
+    installationID: String?,
+    projectID: String?,
+    modelID: String?
+  ) {
+    self.providerID = providerID
+    self.installationID = installationID
+    self.projectID = projectID
+    self.modelID = modelID
+  }
 }
 
 public struct ToastNotice: Identifiable, Equatable, Sendable {

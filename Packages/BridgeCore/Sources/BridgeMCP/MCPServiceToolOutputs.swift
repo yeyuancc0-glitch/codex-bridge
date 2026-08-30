@@ -113,6 +113,7 @@ struct ServiceGetTaskOutput: Codable, Sendable {
 
 struct ServiceSubmitTaskOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "provider_task"
   let taskID: String
   let status: String
   let reusedExistingTask: Bool
@@ -133,6 +134,7 @@ struct ServiceSubmitTaskOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case taskID = "task_id"
     case status
     case reusedExistingTask = "reused_existing_task"
@@ -143,6 +145,7 @@ struct ServiceSubmitTaskOutput: Codable, Sendable {
 
 struct ServiceMutateTaskOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "task_mutation"
   let taskID: String
   let status: String
   let accepted: Bool
@@ -155,6 +158,7 @@ struct ServiceMutateTaskOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case taskID = "task_id"
     case status
     case accepted
@@ -196,12 +200,14 @@ struct ServiceProjectCommandsOutput: Codable, Sendable {
   let builtInCommands: [MCPBuiltInCommand]
   let registeredCommands: [MCPProjectCommand]
   let commands: [MCPProjectCommand]
+  let recommendedUsage: [String: MCPRecommendedCommandUsage]
 
   init(commands: MCPProjectCommands) {
     commandMode = commands.commandMode
     builtInCommands = commands.builtInCommands
     registeredCommands = commands.commands
     self.commands = commands.commands
+    recommendedUsage = commands.recommendedUsage
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -210,11 +216,13 @@ struct ServiceProjectCommandsOutput: Codable, Sendable {
     case builtInCommands = "built_in_commands"
     case registeredCommands = "registered_commands"
     case commands
+    case recommendedUsage = "recommended_usage"
   }
 }
 
 struct ServiceDirectMutationOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "file_mutation"
   let relativePath: String
   let operation: String
   let oldSHA256: String?
@@ -233,6 +241,7 @@ struct ServiceDirectMutationOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case relativePath = "relative_path"
     case operation
     case oldSHA256 = "old_sha256"
@@ -244,23 +253,23 @@ struct ServiceDirectMutationOutput: Codable, Sendable {
 
 struct ServiceDirectPatchOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "file_mutation"
   let operations: [MCPDirectWriteReceipt]
-  let partialCommit: MCPPartialCommit?
 
   init(receipt: MCPDirectPatchReceipt) {
     operations = receipt.operations
-    partialCommit = receipt.partialCommit
   }
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case operations
-    case partialCommit = "partial_commit"
   }
 }
 
 struct ServiceDirectManagePathOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "file_mutation"
   let relativePath: String
   let sourceRelativePath: String
   let destinationRelativePath: String?
@@ -283,6 +292,7 @@ struct ServiceDirectManagePathOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case relativePath = "relative_path"
     case sourceRelativePath = "source_relative_path"
     case destinationRelativePath = "destination_relative_path"
@@ -294,15 +304,25 @@ struct ServiceDirectManagePathOutput: Codable, Sendable {
   }
 }
 
+enum ServiceCommandReceiptType: String, Codable, Sendable {
+  case directCommand = "direct_command"
+  case skillAction = "skill_action"
+}
+
 struct ServiceDirectExecOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType: ServiceCommandReceiptType
   let sessionID: String
   let status: String
   let exitCode: Int?
   let startedAt: String?
   let output: MCPDirectCommandOutput?
 
-  init(receipt: MCPDirectCommandReceipt) {
+  init(
+    receipt: MCPDirectCommandReceipt,
+    receiptType: ServiceCommandReceiptType = .directCommand
+  ) {
+    self.receiptType = receiptType
     sessionID = receipt.sessionID
     status = receipt.status
     exitCode = receipt.exitCode
@@ -312,6 +332,7 @@ struct ServiceDirectExecOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case sessionID = "session_id"
     case status
     case exitCode = "exit_code"
@@ -322,6 +343,7 @@ struct ServiceDirectExecOutput: Codable, Sendable {
 
 struct ServiceDirectCommandOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "direct_command"
   let sessionID: String
   let status: String
   let exitCode: Int?
@@ -352,6 +374,7 @@ struct ServiceDirectCommandOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case sessionID = "session_id"
     case status
     case exitCode = "exit_code"
@@ -369,11 +392,15 @@ struct ServiceDirectCommandOutput: Codable, Sendable {
 
 struct ServiceDirectWriteStdinOutput: Codable, Sendable {
   let schemaVersion = 1
+  let receiptType = "direct_command_input"
+  let sessionID: String
   let bytesWritten: Int
   let stdinClosed: Bool
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
+    case sessionID = "session_id"
     case bytesWritten = "bytes_written"
     case stdinClosed = "stdin_closed"
   }
@@ -381,6 +408,7 @@ struct ServiceDirectWriteStdinOutput: Codable, Sendable {
 
 struct ServiceDirectGitCommitOutput: Codable, Sendable {
   let schemaVersion = 2
+  let receiptType = "git_commit"
   let commitHash: String?
   let changedFiles: [String]
   let summary: String
@@ -399,6 +427,7 @@ struct ServiceDirectGitCommitOutput: Codable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion = "schema_version"
+    case receiptType = "receipt_type"
     case commitHash = "commit_hash"
     case changedFiles = "changed_files"
     case summary

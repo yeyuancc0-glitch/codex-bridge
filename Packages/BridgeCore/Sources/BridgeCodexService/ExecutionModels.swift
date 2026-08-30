@@ -331,6 +331,7 @@ public enum ExecutionToolCallStatus: String, Codable, Equatable, Sendable {
   case completed
   case failed
   case declined
+  case cancelled
 }
 
 public struct ExecutionToolCall: Codable, Equatable, Sendable {

@@ -1,6 +1,6 @@
 # OpenCode 连接指南
 
-本指南适用于 Codex Bridge v0.3.0。它说明如何把本机已安装的 OpenCode 登记到 Bridge，并让 ChatGPT、Qwen Studio 或 Bridge 工作台通过 MCP 提交 OpenCode 任务。
+本指南说明如何把本机已安装的 OpenCode 登记到 Bridge，并让 ChatGPT、Qwen Studio 或 Bridge 工作台通过 MCP 提交 OpenCode 任务。实际兼容范围以当前 Bridge 适配器的 Probe 结果为准。
 
 ## 先说明连接方向
 
@@ -27,31 +27,29 @@ OpenCode 不随 Bridge 打包，Bridge 也不会读取、复制或导出 OpenCod
 ## 2. 在 Bridge 中登记安装
 
 1. 打开 Codex Bridge，先在“项目”页面登记要使用的本地项目。
-2. 进入“设置” → “本机 Agent Provider”。
-3. 点击“登记安装”，选择“OpenCode”。
+2. 进入“连接” → “本机 Agent 引擎连接”。
+3. 点击“登记 Agent”，选择“OpenCode”。
 4. 在文件选择器中选择真实的绝对路径下的 `opencode` 可执行文件，然后点击“登记并 Probe”。
 5. Probe 成功后，确认状态为“可用”，再打开“启用”。
 
 Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规范路径、文件身份、大小、修改时间和 SHA-256；OpenCode 更新后状态会变成“需复核”。只有在确认这是你预期的更新后，才点击“接受替换并 Probe”。
 
-## 3. 刷新模型和设置默认模式
+## 3. 刷新模型和设置默认值
 
-在工作台的“本机 Agent 任务”区域选择 OpenCode：
+在“设置”中的 OpenCode 执行任务默认偏好区域：
 
 1. 点击“刷新模型列表”。模型目录来自当前项目根启动的 ACP `session/new.configOptions`，不是 `opencode models` CLI 的输出。
 2. 选择 ACP 返回的精确模型 ID。不要手动在 `opencode-go/...` 与 `opencode/...` 之间改名或使用别名。
 3. 仅当当前模型通过 ACP 声明了 effort 选项时，才选择对应 effort；没有选项时使用 Provider 默认值。
-4. 选择默认执行模式：
-   - **Build**：工作区可写；
-   - **Plan**：只读。
+4. 保存 Provider 默认模型与 effort。ChatGPT/Qwen 新任务的统一权限默认值在“工作台 → GPT/Qwen 新任务”中选择：
+   - **Write** 映射 OpenCode Build；
+   - **Read Only** 映射 OpenCode Plan。
+
+远程请求通常应省略权限覆盖字段并使用 Workbench 默认。只有用户明确要求本次覆盖时，才发送 `permission_mode_override=true`；项目硬策略仍可把 Build 收窄为只读。
 
 模型目录只在用户点击刷新时读取。刷新失败会保留已有列表和默认设置；如果 OpenCode 删除了当前默认模型或 effort，Bridge 会清空失效的默认值。
 
-## 4. 从工作台测试
-
-确保 OpenCode 安装已启用、项目已选中后，在“本机 Agent 任务”卡片中选择模型并提交任务。任务仍会先进入本机审批，批准后才启动 OpenCode。OpenCode 通过 ACP 请求文件、命令、网络或其他权限时，也会回到 Bridge 工作台等待本机用户审批。
-
-## 5. 从 ChatGPT 或 Qwen 通过 MCP 使用
+## 4. 从 ChatGPT 或 Qwen 通过 MCP 使用
 
 先调用 `list_projects` 获取不透明的项目 ID，再调用 `list_agents` 确认 OpenCode 安装满足：
 
@@ -104,13 +102,15 @@ Bridge 不会自动扫描或执行任意候选二进制。登记时会冻结规�
 - `execution_model` 和 `execution_effort` 只有在 `model_override=true` 时才覆盖本次任务。
 - `permission_mode` 只能是 `read-only` 或 `workspace-write`；它们分别映射为 ACP Plan 和 Build。
 - 只有用户明确要求本次模式时，才设置 `permission_mode_override=true`。
-- 当前 OpenCode ACP 没有 Bridge 级逐任务网络沙箱，因此 `network_access=true` 会被拒绝；网络行为由 OpenCode 原生权限设置控制。
-- OpenCode 任务不要携带 `thread_id`、`skill_name`、`supervisor_model` 或 `supervisor_effort`。
+- OpenCode ACP 不套用 Bridge 级逐任务网络沙箱；显式网络任务应设置 `network_access=true`，实际网络行为由 OpenCode 原生权限设置控制。
+- 新建 OpenCode 会话时省略 `thread_id`；继续已有会话时，将上一任务 `get_task` 返回的 `provider_session_id` 作为 `submit_task.thread_id`。只有用户明确选择已发现的 Bridge Skill 时才携带 `skill_name`；不要携带 Codex 专属的 `supervisor_model` 或 `supervisor_effort`。
 - 项目本身禁止写入时，默认 Build 会安全收窄为只读，不会越过项目策略。
 
-## 6. 审批、查询和继续任务
+## 5. 审批、查询和继续任务
 
-`submit_task` 通常先返回 `awaiting_local_approval`。本机用户在 Bridge 工作台批准后，任务才进入 `starting` 和 `running`。使用 `get_task` 查询阶段、`result_summary`、`failure_code`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 以及 Provider 绑定字段；进入终态后调用 `get_final_report` 获取结构化最终报告。
+`submit_task` 通常先返回 `awaiting_local_approval`。本机用户在 Bridge 工作台批准后，任务才进入 `starting` 和 `running`。设置中的“自动批准远程 Agent 启动请求”默认关闭；即使开启，也不会自动批准 OpenCode 执行期 permission 或 Direct 操作。
+
+使用 `get_task` 查询阶段、`result_summary`、`failure_code`、`changed_files`、`recent_activity`、`execution_model`、`execution_effort`、`permission_mode` 以及 Provider 绑定字段。按它返回的 `wait_policy` 继续查询；进入终态后，直接从同一 `get_task` 快照读取最终结果。`next_action=read_final_report` 只是提示字符串，不是另一个 MCP 工具。
 
 不要因为 `updated_at` 暂时不变、`recent_activity` 为空或任务较安静就推断失败；按 `get_task` 返回的 `wait_policy` 继续轮询，终态才是权威结果。
 
@@ -126,14 +126,14 @@ OpenCode 的 `steer_task` 和 `interrupt_task` 使用 `get_task` 返回的 `prov
 
 Bridge 会在同一个 ACP Session 中把 steer 内容排队为后续 prompt；中断会优先处理并丢弃尚未执行的 steer 队列。
 
-## 7. 权限和数据隔离
+## 6. 权限和数据隔离
 
 - Bridge 的 Plan/Build 只映射 OpenCode 的原生执行模式，不会伪造或绕过 OpenCode 权限。
-- OpenCode 的全局 XDG 配置、认证和插件由 OpenCode 自己管理；每个 Bridge 任务的 `HOME`、cache、state、runtime 和 `OPENCODE_DB` 都使用隔离目录。
+- OpenCode 继承用户 `HOME` 和 `PATH`，使原生配置与本机工具可用；Bridge 仅隔离每次运行的 cache、state、runtime，并将会话数据库保存在 Service 私有 AgentState。
 - Bridge 不读取或回传 OpenCode auth 文件、Token、Cookie 或 Runtime Key。
 - 远程客户端不能批准任务或 ACP 权限请求，所有批准都必须由本机用户完成。
 
-## 8. 常见问题
+## 7. 常见问题
 
 | 状态或问题 | 处理方式 |
 |---|---|
@@ -142,7 +142,7 @@ Bridge 会在同一个 ACP Session 中把 steer 内容排队为后续 prompt；�
 | 版本或 ACP 不兼容 | 使用 `1.18.20 <= OpenCode < 1.19.0` 范围内的官方版本。 |
 | 模型列表为空 | 先选择项目，再点击“刷新模型列表”；目录必须来自 ACP。 |
 | 模型不可用 | 使用 ACP 返回的精确 ID，不要使用跨 Provider 别名。 |
-| `network_access=true` 被拒绝 | 改为 `false`，并在 OpenCode 原生权限中配置网络行为。 |
+| 网络工具被 Provider 拒绝 | 在任务中显式设置 `network_access=true`，并检查 OpenCode 原生权限配置。 |
 | `awaiting_local_approval` | 打开 Bridge 工作台批准任务；ChatGPT/Qwen 无法代替本机批准。 |
 | `project_busy` | 等待同一项目的其他写任务或 Direct 操作完成。 |
 | `unknown` | 检查 Service/Provider 是否重启；不要自动伪造恢复或启动新任务。 |

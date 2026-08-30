@@ -66,7 +66,7 @@ public struct ServiceProcessOptions: Equatable, Sendable {
 public enum ServiceProcessRunner {
   public static func run(
     arguments: [String] = Array(CommandLine.arguments.dropFirst()),
-    appVersion: String = "0.3.0"
+    appVersion: String = "0.4.0"
   ) async throws {
     _ = umask(0o077)
     let options = try ServiceProcessOptions.parse(arguments)

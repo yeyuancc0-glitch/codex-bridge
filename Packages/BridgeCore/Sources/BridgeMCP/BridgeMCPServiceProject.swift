@@ -41,21 +41,25 @@ public struct MCPProjectCommands: Codable, Equatable, Sendable {
   public let commandMode: String
   public let builtInCommands: [MCPBuiltInCommand]
   public let commands: [MCPProjectCommand]
+  public let recommendedUsage: [String: MCPRecommendedCommandUsage]
 
   public init(
     commandMode: String,
     builtInCommands: [MCPBuiltInCommand] = [],
-    commands: [MCPProjectCommand]
+    commands: [MCPProjectCommand],
+    recommendedUsage: [String: MCPRecommendedCommandUsage] = [:]
   ) {
     self.commandMode = commandMode
     self.builtInCommands = builtInCommands
     self.commands = commands
+    self.recommendedUsage = recommendedUsage
   }
 
   private enum CodingKeys: String, CodingKey {
     case commandMode = "command_mode"
     case builtInCommands = "built_in_commands"
     case commands
+    case recommendedUsage = "recommended_usage"
   }
 
   public init(from decoder: any Decoder) throws {
@@ -64,6 +68,29 @@ public struct MCPProjectCommands: Codable, Equatable, Sendable {
     builtInCommands =
       try container.decodeIfPresent([MCPBuiltInCommand].self, forKey: .builtInCommands) ?? []
     commands = try container.decode([MCPProjectCommand].self, forKey: .commands)
+    recommendedUsage =
+      try container.decodeIfPresent(
+        [String: MCPRecommendedCommandUsage].self,
+        forKey: .recommendedUsage
+      ) ?? [:]
+  }
+}
+
+public struct MCPRecommendedCommandUsage: Codable, Equatable, Sendable {
+  public let commandID: String?
+  public let argv: [String]
+  public let workingDirectory: String?
+
+  public init(commandID: String? = nil, argv: [String], workingDirectory: String? = nil) {
+    self.commandID = commandID
+    self.argv = argv
+    self.workingDirectory = workingDirectory
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case commandID = "command_id"
+    case argv
+    case workingDirectory = "working_directory"
   }
 }
 

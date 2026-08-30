@@ -1,36 +1,5 @@
 import Foundation
 
-public protocol BridgeMCPProjectOperations: Sendable {
-  func getProject(
-    projectID: String,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPProjectDetail
-
-  func searchProjectFiles(
-    projectID: String,
-    query: String,
-    relativeDirectory: String?,
-    caseSensitive: Bool,
-    cursor: String?,
-    limit: Int,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPProjectFileSearchPage
-
-  func readProjectFile(
-    projectID: String,
-    relativePath: String,
-    startLine: Int,
-    lineCount: Int,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPProjectFileReadPage
-
-  func openInCodex(
-    projectID: String,
-    threadID: String,
-    deadline: ContinuousClock.Instant
-  ) async throws -> MCPOpenInCodexReceipt
-}
-
 public struct MCPCommandBlacklistRule: Codable, Equatable, Sendable {
   public let ruleID: String
   public let executable: String?

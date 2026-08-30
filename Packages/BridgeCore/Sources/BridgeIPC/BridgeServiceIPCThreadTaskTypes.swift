@@ -82,6 +82,52 @@ public struct IPCTaskRequest: Codable, Equatable, Sendable {
   }
 }
 
+public struct IPCTaskSteerRequest: Codable, Equatable, Sendable {
+  public static let maximumIdentifierBytes = 1_024
+  public static let maximumInputBytes = 32 * 1_024
+
+  public let taskID: String
+  public let expectedTurnID: String
+  public let input: String
+  public let mode: MCPTaskSteerMode?
+
+  public init(
+    taskID: String,
+    expectedTurnID: String,
+    input: String,
+    mode: MCPTaskSteerMode? = nil
+  ) {
+    self.taskID = taskID
+    self.expectedTurnID = expectedTurnID
+    self.input = input
+    self.mode = mode
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case taskID = "task_id"
+    case expectedTurnID = "expected_turn_id"
+    case input
+    case mode
+  }
+}
+
+public struct IPCTaskInterruptRequest: Codable, Equatable, Sendable {
+  public static let maximumIdentifierBytes = 1_024
+
+  public let taskID: String
+  public let expectedTurnID: String
+
+  public init(taskID: String, expectedTurnID: String) {
+    self.taskID = taskID
+    self.expectedTurnID = expectedTurnID
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case taskID = "task_id"
+    case expectedTurnID = "expected_turn_id"
+  }
+}
+
 public struct IPCTaskListResponse: Codable, Equatable, Sendable {
   public let tasks: [MCPServiceTaskSnapshot]
 

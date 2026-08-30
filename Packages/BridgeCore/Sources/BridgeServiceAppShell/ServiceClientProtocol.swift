@@ -26,6 +26,7 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func setProjectCommandMode(projectID: String, commandMode: String) async throws
     -> MCPProjectDetail
   func setWorkbenchProject(projectID: String?) async throws
+  func setWorkbenchPermissionMode(_ mode: String) async throws
   func agentCatalog() async throws -> IPCAgentCatalogResponse
   func registerAgentInstallation(
     _ request: IPCAgentRegistrationRequest
@@ -57,8 +58,15 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
     useStoredDefault: Bool
   ) async throws -> IPCAgentModelsResponse
   func agentModelDefault() async throws -> IPCAgentModelDefaultResponse
+  func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse
   func setAgentModelDefault(_ model: String?) async throws
   func setOpenCodeDefaults(
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse
+  func setAgentDefaults(
+    providerID: String,
     model: String?,
     permissionMode: String?,
     effort: String?
@@ -77,6 +85,16 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func tasks(_ request: IPCTaskListRequest) async throws -> [MCPServiceTaskSnapshot]
   func task(_ request: IPCTaskRequest) async throws -> MCPServiceTaskSnapshot
   func stopTask(taskID: String) async throws
+  func steerTask(
+    taskID: String,
+    expectedTurnID: String,
+    input: String,
+    mode: MCPTaskSteerMode
+  ) async throws -> MCPServiceTaskMutationReceipt
+  func interruptTask(
+    taskID: String,
+    expectedTurnID: String
+  ) async throws -> MCPServiceTaskMutationReceipt
   func deleteTask(taskID: String) async throws
   func approvals(taskID: String?) async throws -> [IPCApprovalSummary]
   func resolveApproval(_ request: IPCApprovalResolutionRequest) async throws
@@ -85,6 +103,8 @@ public protocol BridgeServiceClientProtocol: BridgeTaskConversationClient, Senda
   func denyDirectApproval(approvalID: String) async throws -> Bool
   func directApprovalMode() async throws -> String
   func setDirectApprovalMode(_ mode: String) async throws
+  func taskStartApprovalMode() async throws -> String
+  func setTaskStartApprovalMode(_ mode: String) async throws
   func setExposureMode(_ mode: MCPServiceExposureMode) async throws
   func mcpClients() async throws -> [IPCMCPClientStatus]
   func setMCPClientEnabled(clientID: String, enabled: Bool) async throws
@@ -140,6 +160,22 @@ extension BridgeServiceClientProtocol {
     throw BridgeServiceClientError.unavailable
   }
 
+  public func steerTask(
+    taskID _: String,
+    expectedTurnID _: String,
+    input _: String,
+    mode _: MCPTaskSteerMode
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    throw BridgeServiceClientError.unavailable
+  }
+
+  public func interruptTask(
+    taskID _: String,
+    expectedTurnID _: String
+  ) async throws -> MCPServiceTaskMutationReceipt {
+    throw BridgeServiceClientError.unavailable
+  }
+
   public func agentModels(installationID: String) async throws -> IPCAgentModelsResponse {
     throw BridgeServiceClientError.unavailable
   }
@@ -176,6 +212,11 @@ extension BridgeServiceClientProtocol {
     throw BridgeServiceClientError.unavailable
   }
 
+  public func agentModelDefault(providerID: String) async throws -> IPCAgentModelDefaultResponse {
+    guard providerID == "opencode" else { throw BridgeServiceClientError.unavailable }
+    return try await agentModelDefault()
+  }
+
   public func setAgentModelDefault(_: String?) async throws {
     throw BridgeServiceClientError.unavailable
   }
@@ -189,6 +230,20 @@ extension BridgeServiceClientProtocol {
     return IPCAgentModelDefaultResponse(
       model: model,
       permissionMode: permissionMode ?? "build",
+      effort: effort
+    )
+  }
+
+  public func setAgentDefaults(
+    providerID: String,
+    model: String?,
+    permissionMode: String?,
+    effort: String?
+  ) async throws -> IPCAgentModelDefaultResponse {
+    guard providerID == "opencode" else { throw BridgeServiceClientError.unavailable }
+    return try await setOpenCodeDefaults(
+      model: model,
+      permissionMode: permissionMode,
       effort: effort
     )
   }

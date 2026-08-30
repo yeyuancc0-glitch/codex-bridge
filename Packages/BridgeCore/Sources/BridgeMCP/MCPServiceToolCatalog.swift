@@ -48,6 +48,8 @@ struct MCPServiceToolContract: Sendable {
 }
 
 public struct MCPServiceToolCatalog: Sendable {
+  public static let contractVersion = "1.2.0"
+
   public let definitions: [Tool]
 
   public init(exposureMode: MCPServiceExposureMode) {

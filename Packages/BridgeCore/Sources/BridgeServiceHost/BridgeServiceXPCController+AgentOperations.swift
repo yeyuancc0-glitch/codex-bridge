@@ -1,6 +1,7 @@
 import BridgeAgentCore
+import BridgeDeepSeekHarnessACP
 import BridgeIPC
-import BridgeOpenCodeACP
+import BridgeServiceApplication
 import BridgeServiceCore
 import Foundation
 
@@ -28,16 +29,22 @@ extension BridgeServiceXPCController {
       from: request
     )
     let providerID = AgentProviderID(rawValue: payload.providerID)
-    let securityProfileID: AgentProfileID? =
-      providerID == .openCode ? OpenCodeACPProfiles.controlledReadOnly : nil
+    let policy = ServiceAgentProviderPolicyRegistry.policy(for: providerID)
+    let artifacts = try Self.registrationArtifacts(
+      providerID: providerID,
+      executablePath: payload.executablePath,
+      configurationPath: payload.configurationPath
+    )
     let record = try await composition.application.serviceRegisterManagedAgent(
       try ServiceAgentRegistrationRequest(
         providerID: providerID,
         displayName: payload.displayName,
         executablePath: payload.executablePath,
-        trustProfile: .managed,
-        securityProfileID: securityProfileID,
-        enableOnSuccess: false
+        trustProfile: policy?.registrationTrustProfile ?? .managed,
+        securityProfileID: policy?.registrationSecurityProfileID,
+        enableOnSuccess: false,
+        configurationPath: payload.configurationPath,
+        artifacts: artifacts
       ),
       deadline: Self.deadline()
     )
@@ -45,6 +52,25 @@ extension BridgeServiceXPCController {
       requestID: request.requestID,
       payload: Self.agentInstallationSummary(record)
     )
+  }
+
+  private static func registrationArtifacts(
+    providerID: AgentProviderID,
+    executablePath: String,
+    configurationPath: String?
+  ) throws -> [ServiceAgentInstallationArtifactRequest] {
+    guard providerID == .deepSeekHarness else { return [] }
+    guard let configurationPath else {
+      throw AgentRuntimeError.invalidRequest("registration.configurationPath")
+    }
+    let paths = try DeepSeekHarnessACPProfile.resolveArtifacts(
+      executablePath: executablePath,
+      configurationPath: configurationPath
+    )
+    return try AgentInstallationArtifactRole.allCases.compactMap { role in
+      guard role != .launchConfiguration, let path = paths[role] else { return nil }
+      return try ServiceAgentInstallationArtifactRequest(role: role, path: path)
+    }
   }
 
   func handleReprobeAgentInstallation(_ request: BridgeServiceIPCRequest) async throws -> Data {
@@ -96,10 +122,23 @@ extension BridgeServiceXPCController {
   private static func agentProviderSummary(
     _ descriptor: AgentProviderDescriptor
   ) -> IPCAgentProviderSummary {
-    IPCAgentProviderSummary(
+    let policy = ServiceAgentProviderPolicyRegistry.policy(for: descriptor.providerID)
+    return IPCAgentProviderSummary(
       providerID: descriptor.providerID.rawValue,
       displayName: descriptor.displayName,
-      adapterRevision: descriptor.adapterRevision
+      adapterRevision: descriptor.adapterRevision,
+      requiresConfiguration: policy?.requiresConfiguration ?? false,
+      registrationTrustProfile: policy?.registrationTrustProfile.rawValue ?? "managed",
+      supportsModelSelection: policy?.supportsModelSelection ?? true,
+      supportsEffortSelection: policy?.supportsEffortSelection ?? true,
+      supportsSessionContinuation: policy?.supportsSessionContinuation ?? true,
+      supportsSteer: policy?.supportsSteer ?? false,
+      supportsWorkspaceWrite: policy?.supportsWorkspaceWrite ?? true,
+      supportsSkillSelection: policy?.supportsSkillSelection ?? false,
+      supportsSupervisor: policy?.supportsSupervisor ?? false,
+      workspaceEnforcement: policy?.workspaceEnforcement ?? "legacy",
+      approvalEnforcement: policy?.approvalEnforcement ?? "legacy",
+      networkEnforcement: policy?.networkEnforcement ?? "legacy"
     )
   }
 
@@ -132,7 +171,7 @@ extension BridgeServiceXPCController {
 extension BridgeServiceXPCController {
   func handleSubmitAgentTask(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentSubmitRequest.self, from: request)
-    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     let result = try await composition.application.serviceSubmitAgentTask(
       projectID: payload.projectID,
       providerID: payload.providerID,
@@ -140,7 +179,14 @@ extension BridgeServiceXPCController {
       model: payload.model,
       effort: payload.effort,
       permissionMode: payload.permissionMode,
+      networkAccess: payload.networkAccess ?? false,
       prompt: payload.prompt,
+      threadID: payload.threadID,
+      skillName: payload.skillName,
+      modelOverride: payload.modelOverride,
+      permissionModeOverride: payload.permissionModeOverride,
+      acceptanceCriteria: payload.acceptanceCriteria ?? [],
+      clientRequestID: payload.clientRequestID,
       deadline: deadline
     )
     return try BridgeServiceIPCCodec.success(
@@ -151,7 +197,7 @@ extension BridgeServiceXPCController {
 
   func handleListAgentModels(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentModelsRequest.self, from: request)
-    let deadline = ContinuousClock.now.advanced(by: .seconds(15))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     let items = try await composition.application.serviceListAgentModels(
       installationID: AgentInstallationID(rawValue: payload.installationID),
       projectID: payload.projectID,
@@ -177,55 +223,48 @@ extension BridgeServiceXPCController {
 
 extension BridgeServiceXPCController {
   func handleGetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.optionalPayload(
+      IPCAgentModelDefaultRequest.self,
+      from: request
+    )
+    let providerID = AgentProviderID(
+      rawValue: payload?.providerID ?? AgentProviderID.openCode.rawValue)
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    let model = try await composition.application.serviceOpenCodeDefaultModel(deadline: deadline)
-    let permissionMode = try await composition.application.serviceOpenCodeDefaultPermissionMode(
+    let persisted = try await composition.application.serviceAgentModelDefault(
+      providerID: providerID,
       deadline: deadline
     )
-    let effort = try await composition.application.serviceOpenCodeDefaultEffort(deadline: deadline)
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCAgentModelDefaultResponse(
-        model: model,
-        permissionMode: permissionMode,
-        effort: effort
+        providerID: providerID.rawValue,
+        model: persisted.model,
+        permissionMode: persisted.permissionMode,
+        effort: persisted.effort
       )
     )
   }
 
   func handleSetAgentModelDefault(_ request: BridgeServiceIPCRequest) async throws -> Data {
     let payload = try BridgeServiceIPCCodec.payload(IPCAgentModelDefaultRequest.self, from: request)
+    let providerID = AgentProviderID(
+      rawValue: payload.providerID ?? AgentProviderID.openCode.rawValue)
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    try await composition.application.serviceSetOpenCodeDefaultModel(
-      payload.model,
-      deadline: deadline
-    )
-    if let permissionMode = payload.permissionMode {
-      try await composition.application.serviceSetOpenCodeDefaultPermissionMode(
-        permissionMode,
-        deadline: deadline
-      )
-    }
-    if let effort = payload.effort {
-      try await composition.application.serviceSetOpenCodeDefaultEffort(
-        effort.isEmpty ? nil : effort,
-        deadline: deadline
-      )
-    }
-    let persistedModel = try await composition.application.serviceOpenCodeDefaultModel(
-      deadline: deadline
-    )
-    let persistedPermissionMode = try await composition.application
-      .serviceOpenCodeDefaultPermissionMode(deadline: deadline)
-    let persistedEffort = try await composition.application.serviceOpenCodeDefaultEffort(
+    let persisted = try await composition.application.serviceSetAgentModelDefault(
+      providerID: providerID,
+      model: payload.model,
+      permissionMode: payload.permissionMode,
+      effort: payload.effort.flatMap { $0.isEmpty ? nil : $0 },
+      updateEffort: payload.effort != nil,
       deadline: deadline
     )
     return try BridgeServiceIPCCodec.success(
       requestID: request.requestID,
       payload: IPCAgentModelDefaultResponse(
-        model: persistedModel,
-        permissionMode: persistedPermissionMode,
-        effort: persistedEffort
+        providerID: providerID.rawValue,
+        model: persisted.model,
+        permissionMode: persisted.permissionMode,
+        effort: persisted.effort
       )
     )
   }

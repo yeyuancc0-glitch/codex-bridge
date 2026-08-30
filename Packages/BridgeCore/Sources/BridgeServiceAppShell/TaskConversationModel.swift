@@ -4,65 +4,24 @@ import SwiftUI
 
 @MainActor
 public final class TaskConversationModel: ObservableObject, Identifiable {
-  public enum Activity: Equatable {
-    case idle
-    case thinking
-    case executing(String?)
-    case responding
-  }
-
-  public struct Entry: Identifiable, Equatable {
-    public let key: String
-    public let role: String
-    public let kind: String
-    public let messageID: Int64?
-    public var content: String
-    public var toolName: String?
-    public var toolStatus: String?
-    public var toolArguments: String?
-    public var isFinal: Bool
-
-    public var id: String { key }
-
-    init(_ message: IPCTaskConversationMessage, isFinal: Bool) {
-      key = message.key
-      role = message.role
-      kind = message.kind
-      messageID = message.messageID
-      content = message.content
-      toolName = message.toolName
-      toolStatus = message.toolStatus
-      toolArguments = message.toolArguments
-      self.isFinal = isFinal
-    }
-
-    init(key: String, role: String, kind: String, content: String, isFinal: Bool) {
-      self.key = key
-      self.role = role
-      self.kind = kind
-      messageID = nil
-      self.content = content
-      toolName = nil
-      toolStatus = nil
-      toolArguments = nil
-      self.isFinal = isFinal
-    }
-  }
-
   @Published public private(set) var entries: [Entry] = []
   @Published public private(set) var isStreaming = false
   @Published public private(set) var activity: Activity = .idle
   @Published public private(set) var errorMessage: String?
   @Published public private(set) var isLoadingEarlier = false
+  @Published public private(set) var canLoadEarlier = false
   @Published public var autoScroll = true
   @Published public private(set) var scrollAnchor: String?
+  @Published public private(set) var scrollRevision: UInt64 = 0
 
+  public let id = UUID()
   public let taskID: String
   public private(set) var subscriptionID = -1
 
-  private static let pushBatchDelay: Duration = .milliseconds(40)
+  private static let pushBatchDelay: Duration = .milliseconds(16)
 
   private let client: any BridgeTaskConversationClient
+  private let isTerminal: Bool
   private var index: [String: Int] = [:]
   private var hasAppliedPage = false
   private var streamingTask: Task<Void, Never>?
@@ -70,6 +29,10 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
   private var resyncTask: Task<Void, Never>?
   private var pendingPushes: [IPCTaskConversationPush] = []
   private var pendingResyncPushes: [IPCTaskConversationPush] = []
+  private var lifecycleGeneration: UInt64 = 0
+  private var loadGeneration: UInt64 = 0
+  private var hasLoadedTerminalSnapshot = false
+  private var hasRestoredPresentation = false
 
   private static let maximumPendingPushes = 256
   private static let resyncRetryDelays: [Duration] = [
@@ -79,24 +42,52 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     .seconds(1),
     .seconds(1),
   ]
+  private static let terminalSnapshotRetryDelays: [Duration] = [
+    .zero, .milliseconds(80), .milliseconds(200), .milliseconds(400),
+  ]
 
-  public init(taskID: String, client: any BridgeTaskConversationClient) {
+  public init(
+    taskID: String,
+    client: any BridgeTaskConversationClient,
+    isTerminal: Bool = false
+  ) {
     self.taskID = taskID
     self.client = client
-  }
-
-  public var canLoadEarlier: Bool {
-    entries.first(where: { $0.messageID != nil }) != nil
+    self.isTerminal = isTerminal
   }
 
   func start() async {
+    if isTerminal {
+      await reloadAuthoritativeSnapshot()
+      return
+    }
+    let generation = lifecycleGeneration
+    loadGeneration &+= 1
+    let requestLoadGeneration = self.loadGeneration
     do {
       let (subscription, updates) = try await client.subscribeTaskConversation(
         taskID: taskID,
         limit: 200
       )
+      guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else {
+        if subscription.subscriptionID >= 0 {
+          try? await client.unsubscribeTaskConversation(
+            taskID: taskID,
+            subscriptionID: subscription.subscriptionID
+          )
+        }
+        return
+      }
+      guard applySubscriptionPage(subscription.page) else {
+        if subscription.subscriptionID >= 0 {
+          try? await client.unsubscribeTaskConversation(
+            taskID: taskID,
+            subscriptionID: subscription.subscriptionID
+          )
+        }
+        return
+      }
       subscriptionID = subscription.subscriptionID
-      applyPage(subscription.page)
       hasAppliedPage = true
       streamingTask = Task { [weak self] in
         for await push in updates {
@@ -106,27 +97,56 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
         self?.flushPendingPushes()
       }
     } catch {
+      guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
       errorMessage = BridgeServiceAppModel.message(error)
       do {
         let page = try await client.taskConversation(
           IPCTaskConversationRequest(taskID: taskID, limit: 200)
         )
-        applyPage(page)
+        guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
+        _ = applyAuthoritativePage(page)
       } catch {
+        guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
         errorMessage = BridgeServiceAppModel.message(error)
       }
     }
   }
 
   func cancel() {
-    streamingTask?.cancel()
-    streamingTask = nil
+    lifecycleGeneration &+= 1
+    loadGeneration &+= 1
+    invalidateLiveSubscription()
+    hasAppliedPage = false
+    hasLoadedTerminalSnapshot = false
     pushFlushTask?.cancel()
     pushFlushTask = nil
-    resyncTask?.cancel()
-    resyncTask = nil
     pendingPushes.removeAll(keepingCapacity: false)
     pendingResyncPushes.removeAll(keepingCapacity: false)
+  }
+
+  func refreshPresentation() {
+    guard !entries.isEmpty else { return }
+    requestAutoScroll()
+  }
+
+  func presentationSnapshot() -> TaskConversationPresentationSnapshot? {
+    flushPendingPushes()
+    guard !entries.isEmpty else { return nil }
+    return TaskConversationPresentationSnapshot(
+      entries: entries,
+      canLoadEarlier: canLoadEarlier
+    )
+  }
+
+  func restorePresentation(_ snapshot: TaskConversationPresentationSnapshot?) {
+    guard let snapshot, !snapshot.entries.isEmpty else { return }
+    entries = snapshot.entries
+    canLoadEarlier = snapshot.canLoadEarlier
+    hasRestoredPresentation = true
+    hasLoadedTerminalSnapshot = isTerminal
+    rebuildIndex()
+    refreshStreamingState()
+    requestAutoScroll()
   }
 
   func loadEarlier() async {
@@ -134,12 +154,17 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     guard canLoadEarlier, !isLoadingEarlier else { return }
     let anchor = entries.first(where: { $0.messageID != nil })?.messageID
     guard let anchor else { return }
+    let lifecycle = lifecycleGeneration
+    let load = loadGeneration
     isLoadingEarlier = true
     defer { isLoadingEarlier = false }
     do {
       let page = try await client.taskConversation(
         IPCTaskConversationRequest(taskID: taskID, beforeMessageID: anchor, limit: 100)
       )
+      guard isRequestValid(lifecycle: lifecycle, load: load) else { return }
+      guard page.taskID == taskID else { return }
+      canLoadEarlier = page.messages.count >= 100
       guard !page.messages.isEmpty else { return }
       let older = page.messages
         .filter { index[$0.key] == nil }
@@ -149,8 +174,72 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
       rebuildIndex()
       scrollAnchor = entries.last?.key
     } catch {
+      guard isRequestValid(lifecycle: lifecycle, load: load) else { return }
       errorMessage = BridgeServiceAppModel.message(error)
     }
+  }
+
+  func reloadAuthoritativeSnapshot() async {
+    loadGeneration &+= 1
+    let requestLoadGeneration = self.loadGeneration
+    let generation = lifecycleGeneration
+    invalidateLiveSubscription()
+    let delays = isTerminal ? Self.terminalSnapshotRetryDelays : [.zero]
+    var lastError: Error?
+    for (index, delay) in delays.enumerated() {
+      if delay > .zero {
+        do {
+          try await Task.sleep(for: delay)
+        } catch {
+          return
+        }
+      }
+      guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
+      do {
+        let page = try await client.taskConversation(
+          IPCTaskConversationRequest(taskID: taskID, limit: 200)
+        )
+        guard isRequestValid(lifecycle: generation, load: requestLoadGeneration) else { return }
+        if isTerminal, page.messages.isEmpty, index < delays.count - 1 {
+          continue
+        }
+        _ = applyAuthoritativePage(page)
+        return
+      } catch {
+        lastError = error
+      }
+    }
+    guard isRequestValid(lifecycle: generation, load: requestLoadGeneration), let lastError else {
+      return
+    }
+    errorMessage = BridgeServiceAppModel.message(lastError)
+  }
+
+  @discardableResult
+  private func applyAuthoritativePage(_ page: IPCTaskConversationPage) -> Bool {
+    guard page.taskID == taskID else { return false }
+    if isTerminal, hasLoadedTerminalSnapshot, page.messages.isEmpty, !entries.isEmpty {
+      return true
+    }
+    applyPage(page)
+    if isTerminal {
+      hasLoadedTerminalSnapshot = true
+    }
+    hasAppliedPage = true
+    return true
+  }
+
+  @discardableResult
+  private func applySubscriptionPage(_ page: IPCTaskConversationPage) -> Bool {
+    guard page.taskID == taskID else { return false }
+    guard !(isTerminal && hasLoadedTerminalSnapshot) else { return true }
+    if hasRestoredPresentation, page.messages.isEmpty, !entries.isEmpty {
+      hasRestoredPresentation = false
+      return true
+    }
+    hasRestoredPresentation = false
+    applyPage(page)
+    return true
   }
 
   private func applyPage(_ page: IPCTaskConversationPage) {
@@ -159,9 +248,32 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     pendingPushes.removeAll(keepingCapacity: false)
     pendingResyncPushes.removeAll(keepingCapacity: false)
     entries = page.messages.map { Entry($0, isFinal: $0.final) }
+    canLoadEarlier = page.messages.count >= 200
     rebuildIndex()
     refreshStreamingState()
-    scrollAnchor = entries.last?.key
+    requestAutoScroll()
+  }
+
+  private func isRequestValid(lifecycle: UInt64, load: UInt64) -> Bool {
+    lifecycleGeneration == lifecycle && self.loadGeneration == load
+  }
+
+  private func invalidateLiveSubscription() {
+    streamingTask?.cancel()
+    streamingTask = nil
+    resyncTask?.cancel()
+    resyncTask = nil
+    let subscriptionID = self.subscriptionID
+    self.subscriptionID = -1
+    guard subscriptionID >= 0 else { return }
+    let client = self.client
+    let taskID = self.taskID
+    Task {
+      try? await client.unsubscribeTaskConversation(
+        taskID: taskID,
+        subscriptionID: subscriptionID
+      )
+    }
   }
 
   private func enqueuePush(_ push: IPCTaskConversationPush) {
@@ -257,9 +369,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     entries = updatedEntries
     index = updatedIndex
     refreshStreamingState()
-    if autoScroll {
-      scrollAnchor = entries.last?.key
-    }
+    requestAutoScroll()
   }
 
   private func scheduleConversationResync() {
@@ -337,9 +447,7 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     entries = refreshedEntries
     index = refreshedIndex
     refreshStreamingState()
-    if autoScroll {
-      scrollAnchor = entries.last?.key
-    }
+    requestAutoScroll()
   }
 
   private func rebuildIndex() {
@@ -347,6 +455,12 @@ public final class TaskConversationModel: ObservableObject, Identifiable {
     for (position, entry) in entries.enumerated() {
       index[entry.key] = position
     }
+  }
+
+  private func requestAutoScroll() {
+    guard autoScroll, let key = entries.last?.key else { return }
+    scrollAnchor = key
+    scrollRevision &+= 1
   }
 
   private func refreshStreamingState() {

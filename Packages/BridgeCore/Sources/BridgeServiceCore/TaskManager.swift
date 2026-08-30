@@ -71,7 +71,10 @@ public actor ServiceTaskManager {
   }
 
   @discardableResult
-  public func approveAndBegin(taskID: TaskID) async throws -> ServiceTaskRecord {
+  public func approveAndBegin(
+    taskID: TaskID,
+    summary: String = "The local user approved this provider invocation."
+  ) async throws -> ServiceTaskRecord {
     try await mutate(
       taskID: taskID,
       patch: StatePatch(
@@ -79,7 +82,7 @@ public actor ServiceTaskManager {
         supervisorStatus: try await supervisorStartStatus(taskID: taskID)
       ),
       eventKind: .taskApproved,
-      summary: "The local user approved this provider invocation.",
+      summary: summary,
       expectedStatus: .awaitingLocalApproval
     )
   }
@@ -204,7 +207,8 @@ public actor ServiceTaskManager {
   public func complete(
     taskID: TaskID,
     resultSummary: String,
-    changedFiles: [String]
+    changedFiles: [String],
+    eventSummary: String? = nil
   ) async throws -> ServiceTaskRecord {
     try await mutate(
       taskID: taskID,
@@ -215,7 +219,7 @@ public actor ServiceTaskManager {
         failureCode: .set(nil)
       ),
       eventKind: .taskCompleted,
-      summary: "The provider completed the task."
+      summary: eventSummary ?? "The provider completed the task."
     )
   }
 
@@ -284,6 +288,20 @@ public actor ServiceTaskManager {
 
   public func task(id: TaskID) async throws -> ServiceTaskRecord? {
     try await store.task(id: id)
+  }
+
+  public func task(
+    providerSessionID: String,
+    providerID: String,
+    installationID: String,
+    projectID: ProjectID
+  ) async throws -> ServiceTaskRecord? {
+    try await store.task(
+      providerSessionID: providerSessionID,
+      providerID: providerID,
+      installationID: installationID,
+      projectID: projectID
+    )
   }
 
   public func tasks(projectID: ProjectID? = nil, limit: Int = 100) async throws

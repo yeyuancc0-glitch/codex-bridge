@@ -4,17 +4,126 @@ public struct IPCAgentProviderSummary: Codable, Equatable, Sendable {
   public let providerID: String
   public let displayName: String
   public let adapterRevision: Int
+  public let requiresConfiguration: Bool
+  public let registrationTrustProfile: String
+  public let supportsModelSelection: Bool
+  public let supportsEffortSelection: Bool
+  public let supportsSessionContinuation: Bool
+  public let supportsSteer: Bool
+  public let supportsWorkspaceWrite: Bool
+  public let supportsSkillSelection: Bool
+  public let supportsSupervisor: Bool
+  public let workspaceEnforcement: String
+  public let approvalEnforcement: String
+  public let networkEnforcement: String
 
-  public init(providerID: String, displayName: String, adapterRevision: Int) {
+  public init(
+    providerID: String,
+    displayName: String,
+    adapterRevision: Int,
+    requiresConfiguration: Bool = false,
+    registrationTrustProfile: String = "managed",
+    supportsModelSelection: Bool = true,
+    supportsEffortSelection: Bool = true,
+    supportsSessionContinuation: Bool = true,
+    supportsSteer: Bool = false,
+    supportsWorkspaceWrite: Bool = true,
+    supportsSkillSelection: Bool = false,
+    supportsSupervisor: Bool = false,
+    workspaceEnforcement: String = "legacy",
+    approvalEnforcement: String = "legacy",
+    networkEnforcement: String = "legacy"
+  ) {
     self.providerID = providerID
     self.displayName = displayName
     self.adapterRevision = adapterRevision
+    self.requiresConfiguration = requiresConfiguration
+    self.registrationTrustProfile = registrationTrustProfile
+    self.supportsModelSelection = supportsModelSelection
+    self.supportsEffortSelection = supportsEffortSelection
+    self.supportsSessionContinuation = supportsSessionContinuation
+    self.supportsSteer = supportsSteer
+    self.supportsWorkspaceWrite = supportsWorkspaceWrite
+    self.supportsSkillSelection = supportsSkillSelection
+    self.supportsSupervisor = supportsSupervisor
+    self.workspaceEnforcement = workspaceEnforcement
+    self.approvalEnforcement = approvalEnforcement
+    self.networkEnforcement = networkEnforcement
   }
 
   private enum CodingKeys: String, CodingKey {
     case providerID = "provider_id"
     case displayName = "display_name"
     case adapterRevision = "adapter_revision"
+    case requiresConfiguration = "requires_configuration"
+    case registrationTrustProfile = "registration_trust_profile"
+    case supportsModelSelection = "supports_model_selection"
+    case supportsEffortSelection = "supports_effort_selection"
+    case supportsSessionContinuation = "supports_session_continuation"
+    case supportsSteer = "supports_steer"
+    case supportsWorkspaceWrite = "supports_workspace_write"
+    case supportsSkillSelection = "supports_skill_selection"
+    case supportsSupervisor = "supports_supervisor"
+    case workspaceEnforcement = "workspace_enforcement"
+    case approvalEnforcement = "approval_enforcement"
+    case networkEnforcement = "network_enforcement"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      providerID: try container.decode(String.self, forKey: .providerID),
+      displayName: try container.decode(String.self, forKey: .displayName),
+      adapterRevision: try container.decode(Int.self, forKey: .adapterRevision),
+      requiresConfiguration: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .requiresConfiguration
+      ) ?? false,
+      registrationTrustProfile: try container.decodeIfPresent(
+        String.self,
+        forKey: .registrationTrustProfile
+      ) ?? "managed",
+      supportsModelSelection: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsModelSelection
+      ) ?? true,
+      supportsEffortSelection: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsEffortSelection
+      ) ?? true,
+      supportsSessionContinuation: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsSessionContinuation
+      ) ?? true,
+      supportsSteer: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsSteer
+      ) ?? false,
+      supportsWorkspaceWrite: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsWorkspaceWrite
+      ) ?? true,
+      supportsSkillSelection: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsSkillSelection
+      ) ?? false,
+      supportsSupervisor: try container.decodeIfPresent(
+        Bool.self,
+        forKey: .supportsSupervisor
+      ) ?? false,
+      workspaceEnforcement: try container.decodeIfPresent(
+        String.self,
+        forKey: .workspaceEnforcement
+      ) ?? "legacy",
+      approvalEnforcement: try container.decodeIfPresent(
+        String.self,
+        forKey: .approvalEnforcement
+      ) ?? "legacy",
+      networkEnforcement: try container.decodeIfPresent(
+        String.self,
+        forKey: .networkEnforcement
+      ) ?? "legacy"
+    )
   }
 }
 
@@ -105,17 +214,25 @@ public struct IPCAgentRegistrationRequest: Codable, Equatable, Sendable {
   public let providerID: String
   public let displayName: String
   public let executablePath: String
+  public let configurationPath: String?
 
-  public init(providerID: String, displayName: String, executablePath: String) {
+  public init(
+    providerID: String,
+    displayName: String,
+    executablePath: String,
+    configurationPath: String? = nil
+  ) {
     self.providerID = providerID
     self.displayName = displayName
     self.executablePath = executablePath
+    self.configurationPath = configurationPath
   }
 
   private enum CodingKeys: String, CodingKey {
     case providerID = "provider_id"
     case displayName = "display_name"
     case executablePath = "executable_path"
+    case configurationPath = "configuration_path"
   }
 }
 
@@ -169,6 +286,13 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
   public let effort: String?
   public let permissionMode: String?
   public let prompt: String
+  public let threadID: String?
+  public let skillName: String?
+  public let networkAccess: Bool?
+  public let modelOverride: Bool?
+  public let permissionModeOverride: Bool?
+  public let acceptanceCriteria: [String]?
+  public let clientRequestID: String?
 
   public init(
     projectID: String,
@@ -177,7 +301,14 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     model: String? = nil,
     effort: String? = nil,
     permissionMode: String? = nil,
-    prompt: String
+    prompt: String,
+    threadID: String? = nil,
+    skillName: String? = nil,
+    networkAccess: Bool? = nil,
+    modelOverride: Bool? = nil,
+    permissionModeOverride: Bool? = nil,
+    acceptanceCriteria: [String]? = nil,
+    clientRequestID: String? = nil
   ) {
     self.projectID = projectID
     self.providerID = providerID
@@ -186,6 +317,13 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     self.effort = effort
     self.permissionMode = permissionMode
     self.prompt = prompt
+    self.threadID = threadID
+    self.skillName = skillName
+    self.networkAccess = networkAccess
+    self.modelOverride = modelOverride
+    self.permissionModeOverride = permissionModeOverride
+    self.acceptanceCriteria = acceptanceCriteria
+    self.clientRequestID = clientRequestID
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -196,6 +334,13 @@ public struct IPCAgentSubmitRequest: Codable, Equatable, Sendable {
     case effort
     case permissionMode = "permission_mode"
     case prompt
+    case threadID = "thread_id"
+    case skillName = "skill_name"
+    case networkAccess = "network_access"
+    case modelOverride = "model_override"
+    case permissionModeOverride = "permission_mode_override"
+    case acceptanceCriteria = "acceptance_criteria"
+    case clientRequestID = "client_request_id"
   }
 }
 
@@ -291,21 +436,25 @@ public struct IPCAgentModelsResponse: Codable, Equatable, Sendable {
 }
 
 public struct IPCAgentModelDefaultResponse: Codable, Equatable, Sendable {
+  public let providerID: String
   public let model: String?
   public let permissionMode: String
   public let effort: String?
 
   public init(
+    providerID: String = "opencode",
     model: String?,
     permissionMode: String = "build",
     effort: String? = nil
   ) {
+    self.providerID = providerID
     self.model = model
     self.permissionMode = permissionMode
     self.effort = effort
   }
 
   private enum CodingKeys: String, CodingKey {
+    case providerID = "provider_id"
     case model
     case permissionMode = "permission_mode"
     case effort
@@ -314,6 +463,7 @@ public struct IPCAgentModelDefaultResponse: Codable, Equatable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
+      providerID: try container.decodeIfPresent(String.self, forKey: .providerID) ?? "opencode",
       model: try container.decodeIfPresent(String.self, forKey: .model),
       permissionMode: try container.decodeIfPresent(String.self, forKey: .permissionMode)
         ?? "build",
@@ -323,21 +473,25 @@ public struct IPCAgentModelDefaultResponse: Codable, Equatable, Sendable {
 }
 
 public struct IPCAgentModelDefaultRequest: Codable, Equatable, Sendable {
+  public let providerID: String?
   public let model: String?
   public let permissionMode: String?
   public let effort: String?
 
   public init(
+    providerID: String? = nil,
     model: String?,
     permissionMode: String? = nil,
     effort: String? = nil
   ) {
+    self.providerID = providerID
     self.model = model
     self.permissionMode = permissionMode
     self.effort = effort
   }
 
   private enum CodingKeys: String, CodingKey {
+    case providerID = "provider_id"
     case model
     case permissionMode = "permission_mode"
     case effort

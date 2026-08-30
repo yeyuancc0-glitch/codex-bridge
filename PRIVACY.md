@@ -4,16 +4,16 @@ Codex Bridge is a local-first macOS application. The project does not operate a 
 
 ## Data stored on the Mac
 
-The background Service stores project registrations, non-secret connection settings, task state and bounded conversation events in `~/Library/Application Support/CodexBridgeService`. Database files are created with `0600` permissions inside a `0700` directory. MCP client secrets and Tunnel Runtime Keys are stored in the user's Keychain, not in the database or logs.
+The app stores task events, project registrations, non-secret connection profiles, bounded Git/verification/report evidence and lifecycle preferences in `~/Library/Application Support/CodexBridge`. Database files are created with `0600` permissions inside a `0700` directory. Connection credentials and Tunnel Runtime Keys are stored in the user's Keychain, not in the databases or logs.
 
 Registered project source remains in its existing location. Codex Bridge does not copy whole projects into its data directory.
 
 ## Data sent outside the Mac
 
 - Codex execution and any enabled Supervisor use the user's own Codex ChatGPT session through the local `codex app-server`. Prompts and evidence required for those operations are therefore processed by the user's configured Codex service.
-- ChatGPT and enabled local MCP clients receive only structured MCP results for tools the user has enabled and invoked. Project roots, arbitrary absolute paths and raw credentials are not exposed by the MCP contract.
+- ChatGPT receives only structured MCP results for tools the user has enabled and invoked. Project roots, arbitrary absolute paths, raw credentials and unrestricted file contents are not exposed by the MCP contract.
 - Secure Tunnel mode sends transport traffic through the pinned OpenAI tunnel helper. The restricted Runtime Key is used only by that helper and is not sent to Codex or included in task evidence.
-- Qwen Studio connects to the loopback MCP endpoint. Codex Bridge does not independently forward that traffic to another endpoint.
+- Manual HTTPS mode contacts only the endpoint explicitly configured by the user.
 
 Codex Bridge does not add an independent analytics or crash-reporting transmission path.
 
@@ -25,4 +25,4 @@ Runtime logs are bounded and redact recognized credentials and absolute local pa
 
 Project access is limited to directories registered by the user. Network and write capabilities default to denied or require a local decision. Codex approval remains deny-only when the upstream protocol cannot provide authoritative, atomically enforceable operation evidence.
 
-Users can remove the app and delete `~/Library/Application Support/CodexBridgeService` to remove the active Service database. An older installation may also have data under `~/Library/Application Support/CodexBridge`. Keychain items named for Codex Bridge must be removed separately in Keychain Access. Deleting app data does not delete registered projects or Codex account data.
+Users can remove the app and delete `~/Library/Application Support/CodexBridge` to remove its local databases and evidence. Keychain items named for Codex Bridge must be removed separately in Keychain Access. Deleting app data does not delete registered projects or Codex account data.

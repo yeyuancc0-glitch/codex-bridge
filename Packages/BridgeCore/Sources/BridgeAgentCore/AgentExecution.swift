@@ -66,6 +66,7 @@ public struct AgentExecutionRequest: Equatable, Sendable {
   public let mutationIntent: AgentMutationIntent
   public let workspaceStrategy: AgentWorkspaceStrategy
   public let networkAccessRequested: Bool
+  public let toolApprovalPolicy: AgentToolApprovalPolicy
   public let requiredCapabilities: Set<AgentCapability>
 
   public init(
@@ -80,6 +81,7 @@ public struct AgentExecutionRequest: Equatable, Sendable {
     mutationIntent: AgentMutationIntent,
     workspaceStrategy: AgentWorkspaceStrategy,
     networkAccessRequested: Bool,
+    toolApprovalPolicy: AgentToolApprovalPolicy = .providerManaged,
     requiredCapabilities: Set<AgentCapability> = []
   ) throws {
     try AgentValidation.identifier(taskID.rawValue, field: "request.taskID", maximumBytes: 128)
@@ -101,6 +103,9 @@ public struct AgentExecutionRequest: Equatable, Sendable {
         maximumBytes: 256
       )
     }
+    guard toolApprovalPolicy != .autoApprove || networkAccessRequested else {
+      throw AgentRuntimeError.invalidRequest("request.toolApprovalPolicy")
+    }
     self.taskID = taskID
     self.projectID = projectID
     self.projectRoot = projectRoot
@@ -112,6 +117,7 @@ public struct AgentExecutionRequest: Equatable, Sendable {
     self.mutationIntent = mutationIntent
     self.workspaceStrategy = workspaceStrategy
     self.networkAccessRequested = networkAccessRequested
+    self.toolApprovalPolicy = toolApprovalPolicy
     self.requiredCapabilities = requiredCapabilities
   }
 }
@@ -390,17 +396,20 @@ public struct AgentExecutionControl: Sendable {
   public let interrupt: @Sendable () async throws -> Void
   public let shutdown: (@Sendable () async -> Void)?
   public let steer: (@Sendable (String) async throws -> Void)?
+  public let interruptAndSteer: (@Sendable (String) async throws -> Void)?
   public let resolveApproval: (@Sendable (String, String) async throws -> Void)?
 
   public init(
     interrupt: @escaping @Sendable () async throws -> Void,
     shutdown: (@Sendable () async -> Void)? = nil,
     steer: (@Sendable (String) async throws -> Void)? = nil,
+    interruptAndSteer: (@Sendable (String) async throws -> Void)? = nil,
     resolveApproval: (@Sendable (String, String) async throws -> Void)? = nil
   ) {
     self.interrupt = interrupt
     self.shutdown = shutdown
     self.steer = steer
+    self.interruptAndSteer = interruptAndSteer
     self.resolveApproval = resolveApproval
   }
 }

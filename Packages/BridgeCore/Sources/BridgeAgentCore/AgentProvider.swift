@@ -27,13 +27,15 @@ public struct AgentInstallation: Codable, Equatable, Sendable {
   public let executablePath: String
   public let version: String?
   public let protocolRevision: String?
+  public let artifacts: [AgentInstallationArtifact]
 
   public init(
     id: AgentInstallationID,
     providerID: AgentProviderID,
     executablePath: String,
     version: String? = nil,
-    protocolRevision: String? = nil
+    protocolRevision: String? = nil,
+    artifacts: [AgentInstallationArtifact] = []
   ) throws {
     try AgentValidation.identifier(id.rawValue, field: "installation.id", maximumBytes: 256)
     try AgentValidation.identifier(
@@ -52,11 +54,53 @@ public struct AgentInstallation: Codable, Equatable, Sendable {
       field: "installation.protocolRevision",
       maximumBytes: 128
     )
+    guard artifacts.count <= 16,
+      Set(artifacts.map(\.role)).count == artifacts.count,
+      artifacts.allSatisfy({
+        $0.canonicalPath.hasPrefix("/")
+          && $0.canonicalPath.utf8.count <= 16 * 1_024
+          && !$0.canonicalPath.contains("\0")
+          && $0.inode > 0
+          && $0.fileSize > 0
+          && $0.modificationTimeNanoseconds >= 0
+          && $0.sha256.utf8.count == 64
+          && $0.sha256.utf8.allSatisfy { byte in
+            (48...57).contains(byte) || (97...102).contains(byte)
+          }
+      })
+    else {
+      throw AgentRuntimeError.invalidRequest("installation.artifacts")
+    }
     self.id = id
     self.providerID = providerID
     self.executablePath = executablePath
     self.version = version
     self.protocolRevision = protocolRevision
+    self.artifacts = artifacts
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case providerID
+    case executablePath
+    case version
+    case protocolRevision
+    case artifacts
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    try self.init(
+      id: container.decode(AgentInstallationID.self, forKey: .id),
+      providerID: container.decode(AgentProviderID.self, forKey: .providerID),
+      executablePath: container.decode(String.self, forKey: .executablePath),
+      version: container.decodeIfPresent(String.self, forKey: .version),
+      protocolRevision: container.decodeIfPresent(String.self, forKey: .protocolRevision),
+      artifacts: container.decodeIfPresent(
+        [AgentInstallationArtifact].self,
+        forKey: .artifacts
+      ) ?? []
+    )
   }
 }
 

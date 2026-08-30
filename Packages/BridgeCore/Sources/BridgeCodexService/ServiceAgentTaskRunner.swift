@@ -16,6 +16,11 @@ public struct AgentTaskBrief: Sendable {
   public let permissionMode: ServicePermissionMode
   public let profileID: AgentProfileID?
   public let networkAllowed: Bool
+  public let accessMode: ServiceAccessMode
+
+  public var toolApprovalPolicy: AgentToolApprovalPolicy {
+    accessMode == .fullAccess && networkAllowed ? .autoApprove : .providerManaged
+  }
 
   public init(
     taskID: TaskID,
@@ -29,7 +34,8 @@ public struct AgentTaskBrief: Sendable {
     effort: String? = nil,
     permissionMode: ServicePermissionMode = .readOnly,
     profileID: AgentProfileID? = nil,
-    networkAllowed: Bool
+    networkAllowed: Bool,
+    accessMode: ServiceAccessMode = .requestApproval
   ) {
     self.taskID = taskID
     self.providerID = providerID
@@ -43,6 +49,7 @@ public struct AgentTaskBrief: Sendable {
     self.permissionMode = permissionMode
     self.profileID = profileID
     self.networkAllowed = networkAllowed
+    self.accessMode = accessMode
   }
 }
 
@@ -52,6 +59,7 @@ public struct AgentTaskRunHandle: Sendable {
   public let events: AsyncThrowingStream<AgentEventEnvelope, any Error>
   public let interrupt: @Sendable () async throws -> Void
   public let steer: (@Sendable (String) async throws -> Void)?
+  public let interruptAndSteer: (@Sendable (String) async throws -> Void)?
   public let shutdown: @Sendable () async -> Void
   public let resolveApproval: (@Sendable (String, String) async throws -> Void)?
 
@@ -61,6 +69,7 @@ public struct AgentTaskRunHandle: Sendable {
     events: AsyncThrowingStream<AgentEventEnvelope, any Error>,
     interrupt: @escaping @Sendable () async throws -> Void,
     steer: (@Sendable (String) async throws -> Void)? = nil,
+    interruptAndSteer: (@Sendable (String) async throws -> Void)? = nil,
     shutdown: @escaping @Sendable () async -> Void,
     resolveApproval: (@Sendable (String, String) async throws -> Void)? = nil
   ) {
@@ -69,6 +78,7 @@ public struct AgentTaskRunHandle: Sendable {
     self.events = events
     self.interrupt = interrupt
     self.steer = steer
+    self.interruptAndSteer = interruptAndSteer
     self.shutdown = shutdown
     self.resolveApproval = resolveApproval
   }
@@ -122,10 +132,13 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
     if let profileID = brief.profileID, record.securityProfileID != profileID {
       throw AgentRuntimeError.invalidRequest("request.profileID")
     }
-    let requiredCapabilities: Set<AgentCapability> =
+    var requiredCapabilities: Set<AgentCapability> =
       brief.permissionMode == .workspaceWrite
       ? [.workspaceRead, .workspaceWriteInPlace]
       : [.workspaceRead]
+    if brief.requestedSessionID != nil {
+      requiredCapabilities.insert(.sessionContinue)
+    }
     guard record.capabilities.supports(requiredCapabilities) else {
       let missing = requiredCapabilities.subtracting(record.capabilities.effective)
       guard let capability = missing.sorted(by: { $0.rawValue < $1.rawValue }).first else {
@@ -140,7 +153,18 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       providerID: record.providerID,
       executablePath: record.executableIdentity.canonicalPath,
       version: record.version,
-      protocolRevision: record.protocolRevision
+      protocolRevision: record.protocolRevision,
+      artifacts: record.artifacts.map { artifact in
+        AgentInstallationArtifact(
+          role: artifact.role,
+          canonicalPath: artifact.identity.canonicalPath,
+          device: artifact.identity.device,
+          inode: artifact.identity.inode,
+          fileSize: artifact.identity.fileSize,
+          modificationTimeNanoseconds: artifact.identity.modificationTimeNanoseconds,
+          sha256: artifact.identity.sha256
+        )
+      }
     )
     let request = try AgentExecutionRequest(
       taskID: brief.taskID,
@@ -155,6 +179,7 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       workspaceStrategy: brief.permissionMode == .workspaceWrite
         ? .exclusiveProject : .sharedProject,
       networkAccessRequested: brief.networkAllowed,
+      toolApprovalPolicy: brief.toolApprovalPolicy,
       requiredCapabilities: requiredCapabilities
     )
     let handle = try await provider.start(request, installation: installation)
@@ -175,6 +200,7 @@ public struct ServiceAgentTaskRunner: AgentTaskRunning {
       events: handle.events,
       interrupt: handle.control.interrupt,
       steer: handle.control.steer,
+      interruptAndSteer: handle.control.interruptAndSteer,
       shutdown: handle.control.shutdown ?? {
         try? await handle.control.interrupt()
       },

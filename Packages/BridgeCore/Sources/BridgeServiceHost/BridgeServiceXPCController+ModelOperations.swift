@@ -41,7 +41,10 @@ extension BridgeServiceXPCController {
         tunnel: Self.tunnelStatus(tunnel),
         workbenchProjectID: try await composition.application.serviceWorkbenchProjectID(
           deadline: Self.deadline()
-        )
+        ),
+        workbenchPermissionMode: try await composition.application.serviceWorkbenchPermissionMode(
+          deadline: Self.deadline()
+        ).rawValue
       )
     )
   }
@@ -143,6 +146,31 @@ extension BridgeServiceXPCController {
       throw ServiceStoreError.invalidArgument("directApprovalMode")
     }
     try await composition.application.serviceSetDirectApprovalMode(
+      mode,
+      deadline: Self.deadline()
+    )
+    return try BridgeServiceIPCCodec.emptySuccess(requestID: request.requestID)
+  }
+
+  func handleGetTaskStartApprovalMode(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let mode = try await composition.application.serviceTaskStartApprovalMode(
+      deadline: Self.deadline()
+    )
+    return try BridgeServiceIPCCodec.success(
+      requestID: request.requestID,
+      payload: IPCTaskStartApprovalModeResponse(mode: mode.rawValue)
+    )
+  }
+
+  func handleSetTaskStartApprovalMode(_ request: BridgeServiceIPCRequest) async throws -> Data {
+    let payload = try BridgeServiceIPCCodec.payload(
+      IPCTaskStartApprovalModeRequest.self,
+      from: request
+    )
+    guard let mode = ServiceTaskStartApprovalMode(rawValue: payload.mode) else {
+      throw ServiceStoreError.invalidArgument("taskStartApprovalMode")
+    }
+    try await composition.application.serviceSetTaskStartApprovalMode(
       mode,
       deadline: Self.deadline()
     )

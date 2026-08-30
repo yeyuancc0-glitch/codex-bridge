@@ -110,8 +110,10 @@ extension BridgeServiceApplication {
         let operations: [ProjectPatchFileOperation]
         do {
           operations = try ProjectPatchParser.parse(request.patch)
+        } catch ProjectPatchParserError.absolutePath {
+          throw BridgeMCPQueryError.pathForbidden
         } catch {
-          throw BridgeMCPQueryError.invalidPatch
+          throw BridgeMCPQueryError.invalidPatchSyntax
         }
         let results = try await self.mutations.applyPatch(
           ProjectApplyPatchRequest(
@@ -133,13 +135,18 @@ extension BridgeServiceApplication {
       }
     } catch let error as ProjectMutationError {
       if case .partialCommit(let changedFiles, let rollbackStatus) = error {
-        return MCPDirectPatchReceipt(
-          operations: [],
-          partialCommit: MCPPartialCommit(
+        throw BridgeMCPQueryError.patchPartialCommit(
+          MCPPartialCommit(
             changedFiles: changedFiles,
             rollbackStatus: rollbackStatus
           )
         )
+      }
+      if case .revisionConflict = error {
+        throw BridgeMCPQueryError.patchContextStale
+      }
+      if case .revisionConflictWithContext = error {
+        throw BridgeMCPQueryError.patchContextStale
       }
       throw Self.publicMutationError(error)
     } catch {

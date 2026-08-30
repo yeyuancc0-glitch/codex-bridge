@@ -1,41 +1,28 @@
 import AppKit
 import BridgeIPC
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct BridgeServiceAgentSettingsSection: View {
   @ObservedObject var model: BridgeServiceAppModel
   @State private var installationPendingRemoval: IPCAgentInstallationSummary?
   @State private var installationPendingReplacement: IPCAgentInstallationSummary?
-  @State private var submitProviderID = "opencode"
-  @State private var submitPrompt = ""
 
   var body: some View {
-    Section {
-      HStack(alignment: .top, spacing: 12) {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("只有在这里明确登记并通过 Probe 的本机安装才会出现在 list_agents。")
-            .font(.caption)
-          Text("已启用且 Probe 通过的 OpenCode 安装可以通过 submit_task 提交任务；每个任务仍需本机批准。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
-        providerRegistrationMenu
-      }
+    NativeCard {
+      VStack(alignment: .leading, spacing: 16) {
+        headerRow
 
-      if model.agentInstallations.isEmpty {
-        Label("尚未登记外部 Agent 安装", systemImage: "externaldrive.badge.questionmark")
-          .foregroundStyle(.secondary)
-          .padding(.vertical, 8)
-      } else {
-        ForEach(model.agentInstallations, id: \.installationID) { installation in
-          installationRow(installation)
+        if model.agentInstallations.isEmpty {
+          emptyStateView
+        } else {
+          VStack(spacing: 12) {
+            ForEach(model.agentInstallations, id: \.installationID) { installation in
+              installationCard(installation)
+            }
+          }
         }
       }
-
-      agentSubmitCard
-    } header: {
-      Label("本机 Agent Provider", systemImage: "point.3.connected.trianglepath.dotted")
     }
     .alert(
       "接受二进制替换并重新验证？",
@@ -84,27 +71,37 @@ struct BridgeServiceAgentSettingsSection: View {
     }
   }
 
-  @ViewBuilder
-  private var providerRegistrationMenu: some View {
-    if model.agentProviders.isEmpty {
-      Text("没有可登记的 Provider Adapter")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    } else {
-      Menu {
-        ForEach(model.agentProviders, id: \.providerID) { provider in
-          Button(provider.displayName) {
-            chooseExecutable(for: provider)
-          }
-        }
-      } label: {
-        Label("登记安装", systemImage: "plus")
-      }
-      .disabled(model.isManagingAgents)
+  private var headerRow: some View {
+    HStack(alignment: .center) {
+      Label("本机 Agent 引擎连接", systemImage: "cpu.fill")
+        .font(.headline)
+
+      Spacer()
+
+      providerRegistrationMenu
     }
   }
 
-  private func installationRow(_ installation: IPCAgentInstallationSummary) -> some View {
+  private var emptyStateView: some View {
+    VStack(spacing: 8) {
+      Image(systemName: "externaldrive.badge.plus")
+        .font(.system(size: 28))
+        .foregroundStyle(.secondary)
+      Text("尚未连接本机外部 Agent")
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.primary)
+      Text("点击右上角“登记 Agent”，可连接本机的 OpenCode、DeepSeek Harness 或 Antigravity 实例。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 20)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+  }
+
+  private func installationCard(_ installation: IPCAgentInstallationSummary) -> some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack(spacing: 10) {
         Image(systemName: availabilitySymbol(installation.availability))
@@ -112,7 +109,7 @@ struct BridgeServiceAgentSettingsSection: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text(installation.displayName)
-            .font(.body.weight(.semibold))
+            .font(.subheadline.weight(.semibold))
           Text(installation.providerID + " · " + installation.installationID)
             .font(.caption2.monospaced())
             .foregroundStyle(.secondary)
@@ -144,28 +141,26 @@ struct BridgeServiceAgentSettingsSection: View {
         )
       }
 
-      Text(installation.executablePath)
-        .font(.caption.monospaced())
-        .foregroundStyle(.secondary)
-        .textSelection(.enabled)
-        .lineLimit(2)
+      CodeSnippetBlock(text: installation.executablePath, label: "可执行路径")
 
       HStack(spacing: 16) {
         LabeledContent("版本", value: installation.version ?? "未识别")
-        LabeledContent("ACP", value: installation.protocolRevision ?? "未协商")
+        LabeledContent("ACP 协议", value: installation.protocolRevision ?? "未协商")
         LabeledContent("Adapter", value: "r\(installation.adapterRevision)")
-        LabeledContent("能力", value: "\(installation.effectiveCapabilities.count) 项")
+        LabeledContent("有效能力", value: "\(installation.effectiveCapabilities.count) 项")
       }
       .font(.caption)
 
       if let error = installation.lastProbeError {
-        Text(error)
-          .font(.caption)
-          .foregroundStyle(.orange)
-          .textSelection(.enabled)
+        CalloutBanner(
+          title: "Probe 探测异常",
+          message: error,
+          symbol: "exclamationmark.triangle.fill",
+          tone: .warning
+        )
       }
 
-      HStack {
+      HStack(spacing: 10) {
         Button("重新 Probe") {
           model.reprobeAgentInstallation(
             installation.installationID,
@@ -183,221 +178,78 @@ struct BridgeServiceAgentSettingsSection: View {
 
         Spacer()
 
-        Button("移除", role: .destructive) {
+        Button("移除登记", role: .destructive) {
           installationPendingRemoval = installation
         }
         .disabled(model.isManagingAgents)
       }
       .controlSize(.small)
     }
-    .padding(.vertical, 8)
+    .padding(12)
+    .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .strokeBorder(Color(nsColor: .separatorColor).opacity(0.25), lineWidth: 0.8)
+    )
+  }
+
+  @ViewBuilder
+  private var providerRegistrationMenu: some View {
+    if model.agentProviders.isEmpty {
+      Text("暂无可登记的 Provider")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    } else {
+      Menu {
+        ForEach(model.agentProviders, id: \.providerID) { provider in
+          Button(provider.displayName) {
+            chooseExecutable(for: provider)
+          }
+        }
+      } label: {
+        Label("登记 Agent", systemImage: "plus")
+      }
+      .disabled(model.isManagingAgents)
+    }
   }
 
   private func chooseExecutable(for provider: IPCAgentProviderSummary) {
     let panel = NSOpenPanel()
     panel.title = "选择 \(provider.displayName) 可执行文件"
-    panel.prompt = "登记并 Probe"
+    panel.prompt = provider.requiresConfiguration ? "下一步" : "登记并 Probe"
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = false
     panel.resolvesAliases = true
     guard panel.runModal() == .OK, let url = panel.url else { return }
+    let configurationURL: URL?
+    if provider.requiresConfiguration {
+      let configurationPanel = NSOpenPanel()
+      configurationPanel.title = "选择 \(provider.displayName) cordis.yml"
+      configurationPanel.message =
+        "请选择项目外的只读 cordis.yml。Bridge 不读取或保存 .env 和 API Key。"
+      configurationPanel.prompt = "登记并 Probe"
+      configurationPanel.canChooseFiles = true
+      configurationPanel.canChooseDirectories = false
+      configurationPanel.allowsMultipleSelection = false
+      configurationPanel.resolvesAliases = true
+      configurationPanel.allowedContentTypes = ["yml", "yaml"].compactMap {
+        UTType(filenameExtension: $0)
+      }
+      guard configurationPanel.runModal() == .OK, let selected = configurationPanel.url else {
+        return
+      }
+      configurationURL = selected
+    } else {
+      configurationURL = nil
+    }
     model.registerAgentInstallation(
       providerID: provider.providerID,
       displayName: provider.displayName,
-      executableURL: url
+      executableURL: url,
+      configurationURL: configurationURL
     )
-  }
-
-  @ViewBuilder
-  private var agentSubmitCard: some View {
-    let selectable = model.agentInstallations.filter {
-      $0.providerID == submitProviderID && $0.isEnabled && $0.availability == "available"
-    }
-    VStack(alignment: .leading, spacing: 8) {
-      Divider()
-      Text("本机 Agent 任务")
-        .font(.body.weight(.semibold))
-      Text("提交后进入工作台等待本机批准；OpenCode 使用原生 Build/Plan，网络访问由原生 permissions 控制。")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-
-      Picker("Provider", selection: $submitProviderID) {
-        ForEach(
-          Array(Set(model.agentInstallations.map(\.providerID))).sorted(), id: \.self
-        ) { id in
-          Text(id).tag(id)
-        }
-      }
-      .pickerStyle(.menu)
-
-      Picker("默认执行模式", selection: openCodeDefaultPermissionModeBinding) {
-        Text("OpenCode 原生 Build（工作区可写）").tag("build")
-        Text("OpenCode 原生 Plan（只读）").tag("plan")
-      }
-      .pickerStyle(.menu)
-      .disabled(model.isRefreshingAgentModels)
-      .help("仅当任务没有显式 permission_mode 时使用；项目权限仍会限制写入")
-
-      if selectable.isEmpty {
-        Text("该 Provider 暂无已启用的可用安装")
-          .font(.caption)
-          .foregroundStyle(.orange)
-      }
-
-      Picker("默认模型", selection: agentModelDefaultBinding) {
-        Text("Provider 默认").tag("")
-        if let current = model.openCodeDefaultModel,
-          !model.agentModelOptions.contains(where: { $0.modelID == current })
-        {
-          Text("当前设置 · \(current)").tag(current)
-        }
-        ForEach(model.agentModelOptions, id: \.modelID) { item in
-          Text(item.displayName).tag(item.modelID)
-        }
-      }
-      .pickerStyle(.menu)
-      .disabled(model.isRefreshingAgentModels)
-      .task(
-        id: AgentModelHydrationID(
-          installationID: selectable.first?.installationID,
-          projectID: model.selectedProjectID,
-          modelID: model.openCodeDefaultModel
-        )
-      ) {
-        guard
-          !model.consumeAgentModelHydrationSuppression(
-            installationID: selectable.first?.installationID,
-            projectID: model.selectedProjectID,
-            modelID: model.openCodeDefaultModel
-          )
-        else { return }
-        await model.hydrateAgentModelState(installationID: selectable.first?.installationID)
-      }
-
-      HStack(spacing: 10) {
-        Button {
-          model.refreshAgentModelCatalog(installationID: selectable.first?.installationID)
-        } label: {
-          if model.isRefreshingAgentModels {
-            ProgressView()
-              .controlSize(.small)
-            Text("正在刷新模型列表…")
-          } else {
-            Label("刷新模型列表", systemImage: "arrow.clockwise")
-          }
-        }
-        .controlSize(.small)
-        .disabled(
-          selectable.isEmpty
-            || model.isRefreshingAgentModels
-            || model.isManagingAgents
-        )
-        .accessibilityLabel("刷新 OpenCode 模型列表")
-        .accessibilityHint("从当前 OpenCode ACP 安装重新读取模型目录")
-
-        if !model.agentModelOptions.isEmpty {
-          Text("\(model.agentModelOptions.count) 个模型")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-      }
-
-      if let refreshError = model.agentModelRefreshError {
-        Label(refreshError, systemImage: "exclamationmark.triangle.fill")
-          .font(.caption)
-          .foregroundStyle(.orange)
-          .textSelection(.enabled)
-      }
-
-      Picker("默认推理强度", selection: openCodeDefaultEffortBinding) {
-        Text("Provider 默认").tag("")
-        if let current = selectedAgentModel,
-          !current.supportedReasoningEfforts.isEmpty
-        {
-          ForEach(current.supportedReasoningEfforts, id: \.self) { effort in
-            Text(effort).tag(effort)
-          }
-        }
-      }
-      .pickerStyle(.menu)
-      .disabled(model.isRefreshingAgentModels)
-      .help("OpenCode 通过 ACP 的 effort 选项提供模型支持的推理强度")
-      if selectedAgentModel?.supportedReasoningEfforts.isEmpty != false {
-        Text("当前模型不提供可选推理强度，使用 Provider 默认")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      TextField("任务描述", text: $submitPrompt, axis: .vertical)
-        .textFieldStyle(.roundedBorder)
-        .lineLimit(2...4)
-
-      HStack {
-        Spacer()
-        Button("提交任务") {
-          model.submitAgentTask(
-            projectID: model.selectedProjectID ?? (model.projects.first?.projectID ?? ""),
-            providerID: submitProviderID,
-            installationID: selectable.first?.installationID,
-            model: model.openCodeDefaultModel,
-            effort: model.openCodeDefaultEffort,
-            prompt: submitPrompt
-          )
-          submitPrompt = ""
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .disabled(
-          submitPrompt
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || selectable.isEmpty
-            || model.selectedProjectID == nil && model.projects.isEmpty
-        )
-      }
-    }
-    .padding(.vertical, 6)
-  }
-
-  private var agentModelDefaultBinding: Binding<String> {
-    Binding(
-      get: { model.openCodeDefaultModel ?? "" },
-      set: { value in
-        let selected = value.isEmpty ? nil : value
-        guard selected != model.openCodeDefaultModel else { return }
-        model.saveAgentModelDefault(selected)
-      }
-    )
-  }
-
-  private var openCodeDefaultPermissionModeBinding: Binding<String> {
-    Binding(
-      get: { model.openCodeDefaultPermissionMode },
-      set: { value in
-        guard value == "build" || value == "plan",
-          value != model.openCodeDefaultPermissionMode
-        else { return }
-        model.saveOpenCodePermissionMode(value)
-      }
-    )
-  }
-
-  private var openCodeDefaultEffortBinding: Binding<String> {
-    Binding(
-      get: { model.openCodeDefaultEffort ?? "" },
-      set: { value in
-        let selected = value.isEmpty ? nil : value
-        guard selected != model.openCodeDefaultEffort else { return }
-        model.saveOpenCodeEffort(selected)
-      }
-    )
-  }
-
-  private var selectedAgentModel: IPCAgentModelSummary? {
-    if let modelID = model.openCodeDefaultModel {
-      return model.agentModelOptions.first(where: { $0.modelID == modelID })
-    }
-    return model.agentModelOptions.first(where: { !$0.supportedReasoningEfforts.isEmpty })
   }
 
   private func availabilityTitle(_ value: String) -> String {

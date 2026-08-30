@@ -4,12 +4,11 @@ umask 077
 
 readonly script_directory="${0:A:h}"
 readonly repository_root="${script_directory:h}"
-readonly product_version="0.3.0"
-readonly artifact_base="CodexBridge-${product_version}-macos"
+readonly product_version="0.4.0"
 
-if (( $# != 3 )); then
-  print -u2 "Usage: ${0:t} OUTPUT_DIRECTORY HELPER_DIRECTORY TRUSTED_UNSIGNED_SHA256"
-  print -u2 "Builds an unsigned local release candidate. It is not a public distribution artifact."
+if (( $# < 3 || $# > 4 )); then
+  print -u2 "Usage: ${0:t} OUTPUT_DIRECTORY HELPER_DIRECTORY TRUSTED_UNSIGNED_SHA256 [arm64|x86_64|all]"
+  print -u2 "Builds architecture-specific unsigned local release candidates."
   exit 64
 fi
 
@@ -32,15 +31,20 @@ readonly output_parent="${output_directory:h}"
   exit 64
 }
 readonly helper_directory="${requested_helper_directory:A}"
+readonly requested_architecture="${4:-all}"
+case "${requested_architecture}" in
+  arm64|x86_64) architectures=("${requested_architecture}") ;;
+  all) architectures=(arm64 x86_64) ;;
+  *)
+    print -u2 "Architecture must be arm64, x86_64, or all."
+    exit 64
+    ;;
+esac
+readonly architectures
 
 temporary_root="$(/usr/bin/mktemp -d "${output_parent}/.codex-bridge-release.XXXXXX")"
 readonly temporary_root
-readonly archive_path="${temporary_root}/CodexBridge.xcarchive"
 readonly candidate_directory="${temporary_root}/candidate"
-readonly disk_image_directory="${temporary_root}/disk-image"
-readonly archived_app="${archive_path}/Products/Applications/CodexBridge.app"
-readonly zip_path="${candidate_directory}/${artifact_base}.zip"
-readonly dmg_path="${candidate_directory}/${artifact_base}.dmg"
 
 cleanup() {
   [[ -d "${temporary_root}" ]] || return
@@ -54,49 +58,71 @@ trap 'exit 143' TERM
   "${helper_directory}" \
   "${trusted_unsigned_sha256}"
 
+/bin/mkdir -m 0700 "${candidate_directory}"
 cd "${repository_root}"
-"${script_directory}/with-xcode.sh" xcodebuild \
-  -project CodexBridge.xcodeproj \
-  -scheme CodexBridge \
-  -configuration Release \
-  -destination 'generic/platform=macOS' \
-  -archivePath "${archive_path}" \
-  archive \
-  CODE_SIGNING_ALLOWED=NO \
-  ARCHS='arm64 x86_64' \
-  ONLY_ACTIVE_ARCH=NO \
-  REQUIRE_TUNNEL_HELPER=YES \
-  TUNNEL_HELPER_DIRECTORY="${helper_directory}" \
-  TUNNEL_HELPER_UNSIGNED_SHA256="${trusted_unsigned_sha256}"
+for architecture in "${architectures[@]}"; do
+  archive_path="${temporary_root}/CodexBridge-${architecture}.xcarchive"
+  disk_image_directory="${temporary_root}/disk-image-${architecture}"
+  archived_app="${archive_path}/Products/Applications/CodexBridge.app"
+  artifact_base="CodexBridge-${product_version}-macos-${architecture}"
 
-[[ -d "${archived_app}" && ! -L "${archived_app}" ]] || {
-  print -u2 "Archive did not contain CodexBridge.app."
-  exit 66
-}
-readonly app_binary="${archived_app}/Contents/MacOS/CodexBridge"
-readonly bundled_helper="${archived_app}/Contents/Helpers/tunnel-client"
-readonly bundled_digest="${archived_app}/Contents/Resources/TunnelClient/tunnel-client.sha256"
-for binary in "${app_binary}" "${bundled_helper}"; do
-  /usr/bin/lipo "${binary}" -verify_arch arm64
-  /usr/bin/lipo "${binary}" -verify_arch x86_64
+  "${script_directory}/with-xcode.sh" xcodebuild \
+    -project CodexBridge.xcodeproj \
+    -scheme CodexBridge \
+    -configuration Release \
+    -destination 'generic/platform=macOS' \
+    -archivePath "${archive_path}" \
+    archive \
+    CODE_SIGNING_ALLOWED=NO \
+    ARCHS="${architecture}" \
+    ONLY_ACTIVE_ARCH=NO \
+    REQUIRE_TUNNEL_HELPER=YES \
+    TUNNEL_HELPER_ARCHITECTURE="${architecture}" \
+    TUNNEL_HELPER_DIRECTORY="${helper_directory}" \
+    TUNNEL_HELPER_UNSIGNED_SHA256="${trusted_unsigned_sha256}"
+
+  [[ -d "${archived_app}" && ! -L "${archived_app}" ]] || {
+    print -u2 "Archive did not contain CodexBridge.app."
+    exit 66
+  }
+  app_binary="${archived_app}/Contents/MacOS/CodexBridge"
+  service_binary="${archived_app}/Contents/Resources/CodexBridgeService"
+  bundled_helper="${archived_app}/Contents/Helpers/tunnel-client"
+  bundled_digest="${archived_app}/Contents/Resources/TunnelClient/tunnel-client.sha256"
+  deepseek_bundle="${archived_app}/Contents/Resources/BridgeCore_BridgeDeepSeekHarnessACP.bundle"
+  deepseek_template="${deepseek_bundle}/Contents/Resources/cordis.yml"
+  [[ -d "${deepseek_bundle}" && ! -L "${deepseek_bundle}" && \
+    -f "${deepseek_template}" && ! -L "${deepseek_template}" ]] || {
+    print -u2 "Archive did not contain the DeepSeek Harness resource bundle."
+    exit 66
+  }
+  for binary in "${app_binary}" "${service_binary}" "${bundled_helper}"; do
+    /usr/bin/lipo "${binary}" -verify_arch "${architecture}"
+    [[ "$(/usr/bin/lipo -archs "${binary}")" == "${architecture}" ]] || {
+      print -u2 "Release component contains an unexpected architecture: ${binary}"
+      exit 65
+    }
+  done
+  actual_bundled_sha256="$(/usr/bin/shasum -a 256 "${bundled_helper}")"
+  expected_bundled_sha256="$(/usr/bin/tr -d '[:space:]' < "${bundled_digest}")"
+  [[ "${actual_bundled_sha256%% *}" == "${expected_bundled_sha256}" ]] || {
+    print -u2 "Bundled helper digest does not match its signed resource."
+    exit 65
+  }
+
+  /bin/mkdir -m 0700 "${disk_image_directory}"
+  /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
+    "${archived_app}" \
+    "${candidate_directory}/${artifact_base}.zip"
+  /usr/bin/ditto "${archived_app}" "${disk_image_directory}/CodexBridge.app"
+  /bin/ln -s /Applications "${disk_image_directory}/Applications"
+  /usr/bin/hdiutil create \
+    -quiet \
+    -fs HFS+ \
+    -volname "Codex Bridge" \
+    -srcfolder "${disk_image_directory}" \
+    "${candidate_directory}/${artifact_base}.dmg"
 done
-readonly actual_bundled_sha256="$(/usr/bin/shasum -a 256 "${bundled_helper}")"
-readonly expected_bundled_sha256="$(/usr/bin/tr -d '[:space:]' < "${bundled_digest}")"
-[[ "${actual_bundled_sha256%% *}" == "${expected_bundled_sha256}" ]] || {
-  print -u2 "Bundled helper digest does not match its signed resource."
-  exit 65
-}
-
-/bin/mkdir -m 0700 "${candidate_directory}" "${disk_image_directory}"
-/usr/bin/ditto -c -k --sequesterRsrc --keepParent "${archived_app}" "${zip_path}"
-/usr/bin/ditto "${archived_app}" "${disk_image_directory}/CodexBridge.app"
-/bin/ln -s /Applications "${disk_image_directory}/Applications"
-/usr/bin/hdiutil create \
-  -quiet \
-  -fs HFS+ \
-  -volname "Codex Bridge" \
-  -srcfolder "${disk_image_directory}" \
-  "${dmg_path}"
 
 readonly commit_epoch="$(/usr/bin/git show -s --format=%ct HEAD)"
 readonly created_at="$(/bin/date -u -r "${commit_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
@@ -117,17 +143,17 @@ readonly created_at="$(/bin/date -u -r "${commit_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
 {
   print -r -- "UNSIGNED LOCAL RELEASE CANDIDATE — NOT FOR PUBLIC DISTRIBUTION"
   print -r -- ""
-  print -r -- "This candidate verifies Universal 2 compilation, helper staging, bundle structure, SBOM generation and packaging. It is not Developer ID signed, notarized or stapled."
+  print -r -- "This candidate verifies architecture-specific compilation, helper staging, bundle structure, SBOM generation and packaging. It is not Developer ID signed, notarized or stapled."
 } > "${candidate_directory}/RELEASE-CANDIDATE.txt"
 /bin/chmod 0644 "${candidate_directory}/RELEASE-CANDIDATE.txt"
 
 (
   cd "${candidate_directory}"
-  for artifact in "${artifact_base}.dmg" "${artifact_base}.zip" SBOM.spdx.json; do
+  for artifact in CodexBridge-*-macos-*.dmg CodexBridge-*-macos-*.zip SBOM.spdx.json; do
     /usr/bin/shasum -a 256 "${artifact}"
   done
 ) > "${candidate_directory}/SHA256SUMS"
 /bin/chmod 0644 "${candidate_directory}/SHA256SUMS"
 
 /bin/mv "${candidate_directory}" "${output_directory}"
-print "Built unsigned Universal 2 release candidate at ${output_directory}"
+print "Built unsigned architecture-specific release candidate at ${output_directory}"
