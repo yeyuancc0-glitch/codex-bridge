@@ -161,15 +161,21 @@ try {
   }
   $vcRuntimeDirectory = $vcRuntimeCandidates[0]
   Assert-Directory $vcRuntimeDirectory.FullName | Out-Null
-  $vcRuntimeFiles = @(Get-ChildItem -LiteralPath $vcRuntimeDirectory.FullName -Filter "*.dll" -File)
+  $vcRuntimeFiles = @(
+    Get-ChildItem -LiteralPath $vcRuntimeDirectory.FullName -Filter "*.dll" -File |
+      Where-Object {
+        $compatible = Test-PEArchitectureCompatible $_.FullName $Architecture
+        if (-not $compatible) {
+          Write-Host "Skipping incompatible VC runtime companion: $($_.Name)"
+        }
+        $compatible
+      }
+  )
   if (-not ($vcRuntimeFiles.Name -contains "vcruntime140.dll")) {
-    throw "Visual C++ runtime directory is missing vcruntime140.dll."
+    throw "Visual C++ runtime directory is missing a compatible vcruntime140.dll."
   }
   foreach ($vcRuntimeFile in $vcRuntimeFiles) {
     Assert-RegularFile $vcRuntimeFile.FullName | Out-Null
-    if (-not (Test-PEArchitectureCompatible $vcRuntimeFile.FullName $Architecture)) {
-      throw "Visual C++ runtime DLL has the wrong architecture: $($vcRuntimeFile.FullName)"
-    }
     Stage-File $vcRuntimeFile.FullName $vcRuntimeFile.Name
   }
 

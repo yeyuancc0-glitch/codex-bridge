@@ -220,6 +220,12 @@ jobs:
           }
           & "$env:GITHUB_WORKSPACE\Scripts\stage-windows-portable.ps1" @stageArguments
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-bridge-windows-${{ matrix.architecture }}
+          path: .build/windows-dist/codex-bridge-windows-${{ matrix.architecture }}.zip
+          if-no-files-found: error
       - name: Smoke portable service startup
         if: matrix.run_tests
         shell: pwsh
@@ -251,10 +257,17 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $ready) {
-              $failure = if (Test-Path -LiteralPath $stderrPath) {
+              $process.Refresh()
+              $exitCode = if ($process.HasExited) {
+                "0x" + $process.ExitCode.ToString("X8")
+              } else { "still running" }
+              $standardOutput = if (Test-Path -LiteralPath $stdoutPath) {
+                Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+              } else { "no stdout" }
+              $standardError = if (Test-Path -LiteralPath $stderrPath) {
                 Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
               } else { "no stderr" }
-              throw "Portable service did not reach readiness: $failure"
+              throw "Portable service did not reach readiness ($exitCode). stdout: $standardOutput stderr: $standardError"
             }
             $portableRoot = ([IO.Path]::GetFullPath($portableDir)).TrimEnd("\") + "\"
             $vcModules = @($process.Modules |
@@ -275,9 +288,3 @@ jobs:
               Remove-Item -LiteralPath $smokeRoot -Recurse -Force
             }
           }
-      - name: Upload Windows portable ZIP
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-bridge-windows-${{ matrix.architecture }}
-          path: .build/windows-dist/codex-bridge-windows-${{ matrix.architecture }}.zip
-          if-no-files-found: error

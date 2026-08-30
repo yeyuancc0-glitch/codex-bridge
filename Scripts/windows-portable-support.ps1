@@ -124,7 +124,7 @@ namespace CodexBridgePortable {
       (Get-FullPath $Path),
       [ref]$machines)
   } catch {
-    throw "ARM64X validation requires Windows 11 22H2 or Windows Server 2025."
+    return $false
   }
   return $status -eq 0 -and ($machines -band [UInt32]0x8) -ne 0
 }
