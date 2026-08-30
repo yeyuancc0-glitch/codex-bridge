@@ -49,15 +49,14 @@
       }
       ensureDirectoryExists(userDataFolder)
 
-      // Handler reference ownership transfers to WebView2 on S_OK.
       let handler = webView2CompletionHandler { [weak self] errorCode, environment in
         self?.environmentCreated(errorCode: errorCode, environment: environment)
       }
       let result = userDataFolder.withCString(encodedAs: UTF16.self) { folder in
         create(nil, folder, nil, handler)
       }
+      _ = webView2Release(handler)
       if result != webview2SOK {
-        _ = webView2Release(handler)
         state = .failed
       }
     }
@@ -95,8 +94,8 @@
         self?.controllerCreated(errorCode: errorCode, controller: controller)
       }
       let result = createController(environment, hostWindow, handler)
+      _ = webView2Release(handler)
       if result != webview2SOK {
-        _ = webView2Release(handler)
         state = .failed
       }
     }

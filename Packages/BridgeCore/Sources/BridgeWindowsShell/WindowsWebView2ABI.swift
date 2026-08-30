@@ -48,12 +48,12 @@
 
   /// Vtable slot indices, verified against WebView2.h declaration order:
   /// ICoreWebView2Environment.CreateCoreWebView2Controller = 3,
-  /// ICoreWebView2Controller.put_Bounds = 6, get_CoreWebView2 = 22,
+  /// ICoreWebView2Controller.put_Bounds = 6, get_CoreWebView2 = 25,
   /// ICoreWebView2.Navigate = 5.
   enum WebView2Slot {
     static let environmentCreateController = 3
     static let controllerPutBounds = 6
-    static let controllerGetCoreWebView2 = 22
+    static let controllerGetCoreWebView2 = 25
     static let webViewNavigate = 5
   }
 
@@ -163,8 +163,8 @@
   }()
 
   /// Creates a completion handler COM object with one reference owned by the
-  /// caller. Pass it to WebView2 (ownership transfers on success); on a
-  /// synchronous failure release the returned pointer instead.
+  /// caller. WebView2 retains its own reference for an accepted asynchronous
+  /// operation, so the caller releases this reference after the API returns.
   func webView2CompletionHandler(
     _ onCompleted: @escaping (HRESULT, UnsafeMutableRawPointer?) -> Void
   ) -> UnsafeMutableRawPointer {
@@ -213,7 +213,7 @@
       let context = object.pointee.context
       object.deinitialize(count: 1)
       object.deallocate()
-      context.take().release()
+      context.release()
     }
     return refCount
   }

@@ -104,7 +104,7 @@
       _ = SendMessageW(listBox, UINT(LB_RESETCONTENT), 0, 0)
       for row in rows {
         row.withCString(encodedAs: UTF16.self) { text in
-          let pointer = LPARAM(Int(bitPattern: UnsafeRawPointer(text).bitPattern))
+          let pointer = LPARAM(Int(bitPattern: UnsafeRawPointer(text)))
           _ = SendMessageW(listBox, UINT(LB_ADDSTRING), 0, pointer)
         }
       }
@@ -235,7 +235,8 @@
     }
 
     private static func appendPopup(_ menuBar: HMENU?, _ popup: HMENU?, _ text: String) {
-      let id = UInt(bitPattern: popup?.bitPattern ?? 0)
+      guard let popup else { return }
+      let id = UInt(bitPattern: Int(bitPattern: popup))
       text.withCString(encodedAs: UTF16.self) {
         _ = AppendMenuW(menuBar, UINT(MF_POPUP | MF_STRING), id, $0)
       }

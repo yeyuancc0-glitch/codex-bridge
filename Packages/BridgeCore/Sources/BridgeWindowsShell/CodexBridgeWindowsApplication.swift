@@ -24,7 +24,7 @@
       Task { await model.startServiceAndConnect() }
 
       var message = MSG()
-      while GetMessageW(&message, nil, 0, 0) > 0 {
+      while GetMessageW(&message, nil, 0, 0) {
         _ = TranslateMessage(&message)
         _ = DispatchMessageW(&message)
         for command in WindowsMainWindow.takePendingCommands() {
