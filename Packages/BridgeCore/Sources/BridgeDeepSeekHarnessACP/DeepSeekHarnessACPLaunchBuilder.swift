@@ -2,10 +2,12 @@ import BridgeACP
 import BridgeAgentCore
 import Foundation
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
+#if !os(Windows)
+  #if canImport(Darwin)
+    import Darwin
+  #elseif canImport(Glibc)
+    import Glibc
+  #endif
 #endif
 
 public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
@@ -51,8 +53,14 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     sourceEnvironment: [String: String] = ProcessInfo.processInfo.environment
   ) throws -> DeepSeekHarnessACPLaunchConfiguration {
     let validated = try profile.validate(installation)
-    let project = try canonicalExistingDirectory(projectRoot, field: "projectRoot")
-    let runtime = try preparePrivateDirectory(runDirectory, field: "runDirectory")
+    let project = try DeepSeekHarnessACPPathSupport.canonicalExistingDirectory(
+      projectRoot,
+      field: "projectRoot"
+    )
+    let runtime = try DeepSeekHarnessACPPathSupport.preparePrivateDirectory(
+      runDirectory,
+      field: "runDirectory"
+    )
     let environment = try makeEnvironment(
       nodeInterpreter: validated.nodeInterpreterPath,
       projectRoot: project,
@@ -68,9 +76,11 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
       reasoningEffort: reasoningEffort,
       mutationIntent: mutationIntent
     )
-    let configurationDirectory = URL(fileURLWithPath: validated.configurationPath)
-      .deletingLastPathComponent().standardizedFileURL.path
-    guard FileManager.default.fileExists(atPath: configurationDirectory) else {
+    guard
+      let configurationDirectory = DeepSeekHarnessACPPathSupport.existingParentDirectory(
+        of: validated.configurationPath
+      )
+    else {
       throw AgentRuntimeError.processUnavailable
     }
     let argv = [
@@ -104,24 +114,28 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     reasoningEffort: String? = nil,
     mutationIntent: AgentMutationIntent = .readOnly
   ) throws -> String {
-    let moduleDirectory = URL(fileURLWithPath: sourceRoot, isDirectory: true)
-      .appendingPathComponent("node_modules/.pnpm/node_modules", isDirectory: true)
-      .standardizedFileURL.path
+    let moduleDirectory = try DeepSeekHarnessACPPathSupport.append(
+      ["node_modules", ".pnpm", "node_modules"],
+      to: sourceRoot,
+      isDirectory: true
+    )
     let resolvedModuleDirectory = URL(fileURLWithPath: moduleDirectory, isDirectory: true)
       .resolvingSymlinksInPath().standardizedFileURL.path
     var isDirectory: ObjCBool = false
-    guard resolvedModuleDirectory == moduleDirectory,
+    guard DeepSeekHarnessACPPathSupport.samePath(resolvedModuleDirectory, moduleDirectory),
       FileManager.default.fileExists(atPath: moduleDirectory, isDirectory: &isDirectory),
       isDirectory.boolValue
     else {
       throw DeepSeekHarnessACPError.artifactInvalid("runtime_modules")
     }
 
-    let runtimeProfile = URL(fileURLWithPath: runDirectory, isDirectory: true)
-      .appendingPathComponent("profile", isDirectory: true).path
-    try createPrivateDirectory(runtimeProfile)
-    let configuration = URL(fileURLWithPath: runtimeProfile, isDirectory: true)
-      .appendingPathComponent("cordis.yml").path
+    let runtimeProfile = try DeepSeekHarnessACPPathSupport.append(
+      "profile",
+      to: runDirectory,
+      isDirectory: true
+    )
+    try DeepSeekHarnessACPPathSupport.createPrivateDirectory(runtimeProfile)
+    let configuration = try DeepSeekHarnessACPPathSupport.append("cordis.yml", to: runtimeProfile)
     do {
       let stagedConfiguration = try DeepSeekHarnessACPModelCatalog.runtimeConfiguration(
         from: configurationData ?? profile.configurationTemplate,
@@ -137,12 +151,13 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
         to: URL(fileURLWithPath: configuration),
         options: .atomic
       )
-      guard chmod(configuration, 0o600) == 0 else {
-        throw AgentRuntimeError.processUnavailable
-      }
+      #if !os(Windows)
+        guard chmod(configuration, 0o600) == 0 else {
+          throw AgentRuntimeError.processUnavailable
+        }
+      #endif
       try FileManager.default.createSymbolicLink(
-        atPath: URL(fileURLWithPath: runtimeProfile, isDirectory: true)
-          .appendingPathComponent("node_modules").path,
+        atPath: try DeepSeekHarnessACPPathSupport.append("node_modules", to: runtimeProfile),
         withDestinationPath: moduleDirectory
       )
       return configuration
@@ -154,8 +169,11 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
   }
 
   public static func removeRunDirectory(_ path: String) {
-    guard !path.isEmpty else { return }
-    try? FileManager.default.removeItem(atPath: path)
+    guard !path.isEmpty, AgentPathSemantics.isAbsolute(path),
+      let canonical = AgentPathSemantics.canonicalPath(path),
+      AgentPathSemantics.directoryPath(of: canonical) != nil
+    else { return }
+    try? FileManager.default.removeItem(atPath: canonical)
   }
 
   private func makeEnvironment(
@@ -166,22 +184,22 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     sourceEnvironment: [String: String]
   ) throws -> [String: String] {
     let home = try AgentProviderEnvironment.homeDirectory(source: sourceEnvironment)
-    let xdgConfig = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-config").path
-    let xdgCache = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-cache").path
-    let xdgData = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-data").path
-    let xdgState = URL(fileURLWithPath: runDirectory).appendingPathComponent("xdg-state").path
-    let temporary = URL(fileURLWithPath: runDirectory).appendingPathComponent("tmp").path
-    let dshHome = URL(fileURLWithPath: runDirectory).appendingPathComponent("dsh-home").path
-    let snapshots = URL(fileURLWithPath: runDirectory).appendingPathComponent("snapshots").path
+    let xdgConfig = try DeepSeekHarnessACPPathSupport.append("xdg-config", to: runDirectory)
+    let xdgCache = try DeepSeekHarnessACPPathSupport.append("xdg-cache", to: runDirectory)
+    let xdgData = try DeepSeekHarnessACPPathSupport.append("xdg-data", to: runDirectory)
+    let xdgState = try DeepSeekHarnessACPPathSupport.append("xdg-state", to: runDirectory)
+    let temporary = try DeepSeekHarnessACPPathSupport.append("tmp", to: runDirectory)
+    let dshHome = try DeepSeekHarnessACPPathSupport.append("dsh-home", to: runDirectory)
+    let snapshots = try DeepSeekHarnessACPPathSupport.append("snapshots", to: runDirectory)
     for path in [xdgConfig, xdgCache, xdgData, xdgState, temporary, dshHome, snapshots] {
-      try createPrivateDirectory(path)
+      try DeepSeekHarnessACPPathSupport.createPrivateDirectory(path)
     }
 
     var environment: [String: String] = [
       "HOME": home,
       "PATH": AgentProviderEnvironment.executableSearchPath(
         executablePath: nodeInterpreter,
-        sourcePath: sourceEnvironment["PATH"]
+        source: sourceEnvironment
       ),
       "TMPDIR": temporary,
       "XDG_CONFIG_HOME": xdgConfig,
@@ -202,6 +220,24 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
         environment[key] = value
       }
     }
+    #if os(Windows)
+      environment["USERPROFILE"] = home
+      environment["TEMP"] = temporary
+      environment["TMP"] = temporary
+      for key in [
+        "SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "LOCALAPPDATA", "APPDATA",
+      ] {
+        if let value = sourceEnvironment.first(where: {
+          $0.key.caseInsensitiveCompare(key) == .orderedSame
+        })?.value,
+          !value.isEmpty,
+          !value.contains("\0"),
+          value.rangeOfCharacter(from: .controlCharacters) == nil
+        {
+          environment[key] = value
+        }
+      }
+    #endif
     return environment
   }
 
@@ -239,60 +275,4 @@ public struct DeepSeekHarnessACPLaunchBuilder: Sendable {
     return Data(value.utf8)
   }
 
-  private func canonicalExistingDirectory(_ value: String, field: String) throws -> String {
-    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    let canonical = URL(fileURLWithPath: value, isDirectory: true)
-      .resolvingSymlinksInPath().standardizedFileURL.path
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: canonical, isDirectory: &isDirectory),
-      isDirectory.boolValue
-    else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    return canonical
-  }
-
-  private func preparePrivateDirectory(_ value: String, field: String) throws -> String {
-    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    let canonical = URL(fileURLWithPath: value, isDirectory: true)
-      .standardizedFileURL.path
-    do {
-      try createPrivateDirectory(canonical)
-      return URL(fileURLWithPath: canonical, isDirectory: true)
-        .resolvingSymlinksInPath().standardizedFileURL.path
-    } catch let error as AgentRuntimeError {
-      throw error
-    } catch {
-      throw AgentRuntimeError.processUnavailable
-    }
-  }
-
-  private func createPrivateDirectory(_ path: String) throws {
-    do {
-      try FileManager.default.createDirectory(
-        atPath: path,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-      )
-      guard chmod(path, 0o700) == 0 else {
-        throw AgentRuntimeError.processUnavailable
-      }
-      var metadata = stat()
-      guard lstat(path, &metadata) == 0,
-        metadata.st_uid == getuid(),
-        metadata.st_mode & S_IFMT == S_IFDIR,
-        metadata.st_mode & 0o777 == 0o700
-      else {
-        throw AgentRuntimeError.processUnavailable
-      }
-    } catch let error as AgentRuntimeError {
-      throw error
-    } catch {
-      throw AgentRuntimeError.processUnavailable
-    }
-  }
 }

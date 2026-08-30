@@ -26,9 +26,7 @@ public actor DeepSeekHarnessACPEventNormalizer {
   public init(taskID: TaskID, binding: AgentBinding, projectRoot: String? = nil) {
     self.taskID = taskID
     self.binding = binding
-    self.projectRoot = projectRoot.map {
-      URL(fileURLWithPath: $0).standardizedFileURL.path
-    }
+    self.projectRoot = projectRoot.flatMap { AgentPathSemantics.canonicalPath($0) }
   }
 
   public func normalize(
@@ -238,31 +236,15 @@ public actor DeepSeekHarnessACPEventNormalizer {
     var paths = Set<String>()
     for key in keys {
       guard let value = input[key]?.stringValue,
-        let path = relativePath(value, projectRoot: projectRoot)
+        let path = DeepSeekHarnessACPPathSupport.approvalRelativePath(
+          value,
+          projectRoot: projectRoot
+        ),
+        !containsSensitiveMarker(path.lowercased())
       else { continue }
       paths.insert(path)
     }
     return paths.sorted()
-  }
-
-  private static func relativePath(_ value: String, projectRoot: String) -> String? {
-    guard !value.isEmpty, value.utf8.count <= 1_024,
-      !value.contains("\0"), value.rangeOfCharacter(from: .controlCharacters) == nil
-    else { return nil }
-    let relative: String
-    if value.hasPrefix("/") {
-      let absolute = URL(fileURLWithPath: value).standardizedFileURL.path
-      guard absolute.hasPrefix(projectRoot + "/") else { return nil }
-      relative = String(absolute.dropFirst(projectRoot.count + 1))
-    } else {
-      relative = value
-    }
-    let components = relative.split(separator: "/", omittingEmptySubsequences: false)
-    guard !components.isEmpty,
-      components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
-      !containsSensitiveMarker(relative.lowercased())
-    else { return nil }
-    return relative
   }
 
   private static func safeNetworkTarget(_ value: String?) -> String? {

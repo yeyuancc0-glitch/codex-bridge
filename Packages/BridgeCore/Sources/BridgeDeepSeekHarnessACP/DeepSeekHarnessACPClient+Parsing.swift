@@ -57,7 +57,10 @@ extension DeepSeekHarnessACPClient {
   }
 
   static func validateAbsolutePath(_ value: String, field: String) throws {
-    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
+    guard AgentPathSemantics.isAbsolute(value), !value.contains("\0"),
+      value.utf8.count <= 16 * 1_024,
+      value.rangeOfCharacter(from: .controlCharacters) == nil
+    else {
       throw AgentRuntimeError.invalidRequest(field)
     }
   }

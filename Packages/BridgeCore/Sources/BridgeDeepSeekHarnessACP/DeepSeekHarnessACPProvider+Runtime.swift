@@ -1,12 +1,6 @@
 import BridgeAgentCore
 import Foundation
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
-
 extension DeepSeekHarnessACPProvider {
   func makeRunDirectory(prefix: String) throws -> String {
     guard !prefix.isEmpty,
@@ -16,24 +10,16 @@ extension DeepSeekHarnessACPProvider {
       throw AgentRuntimeError.invalidRequest("runtime.prefix")
     }
     let base = try prepareRuntimeBase()
-    let path = URL(fileURLWithPath: base, isDirectory: true)
-      .appendingPathComponent("\(prefix)-\(UUID().uuidString.lowercased())", isDirectory: true)
-      .path
-    do {
-      try FileManager.default.createDirectory(
-        atPath: path,
-        withIntermediateDirectories: false,
-        attributes: [.posixPermissions: 0o700]
-      )
-      guard chmod(path, 0o700) == 0 else { throw AgentRuntimeError.processUnavailable }
-      try Self.validatePrivateDirectory(path)
-      return URL(fileURLWithPath: path, isDirectory: true)
-        .resolvingSymlinksInPath().standardizedFileURL.path
-    } catch let error as AgentRuntimeError {
-      throw error
-    } catch {
-      throw AgentRuntimeError.processUnavailable
-    }
+    let path = try DeepSeekHarnessACPPathSupport.append(
+      "\(prefix)-\(UUID().uuidString.lowercased())",
+      to: base,
+      isDirectory: true
+    )
+    return try DeepSeekHarnessACPPathSupport.preparePrivateDirectory(
+      path,
+      field: "runDirectory",
+      withIntermediateDirectories: false
+    )
   }
 
   func makeProbeRoot(_ requested: String?) throws -> ProbeRoot {
@@ -54,37 +40,10 @@ extension DeepSeekHarnessACPProvider {
   }
 
   private func prepareRuntimeBase() throws -> String {
-    let value = configuration.runtimeBaseDirectory
-    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.invalidRequest("runtimeBaseDirectory")
-    }
-    let path = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL.path
-    do {
-      try FileManager.default.createDirectory(
-        atPath: path,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-      )
-      guard chmod(path, 0o700) == 0 else { throw AgentRuntimeError.processUnavailable }
-      try Self.validatePrivateDirectory(path)
-      return URL(fileURLWithPath: path, isDirectory: true)
-        .resolvingSymlinksInPath().standardizedFileURL.path
-    } catch let error as AgentRuntimeError {
-      throw error
-    } catch {
-      throw AgentRuntimeError.processUnavailable
-    }
-  }
-
-  private static func validatePrivateDirectory(_ path: String) throws {
-    var metadata = stat()
-    guard lstat(path, &metadata) == 0,
-      metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFDIR,
-      metadata.st_mode & 0o777 == 0o700
-    else {
-      throw AgentRuntimeError.processUnavailable
-    }
+    try DeepSeekHarnessACPPathSupport.preparePrivateDirectory(
+      configuration.runtimeBaseDirectory,
+      field: "runtimeBaseDirectory"
+    )
   }
 }
 

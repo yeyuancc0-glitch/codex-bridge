@@ -28,12 +28,8 @@ enum DeepSeekHarnessACPArtifactValidator {
     let sourceRoot = try DeepSeekHarnessACPArtifactRuntime.findSourceRoot(
       startingAt: executable
     )
-    let configurationRoot = URL(fileURLWithPath: configuration)
-      .deletingLastPathComponent()
-      .standardizedFileURL
-      .path
-    guard configurationRoot != sourceRoot,
-      !configurationRoot.hasPrefix(sourceRoot + "/")
+    guard let configurationRoot = AgentPathSemantics.directoryPath(of: configuration),
+      !AgentPathSemantics.isContained(configurationRoot, in: sourceRoot)
     else {
       throw DeepSeekHarnessACPError.artifactInvalid("configuration.external_profile")
     }
@@ -52,18 +48,20 @@ enum DeepSeekHarnessACPArtifactValidator {
       makeArtifact(
         role: .runtimeManifest,
         snapshot: DeepSeekHarnessACPFileSnapshot(
-          capturing: URL(fileURLWithPath: sourceRoot)
-            .appendingPathComponent("package.json")
-            .path,
+          capturing: try DeepSeekHarnessACPPathSupport.append(
+            "package.json",
+            to: sourceRoot
+          ),
           requiresExecutable: false
         )
       ),
       makeArtifact(
         role: .dependencyLock,
         snapshot: DeepSeekHarnessACPFileSnapshot(
-          capturing: URL(fileURLWithPath: sourceRoot)
-            .appendingPathComponent("pnpm-lock.yaml")
-            .path,
+          capturing: try DeepSeekHarnessACPPathSupport.append(
+            "pnpm-lock.yaml",
+            to: sourceRoot
+          ),
           requiresExecutable: false
         )
       ),
@@ -86,11 +84,11 @@ enum DeepSeekHarnessACPArtifactValidator {
       (.launchConfiguration, configuration),
       (
         .runtimeManifest,
-        URL(fileURLWithPath: sourceRoot).appendingPathComponent("package.json").path
+        try DeepSeekHarnessACPPathSupport.append("package.json", to: sourceRoot)
       ),
       (
         .dependencyLock,
-        URL(fileURLWithPath: sourceRoot).appendingPathComponent("pnpm-lock.yaml").path
+        try DeepSeekHarnessACPPathSupport.append("pnpm-lock.yaml", to: sourceRoot)
       ),
       (.nodeInterpreter, node),
     ])
@@ -131,12 +129,8 @@ enum DeepSeekHarnessACPArtifactValidator {
       manifest.path,
       lock.path
     )
-    let configurationRoot = URL(fileURLWithPath: configuration.path)
-      .deletingLastPathComponent()
-      .standardizedFileURL
-      .path
-    guard configurationRoot != sourceRoot,
-      !configurationRoot.hasPrefix(sourceRoot + "/")
+    guard let configurationRoot = AgentPathSemantics.directoryPath(of: configuration.path),
+      !AgentPathSemantics.isContained(configurationRoot, in: sourceRoot)
     else {
       throw DeepSeekHarnessACPError.artifactInvalid("configuration.external_profile")
     }
@@ -214,7 +208,7 @@ enum DeepSeekHarnessACPArtifactValidator {
     role: AgentInstallationArtifactRole
   ) throws -> DeepSeekHarnessACPFileSnapshot {
     guard artifact.role == role,
-      artifact.canonicalPath.hasPrefix("/"),
+      AgentPathSemantics.isAbsolute(artifact.canonicalPath),
       !artifact.canonicalPath.contains("\0"),
       artifact.canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil
     else {
@@ -224,7 +218,7 @@ enum DeepSeekHarnessACPArtifactValidator {
       .resolvingSymlinksInPath()
       .standardizedFileURL
       .path
-    guard path == artifact.canonicalPath else {
+    guard DeepSeekHarnessACPPathSupport.samePath(path, artifact.canonicalPath) else {
       throw DeepSeekHarnessACPError.artifactInvalid("\(role.rawValue).canonical_path")
     }
     let snapshot = try DeepSeekHarnessACPFileSnapshot(
@@ -247,10 +241,10 @@ enum DeepSeekHarnessACPArtifactValidator {
       path,
       field: "launch.executable"
     )
-    guard canonical.hasPrefix("/"), !canonical.contains("\0") else {
+    guard AgentPathSemantics.isAbsolute(canonical), !canonical.contains("\0") else {
       throw DeepSeekHarnessACPError.artifactInvalid("launch.executable")
     }
-    guard canonical == sourceRoot || canonical.hasPrefix(sourceRoot + "/") else {
+    guard AgentPathSemantics.isContained(canonical, in: sourceRoot) else {
       throw DeepSeekHarnessACPError.artifactInvalid("launch.executable.source_root")
     }
     _ = try DeepSeekHarnessACPFileSnapshot(capturing: canonical, requiresExecutable: true)
