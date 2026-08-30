@@ -75,17 +75,60 @@ function Resolve-WixDark {
   throw "WiX Toolset 3 dark.exe is required to extract the Swift runtime merge module."
 }
 
+function Copy-WixRuntimeFiles(
+  [string]$ManifestPath,
+  [string]$ExtractRoot,
+  [string]$Destination
+) {
+  [xml]$manifest = Get-Content -LiteralPath $ManifestPath -Raw
+  $copied = 0
+  foreach ($fileNode in @($manifest.SelectNodes("//*[local-name()='File']"))) {
+    $name = $fileNode.GetAttribute("Name")
+    if (-not $name.EndsWith(".dll", [StringComparison]::OrdinalIgnoreCase)) {
+      continue
+    }
+    if ([IO.Path]::GetFileName($name) -ne $name) {
+      throw "WiX runtime file name is not a basename: $name"
+    }
+    $sourceValue = $fileNode.GetAttribute("Source")
+    $source = if ([IO.Path]::IsPathRooted($sourceValue)) {
+      Get-FullPath $sourceValue
+    } else {
+      Get-FullPath (Join-Path (Split-Path -Parent $ManifestPath) $sourceValue)
+    }
+    if (-not (Test-SameOrChildPath $ExtractRoot $source)) {
+      throw "WiX runtime source escapes the extraction directory: $source"
+    }
+    Assert-RegularFile $source | Out-Null
+    $target = Join-Path $Destination $name
+    if (Test-Path -LiteralPath $target) {
+      if ((Get-Sha256 $target) -ne (Get-Sha256 $source)) {
+        throw "Conflicting Swift runtime files share the name: $name"
+      }
+    } else {
+      Copy-Item -LiteralPath $source -Destination $target
+    }
+    $copied += 1
+  }
+  if ($copied -eq 0) {
+    throw "WiX manifest did not describe any Swift runtime DLLs."
+  }
+}
+
 function Expand-SwiftRuntimeMergeModule([string]$ModulePath, [string]$Destination) {
   Assert-RegularFile $ModulePath | Out-Null
   if (Test-Path -LiteralPath $Destination) {
     throw "Swift runtime extraction destination already exists."
   }
   New-Item -ItemType Directory -Path $Destination | Out-Null
+  $extractRoot = Join-Path $Destination "raw"
   $manifestPath = Join-Path $Destination "runtime-module.wxs"
   $dark = Resolve-WixDark
-  & $dark -nologo -x $Destination -o $manifestPath $ModulePath
+  & $dark -nologo -x $extractRoot -o $manifestPath $ModulePath
   if ($LASTEXITCODE -ne 0) {
     throw "WiX dark.exe failed to extract the Swift runtime merge module."
   }
+  Copy-WixRuntimeFiles $manifestPath $extractRoot $Destination
+  Remove-ExactPath $extractRoot
   Remove-Item -LiteralPath $manifestPath -Force
 }
