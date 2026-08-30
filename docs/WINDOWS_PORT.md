@@ -94,8 +94,9 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 - Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
   `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
   编译。ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
-- Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的全部测试
-  target；因此 Package.swift 仅声明已适配 target，再由 filter 选择冒烟套件。
+- Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
+  因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由
+  filter 选择已适配的冒烟套件。
 
 ### CI 工具链安装（已踩平的坑）
 

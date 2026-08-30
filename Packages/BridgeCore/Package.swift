@@ -13,8 +13,8 @@ var testTargets: [Target] = [
   ),
 ]
 
-var macOSFixtureProducts: [Product] = []
-var macOSFixtureTargets: [Target] = []
+var macOSOnlyProducts: [Product] = []
+var macOSOnlyTargets: [Target] = []
 
 #if !os(Windows)
   testTargets += [
@@ -183,7 +183,8 @@ var macOSFixtureTargets: [Target] = []
       ]
     ),
   ]
-  macOSFixtureProducts = [
+  macOSOnlyProducts = [
+    .library(name: "BridgeServiceAppShell", targets: ["BridgeServiceAppShell"]),
     .executable(name: "bridge-tunnel-fixture", targets: ["BridgeTunnelFixture"]),
     .executable(
       name: "bridge-tunnel-acceptance-fixture",
@@ -191,7 +192,15 @@ var macOSFixtureTargets: [Target] = []
     ),
     .executable(name: "mcp-inspector-fixture", targets: ["BridgeMCPInspectorFixture"]),
   ]
-  macOSFixtureTargets = [
+  macOSOnlyTargets = [
+    .target(
+      name: "BridgeServiceAppShell",
+      dependencies: [
+        "BridgeIPC",
+        "BridgeMCP",
+        "BridgeServiceAppCore",
+      ]
+    ),
     .executableTarget(
       name: "BridgeTunnelFixture",
       path: "Tests/BridgeTunnelTests/Fixture"
@@ -236,7 +245,6 @@ let package = Package(
     .library(name: "BridgeIPC", targets: ["BridgeIPC"]),
     .library(name: "BridgeServiceHost", targets: ["BridgeServiceHost"]),
     .library(name: "BridgeServiceAppCore", targets: ["BridgeServiceAppCore"]),
-    .library(name: "BridgeServiceAppShell", targets: ["BridgeServiceAppShell"]),
     .library(name: "BridgeWindowsShell", targets: ["BridgeWindowsShell"]),
     .executable(name: "codex-bridge-service", targets: ["CodexBridgeServiceExecutable"]),
     .executable(
@@ -244,7 +252,7 @@ let package = Package(
       targets: ["CodexBridgeWindowsApp"]
     ),
     .executable(name: "codex-rpc-fixture", targets: ["CodexRPCFixture"]),
-  ] + macOSFixtureProducts,
+  ] + macOSOnlyProducts,
   dependencies: [
     // Vendored MCP swift-sdk 0.12.1: upstream excludes the EventSource
     // dependency on Windows while importing it unconditionally, which breaks
@@ -449,14 +457,6 @@ let package = Package(
       ]
     ),
     .target(
-      name: "BridgeServiceAppShell",
-      dependencies: [
-        "BridgeIPC",
-        "BridgeMCP",
-        "BridgeServiceAppCore",
-      ]
-    ),
-    .target(
       name: "BridgeServiceAppCore",
       dependencies: [
         "BridgeIPC",
@@ -486,5 +486,5 @@ let package = Package(
       name: "CodexRPCFixture",
       dependencies: ["BridgeCodexRPC"]
     ),
-  ] + macOSFixtureTargets + testTargets
+  ] + macOSOnlyTargets + testTargets
 )
