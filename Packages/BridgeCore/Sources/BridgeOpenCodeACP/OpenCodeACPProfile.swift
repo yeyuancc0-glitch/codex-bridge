@@ -1,12 +1,6 @@
 import BridgeAgentCore
 import Foundation
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
-
 public enum OpenCodeACPProfiles {
   public static let controlledReadOnly = AgentProfileID(rawValue: "controlled-readonly")
 }
@@ -155,12 +149,15 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
     )
     let dataHome = try absoluteEnvironmentPath(
       source["XDG_DATA_HOME"]
-        ?? URL(fileURLWithPath: sourceHome).appendingPathComponent(".local/share").path,
+        ?? URL(fileURLWithPath: sourceHome)
+        .appendingPathComponent(".local", isDirectory: true)
+        .appendingPathComponent("share", isDirectory: true).path,
       field: "environment.XDG_DATA_HOME"
     )
     let configHome = try absoluteEnvironmentPath(
       source["XDG_CONFIG_HOME"]
-        ?? URL(fileURLWithPath: sourceHome).appendingPathComponent(".config").path,
+        ?? URL(fileURLWithPath: sourceHome)
+        .appendingPathComponent(".config", isDirectory: true).path,
       field: "environment.XDG_CONFIG_HOME"
     )
     let cache = URL(fileURLWithPath: runDirectory).appendingPathComponent("cache").path
@@ -181,7 +178,7 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       "HOME": sourceHome,
       "PATH": AgentProviderEnvironment.executableSearchPath(
         executablePath: executable,
-        sourcePath: source["PATH"]
+        source: source
       ),
       "TMPDIR": temporary,
       "XDG_CONFIG_HOME": configHome,
@@ -190,98 +187,17 @@ public struct OpenCodeACPLaunchBuilder: Sendable {
       "XDG_DATA_HOME": dataHome,
       "OPENCODE_DB": database,
     ]
+    #if os(Windows)
+      environment["USERPROFILE"] = sourceHome
+      environment["TEMP"] = temporary
+      environment["TMP"] = temporary
+    #endif
     for key in ["USER", "LOGNAME", "LANG", "LC_ALL", "SHELL"] {
       if let value = source[key], !value.isEmpty, !value.contains("\0") {
         environment[key] = value
       }
     }
     return environment
-  }
-
-  private static func resolveExecutable(_ path: String) throws -> String {
-    guard let resolved = safeExecutable(path) else {
-      throw AgentRuntimeError.installationUnavailable(AgentInstallationID(rawValue: path))
-    }
-    return resolved
-  }
-
-  private static func safeExecutable(_ path: String) -> String? {
-    guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 16 * 1_024 else {
-      return nil
-    }
-    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
-    var info = stat()
-    guard stat(resolved, &info) == 0,
-      (info.st_mode & S_IFMT) == S_IFREG,
-      access(resolved, X_OK) == 0,
-      info.st_uid == getuid() || info.st_uid == 0,
-      (info.st_mode & mode_t(S_IWGRP | S_IWOTH)) == 0,
-      (info.st_mode & mode_t(S_ISUID | S_ISGID)) == 0
-    else {
-      return nil
-    }
-    return resolved
-  }
-
-  private static func canonicalExistingDirectory(_ path: String, field: String) throws -> String {
-    guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
-    var isDirectory: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory),
-      isDirectory.boolValue
-    else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    return resolved
-  }
-
-  private static func prepareRunDirectory(_ path: String) throws -> String {
-    let canonical = try canonicalPathAllowingMissingLeaf(path, field: "runDirectory")
-    try createPrivateDirectory(canonical)
-    return URL(fileURLWithPath: canonical).resolvingSymlinksInPath().standardizedFileURL.path
-  }
-
-  private static func canonicalPathAllowingMissingLeaf(_ path: String, field: String) throws
-    -> String
-  {
-    guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
-  }
-
-  private static func createPrivateDirectory(_ path: String) throws {
-    do {
-      try FileManager.default.createDirectory(
-        atPath: path,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-      )
-      guard chmod(path, 0o700) == 0 else {
-        throw AgentRuntimeError.processUnavailable
-      }
-      var metadata = stat()
-      guard lstat(path, &metadata) == 0,
-        metadata.st_uid == getuid(),
-        metadata.st_mode & S_IFMT == S_IFDIR,
-        metadata.st_mode & 0o777 == 0o700
-      else {
-        throw AgentRuntimeError.processUnavailable
-      }
-    } catch let error as AgentRuntimeError {
-      throw error
-    } catch {
-      throw AgentRuntimeError.processUnavailable
-    }
-  }
-
-  private static func absoluteEnvironmentPath(_ path: String, field: String) throws -> String {
-    guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 16 * 1_024 else {
-      throw AgentRuntimeError.invalidRequest(field)
-    }
-    return URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
   }
 
 }

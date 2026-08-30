@@ -106,7 +106,9 @@ extension OpenCodeACPClient {
   }
 
   func validateAbsolutePath(_ value: String) throws {
-    guard value.hasPrefix("/"), value.utf8.count <= 16 * 1_024, !value.contains("\0") else {
+    guard AgentPathSemantics.isAbsolute(value), value.utf8.count <= 16 * 1_024,
+      !value.contains("\0")
+    else {
       throw AgentRuntimeError.invalidRequest("path")
     }
   }

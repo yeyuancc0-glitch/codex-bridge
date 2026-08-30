@@ -23,11 +23,13 @@ extension OpenCodeACPProvider {
       try FileManager.default.createDirectory(
         atPath: path,
         withIntermediateDirectories: false,
-        attributes: [.posixPermissions: 0o700]
+        attributes: Self.privateDirectoryAttributes
       )
-      guard chmod(path, 0o700) == 0 else {
-        throw AgentRuntimeError.processUnavailable
-      }
+      #if !os(Windows)
+        guard chmod(path, 0o700) == 0 else {
+          throw AgentRuntimeError.processUnavailable
+        }
+      #endif
       try Self.validatePrivateDirectory(path)
       return URL(fileURLWithPath: path, isDirectory: true)
         .resolvingSymlinksInPath()
@@ -59,7 +61,9 @@ extension OpenCodeACPProvider {
 
   private func prepareRuntimeBase() throws -> String {
     let value = configuration.runtimeBaseDirectory
-    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
+    guard AgentPathSemantics.isAbsolute(value), !value.contains("\0"),
+      value.utf8.count <= 16 * 1_024
+    else {
       throw AgentRuntimeError.invalidRequest("runtimeBaseDirectory")
     }
     let requested = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL.path
@@ -67,15 +71,17 @@ extension OpenCodeACPProvider {
       try FileManager.default.createDirectory(
         atPath: requested,
         withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
+        attributes: Self.privateDirectoryAttributes
       )
       let canonical = URL(fileURLWithPath: requested, isDirectory: true)
         .resolvingSymlinksInPath()
         .standardizedFileURL
         .path
-      guard chmod(canonical, 0o700) == 0 else {
-        throw AgentRuntimeError.processUnavailable
-      }
+      #if !os(Windows)
+        guard chmod(canonical, 0o700) == 0 else {
+          throw AgentRuntimeError.processUnavailable
+        }
+      #endif
       try Self.validatePrivateDirectory(canonical)
       return canonical
     } catch let error as AgentRuntimeError {
@@ -110,7 +116,9 @@ extension OpenCodeACPProvider {
   }
 
   private func preparePrivateDirectory(_ value: String, field: String) throws -> String {
-    guard value.hasPrefix("/"), !value.contains("\0"), value.utf8.count <= 16 * 1_024 else {
+    guard AgentPathSemantics.isAbsolute(value), !value.contains("\0"),
+      value.utf8.count <= 16 * 1_024
+    else {
       throw AgentRuntimeError.invalidRequest(field)
     }
     let requested = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL.path
@@ -118,9 +126,11 @@ extension OpenCodeACPProvider {
       try FileManager.default.createDirectory(
         atPath: requested,
         withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
+        attributes: Self.privateDirectoryAttributes
       )
-      guard chmod(requested, 0o700) == 0 else { throw AgentRuntimeError.processUnavailable }
+      #if !os(Windows)
+        guard chmod(requested, 0o700) == 0 else { throw AgentRuntimeError.processUnavailable }
+      #endif
       try Self.validatePrivateDirectory(requested)
       let canonical = URL(fileURLWithPath: requested, isDirectory: true)
         .resolvingSymlinksInPath()
@@ -134,13 +144,31 @@ extension OpenCodeACPProvider {
   }
 
   private static func validatePrivateDirectory(_ path: String) throws {
-    var metadata = stat()
-    guard lstat(path, &metadata) == 0,
-      metadata.st_uid == getuid(),
-      metadata.st_mode & S_IFMT == S_IFDIR,
-      metadata.st_mode & 0o777 == 0o700
-    else {
-      throw AgentRuntimeError.processUnavailable
-    }
+    #if os(Windows)
+      // Windows uses ACLs; only existence and directory type are portable checks.
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+        isDirectory.boolValue
+      else {
+        throw AgentRuntimeError.processUnavailable
+      }
+    #else
+      var metadata = stat()
+      guard lstat(path, &metadata) == 0,
+        metadata.st_uid == getuid(),
+        metadata.st_mode & S_IFMT == S_IFDIR,
+        metadata.st_mode & 0o777 == 0o700
+      else {
+        throw AgentRuntimeError.processUnavailable
+      }
+    #endif
+  }
+
+  private static var privateDirectoryAttributes: [FileAttributeKey: Any]? {
+    #if os(Windows)
+      nil
+    #else
+      [.posixPermissions: 0o700]
+    #endif
   }
 }

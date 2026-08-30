@@ -32,8 +32,8 @@ public actor OpenCodeACPEventNormalizer {
   public init(taskID: TaskID, binding: AgentBinding, projectRoot: String? = nil) {
     self.taskID = taskID
     self.binding = binding
-    self.projectRoot = projectRoot.map {
-      URL(fileURLWithPath: $0).standardizedFileURL.path
+    self.projectRoot = projectRoot.flatMap {
+      OpenCodeACPPathSupport.canonicalFilesystemPath($0, resolvingSymlinks: false)
     }
   }
 
@@ -173,7 +173,9 @@ public actor OpenCodeACPEventNormalizer {
     if let locations = update["locations"]?.arrayValue {
       guard locations.count <= 128 else { throw OpenCodeACPError.oversizedFrame }
       state.locations = locations.compactMap { value in
-        guard let path = value["path"]?.stringValue, path.hasPrefix("/") else { return nil }
+        guard let path = value["path"]?.stringValue,
+          AgentPathSemantics.isAbsolute(path)
+        else { return nil }
         return path
       }
     }
@@ -395,16 +397,23 @@ public actor OpenCodeACPEventNormalizer {
       !value.contains("\0"), value.rangeOfCharacter(from: .controlCharacters) == nil
     else { return nil }
     let relative: String
-    if value.hasPrefix("/") {
-      let absolute = URL(fileURLWithPath: value).standardizedFileURL.path
-      guard absolute.hasPrefix(projectRoot + "/") else { return nil }
-      relative = String(absolute.dropFirst(projectRoot.count + 1))
+    if AgentPathSemantics.isAbsolute(value) {
+      guard
+        let canonical = OpenCodeACPPathSupport.canonicalFilesystemPath(
+          value,
+          resolvingSymlinks: false
+        ),
+        let contained = AgentPathSemantics.relativePath(canonical, from: projectRoot),
+        !contained.isEmpty
+      else {
+        return nil
+      }
+      relative = contained
     } else {
+      guard AgentPathSemantics.relativeComponents(value) != nil else { return nil }
       relative = value
     }
-    let components = relative.split(separator: "/", omittingEmptySubsequences: false)
-    guard !components.isEmpty,
-      components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+    guard AgentPathSemantics.relativeComponents(relative) != nil,
       !containsSensitiveMarker(relative.lowercased())
     else { return nil }
     return relative
