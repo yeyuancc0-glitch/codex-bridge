@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        swift-version:
+          - 6.1.0
+
+    runs-on: ${{ matrix.os }}
+    name: Test (${{ matrix.os }}, Swift ${{ matrix.swift-version }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare Linux apt dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends libcurl4-openssl-dev
+
+      - name: Setup Swift on Linux
+        if: matrix.os == 'ubuntu-latest'
+        uses: vapor/swiftly-action@v0.2
+        with:
+          toolchain: ${{ matrix.swift-version }}
+      - name: Setup Swift on macOS
+        if: matrix.os == 'macos-latest'
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: ${{ matrix.swift-version }}
+
+      - name: Build
+        run: swift build -v
+
+      - name: Run tests
+        run: swift test -v
+
+  conformance:
+    timeout-minutes: 10
+    runs-on: macos-latest
+    name: MCP Conformance Tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: 6.1.0
+
+      - name: Build Swift executables
+        run: |
+          swift build --product mcp-everything-client
+          swift build --product mcp-everything-server
+
+      - name: Run client conformance tests
+        uses: modelcontextprotocol/conformance@v0.1.15
+        with:
+          mode: client
+          command: '.build/debug/mcp-everything-client'
+          suite: 'core'
+          expected-failures: './conformance-baseline.yml'
+          node-version: '22'
+
+      - name: Start server for testing
+        run: |
+          .build/debug/mcp-everything-server &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+          sleep 3
+
+      - name: Run server conformance tests
+        uses: modelcontextprotocol/conformance@v0.1.15
+        with:
+          mode: server
+          url: 'http://localhost:3001/mcp'
+          suite: 'core'
+          expected-failures: './conformance-baseline.yml'
+          node-version: '22'
+
+      - name: Cleanup server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            kill $SERVER_PID 2>/dev/null || true
+          fi
+
+  documentation:
+    name: Documentation
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1.0"
+      - name: Build Documentation
+        run: swift package generate-documentation --target MCP --warnings-as-errors
+
+  static-linux-sdk-build:
+    name: Linux Static SDK Build (${{ matrix.swift-version }} - ${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        swift-version:
+          - 6.1.2
+    runs-on: ${{ matrix.os }}
+    container: swift:${{ matrix.swift-version }}-noble
+    timeout-minutes: 30
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Install static SDK and build
+        env:
+          BUILD_FLAGS: ""
+        run: |
+          which curl || (apt -q update && apt -yq install curl)
+          curl -s --retry 3 https://raw.githubusercontent.com/swiftlang/github-workflows/refs/heads/main/.github/workflows/scripts/install-and-build-with-sdk.sh | \
+          bash -s -- --static --flags="$BUILD_FLAGS" ${{ matrix.swift-version }}

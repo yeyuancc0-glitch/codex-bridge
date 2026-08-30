@@ -45,10 +45,11 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(
-      url: "https://github.com/modelcontextprotocol/swift-sdk.git",
-      exact: "0.12.1"
-    ),
+    // Vendored MCP swift-sdk 0.12.1: upstream excludes the EventSource
+    // dependency on Windows while importing it unconditionally, which breaks
+    // windows builds; the vendored copy guards the import. Revisit when
+    // upstream ships Windows support.
+    .package(path: "../../Vendor/swift-sdk"),
     .package(
       url: "https://github.com/groue/GRDB.swift.git",
       exact: "7.11.1"
