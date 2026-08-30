@@ -15,11 +15,14 @@
   enum MainWindowCommand: Equatable {
     case refreshTasks
     case startService
+    case selectTask(index: Int)
+    case interruptSelectedTask
+    case submitSteer(input: String)
   }
 
-  /// Owns the top-level window, child controls, menu and tray icon. All state
-  /// is confined to the message-loop thread; `nonisolated(unsafe)` marks the
-  /// statics the plain-C window procedure touches.
+  /// Owns the top-level window, menu, and tray icon. The task inspector owns
+  /// child controls. All state is confined to the message-loop thread;
+  /// `nonisolated(unsafe)` marks statics touched by the plain-C procedure.
   enum WindowsMainWindow {
     private static let windowClassName = "CodexBridgeMainWindow"
     private static let windowTitle = "Codex Bridge"
@@ -32,9 +35,6 @@
     private static let menuExitID: UINT_PTR = 1001
     private static let menuRefreshID: UINT_PTR = 1002
     private static let menuStartServiceID: UINT_PTR = 1003
-    private static let listBoxControlID = 2001
-    private static let statusControlID = 2002
-    private static let chatPlaceholderControlID = 2003
     private static let timerID: UINT_PTR = 1
     private static let timerIntervalMs: UINT = 250
 
@@ -48,9 +48,6 @@
     private static let trayTipOffset = 40
     private static let trayCallbackMessage: UINT = 0x8000 + 2
 
-    nonisolated(unsafe) private static var listBox: HWND?
-    nonisolated(unsafe) private static var statusStatic: HWND?
-    nonisolated(unsafe) private static var chatPlaceholder: HWND?
     nonisolated(unsafe) private static var pendingCommands: [MainWindowCommand] = []
     nonisolated(unsafe) private static var trayData: NOTIFYICONDATAW?
     nonisolated(unsafe) static var chat: WindowsChatWebView?
@@ -70,21 +67,12 @@
         }
       }
       guard let window = created else { return nil }
-      listBox = createChild(
-        "LISTBOX", "", DWORD(WS_VSCROLL), DWORD(WS_EX_CLIENTEDGE),
-        window, instance, listBoxControlID
-      )
-      statusStatic = createChild(
-        "STATIC", "", 0, 0, window, instance, statusControlID
-      )
-      chatPlaceholder = createChild(
-        "STATIC", "正在加载聊天页…", 0, 0, window, instance, chatPlaceholderControlID
-      )
+      WindowsTaskInspector.create(in: window, instance: instance)
       installMenu(window)
       installTrayIcon(window)
       _ = SetTimer(window, timerID, timerIntervalMs, nil)
       _ = ShowWindow(window, SW_SHOW)
-      layout(window)
+      WindowsTaskInspector.layout(window, chat: chat)
       return window
     }
 
@@ -95,29 +83,16 @@
     }
 
     static func setStatusText(_ text: String) {
-      setText(statusStatic, text)
+      WindowsTaskInspector.setStatusText(text)
     }
 
-    static func setTaskRows(_ rows: [String]) {
-      guard let listBox else { return }
-      _ = SendMessageW(listBox, UINT(LB_RESETCONTENT), 0, 0)
-      for row in rows {
-        row.withCString(encodedAs: UTF16.self) { text in
-          let pointer = LPARAM(Int(bitPattern: UnsafeRawPointer(text)))
-          _ = SendMessageW(listBox, UINT(LB_ADDSTRING), 0, pointer)
-        }
-      }
+    static func setTaskRows(_ rows: [String], selectedIndex: Int?) {
+      WindowsTaskInspector.setTaskRows(rows, selectedIndex: selectedIndex)
     }
 
     /// nil hides the placeholder (chat page active).
     static func setChatPlaceholder(_ text: String?) {
-      guard let chatPlaceholder else { return }
-      if let text {
-        setText(chatPlaceholder, text)
-        _ = ShowWindow(chatPlaceholder, SW_SHOW)
-      } else {
-        _ = ShowWindow(chatPlaceholder, SW_HIDE)
-      }
+      WindowsTaskInspector.setChatPlaceholder(text)
     }
 
     // MARK: - Window procedure
@@ -127,6 +102,10 @@
     ) -> LRESULT {
       switch message {
       case UINT(WM_COMMAND):
+        if let command = WindowsTaskInspector.command(for: wParam) {
+          pendingCommands.append(command)
+          return 0
+        }
         switch wParam & 0xFFFF {
         case menuExitID:
           _ = DestroyWindow(window)
@@ -142,7 +121,7 @@
         if wParam == WPARAM(SIZE_MINIMIZED) {
           _ = ShowWindow(window, SW_HIDE)  // minimize to tray
         } else {
-          layout(window)
+          WindowsTaskInspector.layout(window, chat: chat)
         }
         return 0
       case trayCallbackMessage:
@@ -164,25 +143,6 @@
       }
     }
 
-    private static func layout(_ window: HWND?) {
-      var area = RECT()
-      guard GetClientRect(window, &area) else { return }
-      let width = area.right - area.left
-      let height = area.bottom - area.top
-      let sidebar = Int32(WindowLayout.sidebarWidth)
-      let inset = Int32(WindowLayout.statusInset)
-      _ = MoveWindow(listBox, 0, 0, sidebar, height, true)
-      _ = MoveWindow(
-        statusStatic, sidebar + inset, inset,
-        width - sidebar - inset * 2, Int32(WindowLayout.statusHeight), true
-      )
-      let chatTop = Int32(WindowLayout.chatTopInset)
-      _ = MoveWindow(chatPlaceholder, sidebar, chatTop, width - sidebar, height - chatTop, true)
-      chat?.resize(
-        to: RECT(left: sidebar, top: chatTop, right: width, bottom: height)
-      )
-    }
-
     // MARK: - Creation helpers
 
     private static func registerWindowClass(_ instance: HINSTANCE) {
@@ -197,21 +157,6 @@
         windowClass.hbrBackground = GetSysColorBrush(COLOR_WINDOW)
         windowClass.lpszClassName = className
         _ = RegisterClassW(&windowClass)
-      }
-    }
-
-    private static func createChild(
-      _ className: String, _ text: String, _ style: DWORD, _ exStyle: DWORD,
-      _ parent: HWND?, _ instance: HINSTANCE?, _ id: Int
-    ) -> HWND? {
-      className.withCString(encodedAs: UTF16.self) { classPointer -> HWND? in
-        text.withCString(encodedAs: UTF16.self) { textPointer in
-          CreateWindowExW(
-            exStyle, classPointer, textPointer,
-            DWORD(WS_CHILD) | DWORD(WS_VISIBLE) | style,
-            0, 0, 0, 0, parent, HMENU(bitPattern: id), instance, nil
-          )
-        }
       }
     }
 
@@ -280,12 +225,6 @@
         _ = Shell_NotifyIconW(trayNIMDelete, &data)
       }
       trayData = nil
-    }
-
-    private static func setText(_ target: HWND?, _ text: String) {
-      text.withCString(encodedAs: UTF16.self) {
-        _ = SetWindowTextW(target, $0)
-      }
     }
 
     private static func resourcePointer(_ id: Int) -> UnsafePointer<WCHAR> {

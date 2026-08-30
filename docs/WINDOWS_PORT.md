@@ -32,7 +32,7 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 | 服务端监听 | `BridgeServiceXPCListener` | `ServiceRequestListener` / `ServiceListenerFactory` | `BridgeServicePipeListener`（每连接一个会话线程 + 请求路由器） |
 | 密钥存储 | Keychain（`KeychainSecretStore`） | `SecretStore` 协议 / `SecretStoreFactory` | 凭据管理器（`WindowsCredentialStore`，CredReadW/WriteW/DeleteW，blob ≤ 2560 字节） |
 | 内嵌 ChatGPT 页 | WKWebView（`ChatGPTWebView`） | 平台壳各自实现 | WebView2（`WindowsChatWebView`，经 WebView2Loader.dll 的最小 COM 绑定） |
-| 桌面 UI | SwiftUI/AppKit（`BridgeServiceAppShell`） | `BridgeServiceAppCore`（跨平台模型层） | Win32 消息循环 + 子控件（`BridgeWindowsShell`） |
+| 桌面 UI | SwiftUI/AppKit（`BridgeServiceAppShell`） | `BridgeServiceAppCore`（跨平台模型层与任务呈现） | Win32 消息循环 + WebView2 + 原生任务检查器（历史/实时对话、Interrupt、Steer） |
 | 后台服务注册 | `SMAppService` LaunchAgent | —（Windows 为按需拉起） | 壳启动时探测管道，不存在则拉起同目录 `codex-bridge-service.exe` |
 | 文件安全边界 | openat + O_NOFOLLOW 相对 fd 遍历 | `SecureFileReader` / `SecureProjectFileWriter` / `SecureProjectDirectoryMutation` | 逐组件 reparse-point 校验 + CreateFileW（CREATE_NEW / 暂存替换 / MoveFileExW） |
 | Provider 路径与工件 | POSIX 路径、fd/stat 身份 | `AgentPathSemantics` / `SecureFileArtifactSnapshot` / `SecureFileArtifactReader` | 盘符、UNC、大小写与 `;` PATH 语义；逐组件 reparse 校验后按句柄读取身份与摘要 |
@@ -94,13 +94,17 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    是否需要改为受控 junction，待 Windows 真机验收后决定。
    Windows 上 Node 解释器必须是有效 PE；由 Node 间接执行的 Harness 脚本入口
    仍按正规文件、句柄身份与摘要校验，不误要求脚本本身是 PE。
+8. **Windows UI 尚未完全对齐 macOS**。当前已支持服务状态、任务列表与稳定选择、
+   任务元数据、历史/实时对话、Interrupt、支持能力约束下的排队式 Steer，以及
+   WebView2 ChatGPT 页面；项目/Agent 管理、审批、日志和完整设置页仍待补齐。
 
 ## 验证路径与 CI 现状
 
 - macOS：全量 `swift test`（所有套件 0 失败为门禁）+ Xcode Debug 构建。
 - Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
   `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
-  编译；x64 还运行 Domain、AgentCore、Security 与 Codex RPC resolver 测试。
+  编译；x64 还运行 Domain、AgentCore、Security、Codex RPC resolver 与跨平台
+  AppCore 任务呈现测试。
   ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
 - Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
   因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由

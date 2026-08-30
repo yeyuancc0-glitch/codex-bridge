@@ -11,6 +11,10 @@ var testTargets: [Target] = [
     name: "BridgeAgentCoreTests",
     dependencies: ["BridgeAgentCore"]
   ),
+  .testTarget(
+    name: "BridgeServiceAppCoreTests",
+    dependencies: ["BridgeIPC", "BridgeMCP", "BridgeServiceAppCore"]
+  ),
 ]
 
 var macOSOnlyProducts: [Product] = []

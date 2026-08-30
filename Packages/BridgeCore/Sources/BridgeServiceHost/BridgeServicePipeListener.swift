@@ -117,6 +117,7 @@
   final class PipeFrameWriter: @unchecked Sendable {
     private let handle: HANDLE
     private let lock = NSLock()
+    private var closed = false
 
     init(handle: HANDLE) {
       self.handle = handle
@@ -130,6 +131,7 @@
       return frame.withUnsafeBytes { raw -> Bool in
         lock.lock()
         defer { lock.unlock() }
+        guard !closed else { return false }
         var offset = 0
         while offset < raw.count {
           var written: DWORD = 0
@@ -147,6 +149,14 @@
         return true
       }
     }
+
+    func close() {
+      lock.lock()
+      defer { lock.unlock() }
+      guard !closed else { return }
+      closed = true
+      _ = CloseHandle(handle)
+    }
   }
 
   /// One connected shell session: serves requests on a dedicated thread.
@@ -154,6 +164,8 @@
     private let handle: HANDLE
     private let writer: PipeFrameWriter
     private let controller: BridgeServiceRequestController
+    private let closeLock = NSLock()
+    private var closed = false
 
     init(handle: HANDLE, writer: PipeFrameWriter, controller: BridgeServiceRequestController) {
       self.handle = handle
@@ -171,7 +183,10 @@
     }
 
     private func serve(closeCallback: @escaping @Sendable (PipeConnection) -> Void) {
-      defer { closeCallback(self) }
+      defer {
+        close()
+        closeCallback(self)
+      }
       while true {
         guard let (kind, payload) = readFrame() else { return }
         guard kind == 0 else {
@@ -231,7 +246,15 @@
     }
 
     func close() {
-      _ = CloseHandle(handle)
+      closeLock.lock()
+      guard !closed else {
+        closeLock.unlock()
+        return
+      }
+      closed = true
+      closeLock.unlock()
+      controller.stopStreaming()
+      writer.close()
     }
   }
 

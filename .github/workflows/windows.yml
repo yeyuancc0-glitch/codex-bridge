@@ -175,3 +175,5 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeCodexRPCTests"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeServiceAppCoreTests"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

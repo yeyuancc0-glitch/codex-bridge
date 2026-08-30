@@ -40,13 +40,24 @@
     private static func run(_ command: MainWindowCommand, model: WindowsWorkbenchModel) {
       switch command {
       case .refreshTasks:
-        Task { await model.refreshTasks() }
+        Task { await model.refreshSelectedTask() }
       case .startService:
         Task { await model.startServiceAndConnect() }
+      case .selectTask(let index):
+        model.selectTask(at: index)
+      case .interruptSelectedTask:
+        Task { await model.interruptSelectedTask() }
+      case .submitSteer(let input):
+        Task {
+          if await model.submitSteer(input: input) {
+            WindowsTaskInspector.clearSteerInput()
+          }
+        }
       }
     }
 
     private static func applyDisplay(model: WindowsWorkbenchModel, chat: WindowsChatWebView) {
+      model.refreshDisplaySnapshot()
       let display = model.displayBox.current()
       if display != lastAppliedDisplay {
         var lines = [
@@ -58,8 +69,31 @@
           lines.append("详情: \(detail)")
         }
         WindowsMainWindow.setStatusText(lines.joined(separator: "\r\n"))
-        if display.taskRows != lastAppliedDisplay?.taskRows {
-          WindowsMainWindow.setTaskRows(display.taskRows)
+        let previous = lastAppliedDisplay
+        if display.taskRows != previous?.taskRows
+          || display.selectedTaskIndex != previous?.selectedTaskIndex
+        {
+          WindowsMainWindow.setTaskRows(
+            display.taskRows,
+            selectedIndex: display.selectedTaskIndex
+          )
+        }
+        if display.taskMetadata != previous?.taskMetadata {
+          WindowsTaskInspector.setTaskMetadata(display.taskMetadata)
+        }
+        if display.conversationText != previous?.conversationText {
+          WindowsTaskInspector.setConversationText(display.conversationText)
+        }
+        if display.actionText != previous?.actionText {
+          WindowsTaskInspector.setActionStatus(display.actionText)
+        }
+        if display.interruptEnabled != previous?.interruptEnabled
+          || display.steerEnabled != previous?.steerEnabled
+        {
+          WindowsTaskInspector.setControls(
+            interruptEnabled: display.interruptEnabled,
+            steerEnabled: display.steerEnabled
+          )
         }
         lastAppliedDisplay = display
       }
