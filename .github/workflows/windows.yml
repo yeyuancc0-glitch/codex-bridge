@@ -62,6 +62,19 @@ jobs:
           Write-Host "--- swift-build.exe --version ---"
           & "$bin\swift-build.exe" --version
           Write-Host "swift-build exit=$LASTEXITCODE"
+          Write-Host "--- swift-frontend.exe --version ---"
+          & "$bin\swift-frontend.exe" --version
+          Write-Host "frontend exit=$LASTEXITCODE"
+          Write-Host "--- usr\bin dll names ---"
+          (Get-ChildItem $bin -Filter "*.dll").Name -join ", "
+          Write-Host "--- dumpbin dependents ---"
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -find "**\dumpbin.exe" | Select-Object -First 1
+          if ($dumpbin) {
+            & $dumpbin /dependents "$bin\swift.exe" | Select-Object -Skip 1
+          } else {
+            Write-Host "dumpbin not found"
+          }
       - name: Smoke tests (platform-neutral targets)
         working-directory: Packages/BridgeCore
         shell: pwsh
