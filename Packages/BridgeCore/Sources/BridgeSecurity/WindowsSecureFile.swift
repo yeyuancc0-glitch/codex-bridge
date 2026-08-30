@@ -42,19 +42,20 @@
       components: [String],
       desiredAccess: UInt32,
       creationDisposition: DWORD,
-      finalIsDirectory: Bool
+      finalIsDirectory: Bool,
+      shareMode: DWORD = 0,
+      flagsAndAttributes: DWORD = DWORD(FILE_FLAG_BACKUP_SEMANTICS)
     ) throws -> (HANDLE, Metadata) {
       try validateComponents(rootPath: rootPath, components: components)
       let targetPath = ([rootPath] + components).joined(separator: "\\")
-      let flags = DWORD(FILE_FLAG_BACKUP_SEMANTICS)
       let handle = targetPath.withCString(encodedAs: UTF16.self) { wide in
         CreateFileW(
           wide,
           desiredAccess,
-          0,
+          shareMode,
           nil,
           creationDisposition,
-          flags,
+          flagsAndAttributes,
           nil
         )
       }

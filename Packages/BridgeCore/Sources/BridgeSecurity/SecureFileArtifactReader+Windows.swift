@@ -5,18 +5,13 @@
   extension SecureFileArtifactReader {
     static func readData(at path: String, maximumBytes: Int) throws -> Data {
       let canonicalPath = try SecureFileArtifactSnapshot.windowsCanonicalPath(for: path)
-      let handle = canonicalPath.withCString(encodedAs: UTF16.self) { wide in
-        CreateFileW(
-          wide,
-          DWORD(GENERIC_READ),
-          DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE),
-          nil,
-          DWORD(OPEN_EXISTING),
-          DWORD(FILE_FLAG_OPEN_REPARSE_POINT),
-          nil
+      let handle: HANDLE
+      do {
+        (handle, _) = try WindowsSecureFile.openAbsoluteRegularFileResolving(
+          canonicalPath,
+          desiredAccess: DWORD(GENERIC_READ)
         )
-      }
-      guard let handle, handle != INVALID_HANDLE_VALUE else {
+      } catch {
         throw SecureFileArtifactError.openFailed
       }
       defer { _ = CloseHandle(handle) }
