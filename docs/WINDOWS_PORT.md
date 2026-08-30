@@ -95,8 +95,9 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    Windows 上 Node 解释器必须是有效 PE；由 Node 间接执行的 Harness 脚本入口
    仍按正规文件、句柄身份与摘要校验，不误要求脚本本身是 PE。
 8. **Windows UI 尚未完全对齐 macOS**。当前已支持服务状态、任务列表与稳定选择、
-   任务元数据、历史/实时对话、Interrupt、支持能力约束下的排队式 Steer，以及
-   WebView2 ChatGPT 页面；项目/Agent 管理、审批、日志和完整设置页仍待补齐。
+   任务元数据、历史/实时对话、Interrupt、支持能力约束下的排队式 Steer、审批中心，
+   以及 WebView2 ChatGPT 页面。审批中心支持任务审批与 Direct 审批的读取、详情查看、
+   允许/拒绝和过期后刷新；项目/Agent 管理、日志和完整设置页仍待补齐。
 
 ## 验证路径与 CI 现状
 

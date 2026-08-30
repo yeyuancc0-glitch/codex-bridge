@@ -5,7 +5,7 @@
     public func refreshSelectedTask() async {
       actionText = "正在刷新任务…"
       publishDisplay()
-      await loadTasks()
+      await refreshTasks()
       guard connectionState == .connected else { return }
       actionText = "任务列表已刷新。"
       publishDisplay()

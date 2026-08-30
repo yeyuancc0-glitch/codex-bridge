@@ -18,6 +18,7 @@
     public var mcpAddress: String
     public var taskCount: Int
     public var runningTaskCount: Int
+    public var pendingApprovalCount: Int
     public var taskRows: [String]
     public var selectedTaskID: String?
     public var selectedTaskIndex: Int?
@@ -26,6 +27,13 @@
     public var interruptEnabled: Bool
     public var steerEnabled: Bool
     public var actionText: String?
+    public var approvalRows: [String]
+    public var selectedApprovalIndex: Int?
+    public var approvalDetailText: String
+    public var approvalAllowDecisions: [String]
+    public var approvalAllowEnabled: Bool
+    public var approvalDenyEnabled: Bool
+    public var approvalStatusText: String?
     public var detailText: String?
   }
 
@@ -38,6 +46,7 @@
       mcpAddress: "—",
       taskCount: 0,
       runningTaskCount: 0,
+      pendingApprovalCount: 0,
       taskRows: [],
       selectedTaskID: nil,
       selectedTaskIndex: nil,
@@ -46,6 +55,13 @@
       interruptEnabled: false,
       steerEnabled: false,
       actionText: nil,
+      approvalRows: [],
+      selectedApprovalIndex: nil,
+      approvalDetailText: "暂无待处理审批。",
+      approvalAllowDecisions: [],
+      approvalAllowEnabled: false,
+      approvalDenyEnabled: false,
+      approvalStatusText: nil,
       detailText: nil
     )
 
@@ -81,6 +97,13 @@
     var conversation: TaskConversationModel?
     var conversationWasTerminal = false
     var actionText: String?
+    var approvals: [IPCApprovalSummary] = []
+    var directApprovals: [IPCPendingDirectApproval] = []
+    var selectedApprovalID: ApprovalPresentation.Identifier?
+    var approvalSelectionGeneration: UInt64 = 0
+    var resolvingApprovalIDs: Set<ApprovalPresentation.Identifier> = []
+    var approvalStatusText: String?
+    var approvalRefreshInProgress = false
 
     public init() {
       client = BridgeServiceClient(transport: ServiceTransportFactory.defaultTransport())
@@ -119,6 +142,8 @@
 
     public func refreshTasks() async {
       await loadTasks()
+      guard connectionState == .connected else { return }
+      await refreshApprovals()
     }
 
     public func shutdown() async {
@@ -196,11 +221,23 @@
         isStreaming: conversation?.isStreaming == true || task?.isRunning == true,
         errorMessage: conversation?.errorMessage
       )
+      let approvalItems = approvalPresentationItems()
+      let selectedApprovalIndex = selectedApprovalID.flatMap { selectedID in
+        approvalItems.firstIndex(where: { $0.id == selectedID })
+      }
+      let selectedApproval = selectedApprovalIndex.flatMap { approvalItems[$0] }
+      let approvalResolving = selectedApprovalID.map(resolvingApprovalIDs.contains) ?? false
+      let approvalActionsEnabled =
+        connectionState == .connected
+        && selectedApproval != nil
+        && !approvalResolving
+        && !approvalRefreshInProgress
       let value = WindowsWorkbenchDisplay(
         connectionState: connectionState,
         mcpAddress: serviceStatus?.localMCPURL ?? "—",
         taskCount: tasks.count,
         runningTaskCount: runningCount,
+        pendingApprovalCount: approvalItems.count,
         taskRows: tasks.map(Self.rowText),
         selectedTaskID: selectedTaskID,
         selectedTaskIndex: selectedIndex,
@@ -219,6 +256,14 @@
             providerSupportsSteer: providerSupportsSteer(for: task)
           ),
         actionText: actionText,
+        approvalRows: approvalItems.map(\.rowText),
+        selectedApprovalIndex: selectedApprovalIndex,
+        approvalDetailText: selectedApproval?.detailText ?? "暂无待处理审批。",
+        approvalAllowDecisions: selectedApproval?.allowDecisions ?? [],
+        approvalAllowEnabled: approvalActionsEnabled
+          && !(selectedApproval?.allowDecisions.isEmpty ?? true),
+        approvalDenyEnabled: approvalActionsEnabled,
+        approvalStatusText: approvalStatusText,
         detailText: errorMessage
       )
       displayBox.store(value)

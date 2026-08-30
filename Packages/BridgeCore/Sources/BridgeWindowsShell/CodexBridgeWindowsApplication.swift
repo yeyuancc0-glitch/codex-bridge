@@ -34,6 +34,7 @@
         applyDisplay(model: model, chat: chat)
       }
       chat.shutdown()
+      WindowsApprovalWindow.shutdown()
       await model.shutdown()
     }
 
@@ -53,6 +54,17 @@
             WindowsTaskInspector.clearSteerInput()
           }
         }
+      case .showApprovals:
+        WindowsApprovalWindow.show(owner: WindowsMainWindow.currentWindow())
+        model.refreshDisplaySnapshot()
+        WindowsApprovalWindow.apply(model.displayBox.current())
+        Task { await model.refreshApprovals() }
+      case .selectApproval(let index):
+        model.selectApproval(at: index)
+      case .refreshApprovals:
+        Task { await model.refreshApprovals() }
+      case .resolveApproval(let decision):
+        Task { await model.resolveSelectedApproval(decision: decision) }
       }
     }
 
@@ -63,6 +75,7 @@
         var lines = [
           "服务连接: \(statusName(display.connectionState))",
           "任务: \(display.taskCount)（运行中 \(display.runningTaskCount)）",
+          "审批: \(display.pendingApprovalCount)",
           "MCP 地址: \(display.mcpAddress)",
         ]
         if let detail = display.detailText {
@@ -95,6 +108,7 @@
             steerEnabled: display.steerEnabled
           )
         }
+        WindowsApprovalWindow.apply(display)
         lastAppliedDisplay = display
       }
 

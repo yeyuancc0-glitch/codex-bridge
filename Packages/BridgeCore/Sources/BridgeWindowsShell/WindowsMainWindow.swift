@@ -18,6 +18,10 @@
     case selectTask(index: Int)
     case interruptSelectedTask
     case submitSteer(input: String)
+    case showApprovals
+    case selectApproval(index: Int)
+    case refreshApprovals
+    case resolveApproval(decision: String)
   }
 
   /// Owns the top-level window, menu, and tray icon. The task inspector owns
@@ -35,6 +39,7 @@
     private static let menuExitID: UINT_PTR = 1001
     private static let menuRefreshID: UINT_PTR = 1002
     private static let menuStartServiceID: UINT_PTR = 1003
+    private static let menuApprovalsID: UINT_PTR = 1004
     private static let timerID: UINT_PTR = 1
     private static let timerIntervalMs: UINT = 250
 
@@ -51,6 +56,7 @@
     nonisolated(unsafe) private static var pendingCommands: [MainWindowCommand] = []
     nonisolated(unsafe) private static var trayData: NOTIFYICONDATAW?
     nonisolated(unsafe) static var chat: WindowsChatWebView?
+    nonisolated(unsafe) static var window: HWND?
 
     static func create() -> HWND? {
       // Never NULL for a running process.
@@ -67,6 +73,7 @@
         }
       }
       guard let window = created else { return nil }
+      self.window = window
       WindowsTaskInspector.create(in: window, instance: instance)
       installMenu(window)
       installTrayIcon(window)
@@ -74,6 +81,14 @@
       _ = ShowWindow(window, SW_SHOW)
       WindowsTaskInspector.layout(window, chat: chat)
       return window
+    }
+
+    static func enqueue(_ command: MainWindowCommand) {
+      pendingCommands.append(command)
+    }
+
+    static func currentWindow() -> HWND? {
+      window
     }
 
     static func takePendingCommands() -> [MainWindowCommand] {
@@ -113,6 +128,8 @@
           pendingCommands.append(.refreshTasks)
         case menuStartServiceID:
           pendingCommands.append(.startService)
+        case menuApprovalsID:
+          pendingCommands.append(.showApprovals)
         default:
           break
         }
@@ -136,6 +153,7 @@
         return 0
       case UINT(WM_DESTROY):
         removeTrayIcon()
+        Self.window = nil
         PostQuitMessage(0)
         return 0
       default:
@@ -166,6 +184,7 @@
       let actionsMenu = CreatePopupMenu()
       appendMenuItem(actionsMenu, UINT(MF_STRING), menuRefreshID, "刷新任务")
       appendMenuItem(actionsMenu, UINT(MF_STRING), menuStartServiceID, "启动服务")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuApprovalsID, "待处理审批…")
       let menuBar = CreateMenu()
       appendPopup(menuBar, fileMenu, "文件")
       appendPopup(menuBar, actionsMenu, "操作")
