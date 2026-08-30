@@ -42,52 +42,23 @@ jobs:
           if (-not $swiftExe) { throw "swift.exe not found after install" }
           Write-Host "found swift at $swiftExe"
           Add-Content $env:GITHUB_PATH (Split-Path $swiftExe)
+          # The bundle ships host-tool runtime libraries (swiftCore.dll etc.)
+          # in a separate Runtime Libraries directory that must be on PATH.
+          $swiftRoot = Split-Path (Split-Path (Split-Path $swiftExe))
+          $runtimeBin = Get-ChildItem $swiftRoot -Recurse -Filter swiftCore.dll `
+            -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty DirectoryName
+          if (-not $runtimeBin) { throw "swiftCore.dll not found after install" }
+          Write-Host "found runtime at $runtimeBin"
+          Add-Content $env:GITHUB_PATH $runtimeBin
       - name: Build service and Windows shell
         working-directory: Packages/BridgeCore
         shell: pwsh
         run: |
-          $bin = (Get-Command swift).Source | Split-Path
-          Write-Host "toolchain bin: $bin"
-          Write-Host "--- Swift install root ---"
-          Get-ChildItem (Split-Path (Split-Path $bin)) | Select-Object Name
-          Write-Host "--- toolchain root ---"
-          Get-ChildItem (Split-Path $bin) | Select-Object Name
-          Write-Host "--- swift executables ---"
-          Get-ChildItem $bin -Filter "swift*.exe" | Select-Object Name
-          Write-Host "--- dll count ---"
-          (Get-ChildItem $bin -Filter "*.dll").Count
-          Write-Host "--- swift.exe --version ---"
-          & "$bin\swift.exe" --version
-          Write-Host "swift exit=$LASTEXITCODE"
-          Write-Host "--- swift-build.exe --version ---"
-          & "$bin\swift-build.exe" --version
-          Write-Host "swift-build exit=$LASTEXITCODE"
-          Write-Host "--- swift-frontend.exe --version ---"
-          & "$bin\swift-frontend.exe" --version
-          Write-Host "frontend exit=$LASTEXITCODE"
-          Write-Host "--- usr\bin dll names ---"
-          (Get-ChildItem $bin -Filter "*.dll").Name -join ", "
-          Write-Host "--- dumpbin dependents ---"
-          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
-            -latest -find "**\dumpbin.exe" | Select-Object -First 1
-          if ($dumpbin) {
-            $deps = & $dumpbin /dependents "$bin\swift.exe" |
-              Select-String -Pattern '^\s+(\S+\.dll)' |
-              ForEach-Object { $_.Matches[0].Groups[1].Value }
-            foreach ($d in $deps) {
-              $local = Test-Path (Join-Path $bin $d)
-              $system = Test-Path (Join-Path $env:SystemRoot\System32 $d)
-              if (-not ($local -or $system)) {
-                Write-Host "MISSING DEPENDENCY: $d"
-              } else {
-                Write-Host "ok: $d (local=$local system=$system)"
-              }
-            }
-            Write-Host "--- mimalloc files in bin ---"
-            (Get-ChildItem $bin -Filter "mimalloc*").Name -join ", "
-          } else {
-            Write-Host "dumpbin not found"
-          }
+          swift --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift build --product codex-bridge-service
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift build --product codex-bridge-windows-app
       - name: Smoke tests (platform-neutral targets)
         working-directory: Packages/BridgeCore
         shell: pwsh
