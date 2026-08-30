@@ -9,21 +9,21 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            swift-url: https://download.swift.org/swift-6.3.3-release/windows10/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10.exe
-          - os: windows-11-arm
-            swift-url: https://download.swift.org/swift-6.3.3-release/windows10-arm64/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10-arm64.exe
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Exclude build directories from Windows Defender
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath (Join-Path $env:GITHUB_WORKSPACE "Packages")
+          Add-MpPreference -ExclusionProcess "swift-frontend.exe"
+          Add-MpPreference -ExclusionProcess "swift.exe"
+          Add-MpPreference -ExclusionProcess "clang.exe"
+          Add-MpPreference -ExclusionProcess "lld-link.exe"
       - name: Install Swift 6.3.3 toolchain
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "${{ matrix.swift-url }}" -OutFile swift-installer.exe
+          Invoke-WebRequest -Uri "https://download.swift.org/swift-6.3.3-release/windows10/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE-windows10.exe" -OutFile swift-installer.exe
           $proc = Start-Process -Wait -PassThru -FilePath .\swift-installer.exe `
             -ArgumentList "/quiet", "/norestart", "InstallPerMachine=1"
           Remove-Item .\swift-installer.exe
@@ -78,10 +78,10 @@ jobs:
       - name: Install SQLite via vcpkg (for GRDB)
         shell: pwsh
         run: |
-          $triplet = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64-windows" } else { "x64-windows" }
+          $triplet = "x64-windows"
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "sqlite3:$triplet"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $archDir = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+          $archDir = "x64"
           $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -property installationPath | Select-Object -First 1
           $msvcRoot = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
@@ -101,7 +101,7 @@ jobs:
           Add-Content $env:GITHUB_ENV "INCLUDE=$inc"
           # Compose the linker library path: vcpkg + MSVC + Windows SDK, since
           # setting LIB overrides the toolchain's own MSVC discovery.
-          $archDir = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+          $archDir = "x64"
           $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -property installationPath | Select-Object -First 1
           $msvcLib = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
