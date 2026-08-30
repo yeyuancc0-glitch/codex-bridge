@@ -136,11 +136,11 @@ ChatGPT / Qwen ──[run_skill_action]──► Sandbox Enforcement (sandbox-ex
 ## 🛠️ Quick Start
 
 ### 1. Prerequisites
-- **Operating System**: macOS 14.0 (Sonoma) or later (Apple Silicon & Intel supported).
+- **Operating System**: macOS 14.0 (Sonoma) or later (Apple Silicon & Intel supported); Windows 10/11 x64 and ARM64 preview builds are available.
 - **Agent Environment**:
   - **Codex**: Installed and logged-in **Codex Desktop** (or executable `codex` command in system PATH).
   - **OpenCode (Optional)**: Installed **OpenCode** CLI in system PATH.
-- **Toolchain**: Xcode 16+ / Swift 6.0 toolchain.
+- **Toolchain**: Xcode 16+ / Swift 6.0 toolchain; Windows uses Swift 6.3.3.
 
 ### 2. Build & Launch
 ```bash
@@ -159,6 +159,18 @@ Scripts/with-xcode.sh xcodebuild \
 ```
 
 Launching `CodexBridge.app` will automatically register and start the bundled `CodexBridgeService` LaunchAgent.
+
+On Windows, build the service and desktop shell for the host architecture (x64 or ARM64):
+
+```powershell
+powershell -File Scripts\build-windows.ps1 -Test
+```
+
+The default output is a runnable portable directory under
+`.build\windows-dist\<architecture>` plus a sibling
+`codex-bridge-windows-<architecture>.zip`. The Windows chat surface requires the system
+WebView2 Evergreen Runtime; the build stages the matching `WebView2Loader.dll` beside the
+executables.
 
 ### 3. Register Local Projects & Skills
 Open the app and click **Add Project** to register your authorized workspace directories. Bridge binds the canonical path, device ID, and inode to eliminate symlink escapes, automatically discovering any embedded Skills.

@@ -162,6 +162,12 @@ jobs:
           swift build @swiftArguments --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build @swiftArguments --product codex-bridge-windows-app
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binPathOutput = & swift build @swiftArguments --show-bin-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $binPath = ($binPathOutput | Select-Object -Last 1).ToString().Trim()
+          if (-not $binPath) { throw "Swift build output directory was empty." }
+          Add-Content $env:GITHUB_ENV "SWIFT_BIN_PATH=$binPath"
       - name: Smoke tests
         if: matrix.run_tests
         working-directory: Packages/BridgeCore
@@ -177,3 +183,70 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeServiceAppCoreTests"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Stage Windows portable package
+        shell: pwsh
+        run: |
+          $targetTriple = "${{ matrix.target_triple }}"
+          $portableDir = Join-Path $env:GITHUB_WORKSPACE ".build\windows-dist\${{ matrix.architecture }}"
+          $stageArguments = @(
+            "-BinPath", $env:SWIFT_BIN_PATH,
+            "-OutDir", $portableDir,
+            "-Architecture", "${{ matrix.architecture }}",
+            "-VcpkgTriplet", "${{ matrix.triplet }}")
+          if ($targetTriple) {
+            $stageArguments += @("-TargetTriple", $targetTriple)
+          }
+          & "$env:GITHUB_WORKSPACE\Scripts\stage-windows-portable.ps1" @stageArguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke portable service startup
+        if: matrix.run_tests
+        shell: pwsh
+        run: |
+          $portableDir = Join-Path $env:GITHUB_WORKSPACE ".build\windows-dist\${{ matrix.architecture }}"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP ("codex-bridge-portable-" + [Guid]::NewGuid().ToString("N"))
+          $dataRoot = Join-Path $smokeRoot "data"
+          $stdoutPath = Join-Path $smokeRoot "stdout.txt"
+          $stderrPath = Join-Path $smokeRoot "stderr.txt"
+          New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+          $originalPath = $env:PATH
+          $process = $null
+          try {
+            $env:PATH = "$portableDir;$env:SystemRoot\System32;$env:SystemRoot"
+            $process = Start-Process -FilePath (Join-Path $portableDir "codex-bridge-service.exe") `
+              -ArgumentList @("--foreground", "--data-root", "`"$dataRoot`"") `
+              -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath `
+              -NoNewWindow -PassThru
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            $ready = $false
+            while ([DateTime]::UtcNow -lt $deadline -and -not $process.HasExited) {
+              if (Test-Path -LiteralPath $stdoutPath) {
+                $output = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+                if ($output -match "Codex Bridge service ready on 127\.0\.0\.1:\d+\.") {
+                  $ready = $true
+                  break
+                }
+              }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) {
+              $failure = if (Test-Path -LiteralPath $stderrPath) {
+                Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+              } else { "no stderr" }
+              throw "Portable service did not reach readiness: $failure"
+            }
+          } finally {
+            if ($process -and -not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
+            }
+            $env:PATH = $originalPath
+            if (Test-Path -LiteralPath $smokeRoot) {
+              Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+            }
+          }
+      - name: Upload Windows portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-bridge-windows-${{ matrix.architecture }}
+          path: .build/windows-dist/codex-bridge-windows-${{ matrix.architecture }}.zip
+          if-no-files-found: error

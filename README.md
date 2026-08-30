@@ -139,7 +139,7 @@ ChatGPT / Qwen ──[run_skill_action]──► 沙盒隔离检查 (sandbox-exe
 - **Agent 环境**：
   - **Codex**：本地已安装并登录 **Codex 桌面端**（或系统 PATH 具备可执行的 `codex` 命令）。
   - **OpenCode（可选）**：本地已安装 **OpenCode** 并具备可执行命令。
-- **编译工具**：Xcode 16+ / Swift 6.0 工具链；Windows 构建使用 Swift 6.1 工具链（`Scripts/build-windows.ps1`）。
+- **编译工具**：Xcode 16+ / Swift 6.0 工具链；Windows 构建使用 Swift 6.3.3 工具链（`Scripts/build-windows.ps1`）。
 
 ### 2. 构建与启动
 ```bash
@@ -158,6 +158,17 @@ Scripts/with-xcode.sh xcodebuild \
 ```
 
 启动 `CodexBridge.app` 后，应用会自动注册并启动内置的后台常驻服务 `CodexBridgeService`。
+
+Windows 可在 x64 或 ARM64 主机上构建同一套服务与桌面壳：
+
+```powershell
+powershell -File Scripts\build-windows.ps1 -Test
+```
+
+默认会在 `.build\windows-dist\<architecture>` 生成可直接解压运行的 portable 目录，
+并在其同级生成 `codex-bridge-windows-<architecture>.zip`。Windows 运行聊天页仍需系统
+预装 WebView2 Evergreen Runtime；构建脚本会将匹配架构的 WebView2Loader.dll 放入
+portable 目录。
 
 ### 3. 注册本地工程与 Skill
 在 App 中点击 **添加项目**，选择你允许 AI 访问的本地工程目录。Bridge 将严格锁定该目录的规范路径、设备 ID 与 Inode，防止符号链接逃逸，并自动识别项目内的 Skill 目录。

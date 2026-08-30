@@ -49,14 +49,34 @@ powershell -File Scripts\build-windows.ps1            # 构建服务 + 壳
 powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
 ```
 
-产物：`codex-bridge-service.exe` 与 `codex-bridge-windows-app.exe`。运行壳时若
-服务未启动会自动拉起；也可手动 `codex-bridge-service.exe --foreground --data-root C:\path`。
-WebView2 聊天页还需要系统安装 Evergreen Runtime，并让目标架构的
-`WebView2Loader.dll` 位于应用目录或 DLL 搜索路径；缺失时壳保留任务管理功能并
-明确显示聊天页不可用。
+构建脚本随后会生成以下 portable 目录（`<architecture>` 为 `x64` 或 `arm64`）：
+
+```text
+.build/windows-dist/<architecture>/
+├── codex-bridge-service.exe
+├── codex-bridge-windows-app.exe
+├── WebView2Loader.dll
+├── swift*.dll / 其他 Swift runtime DLL
+├── sqlite3.dll
+├── BridgeCore_BridgeDeepSeekHarnessACP.bundle（或 .resources）
+├── LICENSE.txt / NOTICE.txt
+├── Microsoft.Web.WebView2.LICENSE.txt / Microsoft.Web.WebView2.NOTICE.txt
+├── BUILD-INFO.json
+└── SHA256SUMS.txt
+```
+
+并在 `.build/windows-dist/` 下生成同级
+`codex-bridge-windows-<architecture>.zip`。运行壳时若服务未启动会自动拉起；也可手动
+`codex-bridge-service.exe --foreground --data-root C:\path`。portable 目录随附的是
+与应用架构匹配的 `WebView2Loader.dll`；Windows 仍必须预先安装系统级 WebView2
+Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Runtime 或 loader
+时壳保留任务管理功能并明确显示聊天页不可用。
 
 GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest 上构建 x64 与
-ARM64 两套服务/壳产物；x64 运行平台无关测试子集，ARM64 只做交叉编译与链接。
+ARM64 两套服务/壳产物，在构建与测试后分别上传
+`codex-bridge-windows-x64.zip` / `codex-bridge-windows-arm64.zip`。这些 CI artifact
+是可解压的 portable 交付包，不是 MSI/MSIX 安装器，不负责服务注册、卸载或自动安装
+WebView2 Evergreen Runtime；ARM64 只做交叉编译与链接。
 
 Windows 可通过 `CODEX_BRIDGE_CODEX_EXECUTABLE` 指定 `codex.exe` 或标准 npm
 `codex.cmd`；后者不会直接作为子进程启动，而是解析并验证其架构对应的原生
@@ -105,7 +125,8 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 - Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
   `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
   编译；x64 还运行 Domain、AgentCore、Security、Codex RPC resolver 与跨平台
-  AppCore 任务呈现测试。
+  AppCore 任务呈现测试，并从 staged portable 目录在隔离 PATH 下启动服务，使用
+  独立数据目录完成 SQLite/服务组装并等待本地 MCP ready。
   ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
 - Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
   因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由
