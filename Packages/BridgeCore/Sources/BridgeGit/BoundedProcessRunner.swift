@@ -26,7 +26,7 @@ public final class OpenedWorkingDirectory: @unchecked Sendable {
     }
 
     public init(canonicalURL: URL) throws {
-      let opened = canonicalURL.path.withCString(encodedAs: UTF16.self) {
+      let opened: HANDLE? = canonicalURL.path.withCString(encodedAs: UTF16.self) {
         CreateFileW(
           $0,
           DWORD(FILE_READ_ATTRIBUTES),
@@ -38,11 +38,12 @@ public final class OpenedWorkingDirectory: @unchecked Sendable {
         )
       }
       var information = BY_HANDLE_FILE_INFORMATION()
-      guard opened != INVALID_HANDLE_VALUE, GetFileInformationByHandle(opened, &information),
+      guard let opened, opened != INVALID_HANDLE_VALUE,
+        GetFileInformationByHandle(opened, &information),
         information.dwFileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0,
         information.dwFileAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
       else {
-        if opened != INVALID_HANDLE_VALUE { _ = CloseHandle(opened) }
+        if let opened, opened != INVALID_HANDLE_VALUE { _ = CloseHandle(opened) }
         throw GitEvidenceError.invalidAuthorizedRoot
       }
       url = canonicalURL
@@ -390,12 +391,14 @@ public struct BoundedProcessRunner: Sendable {
       var security = SECURITY_ATTRIBUTES()
       security.nLength = DWORD(MemoryLayout<SECURITY_ATTRIBUTES>.size)
       security.bInheritHandle = true
-      var read: HANDLE = INVALID_HANDLE_VALUE
-      var write: HANDLE = INVALID_HANDLE_VALUE
-      guard CreatePipe(&read, &write, &security, 0) else {
+      var read: HANDLE? = nil
+      var write: HANDLE? = nil
+      guard CreatePipe(&read, &write, &security, 0),
+        let readHandle = read, let writeHandle = write
+      else {
         throw BoundedProcessError.launchFailed
       }
-      return (read, write)
+      return (readHandle, writeHandle)
     }
 
     /// Minimal MSVC command-line quoting; arguments are quoted when they contain
@@ -541,7 +544,7 @@ public struct BoundedProcessRunner: Sendable {
 
 private struct ChildProcess {
   #if os(Windows)
-    let pid: pid_t
+    let pid: Int32
     var processHandle: HANDLE
     private var outputHandle: HANDLE
     private var errorHandle: HANDLE
@@ -549,7 +552,7 @@ private struct ChildProcess {
     private var standardError: BoundedByteBuffer
 
     init(
-      pid: pid_t,
+      pid: Int32,
       processHandle: HANDLE,
       outputHandle: HANDLE,
       errorHandle: HANDLE,

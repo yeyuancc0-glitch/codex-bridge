@@ -77,7 +77,7 @@
 
     static func metadata(of handle: HANDLE) throws -> Metadata {
       var info = BY_HANDLE_FILE_INFORMATION()
-      guard GetFileInformationByHandle(handle, &info) != 0 else {
+      guard GetFileInformationByHandle(handle, &info) else {
         throw WindowsSecureFileError.openFailed(Int32(GetLastError()))
       }
       let isDirectory = info.dwFileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) != 0

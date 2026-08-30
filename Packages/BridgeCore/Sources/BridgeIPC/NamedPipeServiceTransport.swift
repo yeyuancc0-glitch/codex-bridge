@@ -83,7 +83,7 @@
       pipeName.withCString(encodedAs: UTF16.self) { name in
         CreateFileW(
           name,
-          GENERIC_READ | GENERIC_WRITE,
+          DWORD(0x8000_0000) | DWORD(0x4000_0000), /* GENERIC_READ | GENERIC_WRITE */
           0,
           nil,
           DWORD(OPEN_EXISTING),

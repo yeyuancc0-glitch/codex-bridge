@@ -49,7 +49,7 @@ public enum SecretStoreError: Error, Equatable, Sendable {
   case notFound
   case accessDenied
   case invalidStoredValue
-  case keychainFailure(OSStatus)
+  case keychainFailure(Int32)
 }
 
 public protocol SecretStore: Sendable {

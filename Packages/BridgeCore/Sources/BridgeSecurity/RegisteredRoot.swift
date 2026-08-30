@@ -59,7 +59,7 @@ public struct RegisteredRoot: Codable, Equatable, Sendable {
       }
       defer { _ = CloseHandle(handle) }
       var info = BY_HANDLE_FILE_INFORMATION()
-      guard GetFileInformationByHandle(handle, &info) != 0 else {
+      guard GetFileInformationByHandle(handle, &info) else {
         throw PathSecurityError.readFailed(Int32(GetLastError()))
       }
       return FileSystemIdentity(

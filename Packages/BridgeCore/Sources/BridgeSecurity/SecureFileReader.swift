@@ -102,7 +102,8 @@ public struct SecureFileReader: Sendable {
     )
   }
 
-  private func openDescriptor(
+  #if !os(Windows)
+    private func openDescriptor(
     for resolved: ResolvedProjectPath,
     root: RegisteredRoot
   ) throws -> Int32 {
@@ -195,7 +196,11 @@ public struct SecureFileReader: Sendable {
     throw PathSecurityError.fileTooLarge(maximumBytes: maximumBytes)
   }
 
-  #if os(Windows)
+  #endif
+}
+
+#if os(Windows)
+extension SecureFileReader {
     private func relativeComponents(
       of resolved: ResolvedProjectPath,
       root: RegisteredRoot
@@ -204,5 +209,5 @@ public struct SecureFileReader: Sendable {
         .drop(while: { $0 == "/" })
       return try SecureRelativePath(String(relativePath)).components
     }
-  #endif
 }
+#endif

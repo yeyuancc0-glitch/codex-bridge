@@ -83,7 +83,7 @@ public struct BundledServiceTunnelManagerFactory: ServiceTunnelManagerBuilding {
       }
       defer { _ = CloseHandle(handle) }
       var info = BY_HANDLE_FILE_INFORMATION()
-      guard GetFileInformationByHandle(handle, &info) != 0,
+      guard GetFileInformationByHandle(handle, &info),
         info.dwFileAttributes & DWORD(FILE_ATTRIBUTE_DIRECTORY) == 0,
         info.dwFileAttributes & DWORD(FILE_ATTRIBUTE_REPARSE_POINT) == 0
       else {
