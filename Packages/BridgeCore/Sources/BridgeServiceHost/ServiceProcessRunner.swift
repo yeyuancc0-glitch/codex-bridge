@@ -152,7 +152,7 @@ public enum ServiceProcessRunner {
       // A C function pointer cannot capture context, so the handler reports
       // to the process-wide shared state.
       _ = SetConsoleCtrlHandler(
-        { (_, _) -> Bool in
+        { _ -> Bool in
           TerminationState.shared.finish()
           return true
         }, true)
