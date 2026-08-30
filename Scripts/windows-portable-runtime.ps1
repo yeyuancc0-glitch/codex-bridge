@@ -33,7 +33,8 @@ function Resolve-SwiftRuntimeMergeModule(
   if (-not (Test-Path Env:SDKROOT) -or [string]::IsNullOrWhiteSpace($env:SDKROOT)) {
     throw "SDKROOT is required to locate Swift redistributables."
   }
-  $cursor = Get-Item -LiteralPath (Get-FullPath $env:SDKROOT) -Force -ErrorAction Stop
+  $sdkDirectory = Get-Item -LiteralPath (Get-FullPath $env:SDKROOT) -Force -ErrorAction Stop
+  $cursor = $sdkDirectory
   $versionDirectory = $null
   for ($depth = 0; $depth -lt 10 -and $cursor.Parent; $depth += 1) {
     if ($cursor.Parent.Name.Equals("Platforms", [StringComparison]::OrdinalIgnoreCase)) {
@@ -50,7 +51,12 @@ function Resolve-SwiftRuntimeMergeModule(
   $redistributablesRoot = Join-Path $swiftRoot.FullName "Redistributables\$($versionDirectory.Name)"
   Assert-Directory $redistributablesRoot | Out-Null
   $moduleArchitecture = if ($Architecture -eq "x64") { "amd64" } else { "arm64" }
-  $moduleName = "rtl.shared.$moduleArchitecture.msm"
+  $modulePrefix = switch ($sdkDirectory.Name) {
+    "Windows.sdk" { "rtl" }
+    "WindowsExperimental.sdk" { "rtl.shared" }
+    default { throw "Unsupported Swift Windows SDK: $($sdkDirectory.Name)" }
+  }
+  $moduleName = "$modulePrefix.$moduleArchitecture.msm"
   $modules = @(Get-ChildItem -LiteralPath $redistributablesRoot -File -Recurse -Filter $moduleName)
   if ($modules.Count -ne 1) {
     throw "Expected exactly one Swift runtime merge module: $moduleName"

@@ -78,7 +78,8 @@ Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Ru
 [Swift Windows toolchain packaging](https://github.com/swiftlang/swift/blob/main/docs/WindowsToolchain.md)，
 安装器只安装宿主架构的 runtime，
 因此 staging 从 SDK `Redistributables` 中对应的 Swift 6.3.3
-`rtl.shared.<arch>.msm` 提取目标 DLL，再逐个校验 PE 架构；该命名由
+MSM 提取目标 DLL，再逐个校验 PE 架构：`Windows.sdk` 使用
+`rtl.<arch>.msm`，`WindowsExperimental.sdk` 使用 `rtl.shared.<arch>.msm`；该映射由
 [6.3.3 installer manifest](https://github.com/swiftlang/swift-installer-scripts/blob/swift-6.3.3-RELEASE/platforms/Windows/platforms/windows/windows.wxs)
 定义。MSM 由 WiX `dark.exe` 解包，并依据反编译 manifest 的 `File/@Source` 与
 `File/@Name` 恢复 DLL 安装文件名。构建产物使用 release 配置，并从
