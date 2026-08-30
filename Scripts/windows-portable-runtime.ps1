@@ -59,24 +59,33 @@ function Resolve-SwiftRuntimeMergeModule(
   return $modules[0].FullName
 }
 
+function Resolve-WixDark {
+  $command = Get-Command "dark.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($command) {
+    Assert-RegularFile $command.Source | Out-Null
+    return $command.Source
+  }
+  if (Test-Path Env:WIX) {
+    $candidate = Join-Path $env:WIX "bin\dark.exe"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      Assert-RegularFile $candidate | Out-Null
+      return $candidate
+    }
+  }
+  throw "WiX Toolset 3 dark.exe is required to extract the Swift runtime merge module."
+}
+
 function Expand-SwiftRuntimeMergeModule([string]$ModulePath, [string]$Destination) {
   Assert-RegularFile $ModulePath | Out-Null
   if (Test-Path -LiteralPath $Destination) {
     throw "Swift runtime extraction destination already exists."
   }
-  $merge = New-Object -ComObject "Msm.Merge2"
-  $opened = $false
-  try {
-    $merge.OpenModule($ModulePath, 0)
-    $opened = $true
-    $extractedPaths = $null
-    $merge.ExtractFilesEx($Destination, $true, [ref]$extractedPaths)
-  } finally {
-    if ($opened) {
-      $merge.CloseModule()
-    }
-    if ($merge) {
-      [Runtime.InteropServices.Marshal]::FinalReleaseComObject($merge) | Out-Null
-    }
+  New-Item -ItemType Directory -Path $Destination | Out-Null
+  $manifestPath = Join-Path $Destination "runtime-module.wxs"
+  $dark = Resolve-WixDark
+  & $dark -nologo -x $Destination -o $manifestPath $ModulePath
+  if ($LASTEXITCODE -ne 0) {
+    throw "WiX dark.exe failed to extract the Swift runtime merge module."
   }
+  Remove-Item -LiteralPath $manifestPath -Force
 }
