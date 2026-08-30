@@ -58,18 +58,23 @@ jobs:
           if (-not $runtimeBin) { throw "swiftCore.dll not found after install" }
           Write-Host "found runtime at $runtimeBin"
           Add-Content $env:GITHUB_PATH $runtimeBin
-          # The installer also ships a bundled Windows SDK and points SDKROOT
-          # at it, but env changes made by the installer do not reach already
-          # running job steps; forward it explicitly.
-          $sdkRoot = Get-ChildItem $searchRoots[0] -Recurse -Directory `
-            -Filter "Windows.sdk" -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
-          if ($sdkRoot) {
-            Write-Host "found SDK at $sdkRoot"
-            Add-Content $env:GITHUB_ENV "SDKROOT=$sdkRoot"
+          # The installer ships a bundled Windows SDK (Platforms) and points
+          # SDKROOT at it, but env changes made by the installer do not reach
+          # already running job steps; forward it explicitly. Fall back to the
+          # system Windows Kits installation.
+          $platformDir = $searchRoots | ForEach-Object {
+            if (Test-Path $_) {
+              Get-ChildItem $_ -Recurse -Directory -Filter "Windows.platform" `
+                -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+            }
+          } | Where-Object { $_ } | Select-Object -First 1
+          if ($platformDir) {
+            $sdkRoot = Join-Path $platformDir "Developer\SDKs\Windows.sdk"
           } else {
-            Write-Host "no bundled Windows.sdk found; relying on VS SDK discovery"
+            $sdkRoot = "C:\Program Files (x86)\Windows Kits\10"
           }
+          Write-Host "SDKROOT=$sdkRoot"
+          Add-Content $env:GITHUB_ENV "SDKROOT=$sdkRoot"
       - name: Build service and Windows shell
         working-directory: Packages/BridgeCore
         shell: pwsh
