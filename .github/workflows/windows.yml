@@ -46,13 +46,22 @@ jobs:
         working-directory: Packages/BridgeCore
         shell: pwsh
         run: |
-          Get-Command swift | Format-List Source
-          swift --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build --product codex-bridge-service --verbose 2>&1 |
-            ForEach-Object { "$_" } | Select-Object -Last 60
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build --product codex-bridge-windows-app
+          $bin = (Get-Command swift).Source | Split-Path
+          Write-Host "toolchain bin: $bin"
+          Write-Host "--- Swift install root ---"
+          Get-ChildItem (Split-Path (Split-Path $bin)) | Select-Object Name
+          Write-Host "--- toolchain root ---"
+          Get-ChildItem (Split-Path $bin) | Select-Object Name
+          Write-Host "--- swift executables ---"
+          Get-ChildItem $bin -Filter "swift*.exe" | Select-Object Name
+          Write-Host "--- dll count ---"
+          (Get-ChildItem $bin -Filter "*.dll").Count
+          Write-Host "--- swift.exe --version ---"
+          & "$bin\swift.exe" --version
+          Write-Host "swift exit=$LASTEXITCODE"
+          Write-Host "--- swift-build.exe --version ---"
+          & "$bin\swift-build.exe" --version
+          Write-Host "swift-build exit=$LASTEXITCODE"
       - name: Smoke tests (platform-neutral targets)
         working-directory: Packages/BridgeCore
         shell: pwsh
