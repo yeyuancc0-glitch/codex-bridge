@@ -30,7 +30,7 @@
           CredentialBlobSize: UInt32(secret.count),
           CredentialBlob: UnsafeMutablePointer(
             mutating: secret.withUnsafeBytes {
-              $0.baseAddress?.assumingMemoryBound(to: Byte.self)
+              $0.baseAddress?.assumingMemoryBound(to: UInt8.self)
             }),
           Persist: UInt32(CRED_PERSIST_LOCAL_MACHINE),
           AttributeCount: 0,

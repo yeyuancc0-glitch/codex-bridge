@@ -632,8 +632,9 @@ private struct ChildProcess {
         }
         guard available > 0 else { return }
         var received: DWORD = 0
+        let requested = min(available, DWORD(bytes.count))
         let succeeded = bytes.withUnsafeMutableBytes { raw in
-          ReadFile(handle, raw.baseAddress, min(available, DWORD(bytes.count)), &received, nil)
+          ReadFile(handle, raw.baseAddress, requested, &received, nil)
         }
         if succeeded, received > 0 {
           buffer.append(Data(bytes.prefix(Int(received))))

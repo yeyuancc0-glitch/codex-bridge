@@ -10,6 +10,18 @@ import Foundation
 #endif
 
 #if os(Windows)
+  private final class PatchStoreLockHandle: @unchecked Sendable {
+    let raw: HANDLE
+
+    init(_ raw: HANDLE) {
+      self.raw = raw
+    }
+
+    deinit {
+      if raw != INVALID_HANDLE_VALUE { _ = CloseHandle(raw) }
+    }
+  }
+
   /// WinSDK primitives backing GitPatchStore on Windows; the POSIX code paths
   /// keep using descriptor-based calls.
   private enum PatchStoreFile {
@@ -195,7 +207,7 @@ public actor GitPatchStore {
   private let persistentDirectory: URL?
   #if os(Windows)
     private var directoryPath: String?
-    private var lockHandle: HANDLE = INVALID_HANDLE_VALUE
+    private var lockHandle: PatchStoreLockHandle?
   #else
     private let directoryDescriptor: Int32?
     private let lockDescriptor: Int32?
@@ -215,6 +227,7 @@ public actor GitPatchStore {
     persistentDirectory = nil
     #if os(Windows)
       directoryPath = nil
+      lockHandle = nil
     #else
       directoryDescriptor = nil
       lockDescriptor = nil
@@ -267,10 +280,10 @@ public actor GitPatchStore {
         }
         self.persistentDirectory = persistentDirectory
         directoryPath = directory
-        lockHandle = lock
         self.committedRemovalHook = committedRemovalHook
         documents = bounded
         storedBytes = try Self.totalBytes(in: bounded)
+        lockHandle = PatchStoreLockHandle(lock)
       } catch {
         _ = CloseHandle(lock)
         throw error
@@ -307,9 +320,7 @@ public actor GitPatchStore {
   }
 
   deinit {
-    #if os(Windows)
-      if lockHandle != INVALID_HANDLE_VALUE { _ = CloseHandle(lockHandle) }
-    #else
+    #if !os(Windows)
       if let lockDescriptor { close(lockDescriptor) }
       if let directoryDescriptor { close(directoryDescriptor) }
     #endif
@@ -619,8 +630,8 @@ public actor GitPatchStore {
 
   private func withStoreLock<Result>(_ body: () throws -> Result) throws -> Result {
     #if os(Windows)
-      guard lockHandle != INVALID_HANDLE_VALUE else { return try body() }
-      return try Self.withExclusiveLock(lockHandle, body)
+      guard let lockHandle else { return try body() }
+      return try Self.withExclusiveLock(lockHandle.raw, body)
     #else
       guard let lockDescriptor else { return try body() }
       return try Self.withExclusiveLock(lockDescriptor, body)

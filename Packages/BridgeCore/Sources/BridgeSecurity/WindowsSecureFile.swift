@@ -58,7 +58,7 @@
           nil
         )
       }
-      guard handle != INVALID_HANDLE_VALUE else {
+      guard let handle, handle != INVALID_HANDLE_VALUE else {
         throw WindowsSecureFileError.openFailed(Int32(GetLastError()))
       }
       do {
@@ -108,7 +108,7 @@
           nil
         )
       }
-      guard handle != INVALID_HANDLE_VALUE else {
+      guard let handle, handle != INVALID_HANDLE_VALUE else {
         throw WindowsSecureFileError.openFailed(Int32(GetLastError()))
       }
       defer { close(handle) }
