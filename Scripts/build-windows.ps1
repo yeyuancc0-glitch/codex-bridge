@@ -12,10 +12,13 @@ $packagePath = Join-Path $repoRoot "Packages\BridgeCore"
 
 Push-Location $packagePath
 try {
-  swift build --product codex-bridge-service
-  swift build --product codex-bridge-windows-app
+  $swiftArguments = @("-Xswiftc", "-DSQLITE_DISABLE_SNAPSHOT")
+  swift build @swiftArguments --product codex-bridge-service
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  swift build @swiftArguments --product codex-bridge-windows-app
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  $binPathOutput = & swift build --show-bin-path
+  $binPathOutput = & swift build @swiftArguments --show-bin-path
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   $binPath = ($binPathOutput | Select-Object -Last 1).ToString().Trim()
   if ([string]::IsNullOrWhiteSpace($binPath)) {
@@ -23,9 +26,9 @@ try {
   }
 
   if ($Test) {
-    swift test --filter "BridgeDomainTests"
+    swift test @swiftArguments --filter "BridgeDomainTests"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    swift test --filter "BridgeAgentCoreTests"
+    swift test @swiftArguments --filter "BridgeAgentCoreTests"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
 

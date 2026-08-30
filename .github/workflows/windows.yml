@@ -9,7 +9,22 @@ on:
 
 jobs:
   build:
+    name: build (${{ matrix.architecture }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            triplet: x64-windows
+            library_architecture: x64
+            target_triple: ""
+            run_tests: true
+          - architecture: arm64
+            triplet: arm64-windows
+            library_architecture: arm64
+            target_triple: aarch64-unknown-windows-msvc
+            run_tests: false
     steps:
       - uses: actions/checkout@v4
       - name: Exclude build directories from Windows Defender
@@ -78,10 +93,10 @@ jobs:
       - name: Install SQLite via vcpkg (for GRDB)
         shell: pwsh
         run: |
-          $triplet = "x64-windows"
+          $triplet = "${{ matrix.triplet }}"
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install "sqlite3:$triplet"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $archDir = "x64"
+          $archDir = "${{ matrix.library_architecture }}"
           $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -property installationPath | Select-Object -First 1
           $msvcRoot = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
@@ -101,7 +116,6 @@ jobs:
           Add-Content $env:GITHUB_ENV "INCLUDE=$inc"
           # Compose the linker library path: vcpkg + MSVC + Windows SDK, since
           # setting LIB overrides the toolchain's own MSVC discovery.
-          $archDir = "x64"
           $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -property installationPath | Select-Object -First 1
           $msvcLib = Get-ChildItem "$vsRoot\VC\Tools\MSVC" -Directory |
@@ -109,12 +123,22 @@ jobs:
             Where-Object { Test-Path $_ } | Select-Object -First 1
           $kitsLib = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Lib" -Directory `
             -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
-          $sdkLibs = @()
-          if ($kitsLib) {
-            $sdkLibs = @("$kitsLib\um\$archDir", "$kitsLib\ucrt\$archDir") |
-              Where-Object { Test-Path $_ }
+          $vcpkgLib = "$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\lib"
+          $sdkUM = "$kitsLib\um\$archDir"
+          $sdkUCRT = "$kitsLib\ucrt\$archDir"
+          $requiredLibraries = @(
+            "$vcpkgLib\sqlite3.lib",
+            "$msvcLib\libcmt.lib",
+            "$sdkUM\kernel32.lib",
+            "$sdkUM\runtimeobject.lib",
+            "$sdkUCRT\ucrt.lib"
+          )
+          foreach ($library in $requiredLibraries) {
+            if (-not (Test-Path $library)) {
+              throw "Required $archDir library is unavailable: $library"
+            }
           }
-          $lib = (@("$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\lib", $msvcLib) + $sdkLibs) -join ";"
+          $lib = @($vcpkgLib, $msvcLib, $sdkUM, $sdkUCRT) -join ";"
           Write-Host "LIB=$lib"
           Add-Content $env:GITHUB_ENV "LIB=$lib"
       - name: Build service and Windows shell
@@ -123,13 +147,17 @@ jobs:
         run: |
           swift --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build --product codex-bridge-service
+          $targetTriple = "${{ matrix.target_triple }}"
+          $swiftArguments = @("-Xswiftc", "-DSQLITE_DISABLE_SNAPSHOT")
+          if ($targetTriple) { $swiftArguments += @("--triple", $targetTriple) }
+          swift build @swiftArguments --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift build --product codex-bridge-windows-app
+          swift build @swiftArguments --product codex-bridge-windows-app
       - name: Smoke tests (platform-neutral targets)
+        if: matrix.run_tests
         working-directory: Packages/BridgeCore
         shell: pwsh
         run: |
-          swift test --filter "BridgeDomainTests"
+          swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeDomainTests"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          swift test --filter "BridgeAgentCoreTests"
+          swift test -Xswiftc -DSQLITE_DISABLE_SNAPSHOT --filter "BridgeAgentCoreTests"

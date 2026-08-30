@@ -1,8 +1,9 @@
 # Windows 移植说明（WINDOWS_PORT.md）
 
 Codex Bridge 的核心逻辑（代理引擎、MCP 网关、服务编排、IPC 协议、存储）自
-win 分支起与 macOS 解耦，可在 Windows x64 与 ARM64 上构建运行。本文记录
-平台层的边界、Windows 侧实现与已知限制。
+win 分支起与 macOS 解耦，Windows 目标同时面向 x64 与 ARM64。x64 由 GitHub
+Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉编译和链接。
+本文记录平台层的边界、Windows 侧实现与已知限制。
 
 ## 架构
 
@@ -34,12 +35,13 @@ win 分支起与 macOS 解耦，可在 Windows x64 与 ARM64 上构建运行。�
 | 桌面 UI | SwiftUI/AppKit（`BridgeServiceAppShell`） | `BridgeServiceAppCore`（跨平台模型层） | Win32 消息循环 + 子控件（`BridgeWindowsShell`） |
 | 后台服务注册 | `SMAppService` LaunchAgent | —（Windows 为按需拉起） | 壳启动时探测管道，不存在则拉起同目录 `codex-bridge-service.exe` |
 | 文件安全边界 | openat + O_NOFOLLOW 相对 fd 遍历 | `SecureFileReader` / `SecureProjectFileWriter` / `SecureProjectDirectoryMutation` | 逐组件 reparse-point 校验 + CreateFileW（CREATE_NEW / 暂存替换 / MoveFileExW） |
+| Provider 路径与工件 | POSIX 路径、fd/stat 身份 | `AgentPathSemantics` / `SecureFileArtifactSnapshot` / `SecureFileArtifactReader` | 盘符、UNC、大小写与 `;` PATH 语义；逐组件 reparse 校验后按句柄读取身份与摘要 |
 | 代码签名校验 | SecCode（SecStaticCode/SecCode） | `TunnelCodeSignatureVerifier` | 不可用（见下节 Tunnel 限制） |
 | SHA-256 | swift-crypto（macOS 上转发 CryptoKit） | `import Crypto` | swift-crypto（BoringSSL 后端） |
 
 ## 构建
 
-Windows 需要 Swift 6.1 工具链（swift.org 官方支持 x86_64 与 aarch64）：
+Windows 使用 Swift 6.3.3 工具链（swift.org 官方支持 x86_64 与 aarch64）：
 
 ```powershell
 powershell -File Scripts\build-windows.ps1            # 构建服务 + 壳
@@ -48,9 +50,12 @@ powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
 
 产物：`codex-bridge-service.exe` 与 `codex-bridge-windows-app.exe`。运行壳时若
 服务未启动会自动拉起；也可手动 `codex-bridge-service.exe --foreground --data-root C:\path`。
+WebView2 聊天页还需要系统安装 Evergreen Runtime，并让目标架构的
+`WebView2Loader.dll` 位于应用目录或 DLL 搜索路径；缺失时壳保留任务管理功能并
+明确显示聊天页不可用。
 
-GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest（x64）与
-windows-11-arm（ARM64）上构建两个产物并运行平台无关测试子集。
+GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest 上构建 x64 与
+ARM64 两套服务/壳产物；x64 运行平台无关测试子集，ARM64 只做交叉编译与链接。
 
 macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 `Scripts/with-xcode.sh swift test --package-path Packages/BridgeCore`。
@@ -73,17 +78,24 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 5. **数据目录**。Windows 默认 `%LOCALAPPDATA%\CodexBridgeService`；`--data-root`
    接受盘符或 UNC 绝对路径。POSIX 的 0700/属主校验在 Windows 由用户目录 ACL
    承担（校验目录真实存在且非 reparse point）。
-6. **GRDB / swift-nio / MCP swift-sdk**：GRDB 官方支持 Apple 平台与 Linux，
-   Windows 支持未官方声明（groue/GRDB.swift#1498）；NIO 与 swift-crypto 已官方
-   支持 Windows。若 GRDB 在 Windows 构建受阻，需要为 `BridgeServiceCore` 引入
-   持久化后端抽象——这是 Windows 构建链路上最大的未验证风险点。
+6. **GRDB / SQLite**。GRDB 尚未官方声明支持 Windows
+   （groue/GRDB.swift#1498），但当前服务持久化已通过 vcpkg sqlite3 构建。
+   Windows 与 GRDB 的 Linux 配置一致，定义 `SQLITE_DISABLE_SNAPSHOT`，因为系统
+   sqlite3 不提供实验性的 snapshot 符号；本项目未使用该 API，常规事务/WAL/迁移
+   不受影响。
+7. **DeepSeek Harness 运行时模块链接**。受控 profile 需要把已校验的
+   `node_modules` 目录链接到隔离运行目录；Windows 创建目录符号链接可能要求
+   Developer Mode 或 `SeCreateSymbolicLinkPrivilege`，失败时保持 fail-closed。
+   是否需要改为受控 junction，待 Windows 真机验收后决定。
 
 ## 验证路径与 CI 现状
 
 - macOS：全量 `swift test`（所有套件 0 失败为门禁）+ Xcode Debug 构建。
-- Windows：`.github/workflows/windows.yml`（windows-latest，x64）。Windows 专属
-  源码（`#if os(Windows)`）在 macOS 上不参与编译，编译正确性由 CI 逐轮验证，
-  截至 2026-08-30 仍在收敛中（详见下节）。
+- Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
+  `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
+  编译。ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
+- Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的全部测试
+  target；因此 Package.swift 仅声明已适配 target，再由 filter 选择冒烟套件。
 
 ### CI 工具链安装（已踩平的坑）
 
@@ -105,8 +117,12 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    必须完整组合；`BOOL` 在 WinSDK Swift 映射里是 `Bool`，不能与 `0` 比较）。
 7. Windows Defender 实时扫描会显著拖慢 Swift 编译，workflow 已对构建目录与
    编译进程加排除项。
-8. **windows-11-arm runner 镜像无 Windows SDK**，原生链接必然失败；ARM64 CI
-   leg 暂移除，待镜像提供 SDK 或自行安装 Build Tools 后恢复。
+8. **windows-11-arm runner 的 ARM64 Windows 系统库不可用**：Swift/ARM64
+   MSVC 编译器与 vcpkg sqlite 均可用，但链接缺 `kernel32.lib`、
+   `runtimeobject.lib`、`ucrt.lib`，`LIB` 中没有 Windows Kits 的 `um\\arm64` /
+   `ucrt\\arm64`。因此 ARM64 门禁改在 windows-latest 上使用 ARM64 MSVC/Windows
+   Kits 库交叉编译，并在构建前显式预检依赖库；若原生 ARM runner 补齐组件，可再
+   恢复原生构建。交叉编译不替代 ARM64 运行验收。
 9. 上游 **MCP swift-sdk 0.12.1 不支持 Windows**（对 EventSource 的依赖带
    `.when(platforms:)` 排除 Windows，但源码无条件 `import EventSource`，且
    `URLSession.bytes(for:)` 在 Windows FoundationNetworking 上不存在）→ 已
