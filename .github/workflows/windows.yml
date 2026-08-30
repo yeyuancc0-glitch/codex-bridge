@@ -44,9 +44,17 @@ jobs:
           Add-Content $env:GITHUB_PATH (Split-Path $swiftExe)
           # The bundle ships host-tool runtime libraries (swiftCore.dll etc.)
           # in a separate Runtime Libraries directory that must be on PATH.
-          $swiftRoot = Split-Path (Split-Path (Split-Path $swiftExe))
-          $runtimeBin = Get-ChildItem $swiftRoot -Recurse -Filter swiftCore.dll `
-            -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty DirectoryName
+          $searchRoots = @(
+            (Split-Path (Split-Path (Split-Path (Split-Path $swiftExe)))),
+            "$env:LOCALAPPDATA\Programs",
+            "C:\Library"
+          )
+          $runtimeBin = $searchRoots | ForEach-Object {
+            if (Test-Path $_) {
+              Get-ChildItem $_ -Recurse -Filter swiftCore.dll `
+                -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty DirectoryName
+            }
+          } | Where-Object { $_ } | Select-Object -First 1
           if (-not $runtimeBin) { throw "swiftCore.dll not found after install" }
           Write-Host "found runtime at $runtimeBin"
           Add-Content $env:GITHUB_PATH $runtimeBin
