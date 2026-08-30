@@ -75,7 +75,7 @@ public struct DirectCommandRunner: Sendable {
   ) async -> DirectCommandRunResult {
     let termination =
       process.terminateAndWait(gracePeriod: gracePeriod)
-      ?? .killed(SIGKILL)
+      ?? .killed(Self.forcedTerminationSignal)
     process.drainRemainingOutput()
     process.close()
     onExit?()
@@ -86,4 +86,10 @@ public struct DirectCommandRunner: Sendable {
       timedOut: timedOut
     )
   }
+
+  #if os(Windows)
+    private static let forcedTerminationSignal: Int32 = 9
+  #else
+    private static let forcedTerminationSignal = SIGKILL
+  #endif
 }

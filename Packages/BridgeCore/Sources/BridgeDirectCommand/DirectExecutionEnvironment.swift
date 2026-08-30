@@ -117,13 +117,16 @@ public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
       var wsaData = WSADATA()
       guard WSAStartup(0x0202, &wsaData) == 0 else { return false }
       defer { WSACleanup() }
-      let descriptor = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+      let descriptor = socket(AF_INET, SOCK_STREAM, Int32(IPPROTO_TCP.rawValue))
       guard descriptor != INVALID_SOCKET else { return false }
       defer { closesocket(descriptor) }
       var address = sockaddr_in()
       address.sin_family = ADDRESS_FAMILY(AF_INET)
       address.sin_port = 0
-      address.sin_addr = "127.0.0.1".withCString { inet_addr($0) }
+      let loopbackAddress: UInt32 = "127.0.0.1".withCString { inet_addr($0) }
+      withUnsafeMutableBytes(of: &address.sin_addr) {
+        $0.storeBytes(of: loopbackAddress, as: UInt32.self)
+      }
       return withUnsafePointer(to: &address) { pointer in
         pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
           bind(descriptor, $0, Int32(MemoryLayout<sockaddr_in>.size)) == 0
