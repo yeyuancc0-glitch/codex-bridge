@@ -166,50 +166,23 @@ public final class ManagedStdioProcess: @unchecked Sendable {
     defer { inputLock.unlock() }
     guard !inputClosed else { throw ManagedProcessError.stdinUnavailable }
     #if os(Windows)
-      // Anonymous pipes do not support overlapped writes; PIPE_NOWAIT emulates
-      // EAGAIN so this loop can poll until the deadline expires.
-      guard let handle = windowsStdioHandle(standardInputHandle) else {
-        throw ManagedProcessError.stdinUnavailable
-      }
-      var nonBlocking = DWORD(PIPE_READMODE_BYTE | PIPE_NOWAIT)
-      var blocking = DWORD(PIPE_READMODE_BYTE | PIPE_WAIT)
-      guard SetNamedPipeHandleState(handle, &nonBlocking, nil, nil) else {
-        throw ManagedProcessError.stdinUnavailable
-      }
-      defer { SetNamedPipeHandleState(handle, &blocking, nil, nil) }
-
-      let deadline = ContinuousClock.now.advanced(by: timeout)
-      do {
-        try data.withUnsafeBytes { buffer in
-          guard let baseAddress = buffer.baseAddress else { return }
-          var offset = 0
-          while offset < buffer.count {
-            var written: DWORD = 0
-            let succeeded = WriteFile(
-              handle,
-              baseAddress.advanced(by: offset),
-              DWORD(buffer.count - offset),
-              &written,
-              nil
-            )
-            if succeeded, written > 0 {
-              offset += Int(written)
-              continue
-            }
-            if succeeded { throw ManagedProcessError.stdinUnavailable }
-            let error = GetLastError()
-            if error == ERROR_BROKEN_PIPE { throw ManagedProcessError.stdinUnavailable }
-            guard error == ERROR_NO_DATA, ContinuousClock.now < deadline else {
-              throw ManagedProcessError.stdinUnavailable
-            }
-            Thread.sleep(forTimeInterval: 0.01)
-          }
+      // Anonymous pipe writes block until the child consumes the bytes; run
+      // the write on a background queue and bound the wait with the timeout.
+      let semaphore = DispatchSemaphore(value: 0)
+      nonisolated(unsafe) var writeFailed = false
+      let handle = standardInputHandle
+      DispatchQueue.global().async {
+        do {
+          try handle.write(contentsOf: data)
+        } catch {
+          writeFailed = true
         }
-      } catch let error as ManagedProcessError {
-        throw error
-      } catch {
+        semaphore.signal()
+      }
+      if semaphore.wait(timeout: .now() + timeout) == .timedOut {
         throw ManagedProcessError.stdinUnavailable
       }
+      if writeFailed { throw ManagedProcessError.stdinUnavailable }
     #else
       let descriptor = standardInputHandle.fileDescriptor
       let previousFlags = fcntl(descriptor, F_GETFL)
@@ -405,12 +378,6 @@ public final class ManagedStdioProcess: @unchecked Sendable {
   extension ManagedStdioProcess {
     /// Bridges a ucrt descriptor to its WinSDK handle; nil when the descriptor
     /// does not wrap a kernel handle.
-    fileprivate static func windowsStdioHandle(_ fileHandle: FileHandle) -> HANDLE? {
-      let raw = _get_osfhandle(fileHandle.fileDescriptor)
-      guard raw >= 0, let value = UInt(exactly: raw) else { return nil }
-      return HANDLE(Value: value)
-    }
-
     fileprivate static func terminateProcessByID(_ processID: Int32) -> Bool {
       let handle = OpenProcess(
         DWORD(PROCESS_TERMINATE),
