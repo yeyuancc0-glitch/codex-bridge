@@ -14,27 +14,31 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            swift-url: https://download.swift.org/swift-6.1.2-release/windows10/swift-6.1.2-RELEASE/swift-6.1.2-RELEASE-windows10.exe
+            swift-url: https://download.swift.org/swift-6.2.2-release/windows10/swift-6.2.2-RELEASE/swift-6.2.2-RELEASE-windows10.exe
           - os: windows-11-arm
-            swift-url: https://download.swift.org/swift-6.1.2-release/windows10-arm64/swift-6.1.2-RELEASE/swift-6.1.2-RELEASE-windows10-arm64.exe
+            swift-url: https://download.swift.org/swift-6.2.2-release/windows10-arm64/swift-6.2.2-RELEASE/swift-6.2.2-RELEASE-windows10-arm64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install Swift 6.1.2 toolchain
+      - name: Install Swift 6.2.2 toolchain
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "${{ matrix.swift-url }}" -OutFile swift-installer.exe
           $proc = Start-Process -Wait -PassThru -FilePath .\swift-installer.exe `
-            -ArgumentList "/quiet", "/norestart"
+            -ArgumentList "/quiet", "/norestart", "InstallPerMachine=1"
           Remove-Item .\swift-installer.exe
           Write-Host "installer exit code: $($proc.ExitCode)"
           $roots = @(
+            "$env:ProgramFiles\Swift",
             "$env:LOCALAPPDATA\Programs\Swift",
-            "C:\Library\Developer\Toolchains",
-            "$env:ProgramFiles\Swift"
+            "C:\Library\Developer\Toolchains"
           )
-          $swiftExe = Get-ChildItem $roots -Recurse -Filter swift.exe `
-            -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          $candidates = Get-ChildItem $roots -Recurse -Filter swift.exe `
+            -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          # Prefer the standard toolchain over the +Asserts variant.
+          $swiftExe = ($candidates | Where-Object { $_ -notmatch '\+Asserts' } |
+            Select-Object -First 1)
+          if (-not $swiftExe) { $swiftExe = $candidates | Select-Object -First 1 }
           if (-not $swiftExe) { throw "swift.exe not found after install" }
           Write-Host "found swift at $swiftExe"
           Add-Content $env:GITHUB_PATH (Split-Path $swiftExe)
