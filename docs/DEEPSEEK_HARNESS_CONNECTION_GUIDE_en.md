@@ -88,6 +88,8 @@ cp /Applications/CodexBridge.app/Contents/Resources/BridgeCore_BridgeDeepSeekHar
 
 Do not rebuild or trim the template from an upstream generic example. It contains the validated workspace, file, shell, Web, code runtime, subagent, workflow, ACP, and execution-evidence composition. Model and effort values are the expected configurable parts; compatible trailing composition can also pass normalized structure validation. Re-Probe every change because incompatible edits cause `templateMismatch` or `needs_review`.
 
+Keep the packaged `dsh-user-approval` plugin at `policy: ask`. Bridge uses it to surface DSH `session/request_permission` calls in Workbench. Removing the approval plugin or changing the sandbox to `danger-full-access` is not a supported user configuration.
+
 ## 4. Configure `.env`
 
 Create a DeepSeek API key at [DeepSeek Platform API Keys](https://platform.deepseek.com/api_keys). Store the real key only in the external profile's `.env`; never paste it into Bridge, ChatGPT, source control, screenshots, or issue reports.
@@ -140,7 +142,38 @@ Do not copy model IDs or effort values from Codex, OpenCode, or Antigravity. Wit
 
 ChatGPT/Qwen permission defaults come from `Workbench → Read Only / Write`. Project hard policy still outranks the Workbench setting and every task override.
 
-## 7. Submit a task
+## 7. Configure permissions for normal use
+
+DSH has two separate approval stages:
+
+1. Remote task start: approve the `awaiting_local_approval` task in Workbench, unless automatic remote-start approval is intentionally enabled.
+2. Runtime tool permission: when the task enters `waiting_for_codex_approval`, open `Workbench → Pending Local Approval`, inspect the command, scope, and paths, then select one-shot allow or deny.
+
+Current DSH ACP accepts only `allow_once` and `reject_once`. `full-access`, `auto-review`, `network_access=true`, and automatic task-start approval do not bypass runtime DSH permissions. One task may therefore ask more than once.
+
+For read-only analysis:
+
+1. Allow project reads and deny project writes.
+2. Select `Read Only` in Workbench.
+3. Send `network_access=false` unless the task explicitly needs network access.
+4. Approve the start and handle any runtime command/tool request one at a time.
+
+For code changes:
+
+1. Allow project reads and writes.
+2. Select `Write` in Workbench.
+3. Ensure no other write task is active for the same project.
+4. Approve the start, then resolve each DSH runtime permission request.
+
+For Web Search:
+
+1. Configure the adjacent `.env` and a search endpoint that supports `web_search_20250305`.
+2. Set the project network intent consistently and send `network_access=true`.
+3. Approve the start and any runtime Web-tool permission.
+
+The project network selector is not a packet-level firewall for external providers. The current DSH launcher does not rewrite its profile from `network_access`; actual model and Web access remain governed by DSH's profile, endpoints, and native tools.
+
+## 8. Submit a task
 
 Call `list_projects` and `list_agents` first. Confirm the installation is available, enabled, and accepts task submissions.
 
@@ -168,11 +201,13 @@ Only when the user explicitly requests overrides should the client add `model_ov
 
 Remote submissions normally enter `awaiting_local_approval`. Review project, provider, access mode, network intent, and prompt in Workbench before approving the start. Automatic remote-start approval is disabled by default and never approves later DSH permission requests or Direct operations.
 
+When DSH requests a runtime tool, the persisted task state uses `waiting_for_codex_approval` for compatibility even though the provider remains DSH. In Workbench, inspect the approval card and choose one-shot allow or deny. There is currently no session-wide allow choice for DSH.
+
 Follow `get_task.wait_policy` and read terminal results from the same `get_task` snapshot: `result_summary`, `failure_code`, `changed_files`, activity, model/effort, and provider bindings. Terminal `next_action=read_final_report` is a hint string, not another MCP tool.
 
 Queued steer sends a second prompt after the current prompt finishes. DSH also supports interrupt-current-then-continue for the active session. Neither is Codex in-flight steer.
 
-## 8. Availability and troubleshooting
+## 9. Availability and troubleshooting
 
 | Symptom | Check first |
 | --- | --- |
@@ -187,8 +222,10 @@ Queued steer sends a second prompt after the current prompt finishes. DSH also s
 | Main model works but search fails | Check the independent search base URL, key acceptance, and `web_search_20250305` support |
 | Model list is empty | Select the project and installation, refresh ACP config options, and use exact provider values |
 | Write denied | Check Workbench mode, project hard policy, and the per-project write gate |
-| Network denied | Set explicit `network_access=true` and satisfy project/native provider policy |
-| Task waits indefinitely | Handle remote-start or runtime provider approval in Workbench |
+| Network denied | Set explicit `network_access=true`; verify the adjacent `.env`, endpoint support, and current DSH runtime approval. The project selector is not an external-provider packet firewall |
+| Start was approved but the task still waits | Open Workbench pending approvals, inspect the DSH tool request, and choose one-shot allow or deny |
+| Runtime approval repeats | DSH supports only `allow_once` / `reject_once`; `full-access` does not bypass it |
+| Automatic task start still shows approvals | It skips only `awaiting_local_approval`, not DSH `session/request_permission` |
 
 Do not paste `.env` or raw authentication responses into support reports. Probe success is not end-to-end acceptance: validate the real model, Web Search, read-only task, write task, and permission flow with your own account and a safe test project.
 

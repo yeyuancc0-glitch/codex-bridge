@@ -24,7 +24,7 @@ ChatGPT / Qwen / Bridge 工作台
 
 ### 1.2 项目、Workbench 默认和单任务请求有优先级
 
-权限优先级为：
+工作区读写模式的优先级为：
 
 ```text
 项目硬策略 > 用户明确的单任务覆盖 > Workbench 新任务默认
@@ -54,6 +54,21 @@ DeepSeek Harness 的 `DEEPSEEK_API_KEY` 属于 Provider 凭据，只放在外部
 3. **Direct 操作审批**：Chat 客户端直接写文件、运行命令或创建本地 Git 提交。
 
 打开“自动批准远程 Agent 启动请求”只影响第 1 类，不会自动批准后两类。
+
+### 1.5 权限不是一个总开关
+
+AGY 和 DSH 最容易配置失败，是因为界面里几处“权限”控制的不是同一件事：
+
+| 配置位置 | 实际控制 | 不会替你完成的事 |
+| --- | --- | --- |
+| `项目 → 访问与执行权限` | 项目是否可读、是否允许进入写模式，以及用户期望的网络边界 | 不是外部 Provider 的逐工具审批窗口，也不是网络包级防火墙 |
+| `工作台 → GPT/Qwen 新任务 → Read Only / Write` | ChatGPT/Qwen 新任务的默认工作区模式 | 不批准 Shell、Web、MCP 等 Provider 原生工具 |
+| `设置 → <Provider> 执行默认偏好 → 访问权限` | 非 ChatGPT/Qwen 调用或没有 Workbench 默认时的 Provider 默认模式 | 不会覆盖 Workbench 已选的远程任务默认 |
+| “自动批准远程 Agent 启动请求” | 是否跳过 `awaiting_local_approval` | 不批准 DSH 运行期请求，也不修改 AGY CLI 权限 |
+| AGY CLI `/permissions`、`/settings` | AGY headless 中哪些命令、URL 或 MCP 工具可直接执行 | 不改变 Bridge 的 Read Only / Write 和项目选择 |
+| DSH `session/request_permission` | 当前 DSH 工具调用是否仅本次允许 | 当前不能设置“整次会话允许”或由 `full-access` 自动跳过 |
+
+还有一个容易忽略的当前实现细节：`设置 → Codex 执行默认偏好 → 访问权限` 保存的是 Service 共用的 access mode。它对 DSH 的运行期审批不起作用；只有选择 `full-access` 且该次 AGY 任务同时带 `network_access=true` 时，Bridge 才会为 AGY 增加 `--dangerously-skip-permissions`。这是高风险的非交互兜底，不是推荐的日常配置。
 
 ## 2. 安装与首次启动
 
@@ -110,7 +125,12 @@ Bridge 会保存规范路径和文件系统身份。不要用项目显示名代�
 - **写入权限**：拒绝、需要本机批准或允许。
 - **网络权限**：拒绝、需要本机批准或允许。
 
-保存后，这些策略同时约束 Codex、OpenCode、DeepSeek Harness、Antigravity、Direct Workspace 和 Skill Action 的任务准入与执行模式。允许写入不等于允许任意系统路径：Direct 文件接口会拒绝项目越界、符号链接逃逸和敏感路径；外部 Provider 的进程级文件边界由其原生 mode/sandbox/权限负责。
+保存后，读取与写入策略会参与 Provider/Direct 的任务准入和工作区模式选择。允许写入不等于允许任意系统路径：Direct 文件接口会拒绝项目越界、符号链接逃逸和敏感路径；外部 Provider 的进程级文件边界由其原生 mode/sandbox/权限负责。
+
+对外部 Provider 还要注意两点：
+
+- “写入权限：需要本机批准”不会为 AGY/DSH 的每一次文件写入额外生成 App 审批；任务启动与 Provider 运行期审批仍按各自链路处理。希望明确阻止外部 Provider 写入时请选择“拒绝”。
+- “网络权限”不是 AGY/DSH 的网络包级防火墙。联网任务仍应显式发送 `network_access=true`，并在 AGY/DSH 自己的配置中限制或允许真实网络工具；不能只看项目网络选择器判断 Provider 已联网或已被断网。
 
 ### 4.3 可选：配置 Direct 命令
 
@@ -216,24 +236,38 @@ App 中依次执行：
 
 DSH 当前只创建新 Session，不支持从历史任务恢复 Session；支持排队继续和“中断当前轮后继续”。完整构建、模板、API endpoint 与故障排查见 [DeepSeek Harness 接入指南](./DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)。
 
+第一次执行前还要完成权限配置：
+
+1. `项目 → 访问与执行权限` 中让读取为“允许”；写任务把写入设为“允许”或“需要本机批准”。
+2. `工作台 → GPT/Qwen 新任务` 选择 `Read Only` 或 `Write`。
+3. 保持随包 `cordis.yml` 中的 `approval.policy: ask`，不要删除 approval 插件，也不要把 sandbox 改成 `danger-full-access`。
+4. 远程任务先在工作台点击“批准启动”。运行中出现“等待本机审批”时，检查命令、路径或工具内容，再从“选择允许范围”中选择“仅本次允许”或拒绝。
+
+DSH 当前只接受 `allow_once` / `reject_once`。打开“自动批准远程 Agent 启动请求”只能省去第 4 步的启动批准；`auto-review`、`full-access` 和 `network_access=true` 都不会自动批准 DSH 的运行期工具请求。
+
 ### 5.4 Antigravity
 
 Bridge 登记的是 `agy` CLI，不是 Antigravity Desktop App：
 
-1. 按 Antigravity CLI 的官方方式安装并完成 CLI 自己的登录。
-2. 在终端运行 `agy --version` 和 `agy --help`，确认命令本身可用。
-3. 打开 `连接 → 本机 Agent 引擎连接 → 登记 Agent → Antigravity`。
-4. 选择真实 `agy` 可执行文件并 Probe。
-5. 确认状态为“可用”后打开“启用”。
-6. 到 `设置 → Antigravity 执行默认偏好` 刷新模型并选择默认 model/effort。
+1. 按 Antigravity CLI 的官方方式安装。
+2. 在终端运行 `command -v agy`，记录输出的真实可执行文件路径；再运行 `agy --version` 和 `agy --help`。
+3. 在准备交给 Bridge 的项目根目录启动一次交互式 `agy`，用同一个 macOS 用户完成 CLI 登录。不要用临时或隔离 `HOME` 做登录测试，否则可能重新触发浏览器 OAuth。
+4. 在 AGY 交互界面输入 `/settings`（或 `/config`），确认 **Tool Permission** 为 `proceed-in-sandbox`（沙箱内终端命令自动执行）。这是正常使用前的关键配置；Bridge 始终传入 `--sandbox`，设置页显示 Sandbox Mode 被命令行覆盖为开启属于正常现象。
+5. 输入 `/permissions`，优先选择 **Project** 作用域，在 allow 页添加任务确实需要的窄规则，例如 `command(git status)`、`command(swift test)`、`read_url(developer.apple.com)` 或 `mcp(server/tool)`。Web 域名、Shell 与 MCP 是不同规则；`deny > ask > allow`，更宽的 ask/deny 规则可能覆盖 allow。
+6. 打开 `连接 → 本机 Agent 引擎连接 → 登记 Agent → Antigravity`，选择第 2 步得到的真实 `agy` 文件。如果路径位于隐藏目录，在文件选择器按 `⌘⇧G` 粘贴绝对路径。
+7. 点击“登记并 Probe”，确认状态为“可用”，再打开“启用”。
+8. 到 `设置 → Antigravity 执行默认偏好` 刷新模型并选择默认 model/effort/访问权限。
 
 当前兼容范围为 `1.1.21 <= agy < 1.2.0`。Probe 还会检查当前帮助中是否存在 stream-json、plan、accept-edits、sandbox、conversation、model 和 effort 能力。
 
 - `Read Only` 使用 `--mode plan`。
 - `Write` 使用 `--mode accept-edits`。
 - Bridge 保留 `agy` 原生 `--sandbox`，不再附加外层 `sandbox-exec`。
-- Desktop 的登录/自动执行设置不保证会同步到 CLI；以 `agy` 自己的 CLI 配置为准。
-- 当前 headless 输入无法交互回传每个原生工具审批。完全访问只会在本机用户明确保存对应任务权限和网络允许时启用，不能作为默认设置。
+- Desktop 的自动执行设置不等于 CLI 的 `~/.gemini/antigravity-cli/settings.json`；以 `agy` 交互界面中的 `/settings` 和 `/permissions` 为准。
+- Bridge 使用 headless `stream-json`，不能在 App 中回答 AGY 的交互式工具确认。没有提前命中 allow 规则的操作会被 AGY 拒绝或软拒绝，因此应在交互式 CLI 中先配置窄规则。
+- 最后手段是将 Service access mode 设为 `full-access`，并让该任务明确发送 `network_access=true`；此时 Bridge 才加入 `--dangerously-skip-permissions`。它会跳过全部 AGY 工具确认，但仍保留 `--sandbox` 和 Plan/Accept Edits，且可能同时影响其他 Provider 默认行为，完成后应改回“请求批准”。
+
+完整的只读、联网、写入和故障排查步骤见 [Antigravity / AGY 连接与权限指南](./ANTIGRAVITY_CONNECTION_GUIDE.md)。
 
 ### 5.5 理解安装状态
 
@@ -361,7 +395,7 @@ App 复制的结构类似：
 
 `installation_id` 通常可省略；有多个启用安装时再使用 `list_agents` 返回的精确值。只有用户明确指定模型/effort 时才设置 `model_override=true`，并使用当前 Provider 模型目录中的精确 ID。
 
-用户明确要求 Web Search、读取 URL 或调用外部 API 时，应发送 `network_access=true`。这代表明确的网络意图和项目准入，不代表 Bridge 为外部 Provider 提供网络包级隔离。
+用户明确要求 Web Search、读取 URL 或调用外部 API 时，应发送 `network_access=true`。这代表明确的网络意图和 Provider 能力请求，不代表 Bridge 为外部 Provider 提供网络包级隔离，也不替代其原生网络权限。
 
 ### 8.4 本机批准启动
 
@@ -381,7 +415,23 @@ awaiting_local_approval
 
 该设置默认关闭，并且不批准 Provider 后续工具请求或 Direct 操作。
 
-### 8.5 等待与读取结果
+### 8.5 处理 Provider 运行期审批
+
+任务进入：
+
+```text
+waiting_for_codex_approval
+```
+
+时，打开 `工作台 → 等待本机审批`，先阅读卡片里的工具类型、命令、权限范围和目标路径：
+
+- DSH：在“选择允许范围”中选择“仅本次允许”或点击“拒绝”。一次批准只对应当前 `session/request_permission`，后续工具可能再次询问。
+- OpenCode/Codex：可用范围以卡片实际列出的 Provider 选项为准。
+- AGY：当前不会在这里出现可回答的 headless 工具审批。若 AGY 报权限拒绝，应回到交互式 `agy` 的 `/permissions` 添加窄 allow 规则，或在完全可信的任务中使用前述 `full-access + network_access=true` 兜底。
+
+审批有时效且绑定当前任务/Session/Run；不要批准内容与预期项目、命令或路径不一致的卡片。
+
+### 8.6 等待与读取结果
 
 提交后按 `get_task.wait_policy` 建议的时间等待，再调用 `get_task`：
 
@@ -405,7 +455,7 @@ awaiting_local_approval
 - `thread_id` 或 `provider_session_id`
 - `turn_id` 或 `provider_run_id`
 
-### 8.6 继续和中断
+### 8.7 继续和中断
 
 | Provider | 继续方式 |
 | --- | --- |
@@ -485,6 +535,11 @@ Bridge 可发现已登记项目中的 `SKILL.md`，但只执行其中明确暴�
 | DSH 找不到正确文件 | 选择固定 tag 构建后的 `packages/examples/acp-demo/lib/bin.js`，不是 `dsh` 或 Web UI |
 | DSH Probe 成功但 API 失败 | `.env` 是否与 `cordis.yml` 同目录；Key、Base URL、账号额度是否由 Provider 侧有效 |
 | DSH 主模型正常但搜索失败 | 检查独立 `DEEPSEEK_SEARCH_BASE_URL` 和 `web_search_20250305` 支持 |
+| DSH 已批准启动但仍停住 | 查看工作台“等待本机审批”；DSH 运行期只支持“仅本次允许/拒绝”，`full-access` 不会跳过 |
+| DSH 反复弹审批 | 这是当前 `approval.policy: ask` 的逐次 ACP 权限流；不要删除模板插件，按每次工具内容决定 |
+| AGY 只读/写任务报 permission denied | 在目标项目中交互启动 `agy`，用 `/settings` 选择 `proceed-in-sandbox`，再用 `/permissions` 添加窄 allow 规则 |
+| AGY Web 搜索或读 URL 被拒绝 | 任务需 `network_access=true`；在 AGY `/permissions` 为 `read_url(domain)` / `execute_url(domain)` 放行，检查是否有更高优先级 ask/deny |
+| AGY Desktop 已自动执行但 Bridge 仍拒绝 | Desktop 与 CLI 设置不是同一来源；检查 `agy` CLI 的 `/settings`、`/permissions` 和当前登录用户 |
 | 任务一直等待 | 是否仍是 `awaiting_local_approval` 或等待 Provider permission；在工作台处理 |
 | `project_busy` | 同项目已有写任务或 Direct 写会话；等待或中断正确任务 |
 | `unknown` | Service/Provider 是否重启并失去运行绑定；不要把它当作已完成或自动新建替代任务 |
@@ -506,4 +561,5 @@ Bridge 可发现已登记项目中的 `SKILL.md`，但只执行其中明确暴�
 - [ChatGPT Developer Mode 接入指南](./CHATGPT_DEVELOPER_MODE.md)
 - [OpenCode 连接指南](./OPENCODE_CONNECTION_GUIDE.md)
 - [DeepSeek Harness 接入指南](./DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)
+- [Antigravity / AGY 连接与权限指南](./ANTIGRAVITY_CONNECTION_GUIDE.md)
 - [Secure Tunnel Helper 技术说明](./TUNNEL_CLIENT_INTEGRATION.md)

@@ -23,8 +23,8 @@ Bridge 不依赖开发者自建的云端中转、账号系统或远程数据库�
 | Qwen Studio | 本机回环 Streamable HTTP `/mcp`；App 一键复制带认证 Header 的 JSON |
 | Codex | 默认 Provider；`codex app-server --stdio`、Thread/Turn、实时 steer、interrupt、审批与 Supervisor |
 | OpenCode | ACP stdio；Plan/Build、动态模型与 effort、permission 回传、同 Session 排队继续 |
-| DeepSeek Harness | 固定版本 ACP 适配；外部 `cordis.yml`、模型/effort、Web/工具/子代理、执行证据与本机审批 |
-| Antigravity | `agy` CLI stream-json；Plan/Accept Edits、原生 sandbox、会话继续、模型/effort 与 queued steer |
+| DeepSeek Harness | 固定版本 ACP 适配；外部 `cordis.yml`、模型/effort、Web/工具/子代理、执行证据与逐次本机审批 |
+| Antigravity | `agy` CLI stream-json；Plan/Accept Edits、原生 sandbox、CLI 权限规则、会话继续与 queued steer |
 | Direct Workspace | 受控读写、revision 校验、Patch、结构化命令、进程会话和本地 Git 提交 |
 | Skills | 安全发现 `SKILL.md`，只执行显式声明的 Action |
 
@@ -107,9 +107,16 @@ Bridge 只接受已登记项目。项目硬策略优先于 Workbench 默认和�
 - **Codex**：默认 Provider，不在“本机 Agent 引擎连接”中登记。请先在官方 Codex/ChatGPT 环境完成登录，再到 `设置 → Codex 执行默认偏好` 选择模型、effort、访问权限和 Fast 模式。Bridge 不读取 Codex 认证文件。
 - **OpenCode**：`连接 → 本机 Agent 引擎连接 → 登记 Agent → OpenCode`，选择真实 `opencode` 可执行文件并 Probe。详见 [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)。
 - **DeepSeek Harness**：登记官方 `dsh-v0.1.1-rc.2` 构建出的 `packages/examples/acp-demo/lib/bin.js`，再选择 DSH 源码树之外的 `cordis.yml`；为隔离凭据，建议 Profile 也位于任务项目和 Bridge 仓库之外。`.env` 与 `cordis.yml` 同目录，由 Harness 自己读取。详见 [DeepSeek Harness 接入指南](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)。
-- **Antigravity**：登记真实 `agy` CLI，而不是 Desktop App。Bridge 会检查版本与当前 `--help` 中的 stream-json、mode、sandbox、conversation、model 和 effort 能力。
+- **Antigravity**：先用 `command -v agy` 找到真实 CLI，在目标项目中交互登录，并通过 `/settings`、`/permissions` 配置 headless 所需的命令、URL 与 MCP 规则；不要登记 Desktop App。详见 [Antigravity / AGY 连接与权限指南](./docs/ANTIGRAVITY_CONNECTION_GUIDE.md)。
 
 外部 Provider 登记成功后还要打开“启用”，然后到 `设置` 中刷新该 Provider 的模型目录并保存默认模型/effort。模型 ID 以当前 Provider 实际返回值为准，不要跨 Provider 猜别名。
+
+### 外部 Provider 权限要点
+
+- ChatGPT/Qwen 的 `Read Only / Write` 由工作台决定；Provider 设置页中的访问权限只是后备默认。
+- DSH 保持 `approval.policy: ask`，运行中在工作台对每个 `session/request_permission` 选择“仅本次允许”或拒绝。`full-access` 和自动批准任务启动都不会跳过该步骤。
+- AGY 正常使用前，必须在交互式 `agy` 的 `/settings` 中确认 **Tool Permission = `proceed-in-sandbox`**（沙箱内终端命令自动执行），再用 Project 作用域的 `/permissions` 添加窄 allow 规则。Bridge 已强制传入 `--sandbox`。
+- 项目网络选择器不是外部 Provider 的网络包级防火墙；联网任务需显式 `network_access=true`，真实网络仍由 AGY/DSH 原生配置和工具权限负责。
 
 ### 5. 连接 Chat 客户端
 
@@ -161,7 +168,7 @@ unknown：失去原运行绑定后的非终态，需要本机复核
 | 写入并发 | 同一项目只有一个活动写任务；Direct 与 Provider 共享工作区门禁 |
 | Provider 授权 | 远程启动、Provider 执行期 permission 与 Direct 操作是不同审批层级 |
 | 凭据 | Tunnel Runtime Key 与按客户端 profile 分离的本地 MCP Secret 存入 Keychain；Bridge 不读取 Provider 的账号凭据或 DSH `.env` |
-| 网络 | 由项目策略、任务请求和 Provider 原生策略共同决定；外部 Provider 不由 Bridge 伪装成逐包网络沙箱 |
+| 网络 | Codex/Direct 受项目策略约束；外部 Provider 记录明确任务意图并使用原生网络策略，项目选择器不是逐包防火墙 |
 | Git | `direct_git_commit` 只创建受控本地提交，不允许 push、amend、reset 或历史改写 |
 
 ## 项目结构
@@ -212,6 +219,7 @@ Xcode/Swift 命令统一经 `Scripts/with-xcode.sh` 选择工具链。App 打包
 - [ChatGPT Developer Mode 接入指南](./docs/CHATGPT_DEVELOPER_MODE.md)
 - [OpenCode 连接指南](./docs/OPENCODE_CONNECTION_GUIDE.md)
 - [DeepSeek Harness 接入指南](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE.md)
+- [Antigravity / AGY 连接与权限指南](./docs/ANTIGRAVITY_CONNECTION_GUIDE.md)
 - [系统与环境兼容性矩阵](./docs/COMPATIBILITY.md)
 - [Secure Tunnel Helper 技术说明](./docs/TUNNEL_CLIENT_INTEGRATION.md)
 - [构建、签名与发布流程](./docs/RELEASE.md)

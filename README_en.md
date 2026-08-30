@@ -23,8 +23,8 @@ Bridge does not depend on a developer-operated relay, account service, or remote
 | Qwen Studio | Loopback Streamable HTTP `/mcp`; the app copies an authenticated JSON profile |
 | Codex | Default provider; `codex app-server --stdio`, Thread/Turn, live steer, interrupt, approvals, and Supervisor |
 | OpenCode | ACP stdio, Plan/Build, runtime model and effort options, permissions, and queued follow-up prompts |
-| DeepSeek Harness | Version-pinned ACP adapter, external `cordis.yml`, models/effort, Web/tools/subagents, execution evidence, and local approvals |
-| Antigravity | `agy` stream-json CLI, Plan/Accept Edits, native sandbox, conversation resume, model/effort, and queued steer |
+| DeepSeek Harness | Version-pinned ACP adapter, external `cordis.yml`, models/effort, Web/tools/subagents, execution evidence, and one-shot local approvals |
+| Antigravity | `agy` stream-json CLI, Plan/Accept Edits, native sandbox, CLI permission rules, conversation resume, and queued steer |
 | Direct Workspace | Controlled reads/writes, revision-aware patches, structured commands, process sessions, and local Git commits |
 | Skills | Safe `SKILL.md` discovery; only explicitly declared actions can run |
 
@@ -107,9 +107,16 @@ When a remote request omits `project_id`, the selected Workbench project is auth
 - **Codex** is the default provider and is not registered under local agent connections. Complete official Codex/ChatGPT authentication, then select model, effort, access, and optional Fast tier in Settings. Bridge does not read Codex credentials.
 - **OpenCode**: `Connections → Local Agent Engine Connections → Register Agent → OpenCode`; select the real `opencode` executable and Probe it. See the [OpenCode guide](./docs/OPENCODE_CONNECTION_GUIDE.md).
 - **DeepSeek Harness**: build pinned tag `dsh-v0.1.1-rc.2`, register `packages/examples/acp-demo/lib/bin.js`, then select an external `cordis.yml`. The adjacent `.env` is loaded by Harness itself. See the [DeepSeek Harness guide](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE_en.md).
-- **Antigravity**: register the actual `agy` CLI, not the Desktop application. Bridge checks its version and current stream-json, mode, sandbox, conversation, model, and effort options.
+- **Antigravity**: use `command -v agy` to locate the actual CLI, sign in interactively from the target project, and configure headless command, URL, and MCP rules through `/settings` and `/permissions`; do not register the Desktop application. See the [Antigravity / AGY guide (Chinese)](./docs/ANTIGRAVITY_CONNECTION_GUIDE.md).
 
 After registering an external provider, enable it, then refresh its model catalog in Settings. Model IDs and effort values are provider-native and must not be guessed or aliased across providers.
+
+### External-provider permission essentials
+
+- Workbench `Read Only / Write` controls new ChatGPT/Qwen tasks; the provider Settings value is only a fallback default.
+- DSH keeps `approval.policy: ask`. Resolve each runtime `session/request_permission` in Workbench with one-shot allow or deny; `full-access` and automatic task-start approval do not bypass it.
+- Before normal AGY use, confirm **Tool Permission = `proceed-in-sandbox`** in interactive `agy /settings`, then add narrow Project-scoped allow rules through `/permissions`. Bridge already forces `--sandbox`.
+- The project network selector is not a packet-level firewall for external providers. Network tasks require explicit `network_access=true`, while actual access remains governed by AGY/DSH native configuration and tool policy.
 
 ### 5. Connect clients
 
@@ -159,7 +166,7 @@ unknown: non-terminal state after losing the original run binding; requires loca
 | Concurrent writes | Provider and Direct paths share one per-project write gate |
 | Approval layers | Remote start approval, provider runtime permission, and Direct approval are separate |
 | Credentials | Tunnel Runtime Key and per-client-profile local MCP secrets use Keychain; Bridge does not read provider credentials or the DSH `.env` |
-| Network | Project policy, explicit task intent, and native provider policy all apply; Bridge does not pretend external providers have packet-level isolation |
+| Network | Codex/Direct enforce project policy; external providers record explicit task intent and use native policy, while the project selector is not a packet-level firewall |
 | Git | `direct_git_commit` creates controlled local commits only; push, amend, reset, and history rewrites are disallowed |
 
 ## Repository layout
@@ -210,6 +217,7 @@ Packaging, installation, and signing only prove artifact state. Real ChatGPT, Qw
 - [ChatGPT Developer Mode guide (Chinese)](./docs/CHATGPT_DEVELOPER_MODE.md)
 - [OpenCode connection guide (Chinese)](./docs/OPENCODE_CONNECTION_GUIDE.md)
 - [DeepSeek Harness connection guide](./docs/DEEPSEEK_HARNESS_CONNECTION_GUIDE_en.md)
+- [Antigravity / AGY connection and permissions guide (Chinese)](./docs/ANTIGRAVITY_CONNECTION_GUIDE.md)
 - [Compatibility matrix](./docs/COMPATIBILITY.md)
 - [Secure Tunnel integration notes](./docs/TUNNEL_CLIENT_INTEGRATION.md)
 - [Build, signing, and release](./docs/RELEASE.md)

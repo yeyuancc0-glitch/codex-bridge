@@ -190,6 +190,8 @@ cp /Applications/CodexBridge.app/Contents/Resources/BridgeCore_BridgeDeepSeekHar
 
 普通用户不应删除插件、改写 sandbox 结构或把模板改成另一种通用 DSH 配置。模型目录、默认模型、thinking/reasoning effort 是预期的可配置内容；兼容的尾部扩展也可能通过归一化结构校验，但任何改动都应重新 Probe，结构不兼容时会触发 `templateMismatch` 或 `needs_review`。
 
+模板中的 `dsh-user-approval` 必须保持 `policy: ask`。Bridge 依靠它把 DSH 的 `session/request_permission` 带回本机工作台；删除 approval 插件、改成自动放行或把 sandbox 改成 `danger-full-access` 都不是受支持的用户配置。
+
 ## 7. 创建 `.env` 并配置 DeepSeek API Key
 
 DeepSeek API Key 可从 [DeepSeek Platform API Keys](https://platform.deepseek.com/api_keys) 创建。只把真实 Key 粘贴到本机 Profile 的 `.env`，不要放进 Bridge UI、项目 `.env`、聊天、截图、Issue 或 Git。
@@ -284,7 +286,7 @@ Search endpoint 必须同时满足：
 4. 点击“刷新模型列表”。
 5. 选择 DSH 当前 ACP Session 返回的精确模型 ID。
 6. 选择当前 DSH Profile 支持的 effort。模型 ID 来自 ACP 动态目录；effort 不是按模型由 ACP 单独广告。
-7. 保存默认访问模式。
+7. 保存默认访问模式。它是 DSH 的 Provider 默认；ChatGPT/Qwen 新任务仍优先使用工作台的 `Read Only / Write`。
 
 模型目录来自：
 
@@ -298,19 +300,97 @@ session/new → configOptions
 
 ## 11. 权限、网络与工作区
 
-DSH 支持：
+### 11.1 先区分四层设置
 
-- `read-only`
-- `workspace-write`
+| 层级 | 在哪里配置 | 对 DSH 的实际作用 |
+| --- | --- | --- |
+| 项目访问 | `项目 → 访问与执行权限` | 读取必须允许；写入为“拒绝”时，DSH 不能进入 `workspace-write` |
+| 远程任务模式 | `工作台 → GPT/Qwen 新任务` | `Read Only` 或 `Write` 是 ChatGPT/Qwen 新任务默认值 |
+| DSH Profile sandbox | 外部 `cordis.yml` 的受验证模板 | Bridge 在私有运行副本中把 `read-only` 精确改为本任务的 `read-only` 或 `workspace-write` |
+| DSH 运行期审批 | `工作台 → 等待本机审批` | 对当前 `session/request_permission` 选择“仅本次允许”或拒绝 |
 
-项目硬策略始终优先。项目禁止写入时，任务只能收窄为只读。
+`设置 → DeepSeek Harness 执行默认偏好 → 访问权限` 只提供 DSH 默认模式；ChatGPT/Qwen 已有 Workbench 默认时以 Workbench 为准。只有用户明确要求单任务覆盖并带 `permission_mode_override=true`，MCP 参数才替换该默认。
 
-- 只读任务可在共享项目中并行。
-- 同一项目最多一个活动写任务；DSH 与其他 Provider/Direct 共享 workspace gate。
-- DSH 使用 Profile 和 Provider 原生策略，Bridge 不再套外层 `sandbox-exec`。
-- `network_access=true` 表示用户明确请求网络并通过项目准入，不是 Bridge 提供逐包网络隔离。
+### 11.2 `full-access` 不会关闭 DSH 审批
 
-需要 Web Search、URL fetch 或外部 API 时，任务必须明确设置 `network_access=true`，并且项目网络策略必须允许或经本机批准。
+当前 DSH Profile 固定使用：
+
+```yaml
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+  config:
+    policy: ask
+```
+
+DSH 发出 `session/request_permission` 后，Bridge 当前只接受两类响应：
+
+```text
+allow_once
+reject_once
+```
+
+因此以下设置都不能跳过 DSH 运行期审批：
+
+- “自动批准远程 Agent 启动请求”——只处理任务启动；
+- `设置 → Codex 执行默认偏好 → full-access`；
+- `auto-review`；
+- `network_access=true`；
+- Workbench 选择 `Write`。
+
+运行中出现审批卡片时，展开命令、权限范围和目标路径，选择“仅本次允许”或“拒绝”。当前没有“本次会话全部允许”选项；同一任务可能因多个工具调用而多次询问。
+
+### 11.3 Read Only 与 Write 如何映射
+
+- Workbench `Read Only` → DSH `read-only`，只读任务使用共享项目，可并行。
+- Workbench `Write` → DSH `workspace-write`，同一项目最多一个活动写任务；DSH 与其他 Provider/Direct 共用 workspace gate。
+- 项目写入为“拒绝”时，任何默认或单任务覆盖都不能升级为可写。
+- 项目写入为“需要本机批准”不会额外生成每次文件写入审批；DSH 是否询问由 `approval.policy: ask` 和实际工具请求决定。希望硬性禁止写入时请选择“拒绝”。
+- Bridge 不允许 DSH 使用 `danger-full-access`，也不在 DSH 外层增加 `sandbox-exec`。
+
+### 11.4 网络与 Web Search
+
+需要 Web Search、URL fetch 或外部 API 时，MCP 任务必须明确设置：
+
+```json
+"network_access": true
+```
+
+这表示用户明确请求 Provider 原生网络能力，不会：
+
+- 为 DSH 创建独立的网络包级沙箱；
+- 自动批准 Web 工具；
+- 配置 `.env`、API Key 或搜索 endpoint；
+- 证明项目网络选择器已经在进程层阻断或放行所有 DSH 流量。
+
+当前 DSH 启动器不会根据 `network_access` 改写 Profile；真正的模型和搜索网络由 DSH 模板、`.env` 与 Provider 原生工具负责。为了让配置意图一致，联网任务应把项目网络设为“允许”或“需要本机批准”，同时显式发送 `network_access=true`，并继续处理 DSH 运行期审批。不要把项目网络选择器当成外部 Provider 的硬防火墙。
+
+### 11.5 三种可直接照做的配置
+
+#### 只读分析，不联网
+
+1. `项目`：读取“允许”、写入“拒绝”。
+2. `工作台`：选择正确项目和 `Read Only`。
+3. `设置 → DeepSeek Harness 执行默认偏好`：默认访问权限选“只读”。
+4. 任务发送 `network_access=false`。
+5. 在工作台批准任务启动；若 DSH 仍请求命令等敏感工具，按内容选择“仅本次允许”或拒绝。
+
+#### 修改项目文件
+
+1. `项目`：读取“允许”、写入“允许”。
+2. `工作台`：选择 `Write`。
+3. 确认同一项目没有另一个活动写任务。
+4. 在工作台批准任务启动。
+5. DSH 请求命令、文件或其他工具权限时逐次处理；不要期待 `full-access` 自动代答。
+
+#### Web Search
+
+1. 保持 `.env` 与登记的 `cordis.yml` 同目录。
+2. 验证 `DEEPSEEK_BASE_URL`、`DEEPSEEK_SEARCH_BASE_URL` 和当前 Key 对应的账号能力。
+3. 项目网络设置为“允许”或“需要本机批准”。
+4. 提交任务时显式发送 `network_access=true`。
+5. 批准任务启动，并在出现 Web 工具的 DSH 运行期请求时选择“仅本次允许”。
+
+如果只想减少一次启动点击，可以开启“自动批准远程 Agent 启动请求”；它不会减少第 5 步的 DSH 工具审批。
 
 ## 12. 从 ChatGPT/Qwen 提交 DSH 任务
 
@@ -388,7 +468,25 @@ awaiting_local_approval
 
 打开 Bridge 工作台，核对项目、DSH 安装、权限、网络意图和 prompt 后点击“批准启动”。设置中的“自动批准远程 Agent 启动请求”默认关闭；开启后也只批准启动，不批准 DSH 后续的 `session/request_permission`。
 
-### 13.2 读取结果
+### 13.2 运行期工具审批
+
+任务状态变成：
+
+```text
+waiting_for_codex_approval
+```
+
+时，进入 `工作台 → 等待本机审批`：
+
+1. 核对标题和 Provider 是当前 DSH 任务。
+2. 阅读卡片中的命令、请求权限、相对路径和理由。
+3. 点击“选择允许范围”。
+4. 选择“仅本次允许”；不认可时点击“拒绝”。
+5. 返回任务对话继续观察。后续不同工具请求可能再次出现。
+
+当前状态名沿用了 `waiting_for_codex_approval`，但它同样承载 DSH Provider 审批，并不表示任务改由 Codex 执行。审批有时效且绑定当前 task/session/run；过期、未知选项或绑定不匹配会拒绝执行。
+
+### 13.3 读取结果
 
 按 `get_task.wait_policy` 轮询 `get_task`。不要因为 DSH 暂时没有文本输出或 `updated_at` 未变化就判断失败。终态的 `next_action=read_final_report` 只是提示字符串，不是另一个 MCP 工具；进入终态后，从同一任务快照读取：
 
@@ -402,7 +500,7 @@ awaiting_local_approval
 - `execution_effort`
 - `permission_mode`
 
-### 13.3 继续和中断
+### 13.4 继续和中断
 
 - 普通 `steer_task` 会把补充指令排队，在当前 prompt 完成后作为下一次 prompt 发送。
 - DSH 还支持“中断当前轮后继续”，先中断当前执行，再在同一当前 Session 中发送后续 prompt。
@@ -457,8 +555,11 @@ awaiting_local_approval
 | 模型列表为空 | 选择正确 Workbench 项目和 DSH 安装后刷新；检查 ACP `configOptions` |
 | 模型/effort 不可用 | 模型使用当前 ACP Session 返回的精确值；effort 使用当前 Profile 支持集合，不要使用其他 Provider 的别名 |
 | 写入被拒绝 | Workbench/任务是否只读；项目硬策略是否禁止写入；同项目是否已有写任务 |
-| 网络工具被拒绝 | 任务是否明确 `network_access=true`；项目网络策略和 DSH 原生权限是否允许 |
-| 任务停在等待状态 | 在工作台批准远程启动或处理 DSH 执行期 permission |
+| 网络工具被拒绝 | 任务是否明确 `network_access=true`；`.env`、搜索 endpoint 和当前 DSH 工具审批是否有效；项目网络选择器不是外部 Provider 硬防火墙 |
+| 已批准启动但任务仍等待 | 查看工作台“等待本机审批”，展开当前 DSH 命令/权限/路径后选择“仅本次允许”或拒绝 |
+| DSH 反复请求审批 | 当前只支持 `allow_once` / `reject_once`；多个工具请求会逐次询问，`full-access` 不会跳过 |
+| 开启自动启动仍有审批 | 自动启动只处理 `awaiting_local_approval`，不处理 DSH `session/request_permission` |
+| 修改 Profile 想关闭审批后变成 `needs_review` | 恢复当前 Bridge 随包模板；保留 `dsh-user-approval` 的 `policy: ask` |
 | 误以为要开启 Web UI | Bridge 直接运行 ACP stdio，不需要 `pnpm dsh web` |
 
 ## 16. 安全与验收边界
