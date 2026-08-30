@@ -78,9 +78,38 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    支持 Windows。若 GRDB 在 Windows 构建受阻，需要为 `BridgeServiceCore` 引入
    持久化后端抽象——这是 Windows 构建链路上最大的未验证风险点。
 
-## 验证路径
+## 验证路径与 CI 现状
 
 - macOS：全量 `swift test`（所有套件 0 失败为门禁）+ Xcode Debug 构建。
-- Windows：`Scripts/build-windows.ps1 -Test` 或 CI workflow。Windows 专属源码
-  （`#if os(Windows)`）在 macOS 上不参与编译，编译正确性由 Windows 侧构建与
-  CI 验证。
+- Windows：`.github/workflows/windows.yml`（windows-latest，x64）。Windows 专属
+  源码（`#if os(Windows)`）在 macOS 上不参与编译，编译正确性由 CI 逐轮验证，
+  截至 2026-08-30 仍在收敛中（详见下节）。
+
+### CI 工具链安装（已踩平的坑）
+
+1. `swift-actions/setup-swift` 的版本目录不含 6.x Windows 工具链 → workflow
+   直接下载 swift.org 官方安装器静默安装（`/quiet /norestart`）。
+2. 安装器默认 **per-user**，位置 `%LOCALAPPDATA%\Programs\Swift`；安装完成后
+   用 `Get-ChildItem -Recurse -Filter swift.exe` 定位并把目录写入 `GITHUB_PATH`。
+3. Swift 6.1.2 / 6.2.2 **release** 安装器存在缺 DLL 打包缺陷
+   （swiftlang/swift#86191，`_CompilerSwiftWarningControl.dll` 未打入），表现为
+   `swift.exe` 以 0xC0000135 静默退出；**6.3.3 起已修复**。
+4. 工具链的宿主运行库（swiftCore/swiftCRT/swiftDispatch/FoundationEssentials/
+   mimalloc）由 bundle 的独立 **Runtime Libraries** MSI 装在
+   `Runtimes/<ver>\usr\bin`，必须一并加入 PATH。
+5. 安装器同时写入 `SDKROOT`（bundled `Windows.platform` SDK）——MSI 改的机器
+   环境变量不会传导到已在运行的 job step，需用 `GITHUB_ENV` 显式转发。
+6. GRDB 的 `GRDBSQLite` 是 systemLibrary（`link "sqlite3"`），Windows 无系统
+   sqlite → CI 用 vcpkg 安装 sqlite3 并把 vcpkg/MSVC/Windows Kits 的
+   include/lib 组合进 `INCLUDE`/`LIB`（注意：设置 `LIB` 会覆盖 MSVC 自动发现，
+   必须完整组合；`BOOL` 在 WinSDK Swift 映射里是 `Bool`，不能与 `0` 比较）。
+7. Windows Defender 实时扫描会显著拖慢 Swift 编译，workflow 已对构建目录与
+   编译进程加排除项。
+8. **windows-11-arm runner 镜像无 Windows SDK**，原生链接必然失败；ARM64 CI
+   leg 暂移除，待镜像提供 SDK 或自行安装 Build Tools 后恢复。
+9. 上游 **MCP swift-sdk 0.12.1 不支持 Windows**（对 EventSource 的依赖带
+   `.when(platforms:)` 排除 Windows，但源码无条件 `import EventSource`，且
+   `URLSession.bytes(for:)` 在 Windows FoundationNetworking 上不存在）→ 已
+   vendor 至 `Vendor/swift-sdk` 并打补丁：`canImport(EventSource)` 守卫 +
+   `URLSession.bytes`/SSE 兼容 shim（SSE 在 Windows 上为整段缓冲接收，非增量
+   流式）。上游恢复 Windows 支持后可切回。
