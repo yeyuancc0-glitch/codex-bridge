@@ -345,20 +345,23 @@ public struct BoundedProcessRunner: Sendable {
       _ = SetHandleInformation(outputPipe.read, DWORD(HANDLE_FLAG_INHERIT), 0)
       _ = SetHandleInformation(errorPipe.read, DWORD(HANDLE_FLAG_INHERIT), 0)
 
-      let commandLine = Self.windowsCommandLine(
-        [configuration.executableURL.path] + configuration.arguments
-      )
+      var commandLine =
+        Array(
+          Self.windowsCommandLine(
+            [configuration.executableURL.path] + configuration.arguments
+          ).utf16
+        ) + [WCHAR(0)]
       let environmentBlock = Self.windowsEnvironmentBlock(configuration.environment)
       var startup = STARTUPINFOW()
       startup.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
       var processInformation = PROCESS_INFORMATION()
       let workingPath = configuration.workingDirectory.url.path
-      let launched = commandLine.withCString(encodedAs: UTF16.self) { commandWide in
+      let launched = commandLine.withUnsafeMutableBufferPointer { commandWide in
         environmentBlock.withCString(encodedAs: UTF16.self) { environmentWide in
           workingPath.withCString(encodedAs: UTF16.self) { workingWide in
             CreateProcessW(
               nil,
-              UnsafeMutablePointer<WCHAR>(mutating: commandWide),
+              commandWide.baseAddress,
               nil,
               nil,
               true,
@@ -404,17 +407,33 @@ public struct BoundedProcessRunner: Sendable {
     /// Minimal MSVC command-line quoting; arguments are quoted when they contain
     /// whitespace or quotes.
     private static func windowsCommandLine(_ arguments: [String]) -> String {
-      arguments.map { argument in
-        let requiresQuoting =
-          argument.isEmpty || argument.contains(" ") || argument.contains("\t")
-          || argument.contains("\"")
-        guard requiresQuoting else { return argument }
-        let escaped =
-          argument
-          .replacingOccurrences(of: "\\", with: "\\\\")
-          .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
-      }.joined(separator: " ")
+      arguments.map(Self.windowsArgument).joined(separator: " ")
+    }
+
+    private static func windowsArgument(_ argument: String) -> String {
+      let requiresQuoting =
+        argument.isEmpty || argument.contains(" ") || argument.contains("\t")
+        || argument.contains("\"")
+      guard requiresQuoting else { return argument }
+      var result = "\""
+      var backslashes = 0
+      for character in argument {
+        if character == "\\" {
+          backslashes += 1
+          continue
+        }
+        if character == "\"" {
+          result += String(repeating: "\\", count: backslashes * 2 + 1)
+          result.append(character)
+        } else {
+          result += String(repeating: "\\", count: backslashes)
+          result.append(character)
+        }
+        backslashes = 0
+      }
+      result += String(repeating: "\\", count: backslashes * 2)
+      result.append("\"")
+      return result
     }
 
     private static func windowsEnvironmentBlock(_ entries: [String]) -> String {

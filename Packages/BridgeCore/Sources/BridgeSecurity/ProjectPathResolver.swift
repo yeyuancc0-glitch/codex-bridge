@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import Foundation
 
 public struct ResolvedProjectPath: Equatable, Sendable {
@@ -54,15 +55,20 @@ public struct ProjectPathResolver: Sendable {
   }
 
   private func contains(_ candidate: String) -> Bool {
-    candidate == root.canonicalPath || candidate.hasPrefix(root.canonicalPath + "/")
+    AgentPathSemantics.isContained(candidate, in: root.canonicalPath)
   }
 
   private func relativePathForResolvedURL(_ url: URL) throws -> SecureRelativePath {
-    let start = url.path.index(url.path.startIndex, offsetBy: root.canonicalPath.count)
-    let suffix = url.path[start...].drop(while: { $0 == "/" })
-    guard !suffix.isEmpty else {
+    guard
+      let relative = AgentPathSemantics.relativePath(
+        url.path,
+        from: root.canonicalPath
+      )
+    else {
       throw PathSecurityError.unsupportedFileType
     }
-    return try SecureRelativePath(String(suffix))
+    let portable = relative.replacingOccurrences(of: "\\", with: "/")
+    guard !portable.isEmpty else { throw PathSecurityError.unsupportedFileType }
+    return try SecureRelativePath(portable)
   }
 }

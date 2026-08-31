@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeDomain
 import BridgeProjects
 import BridgeSecurity
@@ -29,12 +30,29 @@ extension DirectCommandPolicy {
     _ ruleExecutable: String,
     resolvedExecutable: String
   ) -> Bool {
-    if resolvedExecutable == ruleExecutable { return true }
-    guard resolvedExecutable.hasPrefix("/") else { return false }
-    let url = URL(fileURLWithPath: resolvedExecutable).standardizedFileURL
-    let trustedSystemDirectories: Set<String> = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-    return url.lastPathComponent == ruleExecutable
-      && trustedSystemDirectories.contains(url.deletingLastPathComponent().path)
+    #if os(Windows)
+      guard !ruleExecutable.contains("/") && !ruleExecutable.contains("\\") else {
+        return false
+      }
+      guard let separator = resolvedExecutable.lastIndex(where: { $0 == "/" || $0 == "\\" })
+      else { return false }
+      let basename = String(resolvedExecutable[resolvedExecutable.index(after: separator)...])
+      guard
+        basename.caseInsensitiveCompare(ruleExecutable) == .orderedSame
+          || basename.caseInsensitiveCompare(ruleExecutable + ".exe") == .orderedSame
+      else { return false }
+      return builtInResolver.isTrustedSystemExecutable(
+        resolvedExecutable,
+        named: ruleExecutable
+      )
+    #else
+      if resolvedExecutable == ruleExecutable { return true }
+      guard resolvedExecutable.hasPrefix("/") else { return false }
+      let url = URL(fileURLWithPath: resolvedExecutable).standardizedFileURL
+      let trustedSystemDirectories: Set<String> = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+      return url.lastPathComponent == ruleExecutable
+        && trustedSystemDirectories.contains(url.deletingLastPathComponent().path)
+    #endif
   }
 
   private func matchesRegistered(
@@ -43,8 +61,25 @@ extension DirectCommandPolicy {
   ) -> Bool {
     let executable = request.argv.first ?? ""
     let arguments = Array(request.argv.dropFirst())
-    return command.executable == executable
+    return executableMatches(command.executable, executable)
       && (command.arguments.isEmpty || arguments.starts(with: command.arguments))
+  }
+
+  private func executableMatches(_ lhs: String, _ rhs: String) -> Bool {
+    #if os(Windows)
+      let lhsAbsolute = AgentPathSemantics.isAbsolute(lhs, style: .windows)
+      let rhsAbsolute = AgentPathSemantics.isAbsolute(rhs, style: .windows)
+      guard lhsAbsolute == rhsAbsolute else { return false }
+      if lhsAbsolute {
+        guard let left = AgentPathSemantics.canonicalPath(lhs, style: .windows),
+          let right = AgentPathSemantics.canonicalPath(rhs, style: .windows)
+        else { return false }
+        return left.caseInsensitiveCompare(right) == .orderedSame
+      }
+      return lhs.caseInsensitiveCompare(rhs) == .orderedSame
+    #else
+      return lhs == rhs
+    #endif
   }
 
   private func isBlacklisted(
@@ -52,13 +87,38 @@ extension DirectCommandPolicy {
     argv: [String]
   ) -> Bool {
     let executable = argv.first ?? ""
-    let executableBasename = executable.split(separator: "/").last.map(String.init) ?? ""
+    let executableBasename = DirectPathSemantics.basename(executable)
+    #if os(Windows)
+      let normalizedBasename =
+        executableBasename.lowercased().hasSuffix(".exe")
+        ? String(executableBasename.dropLast(4)).lowercased()
+        : executableBasename.lowercased()
+    #else
+      let normalizedBasename = executableBasename
+    #endif
     for rule in rules {
       if let ruleExecutable = rule.executable, !ruleExecutable.isEmpty {
-        let matchesExecutable =
-          ruleExecutable.hasPrefix("/")
-          ? executable == ruleExecutable
-          : executableBasename == ruleExecutable
+        #if os(Windows)
+          let normalizedRule = DirectPathSemantics.basename(ruleExecutable).lowercased()
+          let relativeRule =
+            normalizedRule.hasSuffix(".exe")
+            ? String(normalizedRule.dropLast(4))
+            : normalizedRule
+        #else
+          let relativeRule = ruleExecutable
+        #endif
+        let matchesExecutable: Bool
+        #if os(Windows)
+          matchesExecutable =
+            AgentPathSemantics.isAbsolute(ruleExecutable, style: .windows)
+            ? executableMatches(ruleExecutable, executable)
+            : normalizedBasename == relativeRule
+        #else
+          matchesExecutable =
+            ruleExecutable.hasPrefix("/")
+            ? executable == ruleExecutable
+            : normalizedBasename == relativeRule
+        #endif
         if matchesExecutable {
           return true
         }
@@ -96,7 +156,7 @@ extension DirectCommandPolicy {
       let arguments = Array(request.argv.dropFirst())
       guard
         request.argv.isEmpty
-          || (request.argv.first == command.executable
+          || (executableMatches(request.argv.first ?? "", command.executable)
             && (command.arguments.isEmpty || arguments.starts(with: command.arguments)))
       else {
         return .denied(.invalidArguments)

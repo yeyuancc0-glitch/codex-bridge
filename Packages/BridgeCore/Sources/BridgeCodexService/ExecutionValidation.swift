@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeSecurity
 import Foundation
 
@@ -40,9 +41,23 @@ package enum ExecutionValidation {
   }
 
   static func relativePaths(_ values: [String], field: String) throws {
-    guard values.count <= 256, Set(values).count == values.count else {
+    guard values.count <= 256 else {
       throw ExecutionServiceError.invalidRequest(field)
     }
+    #if os(Windows)
+      let normalized = values.compactMap {
+        AgentPathSemantics.relativeComponents($0, style: .windows)?
+          .joined(separator: "\\")
+          .lowercased()
+      }
+      guard normalized.count == values.count, Set(normalized).count == values.count else {
+        throw ExecutionServiceError.invalidRequest(field)
+      }
+    #else
+      guard Set(values).count == values.count else {
+        throw ExecutionServiceError.invalidRequest(field)
+      }
+    #endif
     for value in values where !OutboundContentSecurity.isSafeOutboundRelativePath(value) {
       throw ExecutionServiceError.invalidRequest(field)
     }
@@ -53,16 +68,38 @@ package enum ExecutionValidation {
       throw ExecutionServiceError.protocolViolation("file path")
     }
     let value: String
-    if rawValue.hasPrefix("/") {
-      let standardized = URL(fileURLWithPath: rawValue).standardizedFileURL.path
-      let rootPrefix = root.hasSuffix("/") ? root : root + "/"
-      guard standardized.hasPrefix(rootPrefix) else {
-        throw ExecutionServiceError.protocolViolation("file path escaped the project")
+    #if os(Windows)
+      if AgentPathSemantics.isAbsolute(rawValue, style: .windows) {
+        guard let candidate = AgentPathSemantics.canonicalPath(rawValue, style: .windows),
+          let canonicalRoot = AgentPathSemantics.canonicalPath(root, style: .windows),
+          let relative = AgentPathSemantics.relativePath(
+            candidate,
+            from: canonicalRoot,
+            style: .windows
+          )
+        else {
+          throw ExecutionServiceError.protocolViolation("file path escaped the project")
+        }
+        value = relative
+      } else {
+        guard let components = AgentPathSemantics.relativeComponents(rawValue, style: .windows)
+        else {
+          throw ExecutionServiceError.protocolViolation("unsafe relative file path")
+        }
+        value = components.joined(separator: "\\")
       }
-      value = String(standardized.dropFirst(rootPrefix.count))
-    } else {
-      value = rawValue
-    }
+    #else
+      if rawValue.hasPrefix("/") {
+        let standardized = URL(fileURLWithPath: rawValue).standardizedFileURL.path
+        let rootPrefix = root.hasSuffix("/") ? root : root + "/"
+        guard standardized.hasPrefix(rootPrefix) else {
+          throw ExecutionServiceError.protocolViolation("file path escaped the project")
+        }
+        value = String(standardized.dropFirst(rootPrefix.count))
+      } else {
+        value = rawValue
+      }
+    #endif
     guard OutboundContentSecurity.isSafeOutboundRelativePath(value) else {
       throw ExecutionServiceError.protocolViolation("unsafe relative file path")
     }

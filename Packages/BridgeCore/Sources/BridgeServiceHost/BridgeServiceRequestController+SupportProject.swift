@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeDomain
 import BridgeIPC
 import BridgeProjects
@@ -68,7 +69,7 @@ extension BridgeServiceRequestController {
 
   static func absoluteDirectoryURL(_ path: String) throws -> URL {
     guard !path.isEmpty,
-      path.hasPrefix("/"),
+      AgentPathSemantics.isAbsolute(path),
       path.utf8.count <= 16_384,
       !path.contains("\0"),
       path.rangeOfCharacter(from: .controlCharacters) == nil

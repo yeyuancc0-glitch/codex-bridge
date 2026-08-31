@@ -10,16 +10,22 @@
   /// on one connection are answered strictly in arrival order so the shell can
   /// match responses FIFO; stream pushes are interleaved as kind-2 frames.
   final class BridgeServicePipeListener: ServiceRequestListener, @unchecked Sendable {
+    private static let maximumPipeInstances: DWORD = 16
+    // PIPE_REJECT_REMOTE_CLIENTS is not exported consistently by WinSDK overlays.
+    private static let rejectRemoteClients: DWORD = 0x0000_0008
     private let pipeName: String
     private let composition: ServiceComposition
+    private let security: WindowsNamedPipeSecurity
     private let lock = NSLock()
+    private let acceptState = PipeAcceptState()
     private var acceptThread: Thread?
     private var running = false
     private var connections: [PipeConnection] = []
 
-    init(pipeName: String, composition: ServiceComposition) {
+    init(pipeName: String, composition: ServiceComposition) throws {
       self.pipeName = pipeName
       self.composition = composition
+      self.security = try WindowsNamedPipeSecurity()
     }
 
     func resume() {
@@ -43,7 +49,11 @@
       running = false
       let active = connections
       connections.removeAll()
+      let pendingAccept = acceptState.cancel()
       lock.unlock()
+      if pendingAccept != INVALID_HANDLE_VALUE {
+        _ = CloseHandle(pendingAccept)
+      }
       for connection in active {
         connection.close()
       }
@@ -55,8 +65,15 @@
           Thread.sleep(forTimeInterval: 0.1)
           continue
         }
-        if !ConnectNamedPipe(handle, nil) {
-          let error = GetLastError()
+        guard acceptState.begin(handle) else {
+          _ = CloseHandle(handle)
+          break
+        }
+        let connected = ConnectNamedPipe(handle, nil)
+        var error: DWORD = 0
+        if !connected { error = GetLastError() }
+        guard acceptState.finish(handle) else { break }
+        if !connected {
           // ERROR_PIPE_CONNECTED: the client connected between creation and
           // ConnectNamedPipe, which still yields a usable session.
           guard error == ERROR_PIPE_CONNECTED, isRunning() else {
@@ -97,16 +114,17 @@
     }
 
     private func createPipeInstance() -> HANDLE? {
+      var attributes = security.attributes
       pipeName.withCString(encodedAs: UTF16.self) { name in
         let handle = CreateNamedPipeW(
           name,
           DWORD(PIPE_ACCESS_DUPLEX),
-          DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT),
-          DWORD(PIPE_UNLIMITED_INSTANCES),
+          DWORD(PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT) | Self.rejectRemoteClients,
+          Self.maximumPipeInstances,
           DWORD(BridgeServiceIPC.maximumMessageBytes),
           DWORD(BridgeServiceIPC.maximumMessageBytes),
           DWORD(0),
-          nil
+          withUnsafeMutablePointer(to: &attributes) { $0 }
         )
         return handle == INVALID_HANDLE_VALUE ? nil : handle
       }
@@ -195,7 +213,19 @@
         }
         let response = dispatchSync(payload)
         guard writer.write(kind: 1, payload: response) else { return }
+        guard shouldRequestShutdown(request: payload, response: response) else { continue }
+        ServiceTerminationSignal.request()
+        return
       }
+    }
+
+    private func shouldRequestShutdown(request: Data, response: Data) -> Bool {
+      guard
+        let decodedRequest = try? BridgeServiceIPCCodec.decodeRequest(request),
+        decodedRequest.operation == .shutdownService,
+        let decodedResponse = try? BridgeServiceIPCCodec.response(response)
+      else { return false }
+      return decodedResponse.error == nil
     }
 
     /// Bridges the async controller dispatch onto the blocking session thread.

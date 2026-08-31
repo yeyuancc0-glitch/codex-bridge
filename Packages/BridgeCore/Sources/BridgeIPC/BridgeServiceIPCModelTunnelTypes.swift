@@ -22,12 +22,18 @@ public struct IPCModelPreferences: Codable, Equatable, Sendable {
   public let accessMode: String
   public let fastModeEnabled: Bool
 
+  #if os(Windows)
+    public static let defaultSupervisorEnabled = false
+  #else
+    public static let defaultSupervisorEnabled = true
+  #endif
+
   public init(
     executionModel: String,
     executionEffort: String,
     supervisorModel: String,
     supervisorEffort: String,
-    supervisorEnabled: Bool = true,
+    supervisorEnabled: Bool = Self.defaultSupervisorEnabled,
     accessMode: String = "request-approval",
     fastModeEnabled: Bool = false
   ) {
@@ -57,7 +63,8 @@ public struct IPCModelPreferences: Codable, Equatable, Sendable {
     self.supervisorModel = try values.decode(String.self, forKey: .supervisorModel)
     self.supervisorEffort = try values.decode(String.self, forKey: .supervisorEffort)
     self.supervisorEnabled =
-      try values.decodeIfPresent(Bool.self, forKey: .supervisorEnabled) ?? true
+      try values.decodeIfPresent(Bool.self, forKey: .supervisorEnabled)
+      ?? Self.defaultSupervisorEnabled
     self.accessMode =
       try values.decodeIfPresent(String.self, forKey: .accessMode) ?? "request-approval"
     self.fastModeEnabled =

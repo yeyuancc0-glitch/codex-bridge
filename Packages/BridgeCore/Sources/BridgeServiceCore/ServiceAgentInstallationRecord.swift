@@ -60,12 +60,14 @@ public struct ServiceAgentInstallationRecord: Codable, Equatable, Sendable {
       field: "agentInstallation.displayName",
       maximumBytes: 256
     )
-    guard executablePath.hasPrefix("/"),
-      executablePath.utf8.count <= 16 * 1_024,
-      !executablePath.contains("\0"),
-      executablePath.rangeOfCharacter(from: .controlCharacters) == nil,
-      adapterRevision > 0
-    else {
+    try ServiceValidation.absolutePath(
+      executablePath,
+      field: "agentInstallation.executablePath"
+    )
+    guard executablePath.rangeOfCharacter(from: .controlCharacters) == nil else {
+      throw ServiceStoreError.invalidArgument("agentInstallation.executablePath")
+    }
+    guard adapterRevision > 0 else {
       throw ServiceStoreError.invalidArgument("agentInstallation.executablePath")
     }
     if let version {

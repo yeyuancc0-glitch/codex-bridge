@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeProcess
 import Foundation
 
@@ -46,12 +47,17 @@ public final class DirectProcessLifetime: @unchecked Sendable {
       throw DirectProcessError.invalidArgument
     }
     let launchArgv: [String]
-    if denyNetwork {
-      guard Self.sandboxExecAvailable else { throw DirectProcessError.sandboxUnavailable }
-      launchArgv = [Self.sandboxExecPath, "-p", Self.denyNetworkProfile, "--"] + argv
-    } else {
+    #if os(Windows)
+      guard !denyNetwork else { throw DirectProcessError.sandboxUnavailable }
       launchArgv = argv
-    }
+    #else
+      if denyNetwork {
+        guard Self.sandboxExecAvailable else { throw DirectProcessError.sandboxUnavailable }
+        launchArgv = [Self.sandboxExecPath, "-p", Self.denyNetworkProfile, "--"] + argv
+      } else {
+        launchArgv = argv
+      }
+    #endif
     let environment = Self.defaultEnvironment(overrides: environment)
     do {
       process = try ManagedStdioProcess(
@@ -166,41 +172,130 @@ public final class DirectProcessLifetime: @unchecked Sendable {
   private static let denyNetworkProfile = "(version 1)(allow default)(deny network*)"
 
   public static func defaultEnvironment(overrides: [String: String]? = nil) -> [String: String] {
-    var environment: [String: String] = [:]
-    let processEnv = ProcessInfo.processInfo.environment
-    for key in ["HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "LANG", "LC_ALL"] {
-      if let value = processEnv[key] {
-        environment[key] = value
+    #if os(Windows)
+      return windowsEnvironment(overrides: overrides)
+    #else
+      var environment: [String: String] = [:]
+      let processEnv = ProcessInfo.processInfo.environment
+      for key in ["HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "LANG", "LC_ALL"] {
+        if let value = processEnv[key] {
+          environment[key] = value
+        }
       }
-    }
-    if environment["HOME"] == nil {
-      environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
-    }
-    if environment["TMPDIR"] == nil {
-      environment["TMPDIR"] = NSTemporaryDirectory()
-    }
-    let trustedDirectories = [
-      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "/bin",
-      "/usr/sbin",
-      "/sbin",
-    ]
-    if let currentPath = processEnv["PATH"], !currentPath.isEmpty {
-      let existing = currentPath.split(separator: ":").map(String.init)
-      var combined = existing
-      for dir in trustedDirectories where !combined.contains(dir) {
-        combined.append(dir)
+      if environment["HOME"] == nil {
+        environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
       }
-      environment["PATH"] = combined.joined(separator: ":")
-    } else {
-      environment["PATH"] = trustedDirectories.joined(separator: ":")
-    }
-    if let overrides {
-      environment.merge(overrides) { _, replacement in replacement }
-    }
-    return environment
+      if environment["TMPDIR"] == nil {
+        environment["TMPDIR"] = NSTemporaryDirectory()
+      }
+      let trustedDirectories = [
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path,
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ]
+      if let currentPath = processEnv["PATH"], !currentPath.isEmpty {
+        let existing = currentPath.split(separator: ":").map(String.init)
+        var combined = existing
+        for dir in trustedDirectories where !combined.contains(dir) {
+          combined.append(dir)
+        }
+        environment["PATH"] = combined.joined(separator: ":")
+      } else {
+        environment["PATH"] = trustedDirectories.joined(separator: ":")
+      }
+      if let overrides {
+        environment.merge(overrides) { _, replacement in replacement }
+      }
+      return environment
+    #endif
   }
+
+  #if os(Windows)
+    private static func windowsEnvironment(overrides: [String: String]?) -> [String: String] {
+      let current = ProcessInfo.processInfo.environment
+      let preserved = [
+        "SystemRoot", "WINDIR", "SystemDrive", "ComSpec", "TEMP", "TMP", "USERPROFILE",
+        "HOMEDRIVE", "HOMEPATH", "HOME", "LOCALAPPDATA", "APPDATA", "ProgramFiles",
+        "ProgramFiles(x86)", "ProgramW6432", "PATH", "PATHEXT", "LANG", "LC_ALL",
+      ]
+      var environment: [String: String] = [:]
+      for key in preserved {
+        if let value = environmentValue(key, in: current) {
+          environment[key] = value
+        }
+      }
+      let home =
+        environment["USERPROFILE"] ?? environment["HOME"]
+        ?? FileManager.default.homeDirectoryForCurrentUser.path
+      environment["USERPROFILE"] = home
+      environment["HOME"] = environment["HOME"] ?? home
+      let temporary = environment["TEMP"] ?? environment["TMP"] ?? NSTemporaryDirectory()
+      environment["TEMP"] = temporary
+      environment["TMP"] = environment["TMP"] ?? temporary
+      environment["PATHEXT"] = environment["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD"
+      let resolver = AgentExecutableResolver(
+        environment: current,
+        includeEnvironmentPath: false,
+        preferredExtensions: [".EXE"]
+      )
+      let trustedPath = resolver.searchDirectories()
+      let inheritedPath = environment["PATH"].map { splitWindowsPath($0) } ?? []
+      var path = inheritedPath
+      for directory in trustedPath
+      where !path.contains(where: {
+        $0.caseInsensitiveCompare(directory) == .orderedSame
+      }) {
+        path.append(directory)
+      }
+      environment["PATH"] = path.joined(separator: ";")
+      if let overrides {
+        for (key, value) in overrides {
+          environment.keys
+            .first(where: { $0.caseInsensitiveCompare(key) == .orderedSame })
+            .map { environment.removeValue(forKey: $0) }
+          environment[key] = value
+        }
+      }
+      return environment
+    }
+
+    private static func environmentValue(
+      _ name: String,
+      in environment: [String: String]
+    ) -> String? {
+      guard
+        let key = environment.keys.first(where: {
+          $0.caseInsensitiveCompare(name) == .orderedSame
+        })
+      else { return nil }
+      let value = environment[key] ?? ""
+      return value.isEmpty ? nil : value
+    }
+
+    private static func splitWindowsPath(_ value: String) -> [String] {
+      var result: [String] = []
+      var component = ""
+      var quoted = false
+      for character in value {
+        if character == "\"" {
+          quoted.toggle()
+        } else if character == ";", !quoted {
+          let trimmed = component.trimmingCharacters(in: .whitespacesAndNewlines)
+          if !trimmed.isEmpty { result.append(trimmed) }
+          component.removeAll(keepingCapacity: true)
+        } else {
+          component.append(character)
+        }
+      }
+      if !quoted {
+        let trimmed = component.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { result.append(trimmed) }
+      }
+      return result
+    }
+  #endif
 }

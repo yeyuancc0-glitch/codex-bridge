@@ -74,7 +74,7 @@ public struct ServiceRootIdentity: Codable, Equatable, Hashable, Sendable {
     inode: UInt64,
     volumeUUID: String? = nil
   ) throws {
-    guard canonicalPath.hasPrefix("/"),
+    guard AgentPathSemantics.isAbsolute(canonicalPath),
       canonicalPath.utf8.count <= 16_384,
       !canonicalPath.contains("\0"),
       canonicalPath.rangeOfCharacter(from: .controlCharacters) == nil

@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import Foundation
 
 extension CodexApprovalWireDecoder {
@@ -198,8 +199,41 @@ extension CodexApprovalWireDecoder {
   }
 
   static func isNormalizedAbsolutePath(_ value: String) -> Bool {
-    guard value.hasPrefix("/"), value == "/" || !value.hasSuffix("/") else { return false }
-    if value.contains("//") || value.contains("/./") || value.contains("/../") { return false }
-    return !value.hasSuffix("/.") && !value.hasSuffix("/..")
+    #if os(Windows)
+      guard AgentPathSemantics.isAbsolute(value, style: .windows),
+        let canonical = AgentPathSemantics.canonicalPath(value, style: .windows)
+      else { return false }
+      return canonical == value.replacingOccurrences(of: "/", with: "\\")
+    #else
+      guard value.hasPrefix("/"), value == "/" || !value.hasSuffix("/") else { return false }
+      if value.contains("//") || value.contains("/./") || value.contains("/../") { return false }
+      return !value.hasSuffix("/.") && !value.hasSuffix("/..")
+    #endif
+  }
+
+  static func optionalCWD(
+    _ object: [String: JSONValue],
+    key: String
+  ) throws -> String? {
+    guard let value = try optionalString(object, key: key) else { return nil }
+    #if os(Windows)
+      guard isNormalizedAbsolutePath(value) else {
+        throw CodexApprovalWireError.invalidField(key)
+      }
+    #endif
+    return value
+  }
+
+  static func requiredCWD(
+    _ object: [String: JSONValue],
+    key: String
+  ) throws -> String {
+    let value = try requiredString(object, key: key)
+    #if os(Windows)
+      guard isNormalizedAbsolutePath(value) else {
+        throw CodexApprovalWireError.invalidField(key)
+      }
+    #endif
+    return value
   }
 }

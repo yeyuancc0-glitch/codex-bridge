@@ -6,13 +6,13 @@ import Foundation
 
 #if os(Windows)
   import ucrt
-  import WinSDK
 #endif
 
 public enum ServiceProcessArgumentError: Error, Equatable, LocalizedError, Sendable {
   case unknownArgument(String)
   case missingValue(String)
   case invalidDataRoot
+  case invalidArgumentCombination
 
   public var errorDescription: String? {
     switch self {
@@ -22,6 +22,8 @@ public enum ServiceProcessArgumentError: Error, Equatable, LocalizedError, Senda
       "Codex Bridge service is missing an argument value."
     case .invalidDataRoot:
       "Codex Bridge service received an invalid data root."
+    case .invalidArgumentCombination:
+      "Codex Bridge service received an invalid argument combination."
     }
   }
 }
@@ -29,14 +31,18 @@ public enum ServiceProcessArgumentError: Error, Equatable, LocalizedError, Senda
 public struct ServiceProcessOptions: Equatable, Sendable {
   public let foreground: Bool
   public let dataRootURL: URL
+  public let shutdown: Bool
 
-  public init(foreground: Bool, dataRootURL: URL) {
+  public init(foreground: Bool, dataRootURL: URL, shutdown: Bool = false) {
     self.foreground = foreground
     self.dataRootURL = dataRootURL
+    self.shutdown = shutdown
   }
 
   public static func parse(_ arguments: [String]) throws -> ServiceProcessOptions {
     var foreground = false
+    var shutdown = false
+    var dataRootSpecified = false
     var dataRoot = ServiceDataPaths.defaultRoot()
     var index = 0
     while index < arguments.count {
@@ -44,6 +50,13 @@ public struct ServiceProcessOptions: Equatable, Sendable {
       case "--foreground":
         foreground = true
         index += 1
+      case "--shutdown":
+        #if os(Windows)
+          shutdown = true
+          index += 1
+        #else
+          throw ServiceProcessArgumentError.unknownArgument("--shutdown")
+        #endif
       case "--data-root":
         let valueIndex = index + 1
         guard valueIndex < arguments.count else {
@@ -58,13 +71,21 @@ public struct ServiceProcessOptions: Equatable, Sendable {
         else {
           throw ServiceProcessArgumentError.invalidDataRoot
         }
+        dataRootSpecified = true
         dataRoot = URL(fileURLWithPath: value, isDirectory: true).standardizedFileURL
         index += 2
       default:
         throw ServiceProcessArgumentError.unknownArgument(arguments[index])
       }
     }
-    return ServiceProcessOptions(foreground: foreground, dataRootURL: dataRoot)
+    guard !shutdown || (!foreground && !dataRootSpecified) else {
+      throw ServiceProcessArgumentError.invalidArgumentCombination
+    }
+    return ServiceProcessOptions(
+      foreground: foreground,
+      dataRootURL: dataRoot,
+      shutdown: shutdown
+    )
   }
 
 }
@@ -76,6 +97,19 @@ public enum ServiceProcessRunner {
   ) async throws {
     applyDefaultUmask()
     let options = try ServiceProcessOptions.parse(arguments)
+    #if os(Windows)
+      if options.shutdown {
+        try await WindowsServiceShutdown.requestAndWait()
+        return
+      }
+      let instanceLock: WindowsServiceInstanceLock?
+      if options.foreground {
+        instanceLock = nil
+      } else {
+        instanceLock = try WindowsServiceInstanceLock()
+      }
+      defer { withExtendedLifetime(instanceLock) {} }
+    #endif
     let composition = try await ServiceComposition.make(
       configuration: ServiceCompositionConfiguration(
         appVersion: appVersion,
@@ -92,7 +126,11 @@ public enum ServiceProcessRunner {
         Data("Codex Bridge service ready on 127.0.0.1:\(endpoint.port).\n".utf8)
       )
     } else {
-      let active = ServiceListenerFactory.makeListener(composition: composition)
+      #if os(Windows)
+        let active = try ServiceListenerFactory.makeListenerOrThrow(composition: composition)
+      #else
+        let active = ServiceListenerFactory.makeListener(composition: composition)
+      #endif
       active.resume()
       listener = active
     }
@@ -111,16 +149,21 @@ public enum ServiceProcessRunner {
       _ = _umask(0o077)
     #endif
   }
+
 }
 
 #if os(Windows)
-  private enum ServiceTerminationSignal {
+  enum ServiceTerminationSignal {
     /// Bridges console lifecycle events (Ctrl+C, window close, logoff) into a
     /// one-shot continuation so the service can shut down cleanly.
     static func wait() async {
       await withCheckedContinuation { continuation in
         TerminationState.shared.start(continuation: continuation)
       }
+    }
+
+    static func request() {
+      TerminationState.shared.finish()
     }
   }
 

@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeSecurity
 import Foundation
 
@@ -171,18 +172,31 @@ enum SkillActionCatalog {
     _ = scripts
     let secure: SecureRelativePath
     do {
-      secure = try SecureRelativePath(relative)
+      #if os(Windows)
+        secure = try SecureRelativePath(relative.replacingOccurrences(of: "\\", with: "/"))
+      #else
+        secure = try SecureRelativePath(relative)
+      #endif
     } catch {
       return false
     }
     let target = root.appendingPathComponent(secure.components.joined(separator: "/"))
     let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
     let resolvedTarget = target.resolvingSymlinksInPath().standardizedFileURL.path
-    guard resolvedTarget.hasPrefix(resolvedRoot + "/"),
-      fileManager.isReadableFile(atPath: target.path)
-    else {
-      return false
-    }
+    #if os(Windows)
+      guard
+        AgentPathSemantics.isContained(
+          resolvedTarget,
+          in: resolvedRoot,
+          style: .windows
+        ),
+        fileManager.isReadableFile(atPath: target.path)
+      else { return false }
+    #else
+      guard resolvedTarget.hasPrefix(resolvedRoot + "/"),
+        fileManager.isReadableFile(atPath: target.path)
+      else { return false }
+    #endif
     return
       (try? SkillActionInterpreter.interpreterForScript(
         url: target,

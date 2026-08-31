@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import Foundation
 
 public struct OutboundRedaction: Equatable, Sendable {
@@ -56,11 +57,19 @@ public enum OutboundContentSecurity {
     _ value: String,
     maximumUTF8Bytes: Int = 1_024
   ) -> Bool {
-    guard maximumUTF8Bytes > 0, value.utf8.count <= maximumUTF8Bytes,
-      !value.contains("\\"),
-      value.rangeOfCharacter(from: .controlCharacters) == nil
-    else { return false }
-    return (try? SecureRelativePath(value)) != nil
+    #if os(Windows)
+      guard maximumUTF8Bytes > 0, value.utf8.count <= maximumUTF8Bytes,
+        value.rangeOfCharacter(from: .controlCharacters) == nil
+      else { return false }
+      return AgentPathSemantics.relativeComponents(value, style: .windows) != nil
+        && !value.hasPrefix("~")
+    #else
+      guard maximumUTF8Bytes > 0, value.utf8.count <= maximumUTF8Bytes,
+        !value.contains("\\"),
+        value.rangeOfCharacter(from: .controlCharacters) == nil
+      else { return false }
+      return (try? SecureRelativePath(value)) != nil
+    #endif
   }
 
   public static func isSafeOutboundRelativePath(
@@ -183,6 +192,11 @@ public enum OutboundContentSecurity {
   private static func unsafeAbsolutePathStart(in line: String) -> String.Index? {
     if let home = line.range(of: "~/")?.lowerBound { return home }
     let safeRanges = safeRanges(in: line, preservingSourceSyntax: false)
+    #if os(Windows)
+      if let windowsPath = windowsUnsafeAbsolutePathStart(in: line, safeRanges: safeRanges) {
+        return windowsPath
+      }
+    #endif
     var safeRangeIndex = 0
     var index = line.startIndex
     while index < line.endIndex {
@@ -241,6 +255,9 @@ public enum OutboundContentSecurity {
   private static func isCommandOutputBoundary(_ suffix: Substring) -> Bool {
     guard !suffix.isEmpty else { return true }
     if suffix.hasPrefix("/") || suffix.hasPrefix("~/") || suffix.hasPrefix("-") { return true }
+    #if os(Windows)
+      if windowsStartsWithAbsolutePath(suffix) { return true }
+    #endif
     let lowercased = suffix.lowercased()
     return lowercased.hasPrefix("(pid")
       || lowercased.hasPrefix("[pid")
@@ -261,6 +278,11 @@ public enum OutboundContentSecurity {
       earliest = earlier(earliest, home)
     }
     let safeRanges = safeRanges(in: line, preservingSourceSyntax: preservingSourceSyntax)
+    #if os(Windows)
+      if let windowsPath = windowsUnsafeAbsolutePathStart(in: line, safeRanges: safeRanges) {
+        earliest = earlier(earliest, windowsPath)
+      }
+    #endif
     var safeRangeIndex = 0
     var index = line.startIndex
     while index < line.endIndex {

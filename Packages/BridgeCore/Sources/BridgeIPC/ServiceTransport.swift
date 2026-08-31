@@ -28,7 +28,3 @@ public enum ServiceTransportFactory {
     #endif
   }
 }
-
-extension BridgeServiceIPC {
-  public static let windowsPipeName = "\\\\.\\pipe\\org.codexbridge.service"
-}

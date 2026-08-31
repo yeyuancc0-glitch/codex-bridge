@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeDomain
 import BridgeSecurity
 import Foundation
@@ -148,6 +149,6 @@ public actor ProjectRegistry {
   }
 
   private static func contains(parent: String, child: String) -> Bool {
-    child == parent || child.hasPrefix(parent + "/")
+    AgentPathSemantics.isContained(child, in: parent)
   }
 }

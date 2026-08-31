@@ -15,6 +15,7 @@ final class ServiceAgentProviderPolicyTests: XCTestCase {
     XCTAssertEqual(policy.workspaceEnforcement, "provider_native")
     XCTAssertEqual(policy.approvalEnforcement, "local_app")
     XCTAssertEqual(policy.networkEnforcement, "provider_native")
+    XCTAssertTrue(policy.supportsSupervisor)
   }
 
   func testAntigravityPolicyExposesNativeWriteContinuationAndQueuedSteerContract() {

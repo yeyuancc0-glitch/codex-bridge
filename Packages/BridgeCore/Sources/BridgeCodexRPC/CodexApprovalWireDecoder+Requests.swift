@@ -25,7 +25,7 @@ extension CodexApprovalWireDecoder {
       correlation: correlation,
       displayCommand: try optionalString(
         params, key: "command", maximumBytes: CodexApprovalWireLimits.commandBytes),
-      displayWorkingDirectory: try optionalString(params, key: "cwd"),
+      displayWorkingDirectory: try optionalCWD(params, key: "cwd"),
       displayActions: try optionalCommandActions(params["commandActions"]),
       reason: try optionalString(params, key: "reason"),
       environmentID: try optionalString(params, key: "environmentId"),

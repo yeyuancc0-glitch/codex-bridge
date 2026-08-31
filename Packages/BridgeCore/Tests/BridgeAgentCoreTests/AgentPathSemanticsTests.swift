@@ -16,6 +16,32 @@ final class AgentPathSemanticsTests: XCTestCase {
     )
   }
 
+  func testPosixContainmentIsBoundaryAware() {
+    let root = "/Users/alice/project"
+    XCTAssertTrue(
+      AgentPathSemantics.isContained(
+        "/Users/alice/project/Sources/App.swift",
+        in: root,
+        style: .posix
+      )
+    )
+    XCTAssertEqual(
+      AgentPathSemantics.relativePath(
+        "/Users/alice/project/Sources/../App.swift",
+        from: root,
+        style: .posix
+      ),
+      "App.swift"
+    )
+    XCTAssertFalse(
+      AgentPathSemantics.isContained(
+        "/Users/alice/project-files/App.swift",
+        in: root,
+        style: .posix
+      )
+    )
+  }
+
   func testWindowsAbsolutePathsAndRejectedNamespaces() {
     XCTAssertTrue(AgentPathSemantics.isAbsolute(#"C:\Users\Alice"#, style: .windows))
     XCTAssertTrue(AgentPathSemantics.isAbsolute(#"C:/Users/Alice"#, style: .windows))

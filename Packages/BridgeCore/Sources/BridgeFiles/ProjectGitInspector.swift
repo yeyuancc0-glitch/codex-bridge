@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeGit
 import BridgeProjects
 import BridgeSecurity
@@ -10,16 +11,20 @@ public struct ProjectGitInspector: Sendable {
     try root.validateCurrentIdentity()
     let workingDirectory = try OpenedWorkingDirectory(
       canonicalURL: URL(fileURLWithPath: root.canonicalPath, isDirectory: true))
+    let git = try Self.gitExecutable()
 
     async let statusTask = runGit(
+      git: git,
       workingDirectory: workingDirectory,
       arguments: ["status", "--porcelain=v1", "-z"]
     )
     async let diffTask = runGit(
+      git: git,
       workingDirectory: workingDirectory,
       arguments: ["diff", "--no-ext-diff", "--no-color"]
     )
     async let cachedTask = runGit(
+      git: git,
       workingDirectory: workingDirectory,
       arguments: ["diff", "--cached", "--no-ext-diff", "--no-color"]
     )
@@ -47,6 +52,7 @@ public struct ProjectGitInspector: Sendable {
   }
 
   private func runGit(
+    git: String,
     workingDirectory: OpenedWorkingDirectory,
     arguments: [String]
   ) async throws -> BoundedProcessResult {
@@ -54,16 +60,48 @@ public struct ProjectGitInspector: Sendable {
     let runner = BoundedProcessRunner()
     return try await runner.run(
       BoundedProcessConfiguration(
-        executableURL: URL(fileURLWithPath: "/usr/bin/git"),
+        executableURL: URL(fileURLWithPath: git),
         arguments: arguments,
         workingDirectory: workingDirectory,
-        environment: ["LANG=C", "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0"],
+        environment: Self.gitEnvironment(),
         timeout: .seconds(10),
         terminationGracePeriod: .seconds(1),
         maximumStandardOutputBytes: 200 * 1_024,
         maximumStandardErrorBytes: 64 * 1_024
       )
     )
+  }
+
+  private static func gitExecutable() throws -> String {
+    #if os(Windows)
+      guard let path = AgentExecutableResolver().resolve("git") else {
+        throw BoundedProcessError.launchFailed
+      }
+      return path
+    #else
+      return "/usr/bin/git"
+    #endif
+  }
+
+  private static func gitEnvironment() -> [String] {
+    #if os(Windows)
+      let source = ProcessInfo.processInfo.environment
+      let keys = [
+        "SystemRoot", "WINDIR", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "HOME",
+        "LOCALAPPDATA", "APPDATA", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+        "PATH", "PATHEXT", "LANG", "LC_ALL",
+      ]
+      return keys.compactMap { key in
+        guard
+          let sourceKey = source.keys.first(where: {
+            $0.caseInsensitiveCompare(key) == .orderedSame
+          })
+        else { return nil }
+        return "\(key)=\(source[sourceKey] ?? "")"
+      } + ["GIT_OPTIONAL_LOCKS=0"]
+    #else
+      return ["LANG=C", "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0"]
+    #endif
   }
 
   private func parseStatus(_ result: BoundedProcessResult) -> [String] {

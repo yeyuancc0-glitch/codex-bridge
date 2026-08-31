@@ -28,6 +28,9 @@ public enum EvidenceOnlyProcessBoundary {
   /// as a shared HOME. Keeping each session in its own child prevents Codex
   /// configuration, caches, and transient files from crossing task boundaries.
   static func prepareSessionHome(in rootURL: URL) throws -> URL {
+    #if os(Windows)
+      throw EvidenceOnlyProcessBoundaryError.unavailable
+    #endif
     let root = try privateDirectory(rootURL, field: "isolatedHomeRoot")
     let child = root.appendingPathComponent(
       sessionHomePrefix + UUID().uuidString.lowercased(),
@@ -54,6 +57,9 @@ public enum EvidenceOnlyProcessBoundary {
   /// Removes only a private session directory created below the supplied root.
   /// A replaced symlink or non-directory is left untouched.
   static func removeSessionHome(_ homeURL: URL, from rootURL: URL) {
+    #if os(Windows)
+      return
+    #endif
     let root = rootURL.standardizedFileURL.path
     let home = homeURL.standardizedFileURL.path
     guard home.hasPrefix(root + "/"),
@@ -72,6 +78,9 @@ public enum EvidenceOnlyProcessBoundary {
     deniedReadRoots: [URL],
     networkAccess: Bool = false
   ) throws -> AppServerConfiguration {
+    #if os(Windows)
+      throw EvidenceOnlyProcessBoundaryError.unavailable
+    #endif
     guard FileManager.default.fileExists(atPath: sandboxExecutableURL.path) else {
       throw EvidenceOnlyProcessBoundaryError.unavailable
     }
@@ -130,8 +139,12 @@ public enum EvidenceOnlyProcessBoundary {
   }
 
   package static func isPrivateDirectory(_ url: URL) -> Bool {
-    guard url.isFileURL else { return false }
-    return hasPrivateDirectoryMetadata(atPath: url.standardizedFileURL.path)
+    #if os(Windows)
+      return false
+    #else
+      guard url.isFileURL else { return false }
+      return hasPrivateDirectoryMetadata(atPath: url.standardizedFileURL.path)
+    #endif
   }
 
   private static func makeProfile(

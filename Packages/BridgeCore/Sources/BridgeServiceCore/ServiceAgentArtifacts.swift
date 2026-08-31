@@ -10,10 +10,8 @@ public struct ServiceAgentInstallationArtifactRequest: Codable, Equatable, Senda
       field: "agentRegistration.artifactPath",
       maximumBytes: 16 * 1_024
     )
-    guard path.hasPrefix("/"),
-      !path.contains("\0"),
-      path.rangeOfCharacter(from: .controlCharacters) == nil
-    else {
+    try ServiceValidation.absolutePath(path, field: "agentRegistration.artifactPath")
+    guard path.rangeOfCharacter(from: .controlCharacters) == nil else {
       throw ServiceStoreError.invalidArgument("agentRegistration.artifactPath")
     }
     self.role = role

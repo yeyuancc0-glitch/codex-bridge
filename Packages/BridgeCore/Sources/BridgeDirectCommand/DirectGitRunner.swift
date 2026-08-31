@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import Foundation
 
 public enum DirectGitError: Error, Equatable, Sendable {
@@ -31,7 +32,32 @@ public struct DirectGitResult: Equatable, Sendable {
 /// captures bounded head/tail output. Used by the controlled Direct Git
 /// commit path so that no shell is involved and no history rewrite is possible.
 public struct DirectGitRunner: Sendable {
-  public static let gitPath = "/usr/bin/git"
+  public static var gitPath: String {
+    #if os(Windows)
+      return (try? resolveGitPath()) ?? "git.exe"
+    #else
+      return "/usr/bin/git"
+    #endif
+  }
+
+  public static func resolveGitPath(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) throws -> String {
+    #if os(Windows)
+      guard
+        let path = AgentExecutableResolver(
+          environment: environment,
+          includeEnvironmentPath: true,
+          preferredExtensions: [".EXE"]
+        ).resolve("git")
+      else {
+        throw DirectGitError.launchFailed
+      }
+      return path
+    #else
+      return "/usr/bin/git"
+    #endif
+  }
 
   public let defaultTimeout: Duration
 
@@ -51,9 +77,9 @@ public struct DirectGitRunner: Sendable {
     else {
       throw DirectGitError.invalidArgument
     }
+    let launchArgv = try Self.resolvedArgv(argv)
     return try await Task.detached(priority: .userInitiated) {
-      var environment = ProcessInfo.processInfo.environment
-      environment["PATH"] = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+      var environment = Self.environmentOverrides()
       if let overrides {
         environment.merge(overrides) { _, replacement in replacement }
       }
@@ -61,7 +87,7 @@ public struct DirectGitRunner: Sendable {
       let process: DirectProcessLifetime
       do {
         process = try DirectProcessLifetime(
-          argv: argv,
+          argv: launchArgv,
           workingDirectory: workingDirectory,
           environment: environment,
           usePTY: false,
@@ -103,5 +129,29 @@ public struct DirectGitRunner: Sendable {
         completeOutput: completeOutput
       )
     }.value
+  }
+
+  private static func resolvedArgv(_ argv: [String]) throws -> [String] {
+    #if os(Windows)
+      guard let executable = argv.first else { throw DirectGitError.invalidArgument }
+      let isBareGit =
+        !AgentPathSemantics.isAbsolute(executable, style: .windows)
+        && !executable.contains("/") && !executable.contains("\\")
+        && ["git", "git.exe"].contains(executable.lowercased())
+      guard isBareGit else { return argv }
+      return [try resolveGitPath()] + argv.dropFirst()
+    #else
+      return argv
+    #endif
+  }
+
+  private static func environmentOverrides() -> [String: String] {
+    #if os(Windows)
+      return [:]
+    #else
+      var environment = ProcessInfo.processInfo.environment
+      environment["PATH"] = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+      return environment
+    #endif
   }
 }

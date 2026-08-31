@@ -149,7 +149,7 @@ extension CodexApprovalWireDecoder {
       startedAtMilliseconds: reference.startedAt,
       displayCommand: try requiredString(
         item, key: "command", maximumBytes: CodexApprovalWireLimits.commandBytes),
-      workingDirectory: try requiredString(item, key: "cwd"),
+      workingDirectory: try requiredCWD(item, key: "cwd"),
       displayActions: try commandActions(item["commandActions"], required: true) ?? [],
       status: status
     )

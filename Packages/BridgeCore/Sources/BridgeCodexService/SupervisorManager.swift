@@ -14,6 +14,9 @@ public actor SupervisorManager {
     guard let model = task.supervisorModel, let effort = task.supervisorEffort else {
       return nil
     }
+    #if os(Windows)
+      throw SupervisorServiceError.processUnavailable
+    #endif
     guard sessions[task.id] == nil else {
       throw SupervisorServiceError.activeSession(task.id)
     }

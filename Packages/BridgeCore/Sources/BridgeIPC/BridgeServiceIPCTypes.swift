@@ -60,6 +60,7 @@ public enum BridgeServiceIPCOperation: String, Codable, CaseIterable, Sendable {
   case connectTunnel = "connect_tunnel"
   case disconnectTunnel = "disconnect_tunnel"
   case clearTunnel = "clear_tunnel"
+  case shutdownService = "shutdown_service"
 }
 
 public struct BridgeServiceIPCRequest: Codable, Equatable, Sendable {
@@ -157,6 +158,21 @@ public struct IPCMutationResponse: Codable, Equatable, Sendable {
 
   public init(accepted: Bool = true) {
     self.accepted = accepted
+  }
+}
+
+public struct IPCServiceShutdownResponse: Codable, Equatable, Sendable {
+  public let processID: UInt32
+  public let imagePath: String
+
+  public init(processID: UInt32, imagePath: String = "") {
+    self.processID = processID
+    self.imagePath = imagePath
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case processID = "process_id"
+    case imagePath = "image_path"
   }
 }
 

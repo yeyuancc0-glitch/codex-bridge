@@ -27,7 +27,7 @@ private struct LegacyWorkspaceCommand: Codable {
 }
 
 enum ServiceStoreSchema {
-  static let version: Int64 = 14
+  static let version: Int64 = 15
   static let migrationPrefix = "BridgeServiceCore."
   static let migrationV1 = "BridgeServiceCore.v1"
   static let migrationV2 = "BridgeServiceCore.v2"
@@ -43,10 +43,11 @@ enum ServiceStoreSchema {
   static let migrationV12 = "BridgeServiceCore.v12"
   static let migrationV13 = "BridgeServiceCore.v13"
   static let migrationV14 = "BridgeServiceCore.v14"
+  static let migrationV15 = "BridgeServiceCore.v15"
   static let knownMigrations: Set<String> = [
     migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7,
     migrationV8, migrationV9, migrationV10, migrationV11, migrationV12, migrationV13,
-    migrationV14,
+    migrationV14, migrationV15,
   ]
 
   static func prepare(_ database: DatabaseQueue) throws {
@@ -82,6 +83,7 @@ enum ServiceStoreSchema {
     case 11: backupSuffix = ".pre-v12"
     case 12: backupSuffix = ".pre-v13"
     case 13: backupSuffix = ".pre-v14"
+    case 14: backupSuffix = ".pre-v15"
     default: return
     }
     let backupPath = sourcePath + backupSuffix
@@ -173,6 +175,9 @@ enum ServiceStoreSchema {
     }
     migrator.registerMigration(migrationV14) { db in
       try createVersionFourteen(in: db)
+    }
+    migrator.registerMigration(migrationV15) { db in
+      try createVersionFifteen(in: db)
     }
     return migrator
   }

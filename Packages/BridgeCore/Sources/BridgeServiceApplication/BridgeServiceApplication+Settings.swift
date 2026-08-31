@@ -60,6 +60,9 @@ extension BridgeServiceApplication {
   }
 
   public func setSupervisorEnabled(_ enabled: Bool) async throws {
+    #if os(Windows)
+      guard !enabled else { throw BridgeMCPQueryError.contractRejected }
+    #endif
     try await settings.setSupervisorEnabled(enabled)
   }
 }

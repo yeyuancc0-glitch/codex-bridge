@@ -63,6 +63,9 @@ extension BridgeServiceApplication {
       models: models
     )
 
+    #if os(Windows)
+      return ModelSelections(execution: execution, supervisor: nil)
+    #endif
     guard try await settings.isSupervisorEnabled() else {
       return ModelSelections(execution: execution, supervisor: nil)
     }

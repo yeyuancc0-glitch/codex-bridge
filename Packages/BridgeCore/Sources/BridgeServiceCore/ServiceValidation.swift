@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeProjects
 import Foundation
 
@@ -39,6 +40,15 @@ enum ServiceValidation {
 
   static func date(_ value: Date, field: String) throws {
     guard value.timeIntervalSince1970.isFinite else {
+      throw ServiceStoreError.invalidArgument(field)
+    }
+  }
+
+  static func absolutePath(_ value: String, field: String) throws {
+    guard AgentPathSemantics.isAbsolute(value),
+      value.utf8.count <= 16 * 1_024,
+      !value.contains("\0")
+    else {
       throw ServiceStoreError.invalidArgument(field)
     }
   }

@@ -48,6 +48,22 @@ public struct DirectExecutionEnvironmentCapabilities: Equatable, Sendable {
   }
 
   public func commandEnvironment(denyNetwork: Bool) -> DirectCommandExecutionEnvironment {
+    #if os(Windows)
+      if denyNetwork {
+        var commandLimitations = limitations
+        commandLimitations.append("network_isolation_unavailable")
+        return DirectCommandExecutionEnvironment(
+          bridgeSandbox: bridgeSandbox,
+          sandboxExec: "unavailable",
+          nestedSandbox: "unavailable",
+          loopback: "unavailable",
+          childNetworkPolicy: "unsupported",
+          xcodebuildNestedSandbox: "unavailable",
+          loopbackBind: "unavailable",
+          limitations: Array(Set(commandLimitations)).sorted()
+        )
+      }
+    #endif
     let nested = denyNetwork ? "restricted" : nestedSandbox
     let reportedLoopback = denyNetwork ? "restricted" : loopback
     let xcodebuildNestedSandbox: String

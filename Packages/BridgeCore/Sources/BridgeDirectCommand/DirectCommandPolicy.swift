@@ -125,7 +125,11 @@ public struct DirectCommandPolicy: Sendable {
   }
 
   public var effectiveSafeCommandRules: [DirectSafeCommandRule] {
-    builtInResolver.effectiveRules
+    #if os(Windows)
+      return []
+    #else
+      builtInResolver.effectiveRules
+    #endif
   }
 
   public static let defaultSafeRules: [DirectSafeCommandRule] = [

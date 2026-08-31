@@ -200,6 +200,18 @@ public final class BridgeServiceRequestController: @unchecked Sendable {
       return try await handleDisconnectTunnel(request)
     case .clearTunnel:
       return try await handleClearTunnel(request)
+    case .shutdownService:
+      #if os(Windows)
+        return try handleShutdownService(request)
+      #else
+        return try BridgeServiceIPCCodec.failure(
+          requestID: request.requestID,
+          error: .init(
+            code: "unsupported_operation",
+            message: "Service shutdown is unavailable on this platform."
+          )
+        )
+      #endif
     }
   }
 

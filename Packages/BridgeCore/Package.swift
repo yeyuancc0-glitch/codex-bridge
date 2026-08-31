@@ -9,7 +9,7 @@ var testTargets: [Target] = [
   ),
   .testTarget(
     name: "BridgeAgentCoreTests",
-    dependencies: ["BridgeAgentCore"]
+    dependencies: ["BridgeAgentCore", "BridgeServiceCore"]
   ),
   .testTarget(
     name: "BridgeServiceAppCoreTests",
@@ -225,6 +225,11 @@ var macOSOnlyTargets: [Target] = []
 #if os(Windows)
   testTargets += [
     .testTarget(
+      name: "BridgeServiceHostWindowsTests",
+      dependencies: ["BridgeIPC", "BridgeServiceHost"],
+      path: "Tests/BridgeServiceHostWindowsTests"
+    ),
+    .testTarget(
       name: "BridgeSecurityTests",
       dependencies: ["BridgeSecurity"],
       path: "Tests/BridgeSecurityTests",
@@ -246,6 +251,30 @@ var macOSOnlyTargets: [Target] = []
         "ThreadCatalogMethodsTests.swift",
         "TypedCodexMethodsTests.swift",
       ]
+    ),
+    .testTarget(
+      name: "BridgeCodexServiceWindowsTests",
+      dependencies: ["BridgeCodexService"],
+      path: "Tests/BridgeCodexServiceWindowsTests"
+    ),
+    .testTarget(
+      name: "BridgeServiceApplicationWindowsTests",
+      dependencies: ["BridgeIPC", "BridgeServiceApplication"],
+      path: "Tests/BridgeServiceApplicationWindowsTests"
+    ),
+    .testTarget(
+      name: "BridgeServiceCoreWindowsTests",
+      dependencies: [
+        "BridgeServiceCore",
+        .product(name: "GRDB", package: "GRDB.swift"),
+      ],
+      path: "Tests/BridgeServiceCoreTests",
+      sources: ["ServiceStoreSchemaV15MigrationTests.swift"]
+    ),
+    .testTarget(
+      name: "BridgeDirectCommandWindowsTests",
+      dependencies: ["BridgeDirectCommand"],
+      path: "Tests/BridgeDirectCommandWindowsTests"
     ),
   ]
 #endif
@@ -313,7 +342,8 @@ let package = Package(
     .target(
       name: "BridgeSecurity",
       dependencies: [
-        .product(name: "Crypto", package: "swift-crypto")
+        "BridgeAgentCore",
+        .product(name: "Crypto", package: "swift-crypto"),
       ]
     ),
     .target(
@@ -322,7 +352,7 @@ let package = Package(
     ),
     .target(
       name: "BridgeProjects",
-      dependencies: ["BridgeDomain", "BridgeSecurity"]
+      dependencies: ["BridgeAgentCore", "BridgeDomain", "BridgeSecurity"]
     ),
     .target(
       name: "BridgeGit",
@@ -336,7 +366,13 @@ let package = Package(
     ),
     .target(
       name: "BridgeFiles",
-      dependencies: ["BridgeDomain", "BridgeGit", "BridgeSecurity", "BridgeProjects"]
+      dependencies: [
+        "BridgeAgentCore",
+        "BridgeDomain",
+        "BridgeGit",
+        "BridgeSecurity",
+        "BridgeProjects",
+      ]
     ),
     .target(
       name: "BridgeMCP",
@@ -372,7 +408,7 @@ let package = Package(
     ),
     .target(
       name: "BridgeSkills",
-      dependencies: ["BridgeSecurity"]
+      dependencies: ["BridgeAgentCore", "BridgeSecurity"]
     ),
     .target(
       name: "BridgeLegacyImport",
@@ -458,6 +494,7 @@ let package = Package(
     .target(
       name: "BridgeDirectCommand",
       dependencies: [
+        "BridgeAgentCore",
         "BridgeDomain",
         "BridgeProcess",
         "BridgeProjects",

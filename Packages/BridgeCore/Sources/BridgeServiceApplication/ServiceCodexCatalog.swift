@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeCodexRPC
 import BridgeMCP
 import BridgeSecurity
@@ -53,7 +54,7 @@ public actor ServiceCodexCatalog {
     search: String?,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPThreadPage {
-    guard root.hasPrefix("/"), (1...100).contains(limit) else {
+    guard AgentPathSemantics.isAbsolute(root), (1...100).contains(limit) else {
       throw BridgeMCPQueryError.contractRejected
     }
     return try await withClient(deadline: deadline) { client in
@@ -70,7 +71,7 @@ public actor ServiceCodexCatalog {
         )
       )
       let threads = try response.data.map { thread -> MCPThreadSummary in
-        guard thread.cwd == root else { throw BridgeMCPQueryError.threadNotFound }
+        guard Self.samePath(thread.cwd, root) else { throw BridgeMCPQueryError.threadNotFound }
         return try Self.summary(thread)
       }
       return MCPThreadPage(threads: threads, nextCursor: response.nextCursor)
@@ -85,7 +86,7 @@ public actor ServiceCodexCatalog {
     including allowedThreadIDs: Set<String>,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPThreadPage {
-    guard root.hasPrefix("/"), (1...100).contains(limit) else {
+    guard AgentPathSemantics.isAbsolute(root), (1...100).contains(limit) else {
       throw BridgeMCPQueryError.contractRejected
     }
     let offset = try Self.decodeAppCursor(cursor)
@@ -125,7 +126,9 @@ public actor ServiceCodexCatalog {
     limit: Int,
     deadline: ContinuousClock.Instant
   ) async throws -> MCPThreadReadPage {
-    guard Self.validIdentifier(threadID, maximum: 1_024), (1...100).contains(limit) else {
+    guard AgentPathSemantics.isAbsolute(root),
+      Self.validIdentifier(threadID, maximum: 1_024), (1...100).contains(limit)
+    else {
       throw BridgeMCPQueryError.contractRejected
     }
     return try await withClient(deadline: deadline) { client in
@@ -137,7 +140,7 @@ public actor ServiceCodexCatalog {
       } catch let error as CodexRPCError {
         throw Self.publicThreadReadError(error)
       }
-      guard response.thread.id == threadID, response.thread.cwd == root else {
+      guard response.thread.id == threadID, Self.samePath(response.thread.cwd, root) else {
         throw BridgeMCPQueryError.threadNotFound
       }
       let summary = try Self.summary(response.thread)
@@ -422,6 +425,11 @@ public actor ServiceCodexCatalog {
     guard let value else { return nil }
     let safe = OutboundContentSecurity.redacted(value, maximumUTF8Bytes: maximum)
     return safe.isEmpty ? nil : safe
+  }
+
+  private static func samePath(_ lhs: String, _ rhs: String) -> Bool {
+    AgentPathSemantics.isContained(lhs, in: rhs)
+      && AgentPathSemantics.isContained(rhs, in: lhs)
   }
 
   private static func validIdentifier(_ value: String, maximum: Int) -> Bool {

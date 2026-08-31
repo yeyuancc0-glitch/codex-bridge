@@ -1,3 +1,4 @@
+import BridgeAgentCore
 import BridgeSecurity
 import Foundation
 
@@ -51,7 +52,11 @@ enum SkillActionResolver {
   ) throws -> String {
     let relative: SecureRelativePath
     do {
-      relative = try SecureRelativePath(scriptPath)
+      #if os(Windows)
+        relative = try SecureRelativePath(scriptPath.replacingOccurrences(of: "\\", with: "/"))
+      #else
+        relative = try SecureRelativePath(scriptPath)
+      #endif
     } catch {
       throw SkillError.pathEscapeDetected
     }
@@ -59,11 +64,24 @@ enum SkillActionResolver {
     let target = root.appendingPathComponent(relative.components.joined(separator: "/"))
     let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
     let resolvedTarget = target.resolvingSymlinksInPath().standardizedFileURL.path
-    guard resolvedTarget.hasPrefix(resolvedRoot + "/"),
-      fileManager.isReadableFile(atPath: target.path)
-    else {
-      throw SkillError.pathEscapeDetected
-    }
+    #if os(Windows)
+      guard
+        AgentPathSemantics.isContained(
+          resolvedTarget,
+          in: resolvedRoot,
+          style: .windows
+        ),
+        fileManager.isReadableFile(atPath: target.path)
+      else {
+        throw SkillError.pathEscapeDetected
+      }
+    #else
+      guard resolvedTarget.hasPrefix(resolvedRoot + "/"),
+        fileManager.isReadableFile(atPath: target.path)
+      else {
+        throw SkillError.pathEscapeDetected
+      }
+    #endif
     return resolvedTarget
   }
 }

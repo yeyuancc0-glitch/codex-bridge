@@ -3,17 +3,15 @@ import Foundation
 
 extension DirectCommandPolicy {
   func isProjectLocalExecutable(_ executable: String, projectRoot: String) -> Bool {
-    guard executable.contains("/") else { return false }
-    guard
+    guard DirectPathSemantics.hasSeparator(executable),
       let resolved = projectContainedPath(
         executable,
         projectRoot: projectRoot,
         workingDirectory: nil
-      )
+      ),
+      let root = DirectPathSemantics.resolvedPath(projectRoot)
     else { return false }
-    let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
-      .standardizedFileURL.resolvingSymlinksInPath().path
-    return resolved != root || FileManager.default.isExecutableFile(atPath: resolved)
+    return resolved != root || DirectPathSemantics.isExecutableFile(at: resolved)
   }
 
   func projectContainedPath(
@@ -21,39 +19,11 @@ extension DirectCommandPolicy {
     projectRoot: String,
     workingDirectory: String?
   ) -> String? {
-    guard !value.isEmpty, !value.hasPrefix("~"), !value.lowercased().hasPrefix("file:") else {
-      return nil
-    }
-    let root = URL(fileURLWithPath: projectRoot, isDirectory: true)
-      .standardizedFileURL.resolvingSymlinksInPath().path
-    let base: String
-    if let workingDirectory, !workingDirectory.isEmpty {
-      if workingDirectory == "." || workingDirectory == "./" {
-        base = root
-      } else {
-        let secure = try? SecureRelativePath(workingDirectory)
-        guard let secure else { return nil }
-        base =
-          URL(fileURLWithPath: root, isDirectory: true)
-          .appendingPathComponent(secure.value, isDirectory: true)
-          .standardizedFileURL.resolvingSymlinksInPath().path
-      }
-    } else {
-      base = root
-    }
-    let candidate: URL
-    if value.hasPrefix("/") {
-      candidate = URL(fileURLWithPath: value)
-    } else {
-      guard
-        !value.split(separator: "/", omittingEmptySubsequences: false)
-          .contains(where: { $0 == ".." || $0.isEmpty })
-      else { return nil }
-      candidate = URL(fileURLWithPath: base, isDirectory: true).appendingPathComponent(value)
-    }
-    let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath().path
-    guard resolved == root || resolved.hasPrefix(root + "/") else { return nil }
-    return resolved
+    DirectPathSemantics.containedPath(
+      value,
+      projectRoot: projectRoot,
+      workingDirectory: workingDirectory
+    )
   }
 
   func safePathArgument(
@@ -155,8 +125,16 @@ extension DirectCommandPolicy {
     workingDirectory: String?
   ) -> Bool {
     guard let executable = argv.first else { return false }
-    let basename = executable.split(separator: "/").last.map(String.init) ?? executable
-    switch basename {
+    let basename = DirectPathSemantics.basename(executable)
+    #if os(Windows)
+      let commandName =
+        basename.lowercased().hasSuffix(".exe")
+        ? String(basename.dropLast(4)).lowercased()
+        : basename.lowercased()
+    #else
+      let commandName = basename
+    #endif
+    switch commandName {
     case "pwd":
       return argv.dropFirst().allSatisfy { ["-L", "-P"].contains($0) }
     case "ls":
@@ -167,7 +145,7 @@ extension DirectCommandPolicy {
         argv.dropFirst(), projectRoot: projectRoot, workingDirectory: workingDirectory)
     case "grep", "rg":
       return DirectSearchArgumentValidator.areArgumentsSafe(
-        executable: basename,
+        executable: commandName,
         argv.dropFirst(),
         pathIsSafe: {
           safePathArgument(

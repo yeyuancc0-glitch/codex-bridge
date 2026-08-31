@@ -33,12 +33,10 @@ public struct ServiceAgentRegistrationRequest: Equatable, Sendable {
       field: "agentRegistration.displayName",
       maximumBytes: 256
     )
-    guard executablePath.hasPrefix("/"),
-      executablePath.utf8.count <= 16 * 1_024,
-      !executablePath.contains("\0")
-    else {
-      throw ServiceStoreError.invalidArgument("agentRegistration.executablePath")
-    }
+    try ServiceValidation.absolutePath(
+      executablePath,
+      field: "agentRegistration.executablePath"
+    )
     if let securityProfileID {
       try ServiceValidation.identifier(
         securityProfileID.rawValue,
@@ -47,19 +45,14 @@ public struct ServiceAgentRegistrationRequest: Equatable, Sendable {
       )
     }
     if let projectRoot {
-      guard projectRoot.hasPrefix("/"),
-        projectRoot.utf8.count <= 16 * 1_024,
-        !projectRoot.contains("\0")
-      else {
-        throw ServiceStoreError.invalidArgument("agentRegistration.projectRoot")
-      }
+      try ServiceValidation.absolutePath(projectRoot, field: "agentRegistration.projectRoot")
     }
     if let configurationPath {
-      guard configurationPath.hasPrefix("/"),
-        configurationPath.utf8.count <= 16 * 1_024,
-        !configurationPath.contains("\0"),
-        configurationPath.rangeOfCharacter(from: .controlCharacters) == nil
-      else {
+      try ServiceValidation.absolutePath(
+        configurationPath,
+        field: "agentRegistration.configurationPath"
+      )
+      guard configurationPath.rangeOfCharacter(from: .controlCharacters) == nil else {
         throw ServiceStoreError.invalidArgument("agentRegistration.configurationPath")
       }
     }

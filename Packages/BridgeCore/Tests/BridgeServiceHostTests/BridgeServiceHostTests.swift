@@ -890,6 +890,38 @@ final class BridgeServiceHostTests: XCTestCase {
     }
   }
 
+  func testShutdownResponseCarriesProcessIdentifier() throws {
+    #if os(Windows)
+      let path = "C:\\Program Files\\Codex Bridge\\codex-bridge-service.exe"
+    #else
+      let path = "/Applications/Codex Bridge.app/Contents/Resources/CodexBridgeService"
+    #endif
+    let encoded = try JSONEncoder().encode(
+      IPCServiceShutdownResponse(processID: 42, imagePath: path)
+    )
+    let decoded = try JSONDecoder().decode(IPCServiceShutdownResponse.self, from: encoded)
+    XCTAssertEqual(decoded.processID, 42)
+    XCTAssertEqual(decoded.imagePath, path)
+  }
+
+  #if os(macOS)
+    func testMacOSControllerRejectsShutdownRequest() async throws {
+      let fixture = try await makeServiceHostFixture(self)
+      let request = try BridgeServiceIPCCodec.emptyRequest(
+        operation: .shutdownService,
+        requestID: "mac-shutdown-test"
+      )
+      let controller = BridgeServiceXPCController(composition: fixture.composition)
+      let responseData = await withCheckedContinuation { continuation in
+        controller.perform(request) { data in
+          continuation.resume(returning: data)
+        }
+      }
+      let response = try BridgeServiceIPCCodec.response(responseData)
+      XCTAssertEqual(response.error?.code, "unsupported_operation")
+    }
+  #endif
+
   func testProcessOptionsAreStrictAndDoNotAcceptRelativeDataRoots() throws {
     let options = try ServiceProcessOptions.parse([
       "--foreground",
@@ -909,6 +941,27 @@ final class BridgeServiceHostTests: XCTestCase {
         .unknownArgument("--unknown")
       )
     }
+    #if os(Windows)
+      let shutdown = try ServiceProcessOptions.parse(["--shutdown"])
+      XCTAssertTrue(shutdown.shutdown)
+      XCTAssertThrowsError(
+        try ServiceProcessOptions.parse(["--shutdown", "--foreground"])
+      ) { error in
+        XCTAssertEqual(error as? ServiceProcessArgumentError, .invalidArgumentCombination)
+      }
+      XCTAssertThrowsError(
+        try ServiceProcessOptions.parse(["--data-root", "C:\\Bridge", "--shutdown"])
+      ) { error in
+        XCTAssertEqual(error as? ServiceProcessArgumentError, .invalidArgumentCombination)
+      }
+    #else
+      XCTAssertThrowsError(try ServiceProcessOptions.parse(["--shutdown"])) { error in
+        XCTAssertEqual(
+          error as? ServiceProcessArgumentError,
+          .unknownArgument("--shutdown")
+        )
+      }
+    #endif
   }
 
   private func connectMCP(endpoint: URL, secret: String) async throws -> Client {

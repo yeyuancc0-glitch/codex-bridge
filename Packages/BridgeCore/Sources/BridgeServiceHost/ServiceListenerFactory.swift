@@ -18,12 +18,24 @@ public enum ServiceListenerFactory {
         composition: composition
       )
     #elseif os(Windows)
-      return BridgeServicePipeListener(
-        pipeName: BridgeServiceIPC.windowsPipeName,
-        composition: composition
-      )
+      do {
+        return try makeListenerOrThrow(composition: composition)
+      } catch {
+        fatalError("Windows named pipe security could not be initialized.")
+      }
     #else
       fatalError("No service listener for this platform.")
     #endif
   }
+
+  #if os(Windows)
+    static func makeListenerOrThrow(
+      composition: ServiceComposition
+    ) throws -> any ServiceRequestListener {
+      try BridgeServicePipeListener(
+        pipeName: WindowsPipeIdentity.currentPipeName(),
+        composition: composition
+      )
+    }
+  #endif
 }
