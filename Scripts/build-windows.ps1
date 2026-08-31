@@ -45,6 +45,25 @@ switch ($hostArchitecture.ToUpperInvariant()) {
 }
 $vcpkgTriplet = "$architecture-windows"
 $targetTriple = if ($architecture -eq "arm64") { "aarch64-unknown-windows-msvc" } else { "" }
+$vcpkgRootValue = if ($resolvedVcpkgRoot) {
+  $resolvedVcpkgRoot
+} elseif (Test-Path Env:VCPKG_INSTALLATION_ROOT) {
+  $env:VCPKG_INSTALLATION_ROOT
+} else {
+  ""
+}
+$originalPath = $env:PATH
+
+if ($Test) {
+  if (-not $vcpkgRootValue) {
+    throw "VcpkgRoot or VCPKG_INSTALLATION_ROOT is required when running tests."
+  }
+  $sqliteRuntimeDirectory = Join-Path $vcpkgRootValue "installed\$vcpkgTriplet\bin"
+  if (-not (Test-Path (Join-Path $sqliteRuntimeDirectory "sqlite3.dll"))) {
+    throw "SQLite runtime is unavailable: $sqliteRuntimeDirectory\sqlite3.dll"
+  }
+  $env:PATH = "$sqliteRuntimeDirectory;$originalPath"
+}
 
 Push-Location $packagePath
 try {
@@ -117,4 +136,5 @@ try {
   }
 } finally {
   Pop-Location
+  $env:PATH = $originalPath
 }
