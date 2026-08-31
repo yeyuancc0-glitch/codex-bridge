@@ -58,14 +58,12 @@
       guard let actualPath = WindowsProcessIdentity.imagePath(for: handle),
         WindowsProcessIdentity.pathsEqual(actualPath, expectedPath)
       else { throw WindowsServiceShutdownError.invalidProcessIdentity }
-      switch WaitForSingleObject(handle, 30_000) {
-      case WAIT_OBJECT_0:
-        return
-      case WAIT_TIMEOUT:
+      let waitResult = WaitForSingleObject(handle, 30_000)
+      if waitResult == WAIT_OBJECT_0 { return }
+      if waitResult == DWORD(WAIT_TIMEOUT) {
         throw WindowsServiceShutdownError.timeout
-      default:
-        throw WindowsServiceShutdownError.waitFailed
       }
+      throw WindowsServiceShutdownError.waitFailed
     }
   }
 

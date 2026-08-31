@@ -33,7 +33,7 @@
       var requiredLength: DWORD = 0
       _ = GetTokenInformation(
         token,
-        TOKEN_INFORMATION_CLASS.TokenUser,
+        TokenUser,
         nil,
         DWORD(0),
         &requiredLength
@@ -50,7 +50,7 @@
       guard
         GetTokenInformation(
           token,
-          TOKEN_INFORMATION_CLASS.TokenUser,
+          TokenUser,
           buffer,
           requiredLength,
           &requiredLength

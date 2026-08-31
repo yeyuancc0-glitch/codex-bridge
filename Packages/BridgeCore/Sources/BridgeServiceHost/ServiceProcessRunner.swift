@@ -6,6 +6,7 @@ import Foundation
 
 #if os(Windows)
   import ucrt
+  import WinSDK
 #endif
 
 public enum ServiceProcessArgumentError: Error, Equatable, LocalizedError, Sendable {

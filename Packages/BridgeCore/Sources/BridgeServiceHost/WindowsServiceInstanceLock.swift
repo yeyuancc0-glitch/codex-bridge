@@ -1,4 +1,5 @@
 #if os(Windows)
+  import BridgeIPC
   import Foundation
   import WinSDK
 
