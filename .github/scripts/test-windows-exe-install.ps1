@@ -127,13 +127,21 @@ function Wait-BridgeProcessesExit {
   $script:service = $null
 }
 
-function Wait-PathRemoval([string]$Path, [int]$Seconds) {
+function Remove-TestOwnedEmptyInstallRoot([string]$Path, [int]$Seconds) {
   $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
-  while ((Test-Path -LiteralPath $Path) -and [DateTime]::UtcNow -lt $deadline) {
+  while (Test-Path -LiteralPath $Path) {
+    $remaining = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)
+    if ($remaining.Count -eq 0) {
+      if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Force
+      }
+      return
+    }
+    if ([DateTime]::UtcNow -ge $deadline) {
+      $names = ($remaining | Select-Object -ExpandProperty Name) -join ", "
+      throw "Install root retained files after uninstall: $names"
+    }
     Start-Sleep -Milliseconds 200
-  }
-  if (Test-Path -LiteralPath $Path) {
-    throw "Path remained after the removal deadline: $Path"
   }
 }
 
@@ -202,7 +210,7 @@ try {
   Invoke-Setup (Join-Path $installRoot "unins000.exe") "CodexBridge-uninstall.log" -Uninstall
   Wait-BridgeProcessesExit
 
-  Wait-PathRemoval $installRoot 30
+  Remove-TestOwnedEmptyInstallRoot $installRoot 30
   if (Test-Path -LiteralPath $shortcutPath) { throw "Start Menu shortcut remained after uninstall." }
   if ($null -ne (Get-LegacyRunValue)) {
     throw "Legacy startup registration remained after uninstall."
