@@ -15,6 +15,32 @@ $stderrPath = Join-Path $smokeRoot "stderr.txt"
 $originalPath = $env:PATH
 $process = $null
 
+function Stop-SmokeProcess([System.Diagnostics.Process]$Process) {
+  if ($null -eq $Process) { return }
+  try {
+    $Process.Refresh()
+    if ($Process.HasExited) { return }
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    if (-not $Process.WaitForExit(10000)) {
+      throw "Portable service did not exit during cleanup."
+    }
+  } finally {
+    $Process.Dispose()
+  }
+}
+
+function Remove-SmokeRoot([string]$Path, [int]$Seconds) {
+  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  while (Test-Path -LiteralPath $Path) {
+    try {
+      Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+    } catch {
+      if ([DateTime]::UtcNow -ge $deadline) { throw }
+      Start-Sleep -Milliseconds 200
+    }
+  }
+}
+
 New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
 try {
   $env:PATH = "$portableFull;$env:SystemRoot\System32;$env:SystemRoot"
@@ -59,12 +85,9 @@ try {
   }
   Write-Host "Portable service startup with app-local runtimes passed."
 } finally {
-  if ($process -and -not $process.HasExited) {
-    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
-  }
+  Stop-SmokeProcess $process
   $env:PATH = $originalPath
   if (Test-Path -LiteralPath $smokeRoot) {
-    Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+    Remove-SmokeRoot $smokeRoot 10
   }
 }
