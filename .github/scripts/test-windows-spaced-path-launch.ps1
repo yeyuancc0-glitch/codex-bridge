@@ -22,9 +22,10 @@ try {
   $appPath = Join-Path $testRoot "codex-bridge-windows-app.exe"
   $servicePath = Join-Path $testRoot "codex-bridge-service.exe"
   $launch = Start-Process -FilePath $appPath -WorkingDirectory $testRoot `
-    -ArgumentList "--ensure-service" -Wait -PassThru
-  if ($launch.ExitCode -ne 0) {
-    throw "The application service control returned $($launch.ExitCode)."
+    -ArgumentList "--ensure-service" -PassThru
+  $launchExitCode = Wait-DirectProcessExit $launch 30 "Application service control"
+  if ($launchExitCode -ne 0) {
+    throw "The application service control returned $launchExitCode."
   }
 
   $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -47,9 +48,10 @@ try {
     throw "The app did not launch the service from its path containing spaces."
   }
 
-  $control = Start-Process -FilePath $servicePath -ArgumentList "--shutdown" -Wait -PassThru
-  if ($control.ExitCode -ne 0) {
-    throw "The service shutdown control returned $($control.ExitCode)."
+  $control = Start-Process -FilePath $servicePath -ArgumentList "--shutdown" -PassThru
+  $controlExitCode = Wait-DirectProcessExit $control 45 "Service shutdown control"
+  if ($controlExitCode -ne 0) {
+    throw "The service shutdown control returned $controlExitCode."
   }
   $service.Refresh()
   if (-not $service.HasExited) {

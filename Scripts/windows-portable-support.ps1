@@ -132,3 +132,16 @@ namespace CodexBridgePortable {
 function Get-Sha256([string]$Path) {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
+
+function Wait-DirectProcessExit(
+  [System.Diagnostics.Process]$Process,
+  [int]$TimeoutSeconds,
+  [string]$Description
+) {
+  if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    throw "$Description timed out."
+  }
+  $Process.Refresh()
+  return $Process.ExitCode
+}

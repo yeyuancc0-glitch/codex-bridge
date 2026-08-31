@@ -105,9 +105,10 @@ function Assert-Shortcut {
 
 function Start-InstalledServiceThroughApplication {
   $launch = Start-Process -FilePath $appPath -WorkingDirectory $installRoot `
-    -ArgumentList "--ensure-service" -Wait -PassThru
-  if ($launch.ExitCode -ne 0) {
-    throw "The installed application service control returned $($launch.ExitCode)."
+    -ArgumentList "--ensure-service" -PassThru
+  $launchExitCode = Wait-DirectProcessExit $launch 30 "Installed application service control"
+  if ($launchExitCode -ne 0) {
+    throw "The installed application service control returned $launchExitCode."
   }
   $script:service = Wait-ExactProcess "codex-bridge-service" $servicePath 30
 }

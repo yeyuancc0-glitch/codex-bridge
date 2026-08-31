@@ -245,6 +245,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Smoke app-to-service launch from spaced path
         if: matrix.run_tests
+        timeout-minutes: 5
         shell: pwsh
         run: |
           & "$env:GITHUB_WORKSPACE\.github\scripts\test-windows-spaced-path-launch.ps1" `
@@ -265,6 +266,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Smoke EXE install, upgrade, and uninstall
         if: matrix.run_tests
+        timeout-minutes: 15
         shell: pwsh
         run: |
           $installerRoot = "$env:GITHUB_WORKSPACE\.build\windows-installer\${{ matrix.architecture }}"
