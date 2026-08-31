@@ -115,7 +115,7 @@
 
     private func createPipeInstance() -> HANDLE? {
       var attributes = security.attributes
-      pipeName.withCString(encodedAs: UTF16.self) { name in
+      return pipeName.withCString(encodedAs: UTF16.self) { name in
         let handle = CreateNamedPipeW(
           name,
           DWORD(PIPE_ACCESS_DUPLEX),
