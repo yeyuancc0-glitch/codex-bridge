@@ -45,18 +45,28 @@
     }
 
     func invalidate() {
+      WindowsServiceShutdownDiagnostics.record("listener-start")
       lock.lock()
+      WindowsServiceShutdownDiagnostics.record("listener-lock-acquired")
       running = false
       let active = connections
       connections.removeAll()
+      WindowsServiceShutdownDiagnostics.record("listener-connections-detached")
       let pendingAccept = acceptState.cancel()
+      WindowsServiceShutdownDiagnostics.record("listener-accept-cancelled")
       lock.unlock()
+      WindowsServiceShutdownDiagnostics.record("listener-lock-released")
       if pendingAccept != INVALID_HANDLE_VALUE {
+        WindowsServiceShutdownDiagnostics.record("listener-accept-close-start")
         _ = CloseHandle(pendingAccept)
+        WindowsServiceShutdownDiagnostics.record("listener-accept-close-complete")
       }
       for connection in active {
+        WindowsServiceShutdownDiagnostics.record("listener-connection-close-start")
         connection.close()
+        WindowsServiceShutdownDiagnostics.record("listener-connection-close-complete")
       }
+      WindowsServiceShutdownDiagnostics.record("listener-complete")
     }
 
     private func acceptLoop() {
