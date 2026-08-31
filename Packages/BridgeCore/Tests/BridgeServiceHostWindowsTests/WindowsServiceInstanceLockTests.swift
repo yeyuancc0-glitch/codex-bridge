@@ -7,7 +7,7 @@
   final class WindowsServiceInstanceLockTests: XCTestCase {
     func testSecondLockForTheSameExecutableDirectoryFails() throws {
       let first = try WindowsServiceInstanceLock()
-      withExtendedLifetime(first) {
+      try withExtendedLifetime(first) {
         XCTAssertThrowsError(try WindowsServiceInstanceLock())
       }
     }
