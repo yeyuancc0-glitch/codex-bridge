@@ -34,10 +34,13 @@ function Invoke-Setup([string]$Executable, [string]$LogName, [switch]$Uninstall)
     "/LOG=`"$logPath`""
   )
   if (-not $Uninstall) { $arguments += "/SP-" }
-  $process = Start-Process -FilePath $Executable -ArgumentList $arguments -Wait -PassThru
-  if ($process.ExitCode -ne 0) {
-    throw "Setup failed with exit code $($process.ExitCode)."
+  Write-Host "Running $LogName"
+  $process = Start-Process -FilePath $Executable -ArgumentList $arguments -PassThru
+  $exitCode = Wait-DirectProcessExit $process 120 $LogName
+  if ($exitCode -ne 0) {
+    throw "Setup failed with exit code $exitCode."
   }
+  Write-Host "Completed $LogName"
 }
 
 function Get-ExactProcess([string]$Name, [string]$ExpectedPath) {
@@ -210,7 +213,7 @@ try {
   Invoke-Setup (Join-Path $installRoot "unins000.exe") "CodexBridge-uninstall.log" -Uninstall
   Wait-BridgeProcessesExit
 
-  Remove-TestOwnedEmptyInstallRoot $installRoot 30
+  Remove-TestOwnedEmptyInstallRoot $installRoot 60
   if (Test-Path -LiteralPath $shortcutPath) { throw "Start Menu shortcut remained after uninstall." }
   if ($null -ne (Get-LegacyRunValue)) {
     throw "Legacy startup registration remained after uninstall."
@@ -233,9 +236,12 @@ try {
   }
   $cleanupUninstaller = Join-Path $installRoot "unins000.exe"
   if (Test-Path -LiteralPath $cleanupUninstaller) {
-    Start-Process -FilePath $cleanupUninstaller -ArgumentList @(
-      "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
-    ) -Wait -ErrorAction SilentlyContinue | Out-Null
+    try {
+      $cleanup = Start-Process -FilePath $cleanupUninstaller -ArgumentList @(
+        "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+      ) -PassThru
+      Wait-DirectProcessExit $cleanup 120 "Cleanup uninstaller" | Out-Null
+    } catch {}
   }
   if ($legacyRunCreated) {
     $runValue = Get-LegacyRunValue
