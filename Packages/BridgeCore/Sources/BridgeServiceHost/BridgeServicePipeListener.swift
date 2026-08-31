@@ -45,28 +45,18 @@
     }
 
     func invalidate() {
-      WindowsServiceShutdownDiagnostics.record("listener-start")
       lock.lock()
-      WindowsServiceShutdownDiagnostics.record("listener-lock-acquired")
       running = false
       let active = connections
       connections.removeAll()
-      WindowsServiceShutdownDiagnostics.record("listener-connections-detached")
       let pendingAccept = acceptState.cancel()
-      WindowsServiceShutdownDiagnostics.record("listener-accept-cancelled")
       lock.unlock()
-      WindowsServiceShutdownDiagnostics.record("listener-lock-released")
       if pendingAccept != INVALID_HANDLE_VALUE {
-        WindowsServiceShutdownDiagnostics.record("listener-accept-close-start")
-        _ = CloseHandle(pendingAccept)
-        WindowsServiceShutdownDiagnostics.record("listener-accept-close-complete")
+        wakeAcceptLoop()
       }
       for connection in active {
-        WindowsServiceShutdownDiagnostics.record("listener-connection-close-start")
         connection.close()
-        WindowsServiceShutdownDiagnostics.record("listener-connection-close-complete")
       }
-      WindowsServiceShutdownDiagnostics.record("listener-complete")
     }
 
     private func acceptLoop() {
@@ -82,7 +72,10 @@
         let connected = ConnectNamedPipe(handle, nil)
         var error: DWORD = 0
         if !connected { error = GetLastError() }
-        guard acceptState.finish(handle) else { break }
+        guard acceptState.finish(handle) else {
+          _ = CloseHandle(handle)
+          break
+        }
         if !connected {
           // ERROR_PIPE_CONNECTED: the client connected between creation and
           // ConnectNamedPipe, which still yields a usable session.
@@ -121,6 +114,25 @@
       lock.lock()
       connections.removeAll { $0 === connection }
       lock.unlock()
+    }
+
+    private func wakeAcceptLoop() {
+      // Completing the synchronous accept through a local client lets the accept
+      // thread reclaim its own server handle without blocking invalidation.
+      pipeName.withCString(encodedAs: UTF16.self) { name in
+        let client = CreateFileW(
+          name,
+          DWORD(0x8000_0000) | DWORD(0x4000_0000),
+          0,
+          nil,
+          DWORD(OPEN_EXISTING),
+          0,
+          nil
+        )
+        if client != INVALID_HANDLE_VALUE {
+          _ = CloseHandle(client)
+        }
+      }
     }
 
     private func createPipeInstance() -> HANDLE? {
