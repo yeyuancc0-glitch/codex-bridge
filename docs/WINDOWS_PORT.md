@@ -223,7 +223,11 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    vendor 至 `Vendor/swift-sdk` 并打补丁：`canImport(EventSource)` 守卫 +
    `URLSession.bytes`/SSE 兼容 shim（SSE 在 Windows 上为整段缓冲接收，非增量
    流式）。上游恢复 Windows 支持后可切回。
-10. EXE 安装器固定使用 **Inno Setup 7.1.0**。workflow 下载官方
+10. SwiftNIO 固定到 `yeyuancc0-glitch/swift-nio@1a69138`：它以官方 2.101.3
+    (`0b18836`) 为父提交，仅把 Windows selector 的 AF_UNIX wakeup pair 改为关闭式
+    loopback TCP pair。上游实现会让 packaged/后台服务的 event loop 无法可靠唤醒，
+    表现为 shutdown IPC 已返回但进程无法退出；上游合入等价修复后切回官方版本。
+11. EXE 安装器固定使用 **Inno Setup 7.1.0**。workflow 下载官方
     `innosetup-7.1.0-x64.exe` 并校验固定 SHA-256 后调用 `ISCC.exe`；x64 使用 x64
     Setup bootstrap，ARM64 payload 使用可在 ARM64 Windows 上运行的 x86 bootstrap，
     再通过 `ArchitecturesAllowed` 拒绝错误架构。

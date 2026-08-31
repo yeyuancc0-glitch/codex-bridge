@@ -30,7 +30,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-system.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         .package(url: "https://github.com/mattt/eventsource.git", from: "1.1.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
+        .package(
+            url: "https://github.com/yeyuancc0-glitch/swift-nio.git",
+            revision: "1a69138cb7f2e63de709c9716e0348ffd6522ac7"),
     ],
     targets: [
         .target(

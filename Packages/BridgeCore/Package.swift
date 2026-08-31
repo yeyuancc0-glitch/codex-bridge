@@ -328,9 +328,12 @@ let package = Package(
       url: "https://github.com/apple/swift-log.git",
       exact: "1.15.0"
     ),
+    // Upstream 2.101.3 plus one Windows-only wakeup change. Windows package
+    // identities and shutdown paths require a loopback TCP pair instead of
+    // the upstream AF_UNIX pair. Drop the fork after upstream ships it.
     .package(
-      url: "https://github.com/apple/swift-nio.git",
-      exact: "2.101.3"
+      url: "https://github.com/yeyuancc0-glitch/swift-nio.git",
+      revision: "1a69138cb7f2e63de709c9716e0348ffd6522ac7"
     ),
     .package(
       url: "https://github.com/apple/swift-crypto.git",
