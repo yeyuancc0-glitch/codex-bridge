@@ -17,9 +17,12 @@
         environment: ["pAtH": root.path, "PaThExT": ".CMD;.EXE"],
         preferredExtensions: [".EXE"]
       )
+      let expected = try XCTUnwrap(
+        AgentPathSemantics.canonicalPath(executable.path, style: .windows)
+      )
       XCTAssertEqual(
         resolver.resolve("tool")?.lowercased(),
-        executable.path.lowercased()
+        expected.lowercased()
       )
       XCTAssertNil(resolver.resolve("tool.cmd"))
     }
