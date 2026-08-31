@@ -17,7 +17,10 @@ if (@(Get-Process -Name "codex-bridge-service" -ErrorAction SilentlyContinue).Co
 
 $testRoot = Join-Path $env:RUNNER_TEMP ("Codex Bridge spaced path " + [Guid]::NewGuid().ToString("N"))
 $service = $null
+$diagnosticPath = $null
+$previousDiagnostics = $env:CODEX_BRIDGE_SHUTDOWN_DIAGNOSTICS
 try {
+  $env:CODEX_BRIDGE_SHUTDOWN_DIAGNOSTICS = "1"
   Copy-Item -LiteralPath $portableFull -Destination $testRoot -Recurse
   $appPath = Join-Path $testRoot "codex-bridge-windows-app.exe"
   $servicePath = Join-Path $testRoot "codex-bridge-service.exe"
@@ -47,11 +50,17 @@ try {
   if ($null -eq $service) {
     throw "The app did not launch the service from its path containing spaces."
   }
+  $diagnosticPath = Join-Path $env:TEMP "codex-bridge-shutdown-$($service.Id).log"
 
   $control = Start-Process -FilePath $servicePath -ArgumentList "--shutdown" -PassThru
   $controlExitCode = Wait-DirectProcessExit $control 45 "Service shutdown control"
   if ($controlExitCode -ne 0) {
-    throw "The service shutdown control returned $controlExitCode."
+    $stages = if (Test-Path -LiteralPath $diagnosticPath) {
+      (Get-Content -LiteralPath $diagnosticPath) -join ","
+    } else {
+      "none"
+    }
+    throw "The service shutdown control returned $controlExitCode. stages=$stages"
   }
   $service.Refresh()
   if (-not $service.HasExited) {
@@ -59,6 +68,7 @@ try {
   }
   Write-Host "App-to-service launch from a path containing spaces passed."
 } finally {
+  $env:CODEX_BRIDGE_SHUTDOWN_DIAGNOSTICS = $previousDiagnostics
   foreach ($process in @($service)) {
     if ($null -eq $process) { continue }
     try {
@@ -72,5 +82,8 @@ try {
   }
   if (Test-Path -LiteralPath $testRoot) {
     Remove-Item -LiteralPath $testRoot -Recurse -Force
+  }
+  if ($diagnosticPath -and (Test-Path -LiteralPath $diagnosticPath)) {
+    Remove-Item -LiteralPath $diagnosticPath -Force
   }
 }

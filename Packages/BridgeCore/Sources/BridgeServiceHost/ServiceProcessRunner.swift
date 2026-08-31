@@ -137,7 +137,13 @@ public enum ServiceProcessRunner {
     }
 
     await ServiceTerminationSignal.wait()
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("signal-received")
+    #endif
     listener?.invalidate()
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("listener-invalidated")
+    #endif
     await composition.shutdown()
   }
 

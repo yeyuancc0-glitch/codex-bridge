@@ -421,11 +421,29 @@ public actor ServiceComposition {
   public func shutdown() async {
     guard !isShutdown else { return }
     isShutdown = true
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("tunnel-start")
+    #endif
     await tunnel.shutdown()
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("mcp-start")
+    #endif
     await stopMCP()
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("coordinator-start")
+    #endif
     await coordinator.shutdown()
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("direct-start")
+    #endif
     await application.shutdownDirectOperations()
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("status-start")
+    #endif
     await runtimeStatus.updateMCP(state: "stopped")
+    #if os(Windows)
+      WindowsServiceShutdownDiagnostics.record("complete")
+    #endif
   }
 
   private func stopMCP() async {
