@@ -127,6 +127,14 @@ function Wait-BridgeProcessesExit {
   $script:service = $null
 }
 
+function Get-LegacyRunValue {
+  $entry = Get-ItemProperty -Path $runKey -ErrorAction SilentlyContinue
+  if ($null -eq $entry) { return $null }
+  $property = $entry.PSObject.Properties["CodexBridgeService"]
+  if ($null -eq $property) { return $null }
+  return $property.Value
+}
+
 if (Test-Path -LiteralPath $installRoot) {
   throw "Install root must not exist before the lifecycle test: $installRoot"
 }
@@ -173,7 +181,7 @@ try {
   foreach ($sentinel in @($dataSentinel, $webViewSentinel)) {
     Assert-RegularFile $sentinel | Out-Null
   }
-  if (Get-ItemProperty -Path $runKey -Name "CodexBridgeService" -ErrorAction SilentlyContinue) {
+  if ($null -ne (Get-LegacyRunValue)) {
     throw "Legacy startup registration remained after upgrade."
   }
 
@@ -186,7 +194,7 @@ try {
 
   if (Test-Path -LiteralPath $installRoot) { throw "Install root remained after uninstall." }
   if (Test-Path -LiteralPath $shortcutPath) { throw "Start Menu shortcut remained after uninstall." }
-  if (Get-ItemProperty -Path $runKey -Name "CodexBridgeService" -ErrorAction SilentlyContinue) {
+  if ($null -ne (Get-LegacyRunValue)) {
     throw "Legacy startup registration remained after uninstall."
   }
   foreach ($sentinel in @($dataSentinel, $webViewSentinel)) {
@@ -212,8 +220,7 @@ try {
     ) -Wait -ErrorAction SilentlyContinue | Out-Null
   }
   if ($legacyRunCreated) {
-    $runValue = Get-ItemPropertyValue -Path $runKey -Name "CodexBridgeService" `
-      -ErrorAction SilentlyContinue
+    $runValue = Get-LegacyRunValue
     if ($runValue -eq ('"' + $servicePath + '"')) {
       Remove-ItemProperty -Path $runKey -Name "CodexBridgeService" -ErrorAction SilentlyContinue
     }
