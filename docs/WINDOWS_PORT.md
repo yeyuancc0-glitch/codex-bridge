@@ -14,7 +14,7 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 │ BridgeServiceAppShell  │        │ BridgeWindowsShell            │
 └──────────┬─────────────┘        └────────────┬─────────────────┘
            │ BridgeIPC                         │ BridgeIPC
-           │  · NSXPC (Mach service)           │  · 命名管道 \\.\pipe\org.codexbridge.service
+           │  · NSXPC (Mach service)           │  · 按安装目录派生的 per-user 命名管道
            │  · XPCServiceTransport            │  · NamedPipeServiceTransport
 ┌──────────▼──────────────────────────────────▼─────────────────┐
 │ 后台服务 codex-bridge-service（macOS: LaunchAgent / Windows: 后台进程）│
@@ -28,7 +28,7 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 
 | 能力 | macOS 实现 | 抽象 | Windows 实现 |
 | --- | --- | --- | --- |
-| Shell ↔ 服务 IPC | NSXPC（launchd Mach service） | `ServiceRequestTransport` / `ServiceStreamSink` | 命名管道（帧格式：kind + u32le 长度 + payload；kind 0 请求 / 1 响应 / 2 流推送） |
+| Shell ↔ 服务 IPC | NSXPC（launchd Mach service） | `ServiceRequestTransport` / `ServiceStreamSink` | 按可执行目录派生的命名管道（帧格式：kind + u32le 长度 + payload；kind 0 请求 / 1 响应 / 2 流推送） |
 | 服务端监听 | `BridgeServiceXPCListener` | `ServiceRequestListener` / `ServiceListenerFactory` | `BridgeServicePipeListener`（每连接一个会话线程 + 请求路由器） |
 | 密钥存储 | Keychain（`KeychainSecretStore`） | `SecretStore` 协议 / `SecretStoreFactory` | 凭据管理器（`WindowsCredentialStore`，CredReadW/WriteW/DeleteW，blob ≤ 2560 字节） |
 | 内嵌 ChatGPT 页 | WKWebView（`ChatGPTWebView`） | 平台壳各自实现 | WebView2（`WindowsChatWebView`，经 WebView2Loader.dll 的最小 COM 绑定） |
@@ -44,12 +44,15 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 
 Windows 使用 Swift 6.3.3 工具链（swift.org 官方支持 x86_64 与 aarch64）：
 构建机还需 Visual Studio C++/Windows SDK、vcpkg sqlite3 和 WiX Toolset 3；WiX
-`dark.exe` 仅用于从 Swift 官方 MSM 提取 portable runtime。GitHub Windows runner
-已包含这些构建工具。
+`dark.exe` 仅用于从 Swift 官方 MSM 提取 portable runtime。构建 EXE 安装包还需
+Inno Setup 7.1.0。CI 从官方固定版本地址下载编译器并先校验 SHA-256，不依赖 runner
+预装版本。
 
 ```powershell
 powershell -File Scripts\build-windows.ps1            # 构建服务 + 壳
 powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
+powershell -File Scripts\build-windows.ps1 -Installer `
+  -ISCCPath 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe'
 ```
 
 构建脚本随后会生成以下 portable 目录（`<architecture>` 为 `x64` 或 `arm64`）：
@@ -71,12 +74,14 @@ powershell -File Scripts\build-windows.ps1 -Test      # 附带冒烟测试
 
 并在 `.build/windows-dist/` 下生成同级
 `codex-bridge-windows-<architecture>.zip`。运行壳时若服务未启动会自动拉起；也可手动
-`codex-bridge-service.exe --foreground --data-root C:\path`。portable 目录随附的是
+`codex-bridge-service.exe --foreground --data-root C:\path`。安装器在升级或卸载前调用
+`codex-bridge-service.exe --shutdown`，服务先返回自身 PID，再完成任务、子进程和存储清理；
+控制进程等待该 PID 真正退出后才允许替换文件。portable 目录随附的是
 与应用架构匹配的 `WebView2Loader.dll`；Windows 仍必须预先安装系统级 WebView2
 Evergreen Runtime，这是 WebView2 native app 的运行前置条件。缺少 Runtime 或 loader
 时壳保留任务管理功能并明确显示聊天页不可用。按
 [Swift Windows toolchain packaging](https://github.com/swiftlang/swift/blob/main/docs/WindowsToolchain.md)，
-安装器只安装宿主架构的 runtime，
+Swift 工具链安装器只安装宿主架构的 runtime，
 因此 staging 从 SDK `Redistributables` 中对应的 Swift 6.3.3
 MSM 提取目标 DLL，再逐个校验 PE 架构：`Windows.sdk` 使用
 `rtl.<arch>.msm`，`WindowsExperimental.sdk` 使用 `rtl.shared.<arch>.msm`；该映射由
@@ -89,11 +94,29 @@ Visual Studio `%VCToolsRedistDir%` 对应架构的 CRT 目录收集 Microsoft �
 兼容位，普通镜像仍校验 COFF Machine；同目录中仅供 x64/ARM64EC 使用的 companion
 不会进入纯 ARM64 包。Windows 10/11 自带的 UCRT 仍作为系统组件使用。
 
+`Scripts/build-windows-installer.ps1` 从已校验的 portable payload 生成独立架构 EXE：
+
+```text
+.build/windows-installer/x64/CodexBridge-Windows-x64-<version>-Setup.exe
+.build/windows-installer/arm64/CodexBridge-Windows-arm64-<version>-Setup.exe
+```
+
+安装包使用固定 AppId 与 `%LOCALAPPDATA%\Programs\CodexBridge`，按用户安装，无需 UAC；
+只创建指向 Swift 壳的开始菜单快捷方式，服务仍由壳按需拉起，不注册 Windows Service、
+计划任务或自启动项。x64 安装包只允许原生 x64 Windows，ARM64 安装包只允许 ARM64
+Windows；二者可沿用同一 AppId 升级。卸载删除程序文件和快捷方式，但保留
+`%LOCALAPPDATA%\CodexBridgeService`、`%LOCALAPPDATA%\CodexBridge\WebView2` 与
+Credential Manager 凭据。本项目直接交付 EXE 安装包，不生成 MSI/MSIX；安装器不会捆绑
+或自动安装 WebView2 Evergreen Runtime。升级只对带 `CodexBridgeControl.v1` 能力标记的
+新版本调用壳/服务优雅退出；更早的 Inno EXE 版本由 CloseApplications 关闭占用进程，
+并依据旧 `payload-manifest.json` 安全清除不再属于 Swift payload 的历史文件。
+
 GitHub Actions（`.github/workflows/windows.yml`）在 windows-latest 上构建 x64 与
-ARM64 两套服务/壳产物，在构建与测试后分别上传
-`codex-bridge-windows-x64.zip` / `codex-bridge-windows-arm64.zip`。这些 CI artifact
-是可解压的 portable 交付包，不是 MSI/MSIX 安装器，不负责服务注册、卸载或自动安装
-WebView2 Evergreen Runtime；ARM64 只做交叉编译与链接。
+ARM64 两套服务/壳、portable ZIP 和 EXE 安装包。x64 门禁通过壳的无界面控制模式从带
+空格的目录拉起服务，随后执行静默安装、运行中升级、陈旧 payload 清理、卸载及用户数据
+保留验证；ARM64 在 x64 runner 上完成交叉编译、payload/PE/hash 校验与安装器编译，
+真实安装运行仍需 ARM64 真机。CI 产出的 EXE 当前未做 Authenticode 签名，发布签名是
+独立交付步骤。
 
 Windows 可通过 `CODEX_BRIDGE_CODEX_EXECUTABLE` 指定 `codex.exe` 或标准 npm
 `codex.cmd`；后者不会直接作为子进程启动，而是解析并验证其架构对应的原生
@@ -113,7 +136,11 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    检查-打开窗口；隐私主要依赖用户目录 ACL。macOS 分支的相对 fd 遍历语义
    保持逐字节不变。
 3. **IPC 并发模型**。XPC 允许同连接并发请求；Windows 命名管道按连接逐请求
-   顺序应答（响应 FIFO 匹配），流式推送以 kind-2 帧交织传输。
+   顺序应答（响应 FIFO 匹配），流式推送以 kind-2 帧交织传输。Windows 端点以规范化的
+   可执行文件目录哈希派生，不同安装/portable 目录互不控制；监听器通过显式 DACL 仅允许
+   当前用户与 SYSTEM，拒绝远程客户端，并把同时监听实例限制为 16。
+   后台服务还在创建组装根前获取同目录哈希的全局 mutex，避免两个壳并发启动时产生两个
+   服务进程并竞争同一数据库；foreground 调试模式不占用该锁。
 4. **凭据管理器上限**。CredMan generic blob 上限 2560 字节，超出即拒绝
    （Keychain 上限 16KB）。当前用途（tunnel runtime key、MCP path secret）
    均远小于该值。
@@ -124,28 +151,42 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    （groue/GRDB.swift#1498），但当前服务持久化已通过 vcpkg sqlite3 构建。
    Windows 与 GRDB 的 Linux 配置一致，定义 `SQLITE_DISABLE_SNAPSHOT`，因为系统
    sqlite3 不提供实验性的 snapshot 符号；本项目未使用该 API，常规事务/WAL/迁移
-   不受影响。
+   不受影响。schema v15 将项目、任务、Agent 安装与工件路径约束统一为 portable
+   absolute-path 语义，迁移时保留 v14 数据，同时接受 POSIX、Windows 盘符和 UNC 根路径。
 7. **DeepSeek Harness 运行时模块链接**。受控 profile 需要把已校验的
    `node_modules` 目录链接到隔离运行目录；Windows 创建目录符号链接可能要求
    Developer Mode 或 `SeCreateSymbolicLinkPrivilege`，失败时保持 fail-closed。
    是否需要改为受控 junction，待 Windows 真机验收后决定。
    Windows 上 Node 解释器必须是有效 PE；由 Node 间接执行的 Harness 脚本入口
    仍按正规文件、句柄身份与摘要校验，不误要求脚本本身是 PE。
-8. **Windows UI 尚未完全对齐 macOS**。当前已支持服务状态、任务列表与稳定选择、
-   任务元数据、历史/实时对话、Interrupt、支持能力约束下的排队式 Steer、审批中心，
-   以及 WebView2 ChatGPT 页面。审批中心支持任务审批与 Direct 审批的读取、详情查看、
-   允许/拒绝和过期后刷新；项目/Agent 管理、日志和完整设置页仍待补齐。
+8. **Windows 不提供 Supervisor（已确认的产品边界）**。macOS 的 evidence-only
+   Supervisor 依赖 `sandbox-exec` 隔离；Windows 默认关闭、不向 UI 宣称可用，显式启用
+   也会 fail-closed，不会退化成无隔离审查。macOS Supervisor 保持原有行为。
+9. **Direct 命令的网络隔离边界**。Windows 没有与 macOS sandbox profile 等价的
+   per-process deny-network 实现，因此要求 `denyNetwork` 的直接命令在启动前失败；
+   内置 safe command 不在 Windows 对外发布。已注册且声明需要网络的命令仍按项目策略运行。
+10. **Windows UI 不追求像素级对齐 macOS**。当前已支持服务状态、任务列表与稳定选择、
+   任务元数据、历史/实时对话、Interrupt、支持能力约束下的排队式 Steer、审批中心、
+   项目策略管理、Agent 安装管理，以及 WebView2 ChatGPT 页面。审批中心支持任务审批与
+   Direct 审批的读取、详情查看、允许/拒绝和过期后刷新；项目与 Agent 窗口支持注册、
+   移除、策略、启停、重新 Probe 与接受替换。Direct workspace command 编辑、Skills
+   清单与文档只读查看、Agent 默认模型、日志和设置页均有原生窗口；Skills 核心目前没有
+   写接口，因此 Windows 与服务契约一致保持只读。路径输入暂为文本框，尚未接原生文件选择器。
 
 ## 验证路径与 CI 现状
 
 - macOS：全量 `swift test`（所有套件 0 失败为门禁）+ Xcode Debug 构建。
 - Windows：`.github/workflows/windows.yml`（windows-latest）分别构建 x64 与
   `aarch64-unknown-windows-msvc`；Windows 专属源码（`#if os(Windows)`）由 CI
-  以 release 配置编译；x64 还运行 Domain、AgentCore、Security、Codex RPC resolver
-  与跨平台 AppCore 任务呈现测试，并从 staged portable 目录在隔离 PATH 下启动服务，
+  以 release 配置编译；x64 还运行 Domain、AgentCore、Security、Codex RPC、跨平台
+  AppCore，以及 Host/CodexService/Application/ServiceCore/DirectCommand 五组 Windows
+  专属测试，并从 staged portable 目录在隔离 PATH 下启动服务，
   使用独立数据目录完成 SQLite/服务组装并等待本地 MCP ready；进程已加载的 VC runtime
-  必须来自 portable 目录。
-  ARM64 是交叉编译/链接门禁，不能替代 ARM64 真机运行验收。
+  必须来自 portable 目录。随后 x64 还以无界面控制模式验证带空格路径的 App→Service
+  拉起、服务优雅退出，
+  以及 EXE 安装→启动→运行中升级→卸载全链；检查开始菜单、安装目录哈希、陈旧文件清理
+  和用户数据保留。Hosted runner 不创建或操作桌面窗口；Win32 窗口和 WebView2 交互由
+  Windows 真机验收。ARM64 是交叉编译/链接与安装器静态门禁，不能替代 ARM64 真机运行验收。
 - Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
   因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由
   filter 选择已适配的冒烟套件。
@@ -182,3 +223,7 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    vendor 至 `Vendor/swift-sdk` 并打补丁：`canImport(EventSource)` 守卫 +
    `URLSession.bytes`/SSE 兼容 shim（SSE 在 Windows 上为整段缓冲接收，非增量
    流式）。上游恢复 Windows 支持后可切回。
+10. EXE 安装器固定使用 **Inno Setup 7.1.0**。workflow 下载官方
+    `innosetup-7.1.0-x64.exe` 并校验固定 SHA-256 后调用 `ISCC.exe`；x64 使用 x64
+    Setup bootstrap，ARM64 payload 使用可在 ARM64 Windows 上运行的 x86 bootstrap，
+    再通过 `ArchitecturesAllowed` 拒绝错误架构。

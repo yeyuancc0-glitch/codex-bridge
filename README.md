@@ -163,10 +163,14 @@ Windows 可在 x64 或 ARM64 主机上构建同一套服务与桌面壳：
 
 ```powershell
 powershell -File Scripts\build-windows.ps1 -Test
+powershell -File Scripts\build-windows.ps1 -Installer `
+  -ISCCPath 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe'
 ```
 
 默认会在 `.build\windows-dist\<architecture>` 生成可直接解压运行的 portable 目录，
-并在其同级生成 `codex-bridge-windows-<architecture>.zip`。Windows 运行聊天页仍需系统
+并在其同级生成 `codex-bridge-windows-<architecture>.zip`；`-Installer` 使用 Inno Setup
+7.1.0 生成 `.build\windows-installer\<architecture>\CodexBridge-Windows-*-Setup.exe`。
+Windows 只交付 portable ZIP 与 EXE 安装包，不生成 MSI/MSIX。运行聊天页仍需系统
 预装 WebView2 Evergreen Runtime；构建脚本会将匹配架构的 WebView2Loader.dll 放入
 portable 目录。
 

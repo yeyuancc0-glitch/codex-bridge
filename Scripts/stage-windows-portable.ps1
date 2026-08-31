@@ -70,6 +70,16 @@ function Get-GitCommit {
   return "unknown"
 }
 
+function Get-AppVersion {
+  $configurationPath = Join-Path $repoRoot "Config\Base.xcconfig"
+  $matches = @(Get-Content -LiteralPath $configurationPath |
+      Where-Object { $_ -match "^MARKETING_VERSION\s*=\s*([0-9]+(?:\.[0-9]+){2,3})\s*$" })
+  if ($matches.Count -ne 1) {
+    throw "Config\Base.xcconfig must declare one numeric MARKETING_VERSION."
+  }
+  return ([regex]::Match($matches[0], "([0-9]+(?:\.[0-9]+){2,3})")).Groups[1].Value
+}
+
 $binFull = Get-FullPath $BinPath
 Assert-Directory $binFull | Out-Null
 $outFull = Get-FullPath $OutDir
@@ -206,6 +216,7 @@ try {
 
   $buildInfo = [ordered]@{
     schema = "codex-bridge-windows-portable/v1"
+    appVersion = Get-AppVersion
     architecture = $Architecture
     targetTriple = $effectiveTargetTriple
     gitCommit = Get-GitCommit

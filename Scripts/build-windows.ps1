@@ -1,11 +1,13 @@
 # Builds the Windows targets (service daemon and desktop shell) for the host
 # architecture. Run on a Windows machine with the Swift 6.3.3 toolchain:
-#   powershell -File Scripts\build-windows.ps1 [-Test] [-OutDir path] [-VcpkgRoot path] [-VCRedistRoot path]
+#   powershell -File Scripts\build-windows.ps1 [-Test] [-Installer] [-OutDir path]
 param(
   [switch]$Test,
+  [switch]$Installer,
   [string]$OutDir = ".build\windows-dist",
   [string]$VcpkgRoot = "",
-  [string]$VCRedistRoot = ""
+  [string]$VCRedistRoot = "",
+  [string]$ISCCPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,7 +71,12 @@ try {
         "BridgeAgentCoreTests",
         "BridgeSecurityTests",
         "BridgeCodexRPCTests",
-        "BridgeServiceAppCoreTests")) {
+        "BridgeServiceAppCoreTests",
+        "BridgeServiceHostWindowsTests",
+        "BridgeCodexServiceWindowsTests",
+        "BridgeServiceApplicationWindowsTests",
+        "BridgeServiceCoreWindowsTests",
+        "BridgeDirectCommandWindowsTests")) {
       swift test @swiftArguments --filter $testFilter
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
@@ -94,6 +101,20 @@ try {
   }
   & $stageScript @stageArguments
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  if ($Installer) {
+    $installerOutDir = Join-Path $repoRoot ".build\windows-installer\$architecture"
+    $installerArguments = @{
+      Architecture = $architecture
+      PayloadDir = $portableDir
+      OutputDir = $installerOutDir
+    }
+    if ($ISCCPath) {
+      $installerArguments["ISCCPath"] = $ISCCPath
+    }
+    & (Join-Path $repoRoot "Scripts\build-windows-installer.ps1") @installerArguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  }
 } finally {
   Pop-Location
 }
