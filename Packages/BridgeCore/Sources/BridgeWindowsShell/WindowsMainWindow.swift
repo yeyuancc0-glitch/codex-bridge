@@ -12,23 +12,11 @@
     static let windowHeight = 720
   }
 
-  enum MainWindowCommand: Equatable {
-    case refreshTasks
-    case startService
-    case selectTask(index: Int)
-    case interruptSelectedTask
-    case submitSteer(input: String)
-    case showApprovals
-    case selectApproval(index: Int)
-    case refreshApprovals
-    case resolveApproval(decision: String)
-  }
-
   /// Owns the top-level window, menu, and tray icon. The task inspector owns
   /// child controls. All state is confined to the message-loop thread;
   /// `nonisolated(unsafe)` marks statics touched by the plain-C procedure.
   enum WindowsMainWindow {
-    private static let windowClassName = "CodexBridgeMainWindow"
+    private static let windowClassName = WindowsApplicationIdentity.mainWindowClassName
     private static let windowTitle = "Codex Bridge"
 
     // CW_USEDEFAULT ((int)0x80000000); cast macros are not imported by WinSDK.
@@ -40,6 +28,12 @@
     private static let menuRefreshID: UINT_PTR = 1002
     private static let menuStartServiceID: UINT_PTR = 1003
     private static let menuApprovalsID: UINT_PTR = 1004
+    private static let menuProjectsID: UINT_PTR = 1005
+    private static let menuAgentsID: UINT_PTR = 1006
+    private static let menuWorkspaceID: UINT_PTR = 1007
+    private static let menuAgentDefaultsID: UINT_PTR = 1008
+    private static let menuLogsID: UINT_PTR = 1009
+    private static let menuSettingsID: UINT_PTR = 1010
     private static let timerID: UINT_PTR = 1
     private static let timerIntervalMs: UINT = 250
 
@@ -130,6 +124,18 @@
           pendingCommands.append(.startService)
         case menuApprovalsID:
           pendingCommands.append(.showApprovals)
+        case menuProjectsID:
+          pendingCommands.append(.showProjects)
+        case menuAgentsID:
+          pendingCommands.append(.showAgents)
+        case menuWorkspaceID:
+          pendingCommands.append(.showWorkspace)
+        case menuAgentDefaultsID:
+          pendingCommands.append(.showAgentDefaults)
+        case menuLogsID:
+          pendingCommands.append(.showLogs)
+        case menuSettingsID:
+          pendingCommands.append(.showSettings)
         default:
           break
         }
@@ -185,6 +191,12 @@
       appendMenuItem(actionsMenu, UINT(MF_STRING), menuRefreshID, "刷新任务")
       appendMenuItem(actionsMenu, UINT(MF_STRING), menuStartServiceID, "启动服务")
       appendMenuItem(actionsMenu, UINT(MF_STRING), menuApprovalsID, "待处理审批…")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuProjectsID, "项目管理…")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuAgentsID, "Agent 管理…")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuWorkspaceID, "Direct 工作区…")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuAgentDefaultsID, "Agent 默认模型…")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuLogsID, "任务日志…")
+      appendMenuItem(actionsMenu, UINT(MF_STRING), menuSettingsID, "设置…")
       let menuBar = CreateMenu()
       appendPopup(menuBar, fileMenu, "文件")
       appendPopup(menuBar, actionsMenu, "操作")

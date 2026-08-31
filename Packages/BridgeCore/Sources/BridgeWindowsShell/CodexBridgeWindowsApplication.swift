@@ -10,10 +10,13 @@
   @MainActor
   public enum CodexBridgeWindowsApplication {
     private static var lastAppliedDisplay: WindowsWorkbenchDisplay?
+    private static var lastAppliedManagementDisplay: WindowsManagementDisplay?
     private static var lastPlaceholderText: String? = ""
 
     public static func main() async {
       let model = WindowsWorkbenchModel()
+      let management = WindowsManagementModel(client: model.client)
+      let auxiliary = WindowsAuxiliaryRuntime(client: model.client)
       let chat = WindowsChatWebView()
       guard let window = WindowsMainWindow.create() else { return }
       WindowsMainWindow.chat = chat
@@ -21,29 +24,44 @@
 
       // Startup path per platform contract: launch the service when the pipe
       // is not connectable, then connect and load tasks.
-      Task { await model.startServiceAndConnect() }
+      Task {
+        await model.startServiceAndConnect()
+        await management.refresh()
+      }
 
       var message = MSG()
       while GetMessageW(&message, nil, 0, 0) {
         _ = TranslateMessage(&message)
         _ = DispatchMessageW(&message)
         for command in WindowsMainWindow.takePendingCommands() {
-          run(command, model: model)
+          run(command, model: model, management: management, auxiliary: auxiliary)
         }
         await Task.yield()
-        applyDisplay(model: model, chat: chat)
+        applyDisplay(model: model, management: management, chat: chat)
+        auxiliary.applyDisplay()
       }
       chat.shutdown()
+      auxiliary.shutdown()
       WindowsApprovalWindow.shutdown()
+      WindowsProjectManagementWindow.shutdown()
+      WindowsAgentManagementWindow.shutdown()
       await model.shutdown()
     }
 
-    private static func run(_ command: MainWindowCommand, model: WindowsWorkbenchModel) {
+    private static func run(
+      _ command: MainWindowCommand,
+      model: WindowsWorkbenchModel,
+      management: WindowsManagementModel,
+      auxiliary: WindowsAuxiliaryRuntime
+    ) {
       switch command {
       case .refreshTasks:
         Task { await model.refreshSelectedTask() }
       case .startService:
-        Task { await model.startServiceAndConnect() }
+        Task {
+          await model.startServiceAndConnect()
+          await management.refresh()
+        }
       case .selectTask(let index):
         model.selectTask(at: index)
       case .interruptSelectedTask:
@@ -65,11 +83,66 @@
         Task { await model.refreshApprovals() }
       case .resolveApproval(let decision):
         Task { await model.resolveSelectedApproval(decision: decision) }
+      case .showProjects:
+        WindowsProjectManagementWindow.show(owner: WindowsMainWindow.currentWindow())
+        management.refreshDisplaySnapshot()
+        WindowsProjectManagementWindow.apply(management.displayBox.current().project)
+        Task { await management.refresh() }
+      case .showAgents:
+        WindowsAgentManagementWindow.show(owner: WindowsMainWindow.currentWindow())
+        management.refreshDisplaySnapshot()
+        WindowsAgentManagementWindow.apply(management.displayBox.current().agent)
+        Task { await management.refresh() }
+      case .selectProject(let index):
+        management.selectProject(at: index)
+      case .refreshProjects:
+        Task { await management.refreshProjects() }
+      case .registerProject(let name, let path):
+        Task { await management.registerProject(name: name, path: path) }
+      case .removeSelectedProject:
+        Task { await management.removeSelectedProject() }
+      case .saveProjectPolicy(let read, let write, let network):
+        Task {
+          await management.saveSelectedProjectPolicy(
+            read: read,
+            write: write,
+            network: network
+          )
+        }
+      case .selectAgentProvider(let index):
+        management.selectProvider(at: index)
+      case .selectAgentInstallation(let index):
+        management.selectInstallation(at: index)
+      case .refreshAgents:
+        Task { await management.refreshAgents() }
+      case .registerAgent(let providerID, let executablePath, let configurationPath):
+        Task {
+          await management.registerAgent(
+            providerID: providerID,
+            executablePath: executablePath,
+            configurationPath: configurationPath
+          )
+        }
+      case .enableSelectedAgent:
+        Task { await management.setSelectedAgentEnabled(true) }
+      case .disableSelectedAgent:
+        Task { await management.setSelectedAgentEnabled(false) }
+      case .reprobeSelectedAgent(let acceptReplacement):
+        Task { await management.reprobeSelectedAgent(acceptReplacement: acceptReplacement) }
+      case .removeSelectedAgent:
+        Task { await management.removeSelectedAgent() }
+      default:
+        auxiliary.run(command)
       }
     }
 
-    private static func applyDisplay(model: WindowsWorkbenchModel, chat: WindowsChatWebView) {
+    private static func applyDisplay(
+      model: WindowsWorkbenchModel,
+      management: WindowsManagementModel,
+      chat: WindowsChatWebView
+    ) {
       model.refreshDisplaySnapshot()
+      management.refreshDisplaySnapshot()
       let display = model.displayBox.current()
       if display != lastAppliedDisplay {
         var lines = [
@@ -110,6 +183,13 @@
         }
         WindowsApprovalWindow.apply(display)
         lastAppliedDisplay = display
+      }
+
+      let managementDisplay = management.displayBox.current()
+      if managementDisplay != lastAppliedManagementDisplay {
+        WindowsProjectManagementWindow.apply(managementDisplay.project)
+        WindowsAgentManagementWindow.apply(managementDisplay.agent)
+        lastAppliedManagementDisplay = managementDisplay
       }
 
       let placeholder: String?

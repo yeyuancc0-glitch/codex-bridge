@@ -1,6 +1,15 @@
 #if os(Windows)
   import BridgeWindowsShell
+  import ucrt
 
+  let arguments = Array(CommandLine.arguments.dropFirst())
+  if arguments == ["--ensure-service"] {
+    _exit(WindowsApplicationControl.ensureServiceRunning() ? EXIT_SUCCESS : EXIT_FAILURE)
+  }
+  if arguments == ["--shutdown"] {
+    _exit(WindowsApplicationControl.shutdownRunningApplication() ? EXIT_SUCCESS : EXIT_FAILURE)
+  }
+  if !arguments.isEmpty { _exit(EXIT_FAILURE) }
   await CodexBridgeWindowsApplication.main()
 #else
   import Foundation

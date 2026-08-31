@@ -50,14 +50,13 @@
       var startupInfo = STARTUPINFOW()
       startupInfo.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
       var processInfo = PROCESS_INFORMATION()
+      var commandLine = Array("\"\(executablePath)\"".utf16) + [WCHAR(0)]
 
-      // The command line may be written by the OS, hence the mutable cast
-      // (same pattern as swift-corelibs-foundation's Process).
       let launched = executablePath.withCString(encodedAs: UTF16.self) { applicationName in
-        executablePath.withCString(encodedAs: UTF16.self) { commandLine in
+        commandLine.withUnsafeMutableBufferPointer { commandLine in
           CreateProcessW(
             applicationName,
-            UnsafeMutablePointer<WCHAR>(mutating: commandLine),
+            commandLine.baseAddress,
             nil,
             nil,
             false,
