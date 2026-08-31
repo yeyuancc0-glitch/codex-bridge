@@ -270,8 +270,11 @@ jobs:
               throw "Portable service did not reach readiness ($exitCode). stdout: $standardOutput stderr: $standardError"
             }
             $portableRoot = ([IO.Path]::GetFullPath($portableDir)).TrimEnd("\") + "\"
+            $portableVCModuleNames = @(Get-ChildItem -LiteralPath $portableDir -File |
+                Where-Object { $_.Name -match "^(concrt|msvcp|vccorlib|vcruntime)[^.]*\.dll$" } |
+                Select-Object -ExpandProperty Name)
             $vcModules = @($process.Modules |
-                Where-Object { $_.ModuleName -match "^(concrt|msvcp|vccorlib|vcruntime)[^.]*\.dll$" })
+                Where-Object { $portableVCModuleNames -contains $_.ModuleName })
             foreach ($vcModule in $vcModules) {
               $modulePath = [IO.Path]::GetFullPath($vcModule.FileName)
               if (-not $modulePath.StartsWith($portableRoot, [StringComparison]::OrdinalIgnoreCase)) {
