@@ -186,9 +186,9 @@ jobs:
             }
           }
           $buildArguments = @($swiftArguments) + @("-c", "release")
-          swift build @buildArguments --product codex-bridge-service
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           swift build @buildArguments --product codex-bridge-windows-app
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift build @buildArguments --product codex-bridge-service
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $binPathOutput = & swift build @buildArguments --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
