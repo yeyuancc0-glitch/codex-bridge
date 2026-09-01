@@ -16,10 +16,12 @@
     private static let standardResourceID = 32_512
     private static let timerID: UINT_PTR = 1
     private static let timerIntervalMs: UINT = 250
+    private static let webViewStoppedMessage = UINT(WM_APP + 40)
 
     nonisolated(unsafe) private static var pendingCommands: [MainWindowCommand] = []
     nonisolated(unsafe) private static var selectedPage = WindowsMainPage.overview
     nonisolated(unsafe) private static var chatBounds = RECT()
+    nonisolated(unsafe) private static var waitingForWebViewShutdown = false
     nonisolated(unsafe) static var chat: WindowsChatWebView?
     nonisolated(unsafe) static var window: HWND?
 
@@ -133,7 +135,7 @@
       switch message {
       case UINT(WM_COMMAND):
         if WindowsMainWindowChrome.isExitCommand(wParam) {
-          _ = DestroyWindow(window)
+          requestClose(window)
           return 0
         }
         let command =
@@ -157,17 +159,33 @@
         _ = WindowsMainWindowChrome.handleTrayMessage(lParam, window: window)
         return 0
       case UINT(WM_CLOSE):
+        requestClose(window)
+        return 0
+      case webViewStoppedMessage:
+        chat?.shutdown()
         _ = DestroyWindow(window)
         return 0
       case UINT(WM_DESTROY):
         WindowsMainWindowChrome.removeTrayIcon()
         WindowsUIFoundation.shutdown()
+        waitingForWebViewShutdown = false
         Self.window = nil
         PostQuitMessage(0)
         return 0
       default:
         return DefWindowProcW(window, message, wParam, lParam)
       }
+    }
+
+    private static func requestClose(_ window: HWND?) {
+      guard !waitingForWebViewShutdown else { return }
+      if let window, chat?.beginShutdown(notifying: window, message: webViewStoppedMessage) == true
+      {
+        waitingForWebViewShutdown = true
+        _ = EnableWindow(window, false)
+        return
+      }
+      _ = DestroyWindow(window)
     }
 
     private static func layout() {

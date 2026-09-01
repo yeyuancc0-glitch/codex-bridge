@@ -59,6 +59,10 @@
       lock.withLock { worker }?.reload()
     }
 
+    func beginShutdown(notifying window: HWND, message: UINT) -> Bool {
+      lock.withLock { worker }?.beginShutdown(notifying: window, message: message) ?? false
+    }
+
     func shutdown() {
       let active = lock.withLock { () -> WindowsWebViewThread? in
         defer { worker = nil }

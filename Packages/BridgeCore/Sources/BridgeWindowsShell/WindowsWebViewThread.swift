@@ -20,6 +20,8 @@
     private var pendingBounds = RECT()
     private var pendingVisible = false
     private var stopping = false
+    private var completed = false
+    private var shutdownNotification: (window: HWND, message: UINT)?
 
     private var loaderModule: HMODULE?
     private var environment: UnsafeMutableRawPointer?
@@ -53,6 +55,18 @@
     func goForward() { post(Message.goForward) }
     func reload() { post(Message.reload) }
 
+    func beginShutdown(notifying window: HWND, message: UINT) -> Bool {
+      let target = lock.withLock { () -> DWORD? in
+        guard !completed else { return nil }
+        stopping = true
+        shutdownNotification = (window, message)
+        return threadID
+      }
+      guard let target else { return false }
+      if target != 0 { _ = PostThreadMessageW(target, UINT(WM_QUIT), 0, 0) }
+      return true
+    }
+
     func shutdown() {
       let target = lock.withLock { () -> DWORD in
         stopping = true
@@ -68,7 +82,7 @@
         releaseInterfaces()
         if let loaderModule { _ = FreeLibrary(loaderModule) }
         if comInitialization >= 0 { CoUninitialize() }
-        if let finished { _ = SetEvent(finished) }
+        complete()
       }
       guard comInitialization >= 0 else {
         updateState(
@@ -161,7 +175,6 @@
         return
       }
       self.webView = webView
-      webView2AddRef(webView)
       let navigate: WebView2NavigateFn = webView2Method(
         webView,
         WebView2Slot.webViewNavigate,
@@ -203,6 +216,18 @@
     private func post(_ message: UINT) {
       let target = lock.withLock { threadID }
       if target != 0 { _ = PostThreadMessageW(target, message, 0, 0) }
+    }
+
+    private func complete() {
+      let notification = lock.withLock { () -> (window: HWND, message: UINT)? in
+        completed = true
+        threadID = 0
+        return shutdownNotification
+      }
+      if let finished { _ = SetEvent(finished) }
+      if let notification {
+        _ = PostMessageW(notification.window, notification.message, 0, 0)
+      }
     }
 
     private func releaseInterfaces() {

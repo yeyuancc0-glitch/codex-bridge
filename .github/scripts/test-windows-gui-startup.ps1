@@ -43,6 +43,7 @@ public static class CodexBridgeGuiSmoke {
 
   private const uint LB_GETCOUNT = 0x018B;
   private const uint LB_GETTEXT = 0x0189;
+  private const uint LB_GETCURSEL = 0x0188;
 
   public static IntPtr FindWindowForProcess(uint expectedProcessId) {
     IntPtr window = IntPtr.Zero;
@@ -66,6 +67,9 @@ public static class CodexBridgeGuiSmoke {
       }
       int count = SendMessage(child, LB_GETCOUNT, IntPtr.Zero, IntPtr.Zero).ToInt32();
       if (count != expected.Length) return true;
+      if (SendMessage(child, LB_GETCURSEL, IntPtr.Zero, IntPtr.Zero).ToInt32() != 0) {
+        return true;
+      }
       for (int index = 0; index < expected.Length; index++) {
         var text = new System.Text.StringBuilder(256);
         SendMessageText(child, LB_GETTEXT, new IntPtr(index), text);
@@ -135,7 +139,8 @@ function Wait-MacInterface([IntPtr]$Window, [int]$Seconds) {
   $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
   while ([DateTime]::UtcNow -lt $deadline) {
     if ([CodexBridgeGuiSmoke]::HasMacNavigation($Window) -and
-        [CodexBridgeGuiSmoke]::HasControlText($Window, "概览")) {
+        [CodexBridgeGuiSmoke]::HasControlText($Window, "概览") -and
+        [CodexBridgeGuiSmoke]::HasControlText($Window, "关键指标")) {
       return
     }
     Start-Sleep -Milliseconds 200
