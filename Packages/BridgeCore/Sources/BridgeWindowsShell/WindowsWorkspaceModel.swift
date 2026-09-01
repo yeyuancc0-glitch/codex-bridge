@@ -10,7 +10,7 @@
 
     private(set) var connectionState: WindowsWorkbenchDisplay.ConnectionState = .idle
     private(set) var projects: [MCPProjectSummary] = []
-    private(set) var detail: MCPProjectDetail?
+    var detail: MCPProjectDetail?
     private(set) var commands: [BridgeWorkspaceCommandDraft] = []
     private(set) var skills: [MCPServiceSkill] = []
     var threads: [MCPThreadSummary] = []
