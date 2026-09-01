@@ -12,14 +12,24 @@
       management.refreshDisplaySnapshot()
       let display = model.displayBox.current()
       let managementDisplay = management.displayBox.current()
-      WindowsMainWindow.updateNavigation(workbench: display, management: managementDisplay)
-      WindowsMainWindow.updateOverview(workbench: display, management: managementDisplay)
-      applyWorkbench(display)
-      applyManagement(managementDisplay)
+      WindowsUIThread.shared.enqueue {
+        applyOnUI(workbench: display, management: managementDisplay, chat: chat)
+      }
+    }
+
+    private nonisolated static func applyOnUI(
+      workbench: WindowsWorkbenchDisplay,
+      management: WindowsManagementDisplay,
+      chat: WindowsChatWebView
+    ) {
+      WindowsMainWindow.updateNavigation(workbench: workbench, management: management)
+      WindowsMainWindow.updateOverview(workbench: workbench, management: management)
+      applyWorkbench(workbench)
+      applyManagement(management)
       applyBrowser(chat)
     }
 
-    private static func applyWorkbench(_ display: WindowsWorkbenchDisplay) {
+    private nonisolated static func applyWorkbench(_ display: WindowsWorkbenchDisplay) {
       guard display != lastAppliedDisplay else { return }
       var lines = [
         "服务连接: \(statusName(display.connectionState))",
@@ -59,7 +69,7 @@
       lastAppliedDisplay = display
     }
 
-    private static func contextChanged(
+    private nonisolated static func contextChanged(
       _ display: WindowsWorkbenchDisplay,
       from previous: WindowsWorkbenchDisplay?
     ) -> Bool {
@@ -72,14 +82,14 @@
         || display.deleteEnabled != previous?.deleteEnabled
     }
 
-    private static func applyManagement(_ display: WindowsManagementDisplay) {
+    private nonisolated static func applyManagement(_ display: WindowsManagementDisplay) {
       guard display != lastAppliedManagementDisplay else { return }
       WindowsProjectManagementWindow.apply(display.project)
       WindowsAgentManagementWindow.apply(display.agent)
       lastAppliedManagementDisplay = display
     }
 
-    private static func applyBrowser(_ chat: WindowsChatWebView) {
+    private nonisolated static func applyBrowser(_ chat: WindowsChatWebView) {
       let placeholder: String?
       switch chat.state {
       case .unsupported:
@@ -99,7 +109,7 @@
       }
     }
 
-    static func openChatExternally() {
+    nonisolated static func openChatExternally() {
       "open".withCString(encodedAs: UTF16.self) { operation in
         WindowsChatWebView.chatURL.withCString(encodedAs: UTF16.self) { url in
           _ = ShellExecuteW(
@@ -108,7 +118,9 @@
       }
     }
 
-    private static func statusName(_ state: WindowsWorkbenchDisplay.ConnectionState) -> String {
+    private nonisolated static func statusName(
+      _ state: WindowsWorkbenchDisplay.ConnectionState
+    ) -> String {
       switch state {
       case .idle: "未连接"
       case .connecting: "连接中…"

@@ -78,7 +78,7 @@
     private func runWorkspace(_ command: MainWindowCommand) {
       switch command {
       case .showWorkspace:
-        WindowsWorkspaceWindow.show(owner: WindowsMainWindow.currentWindow())
+        onUI { WindowsWorkspaceWindow.show(owner: WindowsMainWindow.currentWindow()) }
         workspace.refreshDisplaySnapshot()
         applyWorkspace()
         Task { await workspace.refresh() }
@@ -127,7 +127,7 @@
     private func runAgentDefaults(_ command: MainWindowCommand) {
       switch command {
       case .showAgentDefaults:
-        WindowsAgentDefaultsWindow.show(owner: WindowsMainWindow.currentWindow())
+        onUI { WindowsAgentDefaultsWindow.show(owner: WindowsMainWindow.currentWindow()) }
         agentDefaults.refreshDisplaySnapshot()
         applyAgentDefaults()
         Task { await agentDefaults.refresh() }
@@ -154,7 +154,7 @@
     private func runLogs(_ command: MainWindowCommand) {
       switch command {
       case .showLogs:
-        WindowsLogWindow.show(owner: WindowsMainWindow.currentWindow())
+        onUI { WindowsLogWindow.show(owner: WindowsMainWindow.currentWindow()) }
         logs.refreshDisplaySnapshot()
         applyLogs()
         Task { await logs.refresh() }
@@ -180,7 +180,7 @@
     private func runSettings(_ command: MainWindowCommand) {
       switch command {
       case .showSettings:
-        WindowsSettingsWindow.show(owner: WindowsMainWindow.currentWindow())
+        onUI { WindowsSettingsWindow.show(owner: WindowsMainWindow.currentWindow()) }
         settings.refreshDisplaySnapshot()
         applySettings()
         Task { await settings.refresh() }
@@ -212,47 +212,43 @@
       applyConnections()
     }
 
-    func shutdown() {
-      WindowsWorkspaceWindow.shutdown()
-      WindowsAgentDefaultsWindow.shutdown()
-      WindowsLogWindow.shutdown()
-      WindowsSettingsWindow.shutdown()
-      WindowsConnectionWindow.shutdown()
-    }
-
     private func applyWorkspace() {
       let value = workspace.displayBox.current()
       guard value != lastWorkspaceDisplay else { return }
-      WindowsWorkspaceWindow.apply(value)
       lastWorkspaceDisplay = value
+      onUI { WindowsWorkspaceWindow.apply(value) }
     }
 
     private func applyAgentDefaults() {
       let value = agentDefaults.displayBox.current()
       guard value != lastAgentDefaultsDisplay else { return }
-      WindowsAgentDefaultsWindow.apply(value)
       lastAgentDefaultsDisplay = value
+      onUI { WindowsAgentDefaultsWindow.apply(value) }
     }
 
     private func applyLogs() {
       let value = logs.displayBox.current()
       guard value != lastLogDisplay else { return }
-      WindowsLogWindow.apply(value)
       lastLogDisplay = value
+      onUI { WindowsLogWindow.apply(value) }
     }
 
     private func applySettings() {
       let value = settings.displayBox.current()
       guard value != lastSettingsDisplay else { return }
-      WindowsSettingsWindow.apply(value)
       lastSettingsDisplay = value
+      onUI { WindowsSettingsWindow.apply(value) }
     }
 
     private func applyConnections() {
       let value = connections.displayBox.current()
       guard value != lastConnectionDisplay else { return }
-      WindowsConnectionWindow.apply(value)
       lastConnectionDisplay = value
+      onUI { WindowsConnectionWindow.apply(value) }
+    }
+
+    private func onUI(_ action: @escaping @Sendable () -> Void) {
+      WindowsUIThread.shared.enqueue(action)
     }
   }
 #endif

@@ -1,7 +1,7 @@
 #if os(Windows)
   import WinSDK
 
-  enum WindowsMainPage: Int, CaseIterable {
+  enum WindowsMainPage: Int, CaseIterable, Sendable {
     case overview
     case workbench
     case projects

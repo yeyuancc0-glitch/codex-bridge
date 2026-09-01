@@ -1,4 +1,5 @@
 #if os(Windows)
+  import Foundation
   import WinSDK
 
   enum WindowLayout {
@@ -18,6 +19,7 @@
     private static let timerIntervalMs: UINT = 250
     private static let webViewStoppedMessage = UINT(WM_APP + 40)
 
+    private static let commandLock = NSLock()
     nonisolated(unsafe) private static var pendingCommands: [MainWindowCommand] = []
     nonisolated(unsafe) private static var selectedPage = WindowsMainPage.overview
     nonisolated(unsafe) private static var chatBounds = RECT()
@@ -50,7 +52,9 @@
     }
 
     static func enqueue(_ command: MainWindowCommand) {
+      commandLock.lock()
       pendingCommands.append(command)
+      commandLock.unlock()
     }
 
     static func currentWindow() -> HWND? { window }
@@ -60,6 +64,8 @@
     static func workbenchChatBounds() -> RECT { chatBounds }
 
     static func takePendingCommands() -> [MainWindowCommand] {
+      commandLock.lock()
+      defer { commandLock.unlock() }
       let commands = pendingCommands
       pendingCommands.removeAll()
       return commands
@@ -146,7 +152,7 @@
           ?? WindowsTaskInspector.command(for: wParam)
           ?? WindowsEmbeddedPageTabs.command(for: wParam)
           ?? WindowsMainWindowChrome.command(for: wParam)
-        if let command { pendingCommands.append(command) }
+        if let command { enqueue(command) }
         return 0
       case UINT(WM_SIZE):
         if wParam == WPARAM(SIZE_MINIMIZED) {

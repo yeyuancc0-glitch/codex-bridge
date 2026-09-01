@@ -2,26 +2,21 @@
   import Foundation
   import WinSDK
 
-  /// Windows desktop shell entry point. The Win32 message loop runs inside the
-  /// main-actor task. A short suspension between messages lets service calls
-  /// and model updates run reliably; `Task.yield()` alone does not guarantee
-  /// another ready main-actor task wins scheduling. The 250ms window timer
-  /// guarantees the loop wakes up regularly.
+  /// Windows desktop shell entry point. Models stay on MainActor while the
+  /// thread-affine Win32 message pump lives on `WindowsUIThread`.
   @MainActor
   public enum CodexBridgeWindowsApplication {
-    static var lastAppliedDisplay: WindowsWorkbenchDisplay?
-    static var lastAppliedManagementDisplay: WindowsManagementDisplay?
-    static var lastPlaceholderText: String? = ""
+    nonisolated(unsafe) static var lastAppliedDisplay: WindowsWorkbenchDisplay?
+    nonisolated(unsafe) static var lastAppliedManagementDisplay: WindowsManagementDisplay?
+    nonisolated(unsafe) static var lastPlaceholderText: String? = ""
+    static var selectedPage = WindowsMainPage.overview
 
     public static func main() async {
       let model = WindowsWorkbenchModel()
       let management = WindowsManagementModel(client: model.client)
       let auxiliary = WindowsAuxiliaryRuntime(client: model.client)
-      let chat = WindowsChatWebView()
-      guard let window = WindowsMainWindow.create() else { return }
-      WindowsMainWindow.chat = chat
-      chat.attach(to: window)
-      chat.setVisible(false)
+      let ui = WindowsUIThread.shared
+      guard ui.start(), let chat = ui.chatWebView() else { return }
 
       // Startup path per platform contract: launch the service when the pipe
       // is not connectable, then connect and load tasks.
@@ -30,22 +25,14 @@
         await management.refresh()
       }
 
-      var message = MSG()
-      while GetMessageW(&message, nil, 0, 0) {
-        _ = TranslateMessage(&message)
-        _ = DispatchMessageW(&message)
+      while ui.isRunning() {
         for command in WindowsMainWindow.takePendingCommands() {
           run(command, model: model, management: management, auxiliary: auxiliary)
         }
-        try? await Task.sleep(nanoseconds: 1_000_000)
         applyDisplay(model: model, management: management, chat: chat)
         auxiliary.applyDisplay()
+        try? await Task.sleep(nanoseconds: 10_000_000)
       }
-      chat.shutdown()
-      auxiliary.shutdown()
-      WindowsApprovalWindow.shutdown()
-      WindowsProjectManagementWindow.shutdown()
-      WindowsAgentManagementWindow.shutdown()
       await model.shutdown()
     }
 
@@ -58,24 +45,25 @@
       switch command {
       case .selectPage(let index):
         guard let page = WindowsMainPage(rawValue: index) else { return }
-        WindowsMainWindow.selectPage(page)
+        selectedPage = page
+        onUI { WindowsMainWindow.selectPage(page) }
         refresh(page: page, model: model, management: management, auxiliary: auxiliary)
       case .selectProjectsSection(let index):
-        WindowsEmbeddedPages.selectSection(page: .projects, index: index)
+        onUI { WindowsEmbeddedPages.selectSection(page: .projects, index: index) }
         if index == 0 {
           Task { await management.refreshProjects() }
         } else {
           auxiliary.run(.refreshWorkspace)
         }
       case .selectConnectionsSection(let index):
-        WindowsEmbeddedPages.selectSection(page: .connections, index: index)
+        onUI { WindowsEmbeddedPages.selectSection(page: .connections, index: index) }
         if index == 0 {
           auxiliary.run(.refreshMCPConnections)
         } else {
           Task { await management.refreshAgents() }
         }
       case .selectSettingsSection(let index):
-        WindowsEmbeddedPages.selectSection(page: .settings, index: index)
+        onUI { WindowsEmbeddedPages.selectSection(page: .settings, index: index) }
         if index == 0 {
           auxiliary.run(.refreshSettings)
         } else {
@@ -83,22 +71,23 @@
         }
       case .refreshCurrentPage:
         refresh(
-          page: WindowsMainWindow.currentPage(),
+          page: selectedPage,
           model: model,
           management: management,
           auxiliary: auxiliary
         )
       case .openRecentTask(let index):
         model.selectTask(at: index)
-        WindowsMainWindow.selectPage(.workbench)
+        selectedPage = .workbench
+        onUI { WindowsMainWindow.selectPage(.workbench) }
       case .browserBack:
-        WindowsMainWindow.chat?.goBack()
+        onUI { WindowsMainWindow.chat?.goBack() }
       case .browserForward:
-        WindowsMainWindow.chat?.goForward()
+        onUI { WindowsMainWindow.chat?.goForward() }
       case .browserReload:
-        WindowsMainWindow.chat?.reload()
+        onUI { WindowsMainWindow.chat?.reload() }
       case .openChatExternally:
-        openChatExternally()
+        onUI { openChatExternally() }
       case .refreshTasks:
         Task { await model.refreshSelectedTask() }
       case .startService:
@@ -125,14 +114,18 @@
       case .submitSteer(let input):
         Task {
           if await model.submitSteer(input: input) {
-            WindowsTaskInspector.clearSteerInput()
+            onUI { WindowsTaskInspector.clearSteerInput() }
           }
         }
       case .showApprovals:
-        WindowsMainWindow.selectPage(.workbench)
-        WindowsApprovalWindow.show(owner: WindowsMainWindow.currentWindow())
+        selectedPage = .workbench
         model.refreshDisplaySnapshot()
-        WindowsApprovalWindow.apply(model.displayBox.current())
+        let display = model.displayBox.current()
+        onUI {
+          WindowsMainWindow.selectPage(.workbench)
+          WindowsApprovalWindow.show(owner: WindowsMainWindow.currentWindow())
+          WindowsApprovalWindow.apply(display)
+        }
         Task { await model.refreshApprovals() }
       case .selectApproval(let index):
         model.selectApproval(at: index)
@@ -141,27 +134,43 @@
       case .resolveApproval(let decision):
         Task { await model.resolveSelectedApproval(decision: decision) }
       case .showProjects:
-        WindowsMainWindow.selectPage(.projects)
-        WindowsEmbeddedPages.selectSection(page: .projects, index: 0)
+        selectedPage = .projects
+        onUI {
+          WindowsMainWindow.selectPage(.projects)
+          WindowsEmbeddedPages.selectSection(page: .projects, index: 0)
+        }
         Task { await management.refreshProjects() }
       case .showAgents:
-        WindowsMainWindow.selectPage(.connections)
-        WindowsEmbeddedPages.selectSection(page: .connections, index: 1)
+        selectedPage = .connections
+        onUI {
+          WindowsMainWindow.selectPage(.connections)
+          WindowsEmbeddedPages.selectSection(page: .connections, index: 1)
+        }
         Task { await management.refreshAgents() }
       case .showWorkspace:
-        WindowsMainWindow.selectPage(.projects)
-        WindowsEmbeddedPages.selectSection(page: .projects, index: 1)
+        selectedPage = .projects
+        onUI {
+          WindowsMainWindow.selectPage(.projects)
+          WindowsEmbeddedPages.selectSection(page: .projects, index: 1)
+        }
         auxiliary.run(.refreshWorkspace)
       case .showAgentDefaults:
-        WindowsMainWindow.selectPage(.settings)
-        WindowsEmbeddedPages.selectSection(page: .settings, index: 1)
+        selectedPage = .settings
+        onUI {
+          WindowsMainWindow.selectPage(.settings)
+          WindowsEmbeddedPages.selectSection(page: .settings, index: 1)
+        }
         auxiliary.run(.refreshAgentDefaults)
       case .showLogs:
-        WindowsMainWindow.selectPage(.logs)
+        selectedPage = .logs
+        onUI { WindowsMainWindow.selectPage(.logs) }
         auxiliary.run(.refreshLogs)
       case .showSettings:
-        WindowsMainWindow.selectPage(.settings)
-        WindowsEmbeddedPages.selectSection(page: .settings, index: 0)
+        selectedPage = .settings
+        onUI {
+          WindowsMainWindow.selectPage(.settings)
+          WindowsEmbeddedPages.selectSection(page: .settings, index: 0)
+        }
         auxiliary.run(.refreshSettings)
       case .selectProject(let index):
         management.selectProject(at: index)
@@ -218,6 +227,10 @@
       default:
         auxiliary.run(command)
       }
+    }
+
+    private static func onUI(_ action: @escaping @Sendable () -> Void) {
+      WindowsUIThread.shared.enqueue(action)
     }
 
     private static func refresh(
