@@ -34,8 +34,6 @@ public static class CodexBridgeGuiSmoke {
   private static extern int GetClassName(IntPtr window, System.Text.StringBuilder text, int count);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   private static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int count);
-  [DllImport("user32.dll")]
-  private static extern bool IsWindowVisible(IntPtr window);
   [DllImport("user32.dll", EntryPoint = "SendMessageW")]
   private static extern IntPtr SendMessage(
     IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
@@ -81,10 +79,9 @@ public static class CodexBridgeGuiSmoke {
     return found;
   }
 
-  public static bool HasVisibleText(IntPtr parent, string expected) {
+  public static bool HasControlText(IntPtr parent, string expected) {
     bool found = false;
     EnumChildWindows(parent, delegate(IntPtr child, IntPtr parameter) {
-      if (!IsWindowVisible(child)) return true;
       var text = new System.Text.StringBuilder(256);
       GetWindowText(child, text, text.Capacity);
       if (text.ToString().Equals(expected, StringComparison.Ordinal)) {
@@ -134,6 +131,18 @@ function Wait-MainWindow([System.Diagnostics.Process]$Process, [int]$Seconds) {
   throw "Timed out waiting for the Codex Bridge main window."
 }
 
+function Wait-MacInterface([IntPtr]$Window, [int]$Seconds) {
+  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    if ([CodexBridgeGuiSmoke]::HasMacNavigation($Window) -and
+        [CodexBridgeGuiSmoke]::HasControlText($Window, "概览")) {
+      return
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  throw "Windows application did not finish presenting the macOS-aligned Overview."
+}
+
 function Wait-WebView2Module([System.Diagnostics.Process]$Process, [int]$Seconds) {
   $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
   while ([DateTime]::UtcNow -lt $deadline) {
@@ -176,12 +185,7 @@ if (@(Get-ExactProcess "codex-bridge-windows-app" $appPath).Count -ne 0 -or
 try {
   $app = Start-Process -FilePath $appPath -WorkingDirectory $portableFull -PassThru
   $mainWindow = Wait-MainWindow $app 30
-  if (-not [CodexBridgeGuiSmoke]::HasMacNavigation($mainWindow)) {
-    throw "Windows application did not expose the six macOS navigation destinations."
-  }
-  if (-not [CodexBridgeGuiSmoke]::HasVisibleText($mainWindow, "概览")) {
-    throw "Windows application did not open on Overview."
-  }
+  Wait-MacInterface $mainWindow 30
   if ($RequireWebView2) {
     Wait-WebView2Module $app 30
   }

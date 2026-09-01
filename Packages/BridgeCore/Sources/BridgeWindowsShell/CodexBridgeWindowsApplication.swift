@@ -13,20 +13,11 @@
     static var lastAppliedManagementDisplay: WindowsManagementDisplay?
     static var lastPlaceholderText: String? = ""
 
-    public static func main(comInitialization: HRESULT, comThreadID: DWORD) async {
-      let isCOMThread = GetCurrentThreadId() == comThreadID
-      defer {
-        if comInitialization >= 0 && isCOMThread {
-          CoUninitialize()
-        }
-      }
+    public static func main() async {
       let model = WindowsWorkbenchModel()
       let management = WindowsManagementModel(client: model.client)
       let auxiliary = WindowsAuxiliaryRuntime(client: model.client)
-      let chat = WindowsChatWebView(
-        comInitialization: comInitialization,
-        threadMatches: isCOMThread
-      )
+      let chat = WindowsChatWebView()
       guard let window = WindowsMainWindow.create() else { return }
       WindowsMainWindow.chat = chat
       chat.attach(to: window)

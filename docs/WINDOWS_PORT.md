@@ -172,7 +172,9 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    Tunnel 在 Windows helper 可用前明确 fail-closed。主窗口现已统一概览、工作台、项目、
    日志、连接和设置六页；工作台接通项目/权限/任务/Thread/审批与控制动作，项目页接通
    权限、Direct、黑名单、Skills、Threads，连接页接通本地 MCP/Qwen 与 Agent，日志和设置
-   复用同一 Service API 与状态语义。
+   复用同一 Service API 与状态语义。Swift Windows 的 `MainActor` 与入口线程不绑定；
+   `WindowsWebViewThread` 独占 STA COM、消息循环和 WebView2 接口，主窗口只通过线程安全
+   命令同步尺寸、显隐和浏览器操作。
 
 ## 验证路径与 CI 现状
 
