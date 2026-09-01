@@ -96,8 +96,18 @@
         }
       case .selectTask(let index):
         model.selectTask(at: index)
+      case .selectWorkbenchProject(let index):
+        Task { await model.selectWorkbenchProject(at: index) }
+      case .selectWorkbenchPermission(let index):
+        Task { await model.selectWorkbenchPermission(at: index) }
+      case .selectWorkbenchItem(let index):
+        Task { await model.selectWorkbenchItem(at: index) }
       case .interruptSelectedTask:
         Task { await model.interruptSelectedTask() }
+      case .stopSelectedTask:
+        Task { await model.stopSelectedTask() }
+      case .deleteSelectedTask:
+        Task { await model.deleteSelectedTask() }
       case .submitSteer(let input):
         Task {
           if await model.submitSteer(input: input) {
@@ -235,6 +245,16 @@
         }
         if display.actionText != previous?.actionText {
           WindowsTaskInspector.setActionStatus(display.actionText)
+        }
+        if display.projectRows != previous?.projectRows
+          || display.selectedProjectIndex != previous?.selectedProjectIndex
+          || display.permissionRows != previous?.permissionRows
+          || display.selectedPermissionIndex != previous?.selectedPermissionIndex
+          || display.pendingApprovalCount != previous?.pendingApprovalCount
+          || display.stopEnabled != previous?.stopEnabled
+          || display.deleteEnabled != previous?.deleteEnabled
+        {
+          WindowsTaskInspector.applyContext(display)
         }
         if display.interruptEnabled != previous?.interruptEnabled
           || display.steerEnabled != previous?.steerEnabled

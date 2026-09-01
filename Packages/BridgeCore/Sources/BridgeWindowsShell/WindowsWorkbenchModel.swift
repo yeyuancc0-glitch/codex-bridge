@@ -19,12 +19,19 @@
     public var taskCount: Int
     public var runningTaskCount: Int
     public var pendingApprovalCount: Int
+    public var projectRows: [String]
+    public var selectedProjectIndex: Int?
+    public var permissionRows: [String]
+    public var selectedPermissionIndex: Int?
     public var taskRows: [String]
+    public var recentTaskRows: [String]
     public var selectedTaskID: String?
     public var selectedTaskIndex: Int?
     public var taskMetadata: String
     public var conversationText: String
     public var interruptEnabled: Bool
+    public var stopEnabled: Bool
+    public var deleteEnabled: Bool
     public var steerEnabled: Bool
     public var actionText: String?
     public var approvalRows: [String]
@@ -47,12 +54,19 @@
       taskCount: 0,
       runningTaskCount: 0,
       pendingApprovalCount: 0,
+      projectRows: [],
+      selectedProjectIndex: nil,
+      permissionRows: ["只读", "可写"],
+      selectedPermissionIndex: 1,
       taskRows: [],
+      recentTaskRows: [],
       selectedTaskID: nil,
       selectedTaskIndex: nil,
       taskMetadata: "未选择任务",
       conversationText: "请从上方选择任务。",
       interruptEnabled: false,
+      stopEnabled: false,
+      deleteEnabled: false,
       steerEnabled: false,
       actionText: nil,
       approvalRows: [],
@@ -93,6 +107,11 @@
     var projects: [MCPProjectSummary] = []
     var agentProviders: [IPCAgentProviderSummary] = []
     var tasks: [MCPServiceTaskSnapshot] = []
+    var threads: [MCPThreadSummary] = []
+    var selectedProjectID: String?
+    var selectedThreadID: String?
+    var selectedThreadPage: MCPThreadReadPage?
+    var workbenchPermissionMode = "workspace-write"
     var selectedTaskID: String?
     var conversation: TaskConversationModel?
     var conversationWasTerminal = false
@@ -130,11 +149,21 @@
       connectionState = .connecting
       publishDisplay()
       do {
-        serviceStatus = try await client.status()
+        let status = try await client.status()
+        serviceStatus = status
         projects = (try? await client.projects()) ?? projects
         agentProviders = (try? await client.agentCatalog())?.providers ?? []
+        selectedProjectID =
+          projects.first(where: { $0.projectID == status.workbenchProjectID })?.projectID
+          ?? selectedProjectID
+          ?? projects.first?.projectID
+        workbenchPermissionMode =
+          Self.permissionModes.contains(status.workbenchPermissionMode ?? "")
+          ? status.workbenchPermissionMode!
+          : workbenchPermissionMode
         errorMessage = nil
         await refreshTasks()
+        await loadThreads()
       } catch {
         fail(BridgeServiceErrorMessage.message(error))
       }
@@ -167,6 +196,7 @@
         errorMessage = nil
         connectionState = .connected
         reconcileSelectedTask()
+        selectDefaultTaskIfNeeded()
         publishDisplay()
       } catch {
         fail(BridgeServiceErrorMessage.message(error))
@@ -175,7 +205,12 @@
 
     func reconcileSelectedTask() {
       guard let selectedTaskID else { return }
-      guard let task = tasks.first(where: { $0.taskID == selectedTaskID }) else {
+      guard
+        let task = tasks.first(where: {
+          $0.taskID == selectedTaskID
+            && (selectedProjectID == nil || $0.projectID == selectedProjectID)
+        })
+      else {
         self.selectedTaskID = nil
         conversation?.cancel()
         conversation = nil
@@ -208,89 +243,6 @@
     var selectedTask: MCPServiceTaskSnapshot? {
       guard let selectedTaskID else { return nil }
       return tasks.first(where: { $0.taskID == selectedTaskID })
-    }
-
-    func publishDisplay() {
-      let runningCount = tasks.filter { $0.isRunning }.count
-      let task = selectedTask
-      let selectedIndex = selectedTaskID.flatMap { selectedID in
-        tasks.firstIndex(where: { $0.taskID == selectedID })
-      }
-      let conversationText = TaskInspectorPresentation.conversationText(
-        entries: conversation?.entries ?? [],
-        isStreaming: conversation?.isStreaming == true || task?.isRunning == true,
-        errorMessage: conversation?.errorMessage
-      )
-      let approvalItems = approvalPresentationItems()
-      let selectedApprovalIndex = selectedApprovalID.flatMap { selectedID in
-        approvalItems.firstIndex(where: { $0.id == selectedID })
-      }
-      let selectedApproval = selectedApprovalIndex.flatMap { approvalItems[$0] }
-      let approvalResolving = selectedApprovalID.map(resolvingApprovalIDs.contains) ?? false
-      let approvalActionsEnabled =
-        connectionState == .connected
-        && selectedApproval != nil
-        && !approvalResolving
-        && !approvalRefreshInProgress
-      let value = WindowsWorkbenchDisplay(
-        connectionState: connectionState,
-        mcpAddress: serviceStatus?.localMCPURL ?? "—",
-        taskCount: tasks.count,
-        runningTaskCount: runningCount,
-        pendingApprovalCount: approvalItems.count,
-        taskRows: tasks.map(Self.rowText),
-        selectedTaskID: selectedTaskID,
-        selectedTaskIndex: selectedIndex,
-        taskMetadata: task.map {
-          TaskInspectorPresentation.metadata(
-            for: $0,
-            projectName: projectName(for: $0.projectID)
-          )
-        } ?? "未选择任务",
-        conversationText: conversationText,
-        interruptEnabled: connectionState == .connected
-          && TaskInspectorPresentation.canInterrupt(task),
-        steerEnabled: connectionState == .connected
-          && TaskInspectorPresentation.canSteer(
-            task,
-            providerSupportsSteer: providerSupportsSteer(for: task)
-          ),
-        actionText: actionText,
-        approvalRows: approvalItems.map(\.rowText),
-        selectedApprovalIndex: selectedApprovalIndex,
-        approvalDetailText: selectedApproval?.detailText ?? "暂无待处理审批。",
-        approvalAllowDecisions: selectedApproval?.allowDecisions ?? [],
-        approvalAllowEnabled: approvalActionsEnabled
-          && !(selectedApproval?.allowDecisions.isEmpty ?? true),
-        approvalDenyEnabled: approvalActionsEnabled,
-        approvalStatusText: approvalStatusText,
-        detailText: errorMessage
-      )
-      displayBox.store(value)
-    }
-
-    private func projectName(for projectID: String) -> String {
-      projects.first(where: { $0.projectID == projectID })?.name ?? projectID
-    }
-
-    func providerSupportsSteer(for task: MCPServiceTaskSnapshot?) -> Bool {
-      guard let task, !agentProviders.isEmpty else { return false }
-      let providerID = task.providerIdentifier
-      return agentProviders.contains {
-        AgentProviderPresentation.identifier($0.providerID) == providerID && $0.supportsSteer
-      }
-    }
-
-    private static func rowText(_ task: MCPServiceTaskSnapshot) -> String {
-      let state: String
-      if task.isRunning {
-        state = "运行中"
-      } else if task.isTerminal {
-        state = "已结束"
-      } else {
-        state = task.status
-      }
-      return "\(task.providerDisplayName) · \(task.workbenchTitle) — \(state)"
     }
   }
 #endif

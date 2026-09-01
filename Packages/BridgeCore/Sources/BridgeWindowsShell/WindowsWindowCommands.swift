@@ -13,7 +13,12 @@
     case refreshTasks
     case startService
     case selectTask(index: Int)
+    case selectWorkbenchProject(index: Int)
+    case selectWorkbenchPermission(index: Int)
+    case selectWorkbenchItem(index: Int)
     case interruptSelectedTask
+    case stopSelectedTask
+    case deleteSelectedTask
     case submitSteer(input: String)
     case showApprovals
     case selectApproval(index: Int)

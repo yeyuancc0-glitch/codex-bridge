@@ -31,6 +31,7 @@
     nonisolated(unsafe) private static var chatPlaceholderHasText = true
 
     static func create(in parent: HWND?, instance: HINSTANCE?) {
+      WindowsWorkbenchContextControls.create(in: parent, instance: instance)
       listBox = createChild(
         "LISTBOX", "", DWORD(WS_VSCROLL) | DWORD(LBS_NOTIFY), DWORD(WS_EX_CLIENTEDGE),
         parent, instance, listBoxControlID
@@ -80,10 +81,13 @@
     static func command(for wParam: WPARAM) -> MainWindowCommand? {
       let commandID = wParam & 0xFFFF
       let notification = (wParam >> 16) & 0xFFFF
+      if let command = WindowsWorkbenchContextControls.command(for: wParam) {
+        return command
+      }
       switch commandID {
       case WPARAM(listBoxControlID) where notification == WPARAM(LBN_SELCHANGE):
         guard let index = selectedTaskIndex() else { return nil }
-        return .selectTask(index: index)
+        return .selectWorkbenchItem(index: index)
       case WPARAM(interruptButtonID) where notification == WPARAM(BN_CLICKED):
         return .interruptSelectedTask
       case WPARAM(refreshButtonID) where notification == WPARAM(BN_CLICKED):
@@ -131,6 +135,10 @@
       _ = EnableWindow(steerButton, steerEnabled)
     }
 
+    static func applyContext(_ display: WindowsWorkbenchDisplay) {
+      WindowsWorkbenchContextControls.apply(display)
+    }
+
     static func setStatusText(_ text: String) {
       setText(statusStatic, text)
     }
@@ -153,8 +161,11 @@
       let padding = Int32(8)
       let contentWidth = max(Int32(0), width - padding * 2)
       let statusHeight = Int32(82)
-      let listTop = bounds.top + statusHeight + 8
-      let listHeight = min(Int32(176), max(Int32(120), height / 4))
+      let listTop = WindowsWorkbenchContextControls.layout(
+        in: bounds,
+        below: bounds.top + statusHeight
+      )
+      let listHeight = min(Int32(150), max(Int32(96), height / 5))
       let inspectorTop = listTop + listHeight + 8
       let inspectorHeight = max(Int32(160), bounds.bottom - inspectorTop)
       let metadataHeight = min(Int32(112), max(Int32(76), inspectorHeight / 4))
@@ -182,9 +193,18 @@
         24,
         true
       )
-      _ = MoveWindow(interruptButton, bounds.left + padding, buttonTop, 76, 24, true)
-      _ = MoveWindow(refreshButton, bounds.left + padding + 82, buttonTop, 76, 24, true)
-      _ = MoveWindow(steerButton, bounds.left + padding + 164, buttonTop, 100, 24, true)
+      let actionWidth = max(Int32(44), (contentWidth - 16) / 5)
+      let actionStep = actionWidth + 4
+      _ = MoveWindow(interruptButton, bounds.left + padding, buttonTop, actionWidth, 24, true)
+      WindowsWorkbenchContextControls.layoutTaskActions(
+        in: bounds,
+        y: buttonTop,
+        buttonWidth: actionWidth
+      )
+      _ = MoveWindow(
+        refreshButton, bounds.left + padding + actionStep * 3, buttonTop, actionWidth, 24, true)
+      _ = MoveWindow(
+        steerButton, bounds.left + padding + actionStep * 4, buttonTop, actionWidth, 24, true)
       _ = MoveWindow(actionStatus, bounds.left + padding, actionTop, contentWidth, 20, true)
     }
 
@@ -200,6 +220,7 @@
     }
 
     static func setVisible(_ visible: Bool) {
+      WindowsWorkbenchContextControls.setVisible(visible)
       for control in [
         listBox, statusStatic, metadata, conversation, steerInput, steerLabel,
         interruptButton, refreshButton, steerButton, actionStatus,

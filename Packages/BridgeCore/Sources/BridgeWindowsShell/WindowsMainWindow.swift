@@ -108,7 +108,7 @@
           agentCount: management.agent.installationRows.count,
           taskCount: workbench.taskCount,
           mcpAddress: workbench.mcpAddress,
-          recentTaskRows: Array(workbench.taskRows.prefix(4)),
+          recentTaskRows: Array(workbench.recentTaskRows.prefix(4)),
           detailText: workbench.detailText
         )
       )
