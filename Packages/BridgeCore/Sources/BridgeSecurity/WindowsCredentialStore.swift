@@ -21,27 +21,26 @@
         throw SecretStoreError.invalidSecret
       }
       try withTarget(reference) { target in
-        var credential = CREDENTIALW(
-          Flags: 0,
-          Type: UInt32(CRED_TYPE_GENERIC),
-          TargetName: UnsafeMutablePointer(mutating: target),
-          Comment: nil,
-          LastWritten: FILETIME(dwLowDateTime: 0, dwHighDateTime: 0),
-          CredentialBlobSize: UInt32(secret.count),
-          CredentialBlob: UnsafeMutablePointer(
-            mutating: secret.withUnsafeBytes {
-              $0.baseAddress?.assumingMemoryBound(to: UInt8.self)
-            }),
-          Persist: UInt32(CRED_PERSIST_LOCAL_MACHINE),
-          AttributeCount: 0,
-          Attributes: nil,
-          TargetAlias: nil,
-          UserName: nil
-        )
-        let status = CredWriteW(&credential, 0)
-        guard status else {
-          throw Self.map(Int32(GetLastError()))
+        let result = secret.withUnsafeBytes { bytes -> (status: Bool, error: Int32) in
+          var credential = CREDENTIALW(
+            Flags: 0,
+            Type: UInt32(CRED_TYPE_GENERIC),
+            TargetName: UnsafeMutablePointer(mutating: target),
+            Comment: nil,
+            LastWritten: FILETIME(dwLowDateTime: 0, dwHighDateTime: 0),
+            CredentialBlobSize: UInt32(bytes.count),
+            CredentialBlob: UnsafeMutablePointer(
+              mutating: bytes.baseAddress?.assumingMemoryBound(to: UInt8.self)),
+            Persist: UInt32(CRED_PERSIST_LOCAL_MACHINE),
+            AttributeCount: 0,
+            Attributes: nil,
+            TargetAlias: nil,
+            UserName: nil
+          )
+          let status = CredWriteW(&credential, 0)
+          return (status, status ? 0 : Int32(GetLastError()))
         }
+        guard result.status else { throw Self.map(result.error) }
       }
     }
 
@@ -49,11 +48,15 @@
       try withTarget(reference) { target in
         var credentialPointer: UnsafeMutablePointer<CREDENTIALW>?
         let status = CredReadW(target, UInt32(CRED_TYPE_GENERIC), 0, &credentialPointer)
-        guard status, let credential = credentialPointer?.pointee else {
+        let error = status ? Int32(0) : Int32(GetLastError())
+        guard status else {
           defer {
             if let pointer = credentialPointer { CredFree(pointer) }
           }
-          throw Self.map(Int32(GetLastError()))
+          throw Self.map(error)
+        }
+        guard let credential = credentialPointer?.pointee else {
+          throw SecretStoreError.invalidStoredValue
         }
         defer { CredFree(credentialPointer) }
         let blobSize = Int(credential.CredentialBlobSize)
