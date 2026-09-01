@@ -23,6 +23,7 @@
     static let removeID = 4102
     static let saveID = 4103
     static let refreshID = 4104
+    static let browseID = 4105
     static let readValues = ["denied", "allowed"]
     static let writeValues = ["denied", "requiresLocalApproval", "allowed"]
 
@@ -37,6 +38,7 @@
     nonisolated(unsafe) static var networkCombo: HWND?
     nonisolated(unsafe) static var nameLabel: HWND?
     nonisolated(unsafe) static var pathLabel: HWND?
+    nonisolated(unsafe) static var browseButton: HWND?
     nonisolated(unsafe) static var readLabel: HWND?
     nonisolated(unsafe) static var writeLabel: HWND?
     nonisolated(unsafe) static var networkLabel: HWND?
@@ -71,6 +73,7 @@
       networkCombo = nil
       nameLabel = nil
       pathLabel = nil
+      browseButton = nil
       readLabel = nil
       writeLabel = nil
       networkLabel = nil
@@ -131,6 +134,9 @@
         )
       case WPARAM(refreshID) where notification == WPARAM(BN_CLICKED):
         return .refreshProjects
+      case WPARAM(browseID) where notification == WPARAM(BN_CLICKED):
+        chooseProjectDirectory()
+        return nil
       default:
         return nil
       }
@@ -217,6 +223,33 @@
         GetWindowTextW(target, pointer.baseAddress, Int32(pointer.count))
       }
       return String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
+    }
+
+    private static func chooseProjectDirectory() {
+      var displayName = [WCHAR](repeating: 0, count: Int(MAX_PATH))
+      let title = "选择要注册到 Codex Bridge 的项目目录"
+      let selected = title.withCString(encodedAs: UTF16.self) { titlePointer in
+        displayName.withUnsafeMutableBufferPointer { displayPointer in
+          var info = BROWSEINFOW()
+          info.hwndOwner = window
+          info.pszDisplayName = displayPointer.baseAddress
+          info.lpszTitle = titlePointer
+          info.ulFlags = UINT(BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE)
+          return SHBrowseForFolderW(&info)
+        }
+      }
+      guard let selected else { return }
+      defer { CoTaskMemFree(selected) }
+      var path = [WCHAR](repeating: 0, count: Int(MAX_PATH))
+      guard path.withUnsafeMutableBufferPointer({ SHGetPathFromIDListW(selected, $0.baseAddress) })
+      else { return }
+      let value = String(decoding: path.prefix { $0 != 0 }, as: UTF16.self)
+      setText(pathInput, value)
+      if currentText(nameInput).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let name =
+          value.split(whereSeparator: { $0 == "\\" || $0 == "/" }).last.map(String.init) ?? value
+        setText(nameInput, name)
+      }
     }
 
     private static func setText(_ target: HWND?, _ text: String) {

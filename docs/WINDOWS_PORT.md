@@ -169,8 +169,10 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
    概览、工作台、项目、日志、连接和设置导航；页面状态、文案、操作后果与 Service API
    闭环必须一致，不能用独立工具窗口、占位页或静态指标代替。平台原生控件允许存在渲染
    差异。Windows Supervisor 按已确认边界保持不可用；Skills 与 macOS 一样只读；Secure
-   Tunnel 在 Windows helper 可用前明确 fail-closed。当前迁移先统一根窗口、概览、工作台
-   与 WebView2，再逐页把已有项目、Agent、Direct、日志和设置能力并入同一主窗口。
+   Tunnel 在 Windows helper 可用前明确 fail-closed。主窗口现已统一概览、工作台、项目、
+   日志、连接和设置六页；工作台接通项目/权限/任务/Thread/审批与控制动作，项目页接通
+   权限、Direct、黑名单、Skills、Threads，连接页接通本地 MCP/Qwen 与 Agent，日志和设置
+   复用同一 Service API 与状态语义。
 
 ## 验证路径与 CI 现状
 

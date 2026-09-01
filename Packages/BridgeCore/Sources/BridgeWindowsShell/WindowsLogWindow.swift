@@ -9,12 +9,20 @@
     static let detailID = 6702
     static let statusID = 6703
     static let refreshID = 6801
+    static let searchID = 6704
+    static let projectFilterID = 6705
+    static let kindFilterID = 6706
+    static let copyID = 6802
 
     nonisolated(unsafe) static var window: HWND?
     nonisolated(unsafe) static var list: HWND?
     nonisolated(unsafe) static var detail: HWND?
     nonisolated(unsafe) static var status: HWND?
     nonisolated(unsafe) static var refreshButton: HWND?
+    nonisolated(unsafe) static var searchInput: HWND?
+    nonisolated(unsafe) static var projectFilter: HWND?
+    nonisolated(unsafe) static var kindFilter: HWND?
+    nonisolated(unsafe) static var copyButton: HWND?
 
     static func show(owner: HWND?) {
       if let window {
@@ -40,6 +48,10 @@
       detail = nil
       status = nil
       refreshButton = nil
+      searchInput = nil
+      projectFilter = nil
+      kindFilter = nil
+      copyButton = nil
     }
 
     static func apply(_ display: WindowsLogDisplay) {
@@ -49,9 +61,15 @@
         rows: display.rows,
         selectedIndex: display.selectedIndex
       )
+      WindowsAuxiliaryControlSupport.setText(searchInput, display.searchText)
+      WindowsAuxiliaryControlSupport.setCombo(
+        projectFilter, values: display.projectRows, selectedIndex: display.selectedProjectIndex)
+      WindowsAuxiliaryControlSupport.setCombo(
+        kindFilter, values: display.kindRows, selectedIndex: display.selectedKindIndex)
       WindowsAuxiliaryControlSupport.setText(detail, display.detailText)
       WindowsAuxiliaryControlSupport.setText(status, display.statusText)
       _ = EnableWindow(refreshButton, display.refreshEnabled)
+      _ = EnableWindow(copyButton, display.copyEnabled)
     }
 
     static func handleMessage(
@@ -69,6 +87,27 @@
         }
         if id == WPARAM(refreshID), notification == WPARAM(BN_CLICKED) {
           WindowsMainWindow.enqueue(.refreshLogs)
+          return 0
+        }
+        if id == WPARAM(searchID), notification == WPARAM(EN_CHANGE) {
+          WindowsMainWindow.enqueue(
+            .setLogSearch(text: WindowsAuxiliaryControlSupport.currentText(searchInput)))
+          return 0
+        }
+        if id == WPARAM(projectFilterID), notification == WPARAM(CBN_SELCHANGE),
+          let index = WindowsAuxiliaryControlSupport.selectedIndex(projectFilter, combo: true)
+        {
+          WindowsMainWindow.enqueue(.setLogProjectFilter(index: index))
+          return 0
+        }
+        if id == WPARAM(kindFilterID), notification == WPARAM(CBN_SELCHANGE),
+          let index = WindowsAuxiliaryControlSupport.selectedIndex(kindFilter, combo: true)
+        {
+          WindowsMainWindow.enqueue(.setLogKindFilter(index: index))
+          return 0
+        }
+        if id == WPARAM(copyID), notification == WPARAM(BN_CLICKED) {
+          WindowsMainWindow.enqueue(.copyLogs)
           return 0
         }
         return DefWindowProcW(window, message, wParam, lParam)

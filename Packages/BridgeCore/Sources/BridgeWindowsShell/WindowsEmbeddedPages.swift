@@ -2,6 +2,10 @@
   import WinSDK
 
   enum WindowsEmbeddedPages {
+    nonisolated(unsafe) private static var projectsSection = 0
+    nonisolated(unsafe) private static var connectionsSection = 1
+    nonisolated(unsafe) private static var settingsSection = 0
+
     static func prepare(in parent: HWND?) {
       WindowsProjectManagementWindow.show(owner: parent)
       embed(WindowsProjectManagementWindow.window, in: parent)
@@ -11,41 +15,95 @@
       embed(WindowsAgentManagementWindow.window, in: parent)
       WindowsSettingsWindow.show(owner: parent)
       embed(WindowsSettingsWindow.window, in: parent)
+      WindowsWorkspaceWindow.show(owner: parent)
+      embed(WindowsWorkspaceWindow.window, in: parent)
+      WindowsAgentDefaultsWindow.show(owner: parent)
+      embed(WindowsAgentDefaultsWindow.window, in: parent)
+      WindowsConnectionWindow.show(owner: parent)
+      embed(WindowsConnectionWindow.window, in: parent)
+      WindowsEmbeddedPageTabs.create(in: parent, instance: GetModuleHandleW(nil))
       select(.overview)
     }
 
     static func select(_ page: WindowsMainPage) {
       WindowsUIFoundation.show(
         WindowsProjectManagementWindow.window,
-        page == .projects
+        page == .projects && projectsSection == 0
+      )
+      WindowsUIFoundation.show(
+        WindowsWorkspaceWindow.window,
+        page == .projects && projectsSection == 1
       )
       WindowsUIFoundation.show(WindowsLogWindow.window, page == .logs)
       WindowsUIFoundation.show(
         WindowsAgentManagementWindow.window,
-        page == .connections
+        page == .connections && connectionsSection == 1
       )
-      WindowsUIFoundation.show(WindowsSettingsWindow.window, page == .settings)
+      WindowsUIFoundation.show(
+        WindowsConnectionWindow.window,
+        page == .connections && connectionsSection == 0
+      )
+      WindowsUIFoundation.show(
+        WindowsSettingsWindow.window,
+        page == .settings && settingsSection == 0
+      )
+      WindowsUIFoundation.show(
+        WindowsAgentDefaultsWindow.window,
+        page == .settings && settingsSection == 1
+      )
+      WindowsEmbeddedPageTabs.apply(page: page, selectedIndex: selectedSection(for: page))
+    }
+
+    static func selectSection(page: WindowsMainPage, index: Int) {
+      guard index == 0 || index == 1 else { return }
+      switch page {
+      case .projects: projectsSection = index
+      case .connections: connectionsSection = index
+      case .settings: settingsSection = index
+      case .overview, .workbench, .logs: return
+      }
+      select(page)
     }
 
     static func layout(page: WindowsMainPage, in bounds: RECT) {
+      let contentBounds: RECT
+      switch page {
+      case .projects, .connections, .settings:
+        contentBounds = WindowsEmbeddedPageTabs.layout(in: bounds)
+      case .overview, .workbench, .logs:
+        contentBounds = bounds
+      }
       guard let window = window(for: page) else { return }
       _ = MoveWindow(
         window,
-        bounds.left,
-        bounds.top,
-        max(Int32(0), bounds.right - bounds.left),
-        max(Int32(0), bounds.bottom - bounds.top),
+        contentBounds.left,
+        contentBounds.top,
+        max(Int32(0), contentBounds.right - contentBounds.left),
+        max(Int32(0), contentBounds.bottom - contentBounds.top),
         true
       )
     }
 
     private static func window(for page: WindowsMainPage) -> HWND? {
       switch page {
-      case .projects: WindowsProjectManagementWindow.window
+      case .projects:
+        projectsSection == 0 ? WindowsProjectManagementWindow.window : WindowsWorkspaceWindow.window
       case .logs: WindowsLogWindow.window
-      case .connections: WindowsAgentManagementWindow.window
-      case .settings: WindowsSettingsWindow.window
+      case .connections:
+        connectionsSection == 0
+          ? WindowsConnectionWindow.window : WindowsAgentManagementWindow.window
+      case .settings:
+        settingsSection == 0 ? WindowsSettingsWindow.window : WindowsAgentDefaultsWindow.window
       case .overview, .workbench: nil
+      }
+    }
+
+    private static func selectedSection(for page: WindowsMainPage) -> Int {
+      switch page {
+      case .projects: projectsSection
+      case .connections: connectionsSection
+      case .settings: settingsSection
+      case .overview, .workbench, .logs: 0
       }
     }
 

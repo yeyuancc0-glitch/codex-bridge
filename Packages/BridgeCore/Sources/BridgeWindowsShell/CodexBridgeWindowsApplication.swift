@@ -9,9 +9,9 @@
   /// 250ms window timer guarantees the loop wakes up regularly.
   @MainActor
   public enum CodexBridgeWindowsApplication {
-    private static var lastAppliedDisplay: WindowsWorkbenchDisplay?
-    private static var lastAppliedManagementDisplay: WindowsManagementDisplay?
-    private static var lastPlaceholderText: String? = ""
+    static var lastAppliedDisplay: WindowsWorkbenchDisplay?
+    static var lastAppliedManagementDisplay: WindowsManagementDisplay?
+    static var lastPlaceholderText: String? = ""
 
     public static func main(comInitialization: HRESULT, comThreadID: DWORD) async {
       let isCOMThread = GetCurrentThreadId() == comThreadID
@@ -69,6 +69,27 @@
         guard let page = WindowsMainPage(rawValue: index) else { return }
         WindowsMainWindow.selectPage(page)
         refresh(page: page, model: model, management: management, auxiliary: auxiliary)
+      case .selectProjectsSection(let index):
+        WindowsEmbeddedPages.selectSection(page: .projects, index: index)
+        if index == 0 {
+          Task { await management.refreshProjects() }
+        } else {
+          auxiliary.run(.refreshWorkspace)
+        }
+      case .selectConnectionsSection(let index):
+        WindowsEmbeddedPages.selectSection(page: .connections, index: index)
+        if index == 0 {
+          auxiliary.run(.refreshMCPConnections)
+        } else {
+          Task { await management.refreshAgents() }
+        }
+      case .selectSettingsSection(let index):
+        WindowsEmbeddedPages.selectSection(page: .settings, index: index)
+        if index == 0 {
+          auxiliary.run(.refreshSettings)
+        } else {
+          auxiliary.run(.refreshAgentDefaults)
+        }
       case .refreshCurrentPage:
         refresh(
           page: WindowsMainWindow.currentPage(),
@@ -191,130 +212,17 @@
         Task { await model.refreshSelectedTask() }
       case .projects:
         Task { await management.refreshProjects() }
+        auxiliary.run(.refreshWorkspace)
       case .logs:
         auxiliary.run(.refreshLogs)
       case .connections:
+        auxiliary.run(.refreshMCPConnections)
         Task { await management.refreshAgents() }
       case .settings:
         auxiliary.run(.refreshSettings)
+        auxiliary.run(.refreshAgentDefaults)
       }
     }
 
-    private static func applyDisplay(
-      model: WindowsWorkbenchModel,
-      management: WindowsManagementModel,
-      chat: WindowsChatWebView
-    ) {
-      model.refreshDisplaySnapshot()
-      management.refreshDisplaySnapshot()
-      let display = model.displayBox.current()
-      let managementDisplay = management.displayBox.current()
-      WindowsMainWindow.updateNavigation(
-        workbench: display,
-        management: managementDisplay
-      )
-      WindowsMainWindow.updateOverview(
-        workbench: display,
-        management: managementDisplay
-      )
-      if display != lastAppliedDisplay {
-        var lines = [
-          "服务连接: \(statusName(display.connectionState))",
-          "任务: \(display.taskCount)（运行中 \(display.runningTaskCount)）",
-          "审批: \(display.pendingApprovalCount)",
-          "MCP 地址: \(display.mcpAddress)",
-        ]
-        if let detail = display.detailText {
-          lines.append("详情: \(detail)")
-        }
-        WindowsMainWindow.setStatusText(lines.joined(separator: "\r\n"))
-        let previous = lastAppliedDisplay
-        if display.taskRows != previous?.taskRows
-          || display.selectedTaskIndex != previous?.selectedTaskIndex
-        {
-          WindowsMainWindow.setTaskRows(
-            display.taskRows,
-            selectedIndex: display.selectedTaskIndex
-          )
-        }
-        if display.taskMetadata != previous?.taskMetadata {
-          WindowsTaskInspector.setTaskMetadata(display.taskMetadata)
-        }
-        if display.conversationText != previous?.conversationText {
-          WindowsTaskInspector.setConversationText(display.conversationText)
-        }
-        if display.actionText != previous?.actionText {
-          WindowsTaskInspector.setActionStatus(display.actionText)
-        }
-        if display.projectRows != previous?.projectRows
-          || display.selectedProjectIndex != previous?.selectedProjectIndex
-          || display.permissionRows != previous?.permissionRows
-          || display.selectedPermissionIndex != previous?.selectedPermissionIndex
-          || display.pendingApprovalCount != previous?.pendingApprovalCount
-          || display.stopEnabled != previous?.stopEnabled
-          || display.deleteEnabled != previous?.deleteEnabled
-        {
-          WindowsTaskInspector.applyContext(display)
-        }
-        if display.interruptEnabled != previous?.interruptEnabled
-          || display.steerEnabled != previous?.steerEnabled
-        {
-          WindowsTaskInspector.setControls(
-            interruptEnabled: display.interruptEnabled,
-            steerEnabled: display.steerEnabled
-          )
-        }
-        WindowsApprovalWindow.apply(display)
-        lastAppliedDisplay = display
-      }
-
-      if managementDisplay != lastAppliedManagementDisplay {
-        WindowsProjectManagementWindow.apply(managementDisplay.project)
-        WindowsAgentManagementWindow.apply(managementDisplay.agent)
-        lastAppliedManagementDisplay = managementDisplay
-      }
-
-      let placeholder: String?
-      switch chat.state {
-      case .unsupported:
-        placeholder = "内置浏览器不可用：\(chat.errorDetail ?? "未知原因")\r\n可使用上方“在外部浏览器打开”，任务管理功能仍然可用。"
-      case .loading:
-        placeholder = "正在加载聊天页…"
-      case .failed:
-        placeholder = "聊天页加载失败：\(chat.errorDetail ?? "未知原因")\r\n可使用上方“在外部浏览器打开”，任务管理功能仍然可用。"
-      case .active:
-        placeholder = nil
-      }
-      WindowsBrowserToolbar.setBrowserActionsEnabled(chat.state == .active)
-      chat.setVisible(chat.state == .active && WindowsMainWindow.currentPage() == .workbench)
-      if placeholder != lastPlaceholderText {
-        WindowsMainWindow.setChatPlaceholder(placeholder)
-        lastPlaceholderText = placeholder
-      }
-    }
-
-    private static func openChatExternally() {
-      "open".withCString(encodedAs: UTF16.self) { operation in
-        WindowsChatWebView.chatURL.withCString(encodedAs: UTF16.self) { url in
-          _ = ShellExecuteW(
-            WindowsMainWindow.currentWindow(),
-            operation,
-            url,
-            nil,
-            nil,
-            SW_SHOWNORMAL
-          )
-        }
-      }
-    }
-
-    private static func statusName(_ state: WindowsWorkbenchDisplay.ConnectionState) -> String {
-      switch state {
-      case .idle: "未连接"
-      case .connecting: "连接中…"
-      case .connected: "已连接"
-      case .unavailable: "不可用"
-      }
-    }
   }
 #endif

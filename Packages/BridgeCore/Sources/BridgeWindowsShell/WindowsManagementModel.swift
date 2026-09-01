@@ -54,6 +54,7 @@
       displayBox = ManagementDisplayBox(
         value: WindowsManagementDisplay(
           connectionState: .idle,
+          availableAgentCount: 0,
           project: emptyProject,
           agent: emptyAgent
         )
@@ -204,6 +205,9 @@
       displayBox.store(
         WindowsManagementDisplay(
           connectionState: connectionState,
+          availableAgentCount: agentInstallations.filter {
+            $0.isEnabled && $0.availability == "available"
+          }.count,
           project: projectDisplay,
           agent: agentDisplay
         )

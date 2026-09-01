@@ -8,34 +8,68 @@
     let agentDefaults: WindowsAgentDefaultsModel
     let logs: WindowsLogModel
     let settings: WindowsSettingsModel
+    let connections: WindowsConnectionModel
 
     private var lastWorkspaceDisplay: WindowsWorkspaceDisplay?
     private var lastAgentDefaultsDisplay: WindowsAgentDefaultsDisplay?
     private var lastLogDisplay: WindowsLogDisplay?
     private var lastSettingsDisplay: WindowsSettingsDisplay?
+    private var lastConnectionDisplay: WindowsConnectionDisplay?
 
     init(client: any BridgeServiceClientProtocol) {
       workspace = WindowsWorkspaceModel(client: client)
       agentDefaults = WindowsAgentDefaultsModel(client: client)
       logs = WindowsLogModel(client: client)
       settings = WindowsSettingsModel(client: client)
+      connections = WindowsConnectionModel(client: client)
     }
 
     func run(_ command: MainWindowCommand) {
       switch command {
       case .showWorkspace, .selectWorkspaceProject, .selectWorkspaceCommand,
-        .selectWorkspaceSkill, .refreshWorkspace, .setWorkspaceMode, .saveWorkspaceCommand,
-        .removeSelectedWorkspaceCommand:
+        .selectWorkspaceSkill, .selectWorkspaceThread, .refreshWorkspace, .setWorkspaceMode,
+        .selectWorkspaceBlacklist, .saveWorkspaceCommand, .removeSelectedWorkspaceCommand,
+        .saveWorkspaceBlacklist, .removeSelectedWorkspaceBlacklist:
         runWorkspace(command)
       case .showAgentDefaults, .selectDefaultProvider, .selectDefaultInstallation,
         .refreshAgentDefaults, .refreshAgentModels, .saveAgentDefaults:
         runAgentDefaults(command)
-      case .showLogs, .refreshLogs, .selectLog:
+      case .showLogs, .refreshLogs, .selectLog, .setLogSearch, .setLogProjectFilter,
+        .setLogKindFilter, .copyLogs:
         runLogs(command)
       case .showSettings, .refreshSettings, .saveSettingsPreferences,
         .saveSettingsInstructions, .setSettingsDirectApprovalMode,
         .setSettingsTaskStartApprovalMode:
         runSettings(command)
+      case .selectMCPClient, .refreshMCPConnections, .toggleSelectedMCPClient,
+        .setSelectedMCPExposure, .copySelectedMCPConfiguration,
+        .rotateSelectedMCPCredential, .rotateLocalMCPEndpoint:
+        runConnections(command)
+      default:
+        break
+      }
+    }
+
+    private func runConnections(_ command: MainWindowCommand) {
+      switch command {
+      case .selectMCPClient(let index):
+        connections.selectClient(at: index)
+      case .refreshMCPConnections:
+        Task { await connections.refresh() }
+      case .toggleSelectedMCPClient:
+        Task { await connections.toggleSelectedClient() }
+      case .setSelectedMCPExposure(let index):
+        Task { await connections.setSelectedExposure(at: index) }
+      case .copySelectedMCPConfiguration:
+        Task {
+          guard let configuration = await connections.exportSelectedConfiguration() else { return }
+          connections.didCopyConfiguration(
+            WindowsClipboard.write(configuration, owner: WindowsMainWindow.currentWindow()))
+        }
+      case .rotateSelectedMCPCredential:
+        Task { await connections.rotateSelectedCredential() }
+      case .rotateLocalMCPEndpoint:
+        Task { await connections.rotateEndpoint() }
       default:
         break
       }
@@ -54,6 +88,10 @@
         workspace.selectCommand(at: index)
       case .selectWorkspaceSkill(let index):
         workspace.selectSkill(at: index)
+      case .selectWorkspaceThread(let index):
+        workspace.selectThread(at: index)
+      case .selectWorkspaceBlacklist(let index):
+        workspace.selectBlacklist(at: index)
       case .refreshWorkspace:
         Task { await workspace.refreshSelected() }
       case .setWorkspaceMode(let mode):
@@ -77,6 +115,10 @@
         Task { await workspace.saveCommand(draft) }
       case .removeSelectedWorkspaceCommand:
         Task { await workspace.removeSelectedCommand() }
+      case .saveWorkspaceBlacklist(let executable, let pattern):
+        Task { await workspace.saveBlacklist(executable: executable, pattern: pattern) }
+      case .removeSelectedWorkspaceBlacklist:
+        Task { await workspace.removeSelectedBlacklist() }
       default:
         break
       }
@@ -120,6 +162,16 @@
         Task { await logs.refresh() }
       case .selectLog(let index):
         logs.selectItem(at: index)
+      case .setLogSearch(let text):
+        logs.setSearchText(text)
+      case .setLogProjectFilter(let index):
+        logs.setProjectFilter(index)
+      case .setLogKindFilter(let index):
+        logs.setKindFilter(index)
+      case .copyLogs:
+        let display = logs.displayBox.current()
+        logs.didCopy(
+          WindowsClipboard.write(display.copyText, owner: WindowsMainWindow.currentWindow()))
       default:
         break
       }
@@ -152,10 +204,12 @@
       agentDefaults.refreshDisplaySnapshot()
       logs.refreshDisplaySnapshot()
       settings.refreshDisplaySnapshot()
+      connections.refreshDisplaySnapshot()
       applyWorkspace()
       applyAgentDefaults()
       applyLogs()
       applySettings()
+      applyConnections()
     }
 
     func shutdown() {
@@ -163,6 +217,7 @@
       WindowsAgentDefaultsWindow.shutdown()
       WindowsLogWindow.shutdown()
       WindowsSettingsWindow.shutdown()
+      WindowsConnectionWindow.shutdown()
     }
 
     private func applyWorkspace() {
@@ -191,6 +246,13 @@
       guard value != lastSettingsDisplay else { return }
       WindowsSettingsWindow.apply(value)
       lastSettingsDisplay = value
+    }
+
+    private func applyConnections() {
+      let value = connections.displayBox.current()
+      guard value != lastConnectionDisplay else { return }
+      WindowsConnectionWindow.apply(value)
+      lastConnectionDisplay = value
     }
   }
 #endif

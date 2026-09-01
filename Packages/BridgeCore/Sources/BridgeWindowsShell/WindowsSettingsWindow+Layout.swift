@@ -15,6 +15,7 @@
     nonisolated(unsafe) static var saveDirectApprovalButton: HWND?
     nonisolated(unsafe) static var saveTaskStartApprovalButton: HWND?
     nonisolated(unsafe) static var refreshButton: HWND?
+    nonisolated(unsafe) static var lifecycleLabel: HWND?
 
     static func createControls(parent: HWND, instance: HINSTANCE?) {
       executionLabel = label("执行模型", parent: parent, instance: instance, id: 7101)
@@ -59,6 +60,13 @@
       refreshButton = button("刷新", refreshID, parent: parent, instance: instance)
       status = WindowsAuxiliaryControlSupport.createChild(
         "STATIC", parent: parent, instance: instance, id: statusID
+      )
+      lifecycleLabel = WindowsAuxiliaryControlSupport.createChild(
+        "STATIC",
+        text: "后台服务：按需启动，关闭窗口后继续运行。Supervisor 在 Windows 版不提供。",
+        parent: parent,
+        instance: instance,
+        id: 7110
       )
       _ = EnableWindow(savePreferencesButton, false)
       _ = EnableWindow(saveInstructionsButton, false)
@@ -108,6 +116,7 @@
       _ = MoveWindow(saveTaskStartApprovalButton, padding + 394, buttonTop, 126, 24, true)
       _ = MoveWindow(refreshButton, padding + 530, buttonTop, 76, 24, true)
       _ = MoveWindow(status, padding, buttonTop + 34, width - padding * 2, 42, true)
+      _ = MoveWindow(lifecycleLabel, padding, buttonTop + 76, width - padding * 2, 24, true)
     }
 
     private static func label(_ text: String, parent: HWND, instance: HINSTANCE?, id: Int) -> HWND?

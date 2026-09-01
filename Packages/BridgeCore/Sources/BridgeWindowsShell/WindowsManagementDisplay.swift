@@ -38,6 +38,7 @@
 
   struct WindowsManagementDisplay: Equatable, Sendable {
     let connectionState: WindowsWorkbenchDisplay.ConnectionState
+    let availableAgentCount: Int
     let project: WindowsProjectManagementDisplay
     let agent: WindowsAgentManagementDisplay
   }

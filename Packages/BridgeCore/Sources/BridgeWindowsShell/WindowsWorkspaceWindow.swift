@@ -19,10 +19,17 @@
     static let networkID = 6011
     static let riskID = 6012
     static let statusID = 6013
+    static let threadListID = 6014
+    static let threadDetailID = 6015
+    static let blacklistListID = 6016
+    static let blacklistExecutableID = 6017
+    static let blacklistPatternID = 6018
     static let saveCommandID = 6101
     static let removeCommandID = 6102
     static let saveModeID = 6103
     static let refreshID = 6104
+    static let saveBlacklistID = 6105
+    static let removeBlacklistID = 6106
 
     nonisolated(unsafe) static var window: HWND?
     nonisolated(unsafe) static var projectList: HWND?
@@ -38,6 +45,11 @@
     nonisolated(unsafe) static var networkButton: HWND?
     nonisolated(unsafe) static var riskCombo: HWND?
     nonisolated(unsafe) static var status: HWND?
+    nonisolated(unsafe) static var threadList: HWND?
+    nonisolated(unsafe) static var threadDetail: HWND?
+    nonisolated(unsafe) static var blacklistList: HWND?
+    nonisolated(unsafe) static var blacklistExecutableInput: HWND?
+    nonisolated(unsafe) static var blacklistPatternInput: HWND?
     nonisolated(unsafe) static var modeValues: [String] = []
     nonisolated(unsafe) static var riskValues: [String] = []
 
@@ -74,6 +86,11 @@
       networkButton = nil
       riskCombo = nil
       status = nil
+      threadList = nil
+      threadDetail = nil
+      blacklistList = nil
+      blacklistExecutableInput = nil
+      blacklistPatternInput = nil
       modeValues = []
       riskValues = []
     }
@@ -99,6 +116,20 @@
       )
       WindowsAuxiliaryControlSupport.setText(commandDetail, display.commandDetailText)
       WindowsAuxiliaryControlSupport.setText(skillDetail, display.skillDetailText)
+      WindowsAuxiliaryControlSupport.setRows(
+        threadList,
+        rows: display.threadRows,
+        selectedIndex: display.selectedThreadIndex
+      )
+      WindowsAuxiliaryControlSupport.setText(threadDetail, display.threadDetailText)
+      WindowsAuxiliaryControlSupport.setCombo(
+        blacklistList,
+        values: display.blacklistRows,
+        selectedIndex: display.selectedBlacklistIndex
+      )
+      WindowsAuxiliaryControlSupport.setText(
+        blacklistExecutableInput, display.blacklistExecutable)
+      WindowsAuxiliaryControlSupport.setText(blacklistPatternInput, display.blacklistPattern)
       WindowsAuxiliaryControlSupport.setText(nameInput, display.commandName)
       WindowsAuxiliaryControlSupport.setText(executableInput, display.commandExecutable)
       WindowsAuxiliaryControlSupport.setText(argumentsInput, display.commandArguments)
@@ -118,6 +149,8 @@
       _ = EnableWindow(saveCommandButton, display.saveCommandEnabled)
       _ = EnableWindow(removeCommandButton, display.removeCommandEnabled)
       _ = EnableWindow(saveModeButton, display.saveModeEnabled)
+      _ = EnableWindow(saveBlacklistButton, display.saveBlacklistEnabled)
+      _ = EnableWindow(removeBlacklistButton, display.removeBlacklistEnabled)
     }
 
     static func handleMessage(
@@ -160,6 +193,15 @@
           return nil
         }
         return .selectWorkspaceSkill(index: index)
+      case WPARAM(threadListID) where notification == WPARAM(LBN_SELCHANGE):
+        guard let index = WindowsAuxiliaryControlSupport.selectedIndex(threadList) else {
+          return nil
+        }
+        return .selectWorkspaceThread(index: index)
+      case WPARAM(blacklistListID) where notification == WPARAM(CBN_SELCHANGE):
+        guard let index = WindowsAuxiliaryControlSupport.selectedIndex(blacklistList, combo: true)
+        else { return nil }
+        return .selectWorkspaceBlacklist(index: index)
       case WPARAM(saveCommandID) where notification == WPARAM(BN_CLICKED):
         return .saveWorkspaceCommand(
           name: WindowsAuxiliaryControlSupport.currentText(nameInput),
@@ -177,6 +219,13 @@
         return .setWorkspaceMode(mode: modeValues[index])
       case WPARAM(refreshID) where notification == WPARAM(BN_CLICKED):
         return .refreshWorkspace
+      case WPARAM(saveBlacklistID) where notification == WPARAM(BN_CLICKED):
+        return .saveWorkspaceBlacklist(
+          executable: WindowsAuxiliaryControlSupport.currentText(blacklistExecutableInput),
+          pattern: WindowsAuxiliaryControlSupport.currentText(blacklistPatternInput)
+        )
+      case WPARAM(removeBlacklistID) where notification == WPARAM(BN_CLICKED):
+        return .removeSelectedWorkspaceBlacklist
       default:
         return nil
       }

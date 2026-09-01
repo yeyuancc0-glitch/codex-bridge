@@ -23,6 +23,8 @@
       saveButton = createChild("BUTTON", "保存策略", DWORD(BS_PUSHBUTTON), 0, parent, instance, saveID)
       refreshButton = createChild(
         "BUTTON", "刷新", DWORD(BS_PUSHBUTTON), 0, parent, instance, refreshID)
+      browseButton = createChild(
+        "BUTTON", "浏览…", DWORD(BS_PUSHBUTTON), 0, parent, instance, browseID)
       setCombo(readCombo, values: readValues, selected: "allowed")
       setCombo(writeCombo, values: writeValues, selected: "requiresLocalApproval")
       setCombo(networkCombo, values: writeValues, selected: "denied")
@@ -46,7 +48,8 @@
       _ = MoveWindow(nameLabel, padding, formTop + 3, 58, 20, true)
       _ = MoveWindow(nameInput, 74, formTop, 194, 24, true)
       _ = MoveWindow(pathLabel, rightX, formTop + 3, 76, 20, true)
-      _ = MoveWindow(pathInput, rightX + 76, formTop, rightWidth - 76, 24, true)
+      _ = MoveWindow(pathInput, rightX + 76, formTop, rightWidth - 148, 24, true)
+      _ = MoveWindow(browseButton, rightX + rightWidth - 66, formTop, 66, 24, true)
       _ = MoveWindow(readLabel, padding, formTop + 37, 58, 20, true)
       _ = MoveWindow(readCombo, 74, formTop + 34, 194, 160, true)
       _ = MoveWindow(writeLabel, rightX, formTop + 37, 58, 20, true)

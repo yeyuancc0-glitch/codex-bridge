@@ -90,7 +90,7 @@
         WindowsPageHeader.apply(
           page: .connections,
           statusDetail:
-            "本地 MCP：\(workbench.mcpAddress) · \(management.agent.installationRows.count) 个 Agent"
+            "本地 MCP：\(workbench.mcpAddress) · \(management.availableAgentCount) 个可用 Agent"
         )
       }
     }
@@ -105,7 +105,7 @@
           runningTaskCount: workbench.runningTaskCount,
           pendingApprovalCount: workbench.pendingApprovalCount,
           projectCount: management.project.rows.count,
-          agentCount: management.agent.installationRows.count,
+          agentCount: management.availableAgentCount,
           taskCount: workbench.taskCount,
           mcpAddress: workbench.mcpAddress,
           recentTaskRows: Array(workbench.recentTaskRows.prefix(4)),
@@ -142,6 +142,7 @@
           ?? WindowsOverviewPane.command(for: wParam)
           ?? WindowsBrowserToolbar.command(for: wParam)
           ?? WindowsTaskInspector.command(for: wParam)
+          ?? WindowsEmbeddedPageTabs.command(for: wParam)
           ?? WindowsMainWindowChrome.command(for: wParam)
         if let command { pendingCommands.append(command) }
         return 0

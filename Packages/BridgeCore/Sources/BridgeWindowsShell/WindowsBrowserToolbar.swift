@@ -36,11 +36,11 @@
       let notification = (wParam >> 16) & 0xFFFF
       guard notification == WPARAM(BN_CLICKED) else { return nil }
       switch id {
-      case WPARAM(backID): .browserBack
-      case WPARAM(forwardID): .browserForward
-      case WPARAM(reloadID): .browserReload
-      case WPARAM(externalID): .openChatExternally
-      default: nil
+      case WPARAM(backID): return .browserBack
+      case WPARAM(forwardID): return .browserForward
+      case WPARAM(reloadID): return .browserReload
+      case WPARAM(externalID): return .openChatExternally
+      default: return nil
       }
     }
 

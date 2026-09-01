@@ -22,9 +22,18 @@
     let skillRows: [String]
     let selectedSkillIndex: Int?
     let skillDetailText: String
+    let threadRows: [String]
+    let selectedThreadIndex: Int?
+    let threadDetailText: String
+    let blacklistRows: [String]
+    let selectedBlacklistIndex: Int?
+    let blacklistExecutable: String
+    let blacklistPattern: String
     let saveCommandEnabled: Bool
     let removeCommandEnabled: Bool
     let saveModeEnabled: Bool
+    let saveBlacklistEnabled: Bool
+    let removeBlacklistEnabled: Bool
     let statusText: String
   }
 
@@ -49,10 +58,17 @@
 
   struct WindowsLogDisplay: Equatable, Sendable {
     let connectionState: WindowsWorkbenchDisplay.ConnectionState
+    let searchText: String
+    let projectRows: [String]
+    let selectedProjectIndex: Int
+    let kindRows: [String]
+    let selectedKindIndex: Int
     let rows: [String]
     let selectedIndex: Int?
     let detailText: String
     let refreshEnabled: Bool
+    let copyEnabled: Bool
+    let copyText: String
     let statusText: String
   }
 
