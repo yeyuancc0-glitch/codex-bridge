@@ -198,6 +198,7 @@
       handle = INVALID_HANDLE_VALUE
       lock.unlock()
       guard current != INVALID_HANDLE_VALUE else { return }
+      _ = CancelIoEx(current, nil)
       _ = CloseHandle(current)
     }
   }

@@ -54,6 +54,7 @@
     static let environmentCreateController = 3
     static let controllerPutIsVisible = 4
     static let controllerPutBounds = 6
+    static let controllerClose = 24
     static let controllerGetCoreWebView2 = 25
     static let webViewNavigate = 5
     static let webViewReload = 31

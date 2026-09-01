@@ -231,6 +231,11 @@
     }
 
     private func releaseInterfaces() {
+      if let controller {
+        let close: WebView2ActionFn = webView2Method(
+          controller, WebView2Slot.controllerClose, as: WebView2ActionFn.self)
+        _ = close(controller)
+      }
       for object in [webView, controller, environment].compactMap({ $0 }) {
         _ = webView2Release(object)
       }
