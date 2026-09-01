@@ -29,9 +29,9 @@ Codex Bridge 是一个原生 macOS 开发者工具。它连接 ChatGPT 网页版
 
 **Core content/data:** 连接健康、Codex 账户/版本/模型能力、项目权限、Thread、任务契约、事件、命令、文件、Diff、审批、验证、Supervisor 决策、最终报告和设置。
 
-**Scope and fidelity:** V1 完整原生 macOS 应用，遵循方案全部 V1 要求；Beta 诚实标注实验性 app-server 风险。
+**Scope and fidelity:** macOS 与 Windows 共享同一产品信息架构、页面内容、状态语义和功能闭环；平台分别使用 SwiftUI/AppKit 与 Win32/WebView2 原生承载。Beta 诚实标注实验性 app-server 风险。
 
-**Platforms and inputs:** macOS 14+；键盘、指针、VoiceOver、系统浅/深色、Reduced Motion、Increase Contrast；无 iOS/Windows/Linux UI。
+**Platforms and inputs:** macOS 14+ 与 Windows 10/11；键盘、指针、平台辅助技术、系统浅/深色、Reduced Motion/动画设置和高对比度；无 iOS/Linux UI。
 
 **Visual calibration:** Expressive variance low；information density balanced-to-high，按页面任务调整；motion energy low/functional。
 
@@ -66,7 +66,7 @@ Codex Bridge 是一个原生 macOS 开发者工具。它连接 ChatGPT 网页版
 - Experience architecture: task-focused native app shell；首次使用为线性 Onboarding；日常使用为状态/队列入口与对象详情；高风险决定使用本机 Sheet。
 - Technical architecture: Swift 6 + SwiftUI/AppKit + SPM；领域与基础设施拆成 BridgeCore modules；状态经 actor/事件存储单向投影到 `@MainActor` UI。
 - Selection: 用户委托；方案已明确技术栈和模块边界。
-- Consequences: 原生系统集成与安全能力强；首期仅 macOS；完整发布需要 Xcode 与 Apple 签名链。
+- Consequences: 两个平台复用 BridgeServiceAppCore 与 Service API，分别采用原生桌面承载；macOS 发布需要 Xcode 与 Apple 签名链，Windows 发布需要 Swift Windows 工具链、WebView2 与 Inno Setup。
 - Rejected alternatives: Electron/Tauri 会形成第二前端运行时并偏离方案；云控制台违反本地优先；纯菜单栏不足以承载任务证据与审批。
 
 ## Surface Strategy Record

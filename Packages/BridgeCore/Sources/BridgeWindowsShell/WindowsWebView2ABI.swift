@@ -44,7 +44,7 @@
   // HRESULT values: the cast-macro definitions are not imported by WinSDK.
   let webview2SOK: HRESULT = 0
   private let webview2EPointer = HRESULT(bitPattern: 0x8000_4003)
-  private let webview2ENoInterface = HRESULT(bitPattern: 0x8000_400B)
+  private let webview2ENoInterface = HRESULT(bitPattern: 0x8000_4002)
 
   /// Vtable slot indices, verified against WebView2.h declaration order:
   /// ICoreWebView2Environment.CreateCoreWebView2Controller = 3,
@@ -52,9 +52,13 @@
   /// ICoreWebView2.Navigate = 5.
   enum WebView2Slot {
     static let environmentCreateController = 3
+    static let controllerPutIsVisible = 4
     static let controllerPutBounds = 6
     static let controllerGetCoreWebView2 = 25
     static let webViewNavigate = 5
+    static let webViewReload = 31
+    static let webViewGoBack = 40
+    static let webViewGoForward = 41
   }
 
   /// `CreateCoreWebView2EnvironmentWithOptions` from WebView2Loader.dll.
@@ -79,6 +83,12 @@
       RECT
     ) -> HRESULT
 
+  typealias WebView2PutBoolFn =
+    @convention(c) (
+      UnsafeMutableRawPointer?,
+      Bool
+    ) -> HRESULT
+
   typealias WebView2GetCoreWebView2Fn =
     @convention(c) (
       UnsafeMutableRawPointer?,
@@ -89,6 +99,11 @@
     @convention(c) (
       UnsafeMutableRawPointer?,
       UnsafePointer<WCHAR>?
+    ) -> HRESULT
+
+  typealias WebView2ActionFn =
+    @convention(c) (
+      UnsafeMutableRawPointer?
     ) -> HRESULT
 
   /// Loads a member function pointer of a COM interface by vtable slot.

@@ -9,27 +9,28 @@
   /// 250ms window timer guarantees the loop wakes up regularly.
   @MainActor
   public enum CodexBridgeWindowsApplication {
-    private static let apartmentThreadedCOM: DWORD = 0x2
     private static var lastAppliedDisplay: WindowsWorkbenchDisplay?
     private static var lastAppliedManagementDisplay: WindowsManagementDisplay?
     private static var lastPlaceholderText: String? = ""
 
-    public static func main() async {
-      let comInitialization = CoInitializeEx(nil, apartmentThreadedCOM)
-      let shouldUninitializeCOM = comInitialization >= 0
+    public static func main(comInitialization: HRESULT, comThreadID: DWORD) async {
+      let isCOMThread = GetCurrentThreadId() == comThreadID
       defer {
-        if shouldUninitializeCOM {
+        if comInitialization >= 0 && isCOMThread {
           CoUninitialize()
         }
       }
-
       let model = WindowsWorkbenchModel()
       let management = WindowsManagementModel(client: model.client)
       let auxiliary = WindowsAuxiliaryRuntime(client: model.client)
-      let chat = WindowsChatWebView(comAvailable: shouldUninitializeCOM)
+      let chat = WindowsChatWebView(
+        comInitialization: comInitialization,
+        threadMatches: isCOMThread
+      )
       guard let window = WindowsMainWindow.create() else { return }
       WindowsMainWindow.chat = chat
       chat.attach(to: window)
+      chat.setVisible(false)
 
       // Startup path per platform contract: launch the service when the pipe
       // is not connectable, then connect and load tasks.
@@ -64,6 +65,28 @@
       auxiliary: WindowsAuxiliaryRuntime
     ) {
       switch command {
+      case .selectPage(let index):
+        guard let page = WindowsMainPage(rawValue: index) else { return }
+        WindowsMainWindow.selectPage(page)
+        refresh(page: page, model: model, management: management, auxiliary: auxiliary)
+      case .refreshCurrentPage:
+        refresh(
+          page: WindowsMainWindow.currentPage(),
+          model: model,
+          management: management,
+          auxiliary: auxiliary
+        )
+      case .openRecentTask(let index):
+        model.selectTask(at: index)
+        WindowsMainWindow.selectPage(.workbench)
+      case .browserBack:
+        WindowsMainWindow.chat?.goBack()
+      case .browserForward:
+        WindowsMainWindow.chat?.goForward()
+      case .browserReload:
+        WindowsMainWindow.chat?.reload()
+      case .openChatExternally:
+        openChatExternally()
       case .refreshTasks:
         Task { await model.refreshSelectedTask() }
       case .startService:
@@ -82,6 +105,7 @@
           }
         }
       case .showApprovals:
+        WindowsMainWindow.selectPage(.workbench)
         WindowsApprovalWindow.show(owner: WindowsMainWindow.currentWindow())
         model.refreshDisplaySnapshot()
         WindowsApprovalWindow.apply(model.displayBox.current())
@@ -93,15 +117,11 @@
       case .resolveApproval(let decision):
         Task { await model.resolveSelectedApproval(decision: decision) }
       case .showProjects:
-        WindowsProjectManagementWindow.show(owner: WindowsMainWindow.currentWindow())
-        management.refreshDisplaySnapshot()
-        WindowsProjectManagementWindow.apply(management.displayBox.current().project)
-        Task { await management.refresh() }
+        WindowsMainWindow.selectPage(.projects)
+        Task { await management.refreshProjects() }
       case .showAgents:
-        WindowsAgentManagementWindow.show(owner: WindowsMainWindow.currentWindow())
-        management.refreshDisplaySnapshot()
-        WindowsAgentManagementWindow.apply(management.displayBox.current().agent)
-        Task { await management.refresh() }
+        WindowsMainWindow.selectPage(.connections)
+        Task { await management.refreshAgents() }
       case .selectProject(let index):
         management.selectProject(at: index)
       case .refreshProjects:
@@ -145,6 +165,31 @@
       }
     }
 
+    private static func refresh(
+      page: WindowsMainPage,
+      model: WindowsWorkbenchModel,
+      management: WindowsManagementModel,
+      auxiliary: WindowsAuxiliaryRuntime
+    ) {
+      switch page {
+      case .overview:
+        Task {
+          await model.refreshTasks()
+          await management.refresh()
+        }
+      case .workbench:
+        Task { await model.refreshSelectedTask() }
+      case .projects:
+        Task { await management.refreshProjects() }
+      case .logs:
+        auxiliary.run(.refreshLogs)
+      case .connections:
+        Task { await management.refreshAgents() }
+      case .settings:
+        auxiliary.run(.refreshSettings)
+      }
+    }
+
     private static func applyDisplay(
       model: WindowsWorkbenchModel,
       management: WindowsManagementModel,
@@ -153,6 +198,15 @@
       model.refreshDisplaySnapshot()
       management.refreshDisplaySnapshot()
       let display = model.displayBox.current()
+      let managementDisplay = management.displayBox.current()
+      WindowsMainWindow.updateNavigation(
+        workbench: display,
+        management: managementDisplay
+      )
+      WindowsMainWindow.updateOverview(
+        workbench: display,
+        management: managementDisplay
+      )
       if display != lastAppliedDisplay {
         var lines = [
           "服务连接: \(statusName(display.connectionState))",
@@ -194,7 +248,6 @@
         lastAppliedDisplay = display
       }
 
-      let managementDisplay = management.displayBox.current()
       if managementDisplay != lastAppliedManagementDisplay {
         WindowsProjectManagementWindow.apply(managementDisplay.project)
         WindowsAgentManagementWindow.apply(managementDisplay.agent)
@@ -204,17 +257,34 @@
       let placeholder: String?
       switch chat.state {
       case .unsupported:
-        placeholder = "WebView2 初始化不可用，聊天页已停用；任务管理功能不受影响。"
+        placeholder = "内置浏览器不可用：\(chat.errorDetail ?? "未知原因")\r\n可使用上方“在外部浏览器打开”，任务管理功能仍然可用。"
       case .loading:
         placeholder = "正在加载聊天页…"
       case .failed:
-        placeholder = "聊天页加载失败，已停用；任务管理功能不受影响。"
+        placeholder = "聊天页加载失败：\(chat.errorDetail ?? "未知原因")\r\n可使用上方“在外部浏览器打开”，任务管理功能仍然可用。"
       case .active:
         placeholder = nil
       }
+      WindowsBrowserToolbar.setBrowserActionsEnabled(chat.state == .active)
+      chat.setVisible(chat.state == .active && WindowsMainWindow.currentPage() == .workbench)
       if placeholder != lastPlaceholderText {
         WindowsMainWindow.setChatPlaceholder(placeholder)
         lastPlaceholderText = placeholder
+      }
+    }
+
+    private static func openChatExternally() {
+      "open".withCString(encodedAs: UTF16.self) { operation in
+        WindowsChatWebView.chatURL.withCString(encodedAs: UTF16.self) { url in
+          _ = ShellExecuteW(
+            WindowsMainWindow.currentWindow(),
+            operation,
+            url,
+            nil,
+            nil,
+            SW_SHOWNORMAL
+          )
+        }
       }
     }
 

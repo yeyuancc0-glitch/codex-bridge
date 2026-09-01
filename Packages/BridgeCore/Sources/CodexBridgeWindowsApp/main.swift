@@ -1,6 +1,7 @@
 #if os(Windows)
   import BridgeWindowsShell
   import Dispatch
+  import WinSDK
   import ucrt
 
   let arguments = Array(CommandLine.arguments.dropFirst())
@@ -11,8 +12,13 @@
     _exit(WindowsApplicationControl.shutdownRunningApplication() ? EXIT_SUCCESS : EXIT_FAILURE)
   }
   if !arguments.isEmpty { _exit(EXIT_FAILURE) }
+  let comInitialization = CoInitializeEx(nil, DWORD(0x2))
+  let comThreadID = GetCurrentThreadId()
   Task { @MainActor in
-    await CodexBridgeWindowsApplication.main()
+    await CodexBridgeWindowsApplication.main(
+      comInitialization: comInitialization,
+      comThreadID: comThreadID
+    )
     _exit(EXIT_SUCCESS)
   }
   dispatchMain()

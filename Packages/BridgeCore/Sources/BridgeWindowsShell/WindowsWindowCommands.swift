@@ -3,6 +3,13 @@
   import Foundation
 
   enum MainWindowCommand: Equatable {
+    case selectPage(index: Int)
+    case refreshCurrentPage
+    case openRecentTask(index: Int)
+    case browserBack
+    case browserForward
+    case browserReload
+    case openChatExternally
     case refreshTasks
     case startService
     case selectTask(index: Int)

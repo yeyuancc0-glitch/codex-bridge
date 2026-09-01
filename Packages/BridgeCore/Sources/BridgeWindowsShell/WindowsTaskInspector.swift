@@ -28,6 +28,7 @@
     nonisolated(unsafe) private static var refreshButton: HWND?
     nonisolated(unsafe) private static var steerButton: HWND?
     nonisolated(unsafe) private static var actionStatus: HWND?
+    nonisolated(unsafe) private static var chatPlaceholderHasText = true
 
     static func create(in parent: HWND?, instance: HINSTANCE?) {
       listBox = createChild(
@@ -73,6 +74,7 @@
       )
       setText(conversation, "请从上方选择任务。")
       setControls(interruptEnabled: false, steerEnabled: false)
+      WindowsUIFoundation.applyBodyFontRecursively(to: parent)
     }
 
     static func command(for wParam: WPARAM) -> MainWindowCommand? {
@@ -136,59 +138,83 @@
     static func setChatPlaceholder(_ text: String?) {
       guard let chatPlaceholder else { return }
       if let text {
+        chatPlaceholderHasText = true
         setText(chatPlaceholder, text)
         _ = ShowWindow(chatPlaceholder, SW_SHOW)
       } else {
+        chatPlaceholderHasText = false
         _ = ShowWindow(chatPlaceholder, SW_HIDE)
       }
     }
 
-    static func layout(_ window: HWND?, chat: WindowsChatWebView?) {
-      var area = RECT()
-      guard GetClientRect(window, &area) else { return }
-      let width = area.right - area.left
-      let height = area.bottom - area.top
-      let sidebar = Int32(WindowLayout.sidebarWidth)
-      let listHeight = max(Int32(180), height / 2)
-      let inspectorTop = listHeight + 4
-      let inspectorHeight = max(Int32(160), height - inspectorTop)
-      let padding = Int32(6)
-      let contentWidth = max(Int32(0), sidebar - padding * 2)
-      let metadataHeight = min(Int32(112), max(Int32(76), inspectorHeight / 3))
-      let conversationTop = inspectorTop + metadataHeight + 4
-      let footerTop = max(conversationTop + 44, height - 88)
+    static func layoutInspector(in bounds: RECT) {
+      let width = max(Int32(0), bounds.right - bounds.left)
+      let height = max(Int32(0), bounds.bottom - bounds.top)
+      let padding = Int32(8)
+      let contentWidth = max(Int32(0), width - padding * 2)
+      let statusHeight = Int32(82)
+      let listTop = bounds.top + statusHeight + 8
+      let listHeight = min(Int32(176), max(Int32(120), height / 4))
+      let inspectorTop = listTop + listHeight + 8
+      let inspectorHeight = max(Int32(160), bounds.bottom - inspectorTop)
+      let metadataHeight = min(Int32(112), max(Int32(76), inspectorHeight / 4))
+      let conversationTop = inspectorTop + metadataHeight + 8
+      let footerTop = max(conversationTop + 44, bounds.bottom - 96)
       let conversationHeight = max(Int32(40), footerTop - conversationTop - 4)
       let steerTop = footerTop
       let buttonTop = steerTop + 28
       let actionTop = buttonTop + 28
 
-      _ = MoveWindow(listBox, 0, 0, sidebar, listHeight, true)
+      _ = MoveWindow(statusStatic, bounds.left + padding, bounds.top + 4, contentWidth, 72, true)
+      _ = MoveWindow(listBox, bounds.left + padding, listTop, contentWidth, listHeight, true)
       _ = MoveWindow(
-        metadata, padding, inspectorTop, contentWidth, metadataHeight, true
+        metadata, bounds.left + padding, inspectorTop, contentWidth, metadataHeight, true
       )
       _ = MoveWindow(
-        conversation, padding, conversationTop, contentWidth, conversationHeight, true
+        conversation, bounds.left + padding, conversationTop, contentWidth, conversationHeight, true
       )
-      _ = MoveWindow(steerLabel, padding, steerTop, 48, 24, true)
+      _ = MoveWindow(steerLabel, bounds.left + padding, steerTop, 48, 24, true)
       _ = MoveWindow(
-        steerInput, padding + 50, steerTop, max(Int32(0), contentWidth - 50), 24, true
+        steerInput,
+        bounds.left + padding + 50,
+        steerTop,
+        max(Int32(0), contentWidth - 50),
+        24,
+        true
       )
-      _ = MoveWindow(interruptButton, padding, buttonTop, 76, 24, true)
-      _ = MoveWindow(refreshButton, padding + 82, buttonTop, 76, 24, true)
-      _ = MoveWindow(steerButton, padding + 164, buttonTop, 100, 24, true)
-      _ = MoveWindow(actionStatus, padding, actionTop, contentWidth, 20, true)
+      _ = MoveWindow(interruptButton, bounds.left + padding, buttonTop, 76, 24, true)
+      _ = MoveWindow(refreshButton, bounds.left + padding + 82, buttonTop, 76, 24, true)
+      _ = MoveWindow(steerButton, bounds.left + padding + 164, buttonTop, 100, 24, true)
+      _ = MoveWindow(actionStatus, bounds.left + padding, actionTop, contentWidth, 20, true)
+    }
 
-      let inset = Int32(WindowLayout.statusInset)
+    static func layoutChatPlaceholder(in bounds: RECT) {
       _ = MoveWindow(
-        statusStatic, sidebar + inset, inset,
-        width - sidebar - inset * 2, Int32(WindowLayout.statusHeight), true
+        chatPlaceholder,
+        bounds.left,
+        bounds.top,
+        max(Int32(0), bounds.right - bounds.left),
+        max(Int32(0), bounds.bottom - bounds.top),
+        true
       )
-      let chatTop = Int32(WindowLayout.chatTopInset)
-      _ = MoveWindow(
-        chatPlaceholder, sidebar, chatTop,
-        width - sidebar, height - chatTop, true
-      )
-      chat?.resize(to: RECT(left: sidebar, top: chatTop, right: width, bottom: height))
+    }
+
+    static func setVisible(_ visible: Bool) {
+      for control in [
+        listBox, statusStatic, metadata, conversation, steerInput, steerLabel,
+        interruptButton, refreshButton, steerButton, actionStatus,
+      ] {
+        WindowsUIFoundation.show(control, visible)
+      }
+    }
+
+    static func setChatPlaceholderPageVisible(_ visible: Bool) {
+      guard let chatPlaceholder else { return }
+      if visible && chatPlaceholderHasText {
+        _ = ShowWindow(chatPlaceholder, SW_SHOW)
+      } else {
+        _ = ShowWindow(chatPlaceholder, SW_HIDE)
+      }
     }
 
     static func selectedTaskIndex() -> Int? {

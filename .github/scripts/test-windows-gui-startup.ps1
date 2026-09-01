@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [string]$PortableDir
+  [string]$PortableDir,
+  [switch]$RequireWebView2
 )
 
 Set-StrictMode -Version Latest
@@ -20,11 +21,30 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public static class CodexBridgeGuiSmoke {
+  private delegate bool EnumChildProc(IntPtr window, IntPtr parameter);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   private static extern IntPtr FindWindowEx(
     IntPtr parent, IntPtr after, string className, string windowName);
   [DllImport("user32.dll")]
   private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+  [DllImport("user32.dll")]
+  private static extern bool EnumChildWindows(
+    IntPtr parent, EnumChildProc callback, IntPtr parameter);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  private static extern int GetClassName(IntPtr window, System.Text.StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  private static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int count);
+  [DllImport("user32.dll")]
+  private static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+  private static extern IntPtr SendMessage(
+    IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
+  private static extern IntPtr SendMessageText(
+    IntPtr window, uint message, IntPtr wParam, System.Text.StringBuilder text);
+
+  private const uint LB_GETCOUNT = 0x018B;
+  private const uint LB_GETTEXT = 0x0189;
 
   public static IntPtr FindWindowForProcess(uint expectedProcessId) {
     IntPtr window = IntPtr.Zero;
@@ -35,6 +55,45 @@ public static class CodexBridgeGuiSmoke {
       if (processId == expectedProcessId) return window;
     }
     return IntPtr.Zero;
+  }
+
+  public static bool HasMacNavigation(IntPtr parent) {
+    string[] expected = { "概览", "工作台", "项目", "日志", "连接", "设置" };
+    bool found = false;
+    EnumChildWindows(parent, delegate(IntPtr child, IntPtr parameter) {
+      var className = new System.Text.StringBuilder(64);
+      GetClassName(child, className, className.Capacity);
+      if (!className.ToString().Equals("ListBox", StringComparison.OrdinalIgnoreCase)) {
+        return true;
+      }
+      int count = SendMessage(child, LB_GETCOUNT, IntPtr.Zero, IntPtr.Zero).ToInt32();
+      if (count != expected.Length) return true;
+      for (int index = 0; index < expected.Length; index++) {
+        var text = new System.Text.StringBuilder(256);
+        SendMessageText(child, LB_GETTEXT, new IntPtr(index), text);
+        if (!text.ToString().StartsWith(expected[index], StringComparison.Ordinal)) {
+          return true;
+        }
+      }
+      found = true;
+      return false;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  public static bool HasVisibleText(IntPtr parent, string expected) {
+    bool found = false;
+    EnumChildWindows(parent, delegate(IntPtr child, IntPtr parameter) {
+      if (!IsWindowVisible(child)) return true;
+      var text = new System.Text.StringBuilder(256);
+      GetWindowText(child, text, text.Capacity);
+      if (text.ToString().Equals(expected, StringComparison.Ordinal)) {
+        found = true;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
   }
 }
 "@
@@ -69,10 +128,31 @@ function Wait-MainWindow([System.Diagnostics.Process]$Process, [int]$Seconds) {
       throw "Windows application exited before creating its main window: $($Process.ExitCode)."
     }
     $window = [CodexBridgeGuiSmoke]::FindWindowForProcess([uint32]$Process.Id)
-    if ($window -ne [IntPtr]::Zero) { return }
+    if ($window -ne [IntPtr]::Zero) { return $window }
     Start-Sleep -Milliseconds 200
   }
   throw "Timed out waiting for the Codex Bridge main window."
+}
+
+function Wait-WebView2Module([System.Diagnostics.Process]$Process, [int]$Seconds) {
+  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $Process.Refresh()
+    if ($Process.HasExited) {
+      throw "Windows application exited before loading WebView2: $($Process.ExitCode)."
+    }
+    try {
+      if (@($Process.Modules | Where-Object {
+            $_.ModuleName -eq "WebView2Loader.dll"
+          }).Count -eq 1) {
+        return
+      }
+    } catch {
+      # Module enumeration can briefly race process startup.
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  throw "Timed out waiting for WebView2Loader.dll to load."
 }
 
 function Stop-ExactProcesses([string]$Name, [string]$ExpectedPath) {
@@ -95,7 +175,16 @@ if (@(Get-ExactProcess "codex-bridge-windows-app" $appPath).Count -ne 0 -or
 
 try {
   $app = Start-Process -FilePath $appPath -WorkingDirectory $portableFull -PassThru
-  Wait-MainWindow $app 30
+  $mainWindow = Wait-MainWindow $app 30
+  if (-not [CodexBridgeGuiSmoke]::HasMacNavigation($mainWindow)) {
+    throw "Windows application did not expose the six macOS navigation destinations."
+  }
+  if (-not [CodexBridgeGuiSmoke]::HasVisibleText($mainWindow, "概览")) {
+    throw "Windows application did not open on Overview."
+  }
+  if ($RequireWebView2) {
+    Wait-WebView2Module $app 30
+  }
   $service = Wait-ExactProcess "codex-bridge-service" $servicePath 30
 
   $appControl = Start-Process -FilePath $appPath -ArgumentList "--shutdown" -PassThru
@@ -117,7 +206,7 @@ try {
   if (-not $service.HasExited) {
     throw "Windows service remained running after shutdown."
   }
-  Write-Host "Windows GUI startup, service launch, and graceful shutdown passed."
+  Write-Host "Windows navigation, Overview, service launch, and graceful shutdown passed."
 } finally {
   Stop-ExactProcesses "codex-bridge-windows-app" $appPath
   Stop-ExactProcesses "codex-bridge-service" $servicePath

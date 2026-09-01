@@ -561,6 +561,9 @@ let package = Package(
           [
             "-Xlinker", "/SUBSYSTEM:WINDOWS",
             "-Xlinker", "/ENTRY:mainCRTStartup",
+            "-Xlinker", "/MANIFEST:EMBED",
+            "-Xlinker",
+            "/MANIFESTINPUT:Windows/CodexBridgeWindowsApp.manifest",
           ],
           .when(platforms: [.windows])
         )

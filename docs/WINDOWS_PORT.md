@@ -32,7 +32,7 @@ Actions 原生编译并运行冒烟测试；ARM64 在同一 x64 runner 上交叉
 | 服务端监听 | `BridgeServiceXPCListener` | `ServiceRequestListener` / `ServiceListenerFactory` | `BridgeServicePipeListener`（每连接一个会话线程 + 请求路由器） |
 | 密钥存储 | Keychain（`KeychainSecretStore`） | `SecretStore` 协议 / `SecretStoreFactory` | 凭据管理器（`WindowsCredentialStore`，CredReadW/WriteW/DeleteW，blob ≤ 2560 字节） |
 | 内嵌 ChatGPT 页 | WKWebView（`ChatGPTWebView`） | 平台壳各自实现 | WebView2（`WindowsChatWebView`，经 WebView2Loader.dll 的最小 COM 绑定） |
-| 桌面 UI | SwiftUI/AppKit（`BridgeServiceAppShell`） | `BridgeServiceAppCore`（跨平台模型层与任务呈现） | Win32 消息循环 + WebView2 + 原生任务检查器（历史/实时对话、Interrupt、Steer） |
+| 桌面 UI | SwiftUI/AppKit（`BridgeServiceAppShell`） | `BridgeServiceAppCore`（跨平台模型层与任务呈现） | Win32 消息循环 + WebView2，复刻同一六页导航、状态语义与真实操作闭环 |
 | 后台服务注册 | `SMAppService` LaunchAgent | —（Windows 为按需拉起） | 壳启动时探测管道，不存在则拉起同目录 `codex-bridge-service.exe` |
 | 文件安全边界 | openat + O_NOFOLLOW 相对 fd 遍历 | `SecureFileReader` / `SecureProjectFileWriter` / `SecureProjectDirectoryMutation` | 逐组件 reparse-point 校验 + CreateFileW（CREATE_NEW / 暂存替换 / MoveFileExW） |
 | Provider 路径与工件 | POSIX 路径、fd/stat 身份 | `AgentPathSemantics` / `SecureFileArtifactSnapshot` / `SecureFileArtifactReader` | 盘符、UNC、大小写与 `;` PATH 语义；逐组件 reparse 校验后按句柄读取身份与摘要 |
@@ -165,13 +165,12 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
 9. **Direct 命令的网络隔离边界**。Windows 没有与 macOS sandbox profile 等价的
    per-process deny-network 实现，因此要求 `denyNetwork` 的直接命令在启动前失败；
    内置 safe command 不在 Windows 对外发布。已注册且声明需要网络的命令仍按项目策略运行。
-10. **Windows UI 不追求像素级对齐 macOS**。当前已支持服务状态、任务列表与稳定选择、
-   任务元数据、历史/实时对话、Interrupt、支持能力约束下的排队式 Steer、审批中心、
-   项目策略管理、Agent 安装管理，以及 WebView2 ChatGPT 页面。审批中心支持任务审批与
-   Direct 审批的读取、详情查看、允许/拒绝和过期后刷新；项目与 Agent 窗口支持注册、
-   移除、策略、启停、重新 Probe 与接受替换。Direct workspace command 编辑、Skills
-   清单与文档只读查看、Agent 默认模型、日志和设置页均有原生窗口；Skills 核心目前没有
-   写接口，因此 Windows 与服务契约一致保持只读。路径输入暂为文本框，尚未接原生文件选择器。
+10. **Windows UI 与功能以 macOS 为产品基准**。Windows 使用 Win32/WebView2 承载相同的
+   概览、工作台、项目、日志、连接和设置导航；页面状态、文案、操作后果与 Service API
+   闭环必须一致，不能用独立工具窗口、占位页或静态指标代替。平台原生控件允许存在渲染
+   差异。Windows Supervisor 按已确认边界保持不可用；Skills 与 macOS 一样只读；Secure
+   Tunnel 在 Windows helper 可用前明确 fail-closed。当前迁移先统一根窗口、概览、工作台
+   与 WebView2，再逐页把已有项目、Agent、Direct、日志和设置能力并入同一主窗口。
 
 ## 验证路径与 CI 现状
 
@@ -185,8 +184,9 @@ macOS 侧命令保持不变：`Scripts/with-xcode.sh xcodebuild …` /
   必须来自 portable 目录。随后 x64 还以无界面控制模式验证带空格路径的 App→Service
   拉起、服务优雅退出，
   以及 EXE 安装→启动→运行中升级→卸载全链；检查开始菜单、安装目录哈希、陈旧文件清理
-  和用户数据保留。Hosted runner 不创建或操作桌面窗口；Win32 窗口和 WebView2 交互由
-  Windows 真机验收。ARM64 是交叉编译/链接与安装器静态门禁，不能替代 ARM64 真机运行验收。
+  和用户数据保留。x64 runner 还创建真实 Win32 主窗口，验证六页导航、默认概览、服务拉起
+  与优雅退出；WebView2 Runtime 挂载和业务交互继续由 Windows 真机验收。ARM64 是交叉
+  编译/链接与安装器静态门禁，不能替代 ARM64 真机运行验收。
 - Windows 的 `swift test --filter` 仍会编译 manifest 在该平台声明的其他 target；
   因此 SwiftUI 壳与 macOS 测试 fixture 只在 macOS 清单中声明，Windows 再由
   filter 选择已适配的冒烟套件。
