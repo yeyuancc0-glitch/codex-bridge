@@ -169,6 +169,23 @@ function Wait-WebView2Module([System.Diagnostics.Process]$Process, [int]$Seconds
   throw "Timed out waiting for WebView2Loader.dll to load."
 }
 
+function Wait-ServiceConnection(
+  [IntPtr]$Window,
+  [System.Diagnostics.Process]$Process,
+  [int]$Seconds
+) {
+  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $Process.Refresh()
+    if ($Process.HasExited) {
+      throw "Windows service exited before completing a status round trip: $($Process.ExitCode)."
+    }
+    if ([CodexBridgeGuiSmoke]::HasControlText($Window, "● 已连接")) { return }
+    Start-Sleep -Milliseconds 200
+  }
+  throw "Windows application did not complete a service status round trip."
+}
+
 function Stop-ExactProcesses([string]$Name, [string]$ExpectedPath) {
   foreach ($process in @(Get-ExactProcess $Name $ExpectedPath)) {
     $process.Refresh()
@@ -195,6 +212,7 @@ try {
     Wait-WebView2Module $app 30
   }
   $service = Wait-ExactProcess "codex-bridge-service" $servicePath 30
+  Wait-ServiceConnection $mainWindow $service 30
 
   $appControl = Start-Process -FilePath $appPath -ArgumentList "--shutdown" -PassThru
   $appControlExit = Wait-DirectProcessExit $appControl 35 "Windows application shutdown"
