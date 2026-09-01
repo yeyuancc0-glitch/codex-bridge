@@ -3,10 +3,10 @@
   import WinSDK
 
   /// Windows desktop shell entry point. The Win32 message loop runs inside the
-  /// main-actor task; `await Task.yield()` between messages is what lets
-  /// main-actor jobs (service calls, model updates) execute on Windows, where
-  /// nothing else drains the main executor while GetMessageW blocks. The
-  /// 250ms window timer guarantees the loop wakes up regularly.
+  /// main-actor task. A short suspension between messages lets service calls
+  /// and model updates run reliably; `Task.yield()` alone does not guarantee
+  /// another ready main-actor task wins scheduling. The 250ms window timer
+  /// guarantees the loop wakes up regularly.
   @MainActor
   public enum CodexBridgeWindowsApplication {
     static var lastAppliedDisplay: WindowsWorkbenchDisplay?
@@ -37,7 +37,7 @@
         for command in WindowsMainWindow.takePendingCommands() {
           run(command, model: model, management: management, auxiliary: auxiliary)
         }
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 1_000_000)
         applyDisplay(model: model, management: management, chat: chat)
         auxiliary.applyDisplay()
       }

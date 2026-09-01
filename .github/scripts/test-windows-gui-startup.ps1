@@ -183,7 +183,16 @@ function Wait-ServiceConnection(
     if ([CodexBridgeGuiSmoke]::HasControlText($Window, "● 已连接")) { return }
     Start-Sleep -Milliseconds 200
   }
-  throw "Windows application did not complete a service status round trip."
+  $state = if ([CodexBridgeGuiSmoke]::HasControlText($Window, "● 正在连接")) {
+    "connecting"
+  } elseif ([CodexBridgeGuiSmoke]::HasControlText($Window, "● 未连接")) {
+    "idle"
+  } elseif ([CodexBridgeGuiSmoke]::HasControlText($Window, "● 不可用")) {
+    "unavailable"
+  } else {
+    "unknown"
+  }
+  throw "Windows application did not complete a service status round trip; observed: $state."
 }
 
 function Stop-ExactProcesses([string]$Name, [string]$ExpectedPath) {
