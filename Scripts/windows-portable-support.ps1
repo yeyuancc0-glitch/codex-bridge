@@ -95,6 +95,29 @@ function Get-PEMachine([string]$Path) {
   }
 }
 
+function Get-PESubsystem([string]$Path) {
+  $stream = [IO.File]::OpenRead($Path)
+  $reader = [IO.BinaryReader]::new($stream)
+  try {
+    if ($stream.Length -lt 64 -or $reader.ReadUInt16() -ne [UInt16]0x5A4D) {
+      throw "Not a PE file: $Path"
+    }
+    $stream.Seek(0x3C, [IO.SeekOrigin]::Begin) | Out-Null
+    $peOffset = $reader.ReadUInt32()
+    if ($peOffset -gt 1MB -or $peOffset -gt ($stream.Length - 96)) {
+      throw "Invalid PE header offset: $Path"
+    }
+    $stream.Seek([Int64]$peOffset, [IO.SeekOrigin]::Begin) | Out-Null
+    if ($reader.ReadUInt32() -ne [UInt32]0x00004550) {
+      throw "Invalid PE signature: $Path"
+    }
+    $stream.Seek([Int64]$peOffset + 24 + 68, [IO.SeekOrigin]::Begin) | Out-Null
+    return $reader.ReadUInt16()
+  } finally {
+    $reader.Dispose()
+  }
+}
+
 function Test-PEArchitectureCompatible(
   [string]$Path,
   [ValidateSet("x64", "arm64")]

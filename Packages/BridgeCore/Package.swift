@@ -555,6 +555,15 @@ let package = Package(
       dependencies: [
         "BridgeWindowsShell",
         "BridgeIPC",
+      ],
+      linkerSettings: [
+        .unsafeFlags(
+          [
+            "-Xlinker", "/SUBSYSTEM:WINDOWS",
+            "-Xlinker", "/ENTRY:mainCRTStartup",
+          ],
+          .when(platforms: [.windows])
+        )
       ]
     ),
     .executableTarget(

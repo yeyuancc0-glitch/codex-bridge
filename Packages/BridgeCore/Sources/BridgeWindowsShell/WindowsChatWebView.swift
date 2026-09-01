@@ -16,19 +16,25 @@
 
     static let chatURL = "https://chatgpt.com"
 
-    private(set) var state: State = .loading
+    private(set) var state: State
+    private let comAvailable: Bool
     private var loaderModule: HMODULE?
     private var hostWindow: HWND?
     private var environment: UnsafeMutableRawPointer?
     private var controller: UnsafeMutableRawPointer?
     private var webView: UnsafeMutableRawPointer?
 
+    init(comAvailable: Bool = true) {
+      self.comAvailable = comAvailable
+      state = comAvailable ? .loading : .unsupported
+    }
+
     deinit {
       releaseInterfaces()
     }
 
     func attach(to window: HWND?) {
-      guard hostWindow == nil, let window else { return }
+      guard comAvailable, hostWindow == nil, let window else { return }
       guard let loader = Self.loadLoader() else {
         state = .unsupported
         return

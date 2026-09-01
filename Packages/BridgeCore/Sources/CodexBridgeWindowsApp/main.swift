@@ -1,5 +1,6 @@
 #if os(Windows)
   import BridgeWindowsShell
+  import Dispatch
   import ucrt
 
   let arguments = Array(CommandLine.arguments.dropFirst())
@@ -10,7 +11,11 @@
     _exit(WindowsApplicationControl.shutdownRunningApplication() ? EXIT_SUCCESS : EXIT_FAILURE)
   }
   if !arguments.isEmpty { _exit(EXIT_FAILURE) }
-  await CodexBridgeWindowsApplication.main()
+  Task { @MainActor in
+    await CodexBridgeWindowsApplication.main()
+    _exit(EXIT_SUCCESS)
+  }
+  dispatchMain()
 #else
   import Foundation
 

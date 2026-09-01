@@ -9,15 +9,24 @@
   /// 250ms window timer guarantees the loop wakes up regularly.
   @MainActor
   public enum CodexBridgeWindowsApplication {
+    private static let apartmentThreadedCOM: DWORD = 0x2
     private static var lastAppliedDisplay: WindowsWorkbenchDisplay?
     private static var lastAppliedManagementDisplay: WindowsManagementDisplay?
     private static var lastPlaceholderText: String? = ""
 
     public static func main() async {
+      let comInitialization = CoInitializeEx(nil, apartmentThreadedCOM)
+      let shouldUninitializeCOM = comInitialization >= 0
+      defer {
+        if shouldUninitializeCOM {
+          CoUninitialize()
+        }
+      }
+
       let model = WindowsWorkbenchModel()
       let management = WindowsManagementModel(client: model.client)
       let auxiliary = WindowsAuxiliaryRuntime(client: model.client)
-      let chat = WindowsChatWebView()
+      let chat = WindowsChatWebView(comAvailable: shouldUninitializeCOM)
       guard let window = WindowsMainWindow.create() else { return }
       WindowsMainWindow.chat = chat
       chat.attach(to: window)
@@ -195,7 +204,7 @@
       let placeholder: String?
       switch chat.state {
       case .unsupported:
-        placeholder = "未检测到 WebView2 Runtime，聊天页不可用；任务管理功能不受影响。"
+        placeholder = "WebView2 初始化不可用，聊天页已停用；任务管理功能不受影响。"
       case .loading:
         placeholder = "正在加载聊天页…"
       case .failed:

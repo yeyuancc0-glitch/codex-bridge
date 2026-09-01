@@ -124,6 +124,12 @@ try {
       throw "Binary has the wrong architecture: $binary"
     }
   }
+  if ((Get-PESubsystem $applicationPath) -ne 2) {
+    throw "Windows application must use the GUI subsystem."
+  }
+  if ((Get-PESubsystem $servicePath) -ne 3) {
+    throw "Windows service must use the console subsystem."
+  }
   Stage-File $servicePath "codex-bridge-service.exe"
   Stage-File $applicationPath "codex-bridge-windows-app.exe"
   Stage-File (Join-Path $repoRoot "LICENSE") "LICENSE.txt"

@@ -66,7 +66,10 @@
           )
         }
       }
-      guard let window = created else { return nil }
+      guard let window = created else {
+        showCreationFailure(GetLastError())
+        return nil
+      }
       self.window = window
       WindowsTaskInspector.create(in: window, instance: instance)
       installMenu(window)
@@ -75,6 +78,20 @@
       _ = ShowWindow(window, SW_SHOW)
       WindowsTaskInspector.layout(window, chat: chat)
       return window
+    }
+
+    private static func showCreationFailure(_ errorCode: DWORD) {
+      let message = "无法创建 Codex Bridge 主窗口。Win32 错误：\(errorCode)"
+      message.withCString(encodedAs: UTF16.self) { messagePointer in
+        windowTitle.withCString(encodedAs: UTF16.self) { titlePointer in
+          _ = MessageBoxW(
+            nil,
+            messagePointer,
+            titlePointer,
+            UINT(MB_OK) | UINT(MB_ICONERROR)
+          )
+        }
+      }
     }
 
     static func enqueue(_ command: MainWindowCommand) {

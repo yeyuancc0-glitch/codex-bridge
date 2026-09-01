@@ -251,6 +251,14 @@ jobs:
           & "$env:GITHUB_WORKSPACE\.github\scripts\test-windows-spaced-path-launch.ps1" `
             -PortableDir "$env:GITHUB_WORKSPACE\.build\windows-dist\${{ matrix.architecture }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke Windows GUI startup
+        if: matrix.run_tests
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-windows-gui-startup.ps1" `
+            -PortableDir "$env:GITHUB_WORKSPACE\.build\windows-dist\${{ matrix.architecture }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install pinned Inno Setup 7.1.0
         shell: pwsh
         run: |
