@@ -35,16 +35,16 @@
 
     static func command(for wParam: WPARAM) -> MainWindowCommand? {
       switch wParam & 0xFFFF {
-      case menuRefreshID: .refreshCurrentPage
-      case menuStartServiceID: .startService
-      case menuApprovalsID: .showApprovals
-      case menuProjectsID: .selectPage(index: WindowsMainPage.projects.rawValue)
-      case menuAgentsID: .selectPage(index: WindowsMainPage.connections.rawValue)
-      case menuWorkspaceID: .showWorkspace
-      case menuAgentDefaultsID: .showAgentDefaults
-      case menuLogsID: .selectPage(index: WindowsMainPage.logs.rawValue)
-      case menuSettingsID: .selectPage(index: WindowsMainPage.settings.rawValue)
-      default: nil
+      case menuRefreshID: return .refreshCurrentPage
+      case menuStartServiceID: return .startService
+      case menuApprovalsID: return .showApprovals
+      case menuProjectsID: return .selectPage(index: WindowsMainPage.projects.rawValue)
+      case menuAgentsID: return .selectPage(index: WindowsMainPage.connections.rawValue)
+      case menuWorkspaceID: return .showWorkspace
+      case menuAgentDefaultsID: return .showAgentDefaults
+      case menuLogsID: return .selectPage(index: WindowsMainPage.logs.rawValue)
+      case menuSettingsID: return .selectPage(index: WindowsMainPage.settings.rawValue)
+      default: return nil
       }
     }
 

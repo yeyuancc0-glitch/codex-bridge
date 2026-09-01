@@ -212,7 +212,11 @@
           risk: selectedValue(riskCombo, values: riskValues)
         )
       case WPARAM(removeCommandID) where notification == WPARAM(BN_CLICKED):
-        return .removeSelectedWorkspaceCommand
+        return WindowsConfirmation.confirm(
+          "确定移除所选 Direct 命令吗？",
+          title: "移除命令？",
+          owner: window
+        ) ? .removeSelectedWorkspaceCommand : nil
       case WPARAM(saveModeID) where notification == WPARAM(BN_CLICKED):
         let index = WindowsAuxiliaryControlSupport.selectedIndex(modeCombo, combo: true) ?? 0
         guard modeValues.indices.contains(index) else { return nil }
@@ -225,7 +229,11 @@
           pattern: WindowsAuxiliaryControlSupport.currentText(blacklistPatternInput)
         )
       case WPARAM(removeBlacklistID) where notification == WPARAM(BN_CLICKED):
-        return .removeSelectedWorkspaceBlacklist
+        return WindowsConfirmation.confirm(
+          "确定移除所选黑名单规则吗？",
+          title: "移除黑名单？",
+          owner: window
+        ) ? .removeSelectedWorkspaceBlacklist : nil
       default:
         return nil
       }

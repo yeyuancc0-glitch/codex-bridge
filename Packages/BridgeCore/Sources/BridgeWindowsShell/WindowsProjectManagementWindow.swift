@@ -125,7 +125,11 @@
       case WPARAM(registerID) where notification == WPARAM(BN_CLICKED):
         return .registerProject(name: currentText(nameInput), path: currentText(pathInput))
       case WPARAM(removeID) where notification == WPARAM(BN_CLICKED):
-        return .removeSelectedProject
+        return WindowsConfirmation.confirm(
+          "确定从 Codex Bridge 移除所选项目吗？本地磁盘文件不会被删除。",
+          title: "移除项目？",
+          owner: window
+        ) ? .removeSelectedProject : nil
       case WPARAM(saveID) where notification == WPARAM(BN_CLICKED):
         return .saveProjectPolicy(
           read: selectedValue(readCombo, values: readValues),

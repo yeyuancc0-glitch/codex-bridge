@@ -118,6 +118,8 @@
       case .selectTask(let index):
         model.selectTask(at: index)
       case .selectWorkbenchProject(let index):
+        management.selectProject(at: index)
+        auxiliary.run(.selectWorkspaceProject(index: index))
         Task { await model.selectWorkbenchProject(at: index) }
       case .selectWorkbenchPermission(let index):
         Task { await model.selectWorkbenchPermission(at: index) }
@@ -149,18 +151,49 @@
         Task { await model.resolveSelectedApproval(decision: decision) }
       case .showProjects:
         WindowsMainWindow.selectPage(.projects)
+        WindowsEmbeddedPages.selectSection(page: .projects, index: 0)
         Task { await management.refreshProjects() }
       case .showAgents:
         WindowsMainWindow.selectPage(.connections)
+        WindowsEmbeddedPages.selectSection(page: .connections, index: 1)
         Task { await management.refreshAgents() }
+      case .showWorkspace:
+        WindowsMainWindow.selectPage(.projects)
+        WindowsEmbeddedPages.selectSection(page: .projects, index: 1)
+        auxiliary.run(.refreshWorkspace)
+      case .showAgentDefaults:
+        WindowsMainWindow.selectPage(.settings)
+        WindowsEmbeddedPages.selectSection(page: .settings, index: 1)
+        auxiliary.run(.refreshAgentDefaults)
+      case .showLogs:
+        WindowsMainWindow.selectPage(.logs)
+        auxiliary.run(.refreshLogs)
+      case .showSettings:
+        WindowsMainWindow.selectPage(.settings)
+        WindowsEmbeddedPages.selectSection(page: .settings, index: 0)
+        auxiliary.run(.refreshSettings)
       case .selectProject(let index):
         management.selectProject(at: index)
+        auxiliary.run(.selectWorkspaceProject(index: index))
+        Task { await model.selectWorkbenchProject(at: index) }
+      case .selectWorkspaceProject(let index):
+        auxiliary.run(.selectWorkspaceProject(index: index))
+        management.selectProject(at: index)
+        Task { await model.selectWorkbenchProject(at: index) }
       case .refreshProjects:
         Task { await management.refreshProjects() }
       case .registerProject(let name, let path):
-        Task { await management.registerProject(name: name, path: path) }
+        Task {
+          await management.registerProject(name: name, path: path)
+          await model.connectAndRefresh()
+          auxiliary.run(.refreshWorkspace)
+        }
       case .removeSelectedProject:
-        Task { await management.removeSelectedProject() }
+        Task {
+          await management.removeSelectedProject()
+          await model.connectAndRefresh()
+          auxiliary.run(.refreshWorkspace)
+        }
       case .saveProjectPolicy(let read, let write, let network):
         Task {
           await management.saveSelectedProjectPolicy(

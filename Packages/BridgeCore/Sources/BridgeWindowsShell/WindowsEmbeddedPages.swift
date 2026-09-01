@@ -3,7 +3,7 @@
 
   enum WindowsEmbeddedPages {
     nonisolated(unsafe) private static var projectsSection = 0
-    nonisolated(unsafe) private static var connectionsSection = 1
+    nonisolated(unsafe) private static var connectionsSection = 0
     nonisolated(unsafe) private static var settingsSection = 0
 
     static func prepare(in parent: HWND?) {

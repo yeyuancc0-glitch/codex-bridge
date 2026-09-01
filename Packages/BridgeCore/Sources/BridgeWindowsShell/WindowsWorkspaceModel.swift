@@ -75,9 +75,12 @@
         publishDisplay()
       }
       do {
-        _ = try await client.status()
+        let status = try await client.status()
         connectionState = .connected
         projects = try await client.projects()
+        if projects.contains(where: { $0.projectID == status.workbenchProjectID }) {
+          selectedProjectID = status.workbenchProjectID
+        }
         reconcileProjectSelection()
         await loadSelectedWorkspace()
       } catch {
@@ -94,6 +97,11 @@
       selectedThreadID = nil
       selectedThreadPage = nil
       selectedBlacklistID = nil
+      detail = nil
+      commands = []
+      skills = []
+      threads = []
+      blacklists = []
       statusText = "已选择项目：\(projects[index].name)"
       publishDisplay()
       Task { await loadSelectedWorkspace() }

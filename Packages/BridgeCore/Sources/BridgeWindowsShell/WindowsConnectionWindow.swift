@@ -117,9 +117,17 @@
       case WPARAM(copyID) where notification == WPARAM(BN_CLICKED):
         return .copySelectedMCPConfiguration
       case WPARAM(rotateCredentialID) where notification == WPARAM(BN_CLICKED):
-        return .rotateSelectedMCPCredential
+        return WindowsConfirmation.confirm(
+          "现有 Qwen Studio 配置会立即失效，需要重新复制 JSON。",
+          title: "重新生成 Qwen 凭证？",
+          owner: window
+        ) ? .rotateSelectedMCPCredential : nil
       case WPARAM(rotateEndpointID) where notification == WPARAM(BN_CLICKED):
-        return .rotateLocalMCPEndpoint
+        return WindowsConfirmation.confirm(
+          "Qwen Studio 保存的旧 URL 会失效，需要重新复制 JSON。",
+          title: "重新生成本地 Endpoint？",
+          owner: window
+        ) ? .rotateLocalMCPEndpoint : nil
       case WPARAM(refreshID) where notification == WPARAM(BN_CLICKED):
         return .refreshMCPConnections
       default:

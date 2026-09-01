@@ -51,7 +51,11 @@
       case WPARAM(stopID) where notification == WPARAM(BN_CLICKED):
         return .stopSelectedTask
       case WPARAM(deleteID) where notification == WPARAM(BN_CLICKED):
-        return .deleteSelectedTask
+        return WindowsConfirmation.confirm(
+          "该操作会删除任务、事件和对话记录，无法撤销。",
+          title: "删除任务？",
+          owner: GetParent(deleteButton)
+        ) ? .deleteSelectedTask : nil
       default:
         return nil
       }

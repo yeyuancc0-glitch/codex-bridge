@@ -53,6 +53,7 @@
         let tasks = try await client.tasks(IPCTaskListRequest(limit: 200))
         let names = Dictionary(uniqueKeysWithValues: projects.map { ($0.projectID, $0.name) })
         projectNames = projects.map(\.name).sorted()
+        selectedProjectIndex = min(selectedProjectIndex, projectNames.count)
         items = TaskLogPresentation.flatten(tasks: tasks, projectNames: names)
         reconcileSelection()
         statusText = "已加载 \(items.count) 条任务事件。"

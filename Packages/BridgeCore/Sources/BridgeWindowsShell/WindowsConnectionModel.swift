@@ -160,7 +160,9 @@
           selectedExposureIndex: profile.flatMap {
             Self.exposureModes.firstIndex(of: $0.exposureMode)
           },
-          toggleTitle: enabled ? "停用 Qwen Studio" : "启用 Qwen Studio",
+          toggleTitle: isQwen
+            ? (enabled ? "停用 Qwen Studio" : "启用 Qwen Studio")
+            : "ChatGPT 保持启用",
           toggleEnabled: isQwen && !busy,
           saveExposureEnabled: enabled && !busy,
           copyConfigurationEnabled: isQwen && enabled && !busy,
