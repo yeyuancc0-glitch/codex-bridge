@@ -10,6 +10,7 @@
   /// response ordering.
   final class NamedPipeServiceTransport: ServiceRequestTransport, @unchecked Sendable {
     private let pipeName: String
+    private let io = NamedPipeOverlappedIO()
     private let lock = NSLock()
     private var handle: HANDLE = INVALID_HANDLE_VALUE
     private var readerThread: Thread?
@@ -53,6 +54,7 @@
     }
 
     func invalidate() {
+      io?.requestCancellation()
       lock.lock()
       invalidated = true
       let failed = pending
@@ -66,6 +68,7 @@
 
     private func connectIfNeededLocked() throws {
       guard handle == INVALID_HANDLE_VALUE else { return }
+      guard let io else { throw BridgeServiceClientError.unavailable }
       var opened = openPipe()
       for _ in 0..<50 where opened == INVALID_HANDLE_VALUE {
         guard GetLastError() == ERROR_PIPE_BUSY else { break }
@@ -77,6 +80,7 @@
       guard opened != INVALID_HANDLE_VALUE else {
         throw BridgeServiceClientError.unavailable
       }
+      io.prepareConnection()
       handle = opened
       pending.removeAll()
       let thread = Thread { [weak self] in
@@ -98,7 +102,7 @@
           0,
           nil,
           DWORD(OPEN_EXISTING),
-          0,
+          DWORD(FILE_FLAG_OVERLAPPED),
           nil
         )
       }
@@ -109,27 +113,12 @@
       var length = UInt32(payload.count).littleEndian
       withUnsafeBytes(of: &length) { frame.append(contentsOf: $0) }
       frame.append(payload)
-      try frame.withUnsafeBytes { raw in
-        var offset = 0
-        while offset < raw.count {
-          var written: DWORD = 0
-          guard
-            WriteFile(
-              handle,
-              UnsafeRawPointer(raw.baseAddress!).advanced(by: offset),
-              DWORD(raw.count - offset),
-              &written,
-              nil
-            ), written > 0
-          else {
-            throw BridgeServiceClientError.unavailable
-          }
-          offset += Int(written)
-        }
-      }
+      guard let io else { throw BridgeServiceClientError.unavailable }
+      try io.writeFully(handle, data: frame)
     }
 
     private func readLoop() {
+      defer { io?.signalReaderExited() }
       while true {
         lock.lock()
         let current = handle
@@ -157,26 +146,7 @@
     }
 
     private func readFully(_ handle: HANDLE, _ count: UInt32) -> Data? {
-      guard count > 0 else { return Data() }
-      var buffer = Data(count: Int(count))
-      let ok = buffer.withUnsafeMutableBytes { raw -> Bool in
-        var total: UInt32 = 0
-        while total < count {
-          var read: DWORD = 0
-          guard
-            ReadFile(
-              handle,
-              raw.baseAddress!.advanced(by: Int(total)),
-              count - total,
-              &read,
-              nil
-            ), read > 0
-          else { return false }
-          total += read
-        }
-        return true
-      }
-      return ok ? buffer : nil
+      io?.readFully(handle, count: count)
     }
 
     private func deliver(_ frame: (kind: UInt8, payload: Data)) {
@@ -203,16 +173,18 @@
       for continuation in failed {
         continuation.resume(throwing: BridgeServiceClientError.unavailable)
       }
-      closeHandle()
+      closeHandle(waitForReader: false)
     }
 
-    private func closeHandle() {
+    private func closeHandle(waitForReader: Bool = true) {
+      io?.requestCancellation()
       lock.lock()
       let current = handle
       handle = INVALID_HANDLE_VALUE
       lock.unlock()
       guard current != INVALID_HANDLE_VALUE else { return }
       _ = CancelIoEx(current, nil)
+      if waitForReader { io?.waitForReaderExit() }
       _ = CloseHandle(current)
     }
   }
