@@ -28,7 +28,7 @@
 
     func perform(_ data: Data) async throws -> Data {
       WindowsIPCTrace.record("transport.perform.begin")
-      try await withCheckedThrowingContinuation { continuation in
+      return try await withCheckedThrowingContinuation { continuation in
         lock.lock()
         if invalidated {
           lock.unlock()
@@ -55,7 +55,12 @@
     func invalidate() {
       lock.lock()
       invalidated = true
+      let failed = pending
+      pending.removeAll()
       lock.unlock()
+      for continuation in failed {
+        continuation.resume(throwing: BridgeServiceClientError.unavailable)
+      }
       closeHandle()
     }
 
