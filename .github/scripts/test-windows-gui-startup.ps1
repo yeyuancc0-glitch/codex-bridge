@@ -208,17 +208,13 @@ function Stop-ExactProcesses([string]$Name, [string]$ExpectedPath) {
 
 $app = $null
 $service = $null
-$tracePath = Join-Path ([IO.Path]::GetTempPath()) "codex-bridge-gui-ipc-trace.txt"
-Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
 if (@(Get-ExactProcess "codex-bridge-windows-app" $appPath).Count -ne 0 -or
     @(Get-ExactProcess "codex-bridge-service" $servicePath).Count -ne 0) {
   throw "The GUI smoke payload is already running."
 }
 
 try {
-  $env:CODEX_BRIDGE_IPC_TRACE = $tracePath
   $app = Start-Process -FilePath $appPath -WorkingDirectory $portableFull -PassThru
-  Remove-Item Env:\CODEX_BRIDGE_IPC_TRACE -ErrorAction SilentlyContinue
   $mainWindow = Wait-MainWindow $app 30
   Wait-MacInterface $mainWindow 30
   if ($RequireWebView2) {
@@ -248,12 +244,6 @@ try {
   }
   Write-Host "Windows navigation, Overview, service launch, and graceful shutdown passed."
 } finally {
-  Remove-Item Env:\CODEX_BRIDGE_IPC_TRACE -ErrorAction SilentlyContinue
-  if (Test-Path -LiteralPath $tracePath -PathType Leaf) {
-    Write-Host "GUI IPC diagnostic trace:"
-    Get-Content -LiteralPath $tracePath
-    Remove-Item -LiteralPath $tracePath -Force
-  }
   Stop-ExactProcesses "codex-bridge-windows-app" $appPath
   Stop-ExactProcesses "codex-bridge-service" $servicePath
 }

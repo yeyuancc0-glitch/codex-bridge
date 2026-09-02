@@ -28,7 +28,6 @@
     }
 
     func perform(_ data: Data) async throws -> Data {
-      WindowsIPCTrace.record("transport.perform.begin")
       return try await withCheckedThrowingContinuation { continuation in
         lock.lock()
         if invalidated {
@@ -38,11 +37,8 @@
         }
         do {
           try connectIfNeededLocked()
-          WindowsIPCTrace.record("transport.connected")
           try writeFrameLocked(kind: 0, payload: data)
-          WindowsIPCTrace.record("transport.request-written")
           pending.append(continuation)
-          WindowsIPCTrace.record("transport.continuation-pending")
         } catch {
           lock.unlock()
           closeHandle()
@@ -84,7 +80,6 @@
       handle = opened
       pending.removeAll()
       let thread = Thread { [weak self] in
-        WindowsIPCTrace.record("transport.reader.started")
         self?.readLoop()
       }
       thread.name = "codex-bridge.pipe-reader"
@@ -125,11 +120,9 @@
         lock.unlock()
         guard current != INVALID_HANDLE_VALUE else { return }
         guard let frame = readFrame(current) else {
-          WindowsIPCTrace.record("transport.reader.failed")
           failPendingAndClose()
           return
         }
-        WindowsIPCTrace.record("transport.reader.frame-\(frame.kind)")
         deliver(frame)
       }
     }
@@ -155,8 +148,6 @@
         lock.lock()
         let continuation = pending.isEmpty ? nil : pending.removeFirst()
         lock.unlock()
-        WindowsIPCTrace.record(
-          continuation == nil ? "transport.response-orphaned" : "transport.response-resume")
         continuation?.resume(returning: frame.payload)
       case 2:
         streamHandler?(frame.payload)

@@ -54,9 +54,6 @@ public actor BridgeServiceClient {
     payload: Payload?
   ) async throws -> Response {
     guard !invalidated else { throw BridgeServiceClientError.unavailable }
-    #if os(Windows)
-      WindowsIPCTrace.record("client.\(operation.rawValue).begin")
-    #endif
     let requestID = UUID().uuidString.lowercased()
     let data = try BridgeServiceIPCCodec.request(
       operation: operation,
@@ -64,9 +61,6 @@ public actor BridgeServiceClient {
       requestID: requestID
     )
     let response = try await perform(data)
-    #if os(Windows)
-      WindowsIPCTrace.record("client.\(operation.rawValue).response")
-    #endif
     return try BridgeServiceIPCCodec.decodeResponse(
       Response.self,
       data: response,
